@@ -940,6 +940,36 @@ void DiskDFJK::initialize_JK_disk() {
 
         timer_off("JK: (Q|mn)");
 
+	//double dum[naux][max_cols];
+	
+	std::unique_ptr<double[]> DUM(new double[naux * max_cols]);
+	double* dummy = DUM.get();
+
+	timer_on("DiskDFJK: COPY TEST NO OMP");
+
+	C_DCOPY(naux * max_cols, &Qmnp[0][0], 1, dummy, 1);
+
+	//for (int mn = 0; mn < mn_col_val; mn += naux) {
+	//    int cols = naux;
+	//    if (mn + naux >= mn_col_val) cols = mn_col_val - mn;
+
+	//    for (int Q = 0; Q < naux; Q++) C_DCOPY(cols, &Qmnp[Q][mn], 1, &dummy[Q][mn], 1);
+	//}
+
+	timer_off("DiskDFJK: COPY TEST NO OMP");
+
+	timer_on("DiskDFJK: COPY TEST WITH OMP");
+
+#pragma omp parallel for schedule(guided) num_threads(nthread)
+	for (int mn = 0; mn < mn_col_val; mn += naux) {
+	    int cols = naux;
+	    if (mn + naux >= mn_col_val) cols = mn_col_val - mn;
+
+	    for (int Q = 0; Q < naux; Q++) C_DCOPY(cols, &Qmnp[Q][mn], 1, &dummy[Q * mn_col_val + mn], 1);
+	}
+
+	timer_off("DiskDFJK: COPY TEST WITH OMP");
+
         // ==> Disk striping <== //
 
         timer_on("JK: (Q|mn) Write");
@@ -959,6 +989,8 @@ void DiskDFJK::initialize_JK_disk() {
     delete[] buffer;
 
     psio_->close(unit_, 1);
+
+    throw PsiException("To HELL with notre shame!!!", __FILE__, __LINE__);
 }
 void DiskDFJK::initialize_wK_core() {
     int naux = auxiliary_->nbf();
