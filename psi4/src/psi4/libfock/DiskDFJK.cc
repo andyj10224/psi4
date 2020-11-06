@@ -84,7 +84,7 @@ size_t DiskDFJK::memory_estimate() {
     size_t memory = three_memory + two_memory;
     memory += memory_overhead();
     memory += memory_temp();
-
+    outfile->Printf("DiskDFJK::memory_estimate(): Memory is %zu\n", memory );
     return memory;
 }
 SharedVector DiskDFJK::iaia(SharedMatrix Ci, SharedMatrix Ca) {
@@ -406,9 +406,9 @@ void DiskDFJK::preiterations() {
     // Core or disk?
     is_core_ = is_core();
 
-    if (is_core_)
+    if (is_core_) 
         initialize_JK_core();
-    else
+    else 
         initialize_JK_disk();
 
     if (do_wK_) {
@@ -453,6 +453,7 @@ void DiskDFJK::postiterations() {
     Qrmn_.reset();
 }
 void DiskDFJK::initialize_JK_core() {
+    printf("TOUCHDOWN GEORGIA TECH!!!");
     size_t ntri = sieve_->function_pairs().size();
     size_t three_memory = ((size_t)auxiliary_->nbf()) * ntri;
     size_t two_memory = ((size_t)auxiliary_->nbf()) * auxiliary_->nbf();
@@ -933,7 +934,10 @@ void DiskDFJK::initialize_JK_disk() {
             int cols = naux;
             if (mn + naux >= mn_col_val) cols = mn_col_val - mn;
 
+	    timer_on("JK: (Q|mn) Copying Step");
+
             for (int Q = 0; Q < naux; Q++) C_DCOPY(cols, &Qmnp[Q][mn], 1, Amnp[Q], 1);
+	    timer_off("JK: (Q|mn) Copying Step");
 
             C_DGEMM('N', 'N', naux, cols, naux, 1.0, Jinvp[0], naux, Amnp[0], naux, 0.0, &Qmnp[0][mn], max_cols);
         }
