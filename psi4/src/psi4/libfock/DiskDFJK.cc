@@ -84,7 +84,11 @@ size_t DiskDFJK::memory_estimate() {
     size_t memory = three_memory + two_memory;
     memory += memory_overhead();
     memory += memory_temp();
-    outfile->Printf("DiskDFJK::memory_estimate(): Memory is %zu\n", memory );
+    outfile->Printf("DiskDFJK::memory_estimate(): Memory is %zu\n", memory);
+    outfile->Printf("DiskDFJK::memory_estimate(): Memory is %8.5f GB\n", memory * 8.0 / (1024 * 1024 * 1000));
+
+    //throw PsiException("To HELL with pybel!!!", __FILE__, __LINE__);
+
     return memory;
 }
 SharedVector DiskDFJK::iaia(SharedMatrix Ci, SharedMatrix Ca) {
