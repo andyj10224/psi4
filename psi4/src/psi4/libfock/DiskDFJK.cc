@@ -423,13 +423,25 @@ void DiskDFJK::compute_JK() {
     max_nocc_ = max_nocc();
     max_rows_ = max_rows();
 
+    printf("Hello, Zuko here.\n");
+
     if (do_J_ || do_K_) {
+        timer_on("JK: initialize_temps()");
         initialize_temps();
-        if (is_core_)
+        timer_off("JK: initialize_temps()");
+        if (is_core_) {
+            timer_on("JK: manage_JK_core()");
             manage_JK_core();
-        else
+            timer_off("JK: manage_JK_core()");
+        }
+        else {
+            timer_on("JK: manage_JK_disk()");
             manage_JK_disk();
+            timer_off("JK: manage_JK_disk()");
+        }
+        timer_on("JK: free_temps()");
         free_temps();
+        timer_off("JK: free_temps()");
     }
 
     if (do_wK_) {

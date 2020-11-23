@@ -90,17 +90,23 @@ void SAPT0::ind20() {
 
 void SAPT0::ind20r() {
     if (aio_cphf_) {
+	timer_on("Ind20rA_B aio");
         ind20rA_B_aio();
         ind20rB_A_aio();
+	timer_off("Ind20rA_B aio");
     } else {
+	timer_on("Ind20rA_B no aio");
         ind20rA_B();
         ind20rB_A();
+	timer_off("Ind20rA_B no aio");
     }
 
     double indA_B, indB_A;
 
+    timer_on("Ind20r C_CDOT");
     indA_B = 2.0 * C_DDOT(noccA_ * nvirA_, CHFA_[0], 1, wBAR_[0], 1);
     indB_A = 2.0 * C_DDOT(noccB_ * nvirB_, CHFB_[0], 1, wABS_[0], 1);
+    timer_off("Ind20r C_CDOT");
 
     e_ind20_ = indA_B + indB_A;
 
@@ -133,11 +139,14 @@ void SAPT0::ind20rA_B() {
 #endif
     int rank = 0;
 
+
+    timer_on("ind20rA_B() Process 1");
     for (int a = 0, ar = 0; a < noccA_; a++) {
         for (int r = 0; r < nvirA_; r++, ar++) {
             tAR_old[ar] = wBAR_[a][r] / (evalsA_[a] - evalsA_[r + noccA_]);
         }
     }
+    timer_off("ind20rA_B() Process 1");
 
     E_old = 0.0;
     conv = 1.0;
@@ -166,14 +175,18 @@ void SAPT0::ind20rA_B() {
 
         Iterator AR_iter = get_iterator(mem_, &C_p_AR);
 
+	timer_on("ind20rA_B() Process 2");
         for (int i = 0, off = 0; i < AR_iter.num_blocks; i++) {
             read_block(&AR_iter, &C_p_AR);
 
+	    timer_on("ind20rA_B() Process 2 DGEMV");
             C_DGEMV('n', AR_iter.curr_size, noccA_ * nvirA_, 1.0, &(C_p_AR.B_p_[0][0]), noccA_ * nvirA_, tAR_old, 1,
                     0.0, &(X[0]), 1);
             C_DGEMV('t', AR_iter.curr_size, noccA_ * nvirA_, -4.0, &(C_p_AR.B_p_[0][0]), noccA_ * nvirA_, &(X[0]), 1,
                     1.0, Ax, 1);
+	    timer_off("ind20rA_B() Process 2 DGEMV");
 
+	    timer_on("ind20rA_B() Process 2 DGEMM");
 #pragma omp parallel
             {
 #pragma omp for private(rank)
@@ -188,16 +201,20 @@ void SAPT0::ind20rA_B() {
                             tAR_dump[rank], nvirA_);
                 }
             }
+	    timer_off("ind20rA_B() Process 2 DGEMM");
             off += AR_iter.curr_size;
         }
+	timer_off("ind20rA_B() Process 2");
 
         C_p_AR.clear();
 
         Iterator RR_iter = get_iterator(mem_, &C_p_AA, &C_p_RR);
 
+	timer_on("ind20rA_B() Process 3");
         for (int i = 0, off = 0; i < RR_iter.num_blocks; i++) {
             read_block(&RR_iter, &C_p_AA, &C_p_RR);
 
+	    timer_on("ind20rA_B() Process 3 DGEMM");
 #pragma omp parallel
             {
 #pragma omp for private(rank)
@@ -219,20 +236,26 @@ void SAPT0::ind20rA_B() {
                             tAR_dump[rank], nvirA_);
                 }
             }
+	    timer_off("ind20rA_B() Process 3 DGEMM");
             off += RR_iter.curr_size;
         }
 
         C_p_AA.clear();
         C_p_RR.clear();
 
+	timer_on("ind20rA_B() Process 3 DAXPY");
         for (int n = 0; n < nthreads; n++) C_DAXPY(noccA_ * nvirA_, 1.0, tAR_dump[n], 1, Ax, 1);
+	timer_off("ind20rA_B() Process 3 DAXPY");
 
+	timer_on("ind20rA_B() Process 3 Ax[ar]");
         for (int a = 0, ar = 0; a < noccA_; a++) {
             for (int r = 0; r < nvirA_; r++, ar++) {
                 Ax[ar] += (evalsA_[a] - evalsA_[r + noccA_]) * tAR_old[ar];
             }
         }
+	timer_off("ind20rA_B() Process 3 Ax[ar]");
 
+	timer_on("ind20rA_B() Process 3 BIG BLOCK");
         if (!iter) {
             C_DCOPY(noccA_ * nvirA_, wBAR_[0], 1, R_old, 1);
             C_DAXPY(noccA_ * nvirA_, -1.0, Ax, 1, R_old, 1);
@@ -261,12 +284,15 @@ void SAPT0::ind20rA_B() {
             C_DCOPY(noccA_ * nvirA_, z_new, 1, z_old, 1);
             C_DCOPY(noccA_ * nvirA_, R_new, 1, R_old, 1);
         }
+	timer_off("ind20rA_B() Process 3 BIG BLOCK");
 
+	timer_on("ind20rA_B() Process 3 DDOT");
         E = 2.0 * C_DDOT(noccA_ * nvirA_, tAR_new, 1, &(wBAR_[0][0]), 1);
-
+	
         conv = C_DDOT(noccA_ * nvirA_, R_old, 1, R_old, 1);
         conv = std::sqrt(conv);
         dE = E_old - E;
+	timer_off("ind20rA_B() Process 3 DDOT");
 
         iter++;
         stop = std::time(nullptr);
@@ -275,6 +301,7 @@ void SAPT0::ind20rA_B() {
                             stop - start);
         }
         E_old = E;
+	timer_off("ind20rA_B() Process 3");
     } while ((conv > d_conv_ || std::fabs(dE) > e_conv_) && iter < maxiter_);
 
     if ((conv <= d_conv_) && (std::fabs(dE) <= e_conv_)) {
