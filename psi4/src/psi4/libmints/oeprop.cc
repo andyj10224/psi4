@@ -2010,6 +2010,7 @@ PopulationAnalysisCalc::compute_mbis_multipoles(bool print_output) {
     const int max_iter = options.get_int("MBIS_MAXITER");
     const double conv = options.get_double("MBIS_D_CONVERGENCE");
     const int debug = options.get_int("DEBUG");
+    const bool diis = options.get_bool("MBIS_DIIS");
     std::shared_ptr<Molecule> mol = basisset_->molecule();
 
     // MBIS grid options
@@ -2141,27 +2142,34 @@ PopulationAnalysisCalc::compute_mbis_multipoles(bool print_output) {
     }
     
     // Atomic shell populations (N) and widths (S) (up to 4 shells per atom), from equations 18 and 19 in Verstraelen et al.
-    std::vector<std::vector<double>> Nai(num_atoms, std::vector<double>(4, 0.0));
-    std::vector<std::vector<double>> Sai(num_atoms, std::vector<double>(4, 0.0));
+    const int max_shells = 4;
+    std::vector<double> Nai(num_atoms * max_shells, 0.0);
+    std::vector<double> Sai(num_atoms * max_shells, 0.0);
+
+    // Used in DIIS
+    std::deque<std::vector<double>> del_Nai;
+    std::deque<std::vector<double>> del_Sai;
+    std::deque<std::vector<double>> Nai_list;
+    std::deque<std::vector<double>> Sai_list;
 
     // Next iteration populations and widths
-    std::vector<std::vector<double>> Nai_next(num_atoms, std::vector<double>(4, 0.0));
-    std::vector<std::vector<double>> Sai_next(num_atoms, std::vector<double>(4, 0.0));
+    std::vector<double> Nai_next(num_atoms * max_shells, 0.0);
+    std::vector<double> Sai_next(num_atoms * max_shells, 0.0);
 
     // Population and width guesses, from get_mbis_params function
     for (int atom = 0; atom < num_atoms; atom++) {
         int atomic_num = (int) mol->Z(atom);        
 
         for (int m = 0; m < mA[atom]; m++) {
-            std::tie(Nai[atom][m], Sai[atom][m]) = get_mbis_params(atomic_num, m);
-            Sai[atom][m] = 1.0/Sai[atom][m];
+            std::tie(Nai[atom * max_shells + m], Sai[atom * max_shells + m]) = get_mbis_params(atomic_num, m);
+            Sai[atom * max_shells + m] = 1.0/Sai[atom * max_shells + m];
             
             if (print_output && debug >= 1) {
-                outfile->Printf("  INITIAL ATOM %d, SHELL %d, POP %8.5f, WIDTH %8.5f\n", atom+1, m+1, Nai[atom][m], Sai[atom][m]);
+                outfile->Printf("  INITIAL ATOM %d, SHELL %d, POP %8.5f, WIDTH %8.5f\n", atom+1, m+1, Nai[atom * max_shells + m], Sai[atom * max_shells + m]);
             }
             
-            Nai_next[atom][m] = Nai[atom][m];
-            Sai_next[atom][m] = Sai[atom][m];
+            Nai_next[atom * max_shells + m] = Nai[atom * max_shells + m];
+            Sai_next[atom * max_shells + m] = Sai[atom * max_shells + m];
         }
     }
 
@@ -2180,7 +2188,7 @@ PopulationAnalysisCalc::compute_mbis_multipoles(bool print_output) {
         for (int atom = 0; atom < num_atoms; atom++) {
             rho_a_0_points[atom * total_points + point] = 0.0;
              for (int m = 0; m < mA[atom]; m++) {
-                 rho_a_0_points[atom * total_points + point] += rho_ai_0(Nai[atom][m], Sai[atom][m], distances[atom * total_points + point]);
+                 rho_a_0_points[atom * total_points + point] += rho_ai_0(Nai[atom * max_shells + m], Sai[atom * max_shells + m], distances[atom * total_points + point]);
              }
              rho_0_points[point] += rho_a_0_points[atom * total_points + point];
         }
@@ -2190,7 +2198,7 @@ PopulationAnalysisCalc::compute_mbis_multipoles(bool print_output) {
 
     int iter = 1;
     bool is_converged = false;
-    double delta_rho_max_0;
+    double delta_rho_max_0 = 1.0;
 
     if (print_output && debug >= 1) outfile->Printf("                     Delta D\n");
     while (iter < max_iter) {
@@ -2204,13 +2212,88 @@ PopulationAnalysisCalc::compute_mbis_multipoles(bool print_output) {
                 double sum_s = 0.0;
 
                 for (int point = 0; point < total_points; point++) {
-                    double rho_ai_0_point = rho_ai_0(Nai[atom][m], Sai[atom][m], distances[atom * total_points + point]);
+                    double rho_ai_0_point = rho_ai_0(Nai[atom * max_shells + m], Sai[atom * max_shells + m], distances[atom * total_points + point]);
                     sum_n += weights[point] * rho[point] * rho_ai_0_point / rho_0_points[point];
                     sum_s += weights[point] * distances[atom * total_points + point] * rho[point] * rho_ai_0_point / rho_0_points[point];
                 }
 
-                Nai_next[atom][m] = sum_n;
-                Sai_next[atom][m] = sum_s / (3 * Nai_next[atom][m]);
+                Nai_next[atom * max_shells + m] = sum_n;
+                Sai_next[atom * max_shells + m] = sum_s / (3 * sum_n);
+            }
+        }
+
+        // DIIS acceleration
+        if (diis) {
+            std::vector<double> del_Nai_curr(num_atoms * max_shells, 0.0);
+            std::vector<double> del_Sai_curr(num_atoms * max_shells, 0.0);
+
+            for (int atom = 0; atom < num_atoms; atom++) {
+                for (int m = 0; m < mA[atom]; m++) {
+                    del_Nai_curr[atom * max_shells + m] = Nai_next[atom * max_shells + m] - Nai[atom * max_shells + m];
+                    del_Sai_curr[atom * max_shells + m] = Sai_next[atom * max_shells + m] - Sai[atom * max_shells + m];
+                }
+            }
+
+            Nai_list.push_back(Nai_next);
+            Sai_list.push_back(Sai_next);
+            del_Nai.push_back(del_Nai_curr);
+            del_Sai.push_back(del_Sai_curr);
+
+            if (Nai_list.size() > 6) {
+                Nai_list.pop_front();
+                del_Nai.pop_front();
+                Sai_list.pop_front();
+                del_Sai.pop_front();
+            }
+
+            if (delta_rho_max_0 < sqrt(conv)) {
+                    
+                int dim = Nai_list.size() + 1;
+
+                std::vector<double> Nai_lhs_matrix(dim * dim, 0.0);
+                std::vector<double> Sai_lhs_matrix(dim * dim, 0.0);
+                std::vector<double> coeff_Nai(dim, 0.0);
+                std::vector<double> coeff_Sai(dim, 0.0);
+
+                for (int i = 0; i < dim - 1; i++) {
+                    for (int j = i; j < dim - 1; j++) {
+                        for (int k = 0; k < num_atoms * max_shells; k++) {
+                            Nai_lhs_matrix[i * dim + j] += del_Nai[i][k] * del_Nai[j][k];
+                            Sai_lhs_matrix[i * dim + j] += del_Sai[i][k] * del_Sai[j][k];
+                        }
+                        Nai_lhs_matrix[j * dim + i] = Nai_lhs_matrix[i * dim + j];
+                        Sai_lhs_matrix[j * dim + i] = Sai_lhs_matrix[i * dim + j];
+                    }
+                }
+
+                for (int i = 0; i < dim - 1; i++) {
+                    Nai_lhs_matrix[(dim - 1) * dim + i] = -1.0;
+                    Sai_lhs_matrix[(dim - 1) * dim + i] = -1.0;
+                    Nai_lhs_matrix[i * dim + (dim - 1)] = -1.0;
+                    Sai_lhs_matrix[i * dim + (dim - 1)] = -1.0;
+                }
+
+                coeff_Nai[dim - 1] = -1.0;
+                coeff_Sai[dim - 1] = -1.0;
+
+                std::vector<int> ipiv;
+                for (int i = 0; i < dim; i++) {
+                    ipiv.push_back(i);
+                }
+
+                C_DGESV(dim, 1, Nai_lhs_matrix.data(), dim, ipiv.data(), coeff_Nai.data(), dim);
+                C_DGESV(dim, 1, Sai_lhs_matrix.data(), dim, ipiv.data(), coeff_Sai.data(), dim);
+
+                std::fill(Nai_next.begin(), Nai_next.end(), 0.0);
+                std::fill(Sai_next.begin(), Sai_next.end(), 0.0);
+
+                for (int i = 0; i < dim - 1; i++) {
+                    // outfile->Printf("   Nai Coefficients %.5f\n", coeff_Nai[i]);
+                    for (int k = 0; k < num_atoms * max_shells; k++) {
+                        Nai_next[k] += coeff_Nai[i] * Nai_list[i][k];
+                        Sai_next[k] += coeff_Sai[i] * Sai_list[i][k];
+                    }
+                }
             }
         }
 
@@ -2221,7 +2304,7 @@ PopulationAnalysisCalc::compute_mbis_multipoles(bool print_output) {
         for (size_t point = 0; point < total_points; point++) {
             for (int atom = 0; atom < num_atoms; atom++) {
                 for (int m = 0; m < mA[atom]; m++) {
-                    rho_a_0_points_next[atom * total_points + point] += rho_ai_0(Nai_next[atom][m], Sai_next[atom][m], distances[atom * total_points + point]);
+                    rho_a_0_points_next[atom * total_points + point] += rho_ai_0(Nai_next[atom * max_shells + m], Sai_next[atom * max_shells + m], distances[atom * total_points + point]);
                 }
                 rho_0_points_next[point] += rho_a_0_points_next[atom * total_points + point];
             }
@@ -2244,6 +2327,80 @@ PopulationAnalysisCalc::compute_mbis_multipoles(bool print_output) {
         for (int atom = 0; atom < num_atoms; atom++) {
             if (delta_rho_atoms_0[atom] > delta_rho_max_0) delta_rho_max_0 = delta_rho_atoms_0[atom]; 
         }
+
+        /*
+        // DIIS acceleration
+        if (diis) {
+            std::vector<double> del_Nai_curr(num_atoms * max_shells, 0.0);
+            std::vector<double> del_Sai_curr(num_atoms * max_shells, 0.0);
+
+            for (int atom = 0; atom < num_atoms; atom++) {
+                for (int m = 0; m < mA[atom]; m++) {
+                    del_Nai_curr[atom * max_shells + m] = Nai_next[atom * max_shells + m] - Nai[atom * max_shells + m];
+                    del_Sai_curr[atom * max_shells + m] = Sai_next[atom * max_shells + m] - Sai[atom * max_shells + m];
+                }
+            }
+
+            Nai_list.push_back(Nai_next);
+            Sai_list.push_back(Sai_next);
+            del_Nai.push_back(del_Nai_curr);
+            del_Sai.push_back(del_Sai_curr);
+
+            if (Nai_list.size() > 6) {
+                Nai_list.pop_front();
+                del_Nai.pop_front();
+                Sai_list.pop_front();
+                del_Sai.pop_front();
+            }
+                    
+            int dim = Nai_list.size() + 1;
+
+            std::vector<double> Nai_lhs_matrix(dim * dim, 0.0);
+            std::vector<double> Sai_lhs_matrix(dim * dim, 0.0);
+            std::vector<double> coeff_Nai(dim, 0.0);
+            std::vector<double> coeff_Sai(dim, 0.0);
+
+            for (int i = 0; i < dim - 1; i++) {
+                for (int j = i; j < dim - 1; j++) {
+                    for (int k = 0; k < num_atoms * max_shells; k++) {
+                        Nai_lhs_matrix[i * dim + j] += del_Nai[i][k] * del_Nai[j][k];
+                        Sai_lhs_matrix[i * dim + j] += del_Sai[i][k] * del_Sai[j][k];
+                    }
+                    Nai_lhs_matrix[j * dim + i] = Nai_lhs_matrix[i * dim + j];
+                    Sai_lhs_matrix[j * dim + i] = Sai_lhs_matrix[i * dim + j];
+                }
+            }
+
+            for (int i = 0; i < dim - 1; i++) {
+                Nai_lhs_matrix[(dim - 1) * dim + i] = -1.0;
+                Sai_lhs_matrix[(dim - 1) * dim + i] = -1.0;
+                Nai_lhs_matrix[i * dim + (dim - 1)] = -1.0;
+                Sai_lhs_matrix[i * dim + (dim - 1)] = -1.0;
+            }
+
+            coeff_Nai[dim - 1] = -1.0;
+            coeff_Sai[dim - 1] = -1.0;
+
+            std::vector<int> ipiv;
+            for (int i = 0; i < dim; i++) {
+                ipiv.push_back(i);
+            }
+
+            C_DGESV(dim, 1, Nai_lhs_matrix.data(), dim, ipiv.data(), coeff_Nai.data(), dim);
+            C_DGESV(dim, 1, Sai_lhs_matrix.data(), dim, ipiv.data(), coeff_Sai.data(), dim);
+
+            std::fill(Nai_next.begin(), Nai_next.end(), 0.0);
+            std::fill(Sai_next.begin(), Sai_next.end(), 0.0);
+
+            for (int i = 0; i < dim - 1; i++) {
+                outfile->Printf("   Nai Coefficients %.5f\n", coeff_Nai[i]);
+                for (int k = 0; k < num_atoms * max_shells; k++) {
+                    Nai_next[k] += coeff_Nai[i] * Nai_list[i][k];
+                    Sai_next[k] += coeff_Sai[i] * Sai_list[i][k];
+                }
+            }
+        }
+        */
 
         // Update populations, widths, and densities
         Nai = Nai_next;
