@@ -268,6 +268,12 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
                     "ROBUST TREUTLER NONE FLAT P_GAUSSIAN D_GAUSSIAN P_SLATER D_SLATER LOG_GAUSSIAN LOG_SLATER NONE");
     /*- Run DIIS to accelerate MBIS convergence? -*/
     options.add_bool("MBIS_DIIS", false);
+    /*- MBIS DIIS Damping Factor -*/
+    options.add_double("MBIS_DIIS_DAMPING", 20.0);
+    /*- MBIS Number of Vectors for DIIS -*/
+    options.add_int("MBIS_DIIS_NUM_VECTORS", 6);
+    /* When to trigger DIIS? -*/
+    options.add_double("MBIS_DIIS_DENS_THRESHOLD", 1.0e-3);
 
     /*- PCM boolean for pcmsolver module -*/
     options.add_bool("PCM", false);
