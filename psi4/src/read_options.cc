@@ -269,6 +269,16 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
     /*- Maximum Radial Moment to Calculate -*/
     options.add_int("MAX_RADIAL_MOMENT", 4);
 
+    /// BSISA Options (libmints/oeprop.cc)
+    options.add_str("DF_BASIS_BSISA", "");
+    options.add_int("BSISA_MAXITER", 100);
+    options.add_double("BSISA_LAMBDA", 1000.0);
+    options.add_double("BSISA_ZETA", 0.9);
+    options.add_int("BSISA_RADIAL_POINTS", 75);
+    options.add_int("BSISA_SPHERICAL_POINTS", 302);
+    options.add_str("BSISA_PRUNING_SCHEME", "ROBUST", 
+		    "ROBUST TREUTLER NONE FLAT P_GAUSSIAN D_GAUSSIAN P_SLATER D_SLATER LOG_GAUSSIAN LOG_SLATER NONE");
+
     /*- PCM boolean for pcmsolver module -*/
     options.add_bool("PCM", false);
     /*- PE boolean for polarizable embedding module -*/

@@ -71,8 +71,10 @@ def oeprop(wfn: core.Wavefunction, *args, **kwargs):
             core.print_out("  Computing free-atom volumes\n")
             free_atom_volumes(wfn)    
 
+        if 'BSISA_CHARGES' in prop:
+            proc.bsisa_df_factory(wfn)
+    
     oe.compute()
-
 
 def cubeprop(wfn, **kwargs):
     """Evaluate properties on a grid and generate cube files.

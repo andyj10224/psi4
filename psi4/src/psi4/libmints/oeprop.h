@@ -320,6 +320,8 @@ class PopulationAnalysisCalc : public Prop {
     std::tuple<SharedStdVector, SharedStdVector, SharedStdVector> compute_lowdin_charges(bool print_output = false);
     /// Compute MBIS Multipoles (doi:10.1021/acs.jctc.6b00456)
     std::tuple<SharedMatrix, SharedMatrix, SharedMatrix, SharedMatrix> compute_mbis_multipoles(bool print_output = false);
+    /// Compute BSISA Multipoles
+    SharedMatrix compute_bsisa_multipoles(bool print_output = false);
     /// Compute Mayer Bond Indices (non-orthogoal basis)
     std::tuple<SharedMatrix, SharedMatrix, SharedMatrix, SharedVector> compute_mayer_indices(bool print_output = false);
     /// Compute Wiberg Bond Indices using Lowdin Orbitals (symmetrically orthogonal basis)
@@ -416,6 +418,8 @@ class PSI_API OEProp : public TaskListComputer {
     void compute_lowdin_charges();
     /// Compute MBIS Multipoles (doi:10.1021/acs.jctc.6b00456)
     void compute_mbis_multipoles();
+    /// Compute BSISA Multipoles
+    void compute_bsisa_multipoles();
     /// Compute Mayer Bond Indices (non-orthogoal basis)
     void compute_mayer_indices();
     /// Compute Wiberg Bond Indices using Lowdin Orbitals (symmetrically orthogonal basis)
