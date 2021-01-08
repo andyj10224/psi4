@@ -2506,7 +2506,7 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
     auto aux = wfn_->get_basisset("DF_BASIS_BSISA");
     int a_nbf = aux->nbf();
     int a_nshell = aux->nshell();
-    bool is_spherical = aux->has_puream();
+    // bool is_spherical = aux->has_puream();
 
     int p_nbf = basisset_->nbf();
     int p_nshell = basisset_->nshell();
@@ -2614,6 +2614,13 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 
     std::vector<double> I_k(a_nbf, 0.0);
 
+    for (int a = 0; a < a_nbf; a++) {
+        for (int point = 0; point < total_points; point++) {
+            I_k[a] += weights[point] * aux_values[point][a];  	
+	}
+    }
+
+    /*
     for (int A = 0; A < a_nshell; A++) {
 	const GaussianShell& shell_A = aux->shell(A);
 	int a_start = shell_A.function_index();
@@ -2626,13 +2633,10 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 	if (L % 2 == 0) {
             for (int i = 0, index = 0; i <= L; i++) {
 	        int l = L - i;
-		if (l % 2 == 1) {
-		    index += 1;
-		    continue;
-		}
 	        for (int j = 0; j <= i; j++, index++) {
 		    int m = i - j;
 		    int n = j;
+		    if (l % 2 == 1) continue;
 		    if (m % 2 == 1) continue;
 		    if (n % 2 == 1) continue;
 		    for (int pi = 0; pi < nprim_a; pi++) {
@@ -2648,19 +2652,21 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 	}
     }
 
+    */
+
     for (int A = 0; A < a_nshell; A++) {
 	int a_start = aux->shell(A).function_index();
         int num_a = aux->shell(A).nfunction();
-        for (int B = A; B < a_nshell; B++) {
+        for (int B = 0; B < a_nshell; B++) {
 	    int b_start = aux->shell(B).function_index();
 	    int num_b = aux->shell(B).nfunction();
 	    two_int->compute_shell(A, 0, B, 0);
-	    const double* buff = two_int->buffer();
+	    const double* buff = (two_int->buffers())[0];
 	    for (int a = a_start; a < a_start + num_a; a++) {
 		for (int b = b_start; b < b_start + num_b; b++) {
 		    int da = a - a_start;
 		    int db = b - b_start;
-	            S_df[a * a_nbf + b] = S_df[b * a_nbf + a] = buff[da * num_b + db] + lambda * I_k[a] * I_k[b];
+	            S_df[a * a_nbf + b] = buff[da * num_b + db] + lambda * I_k[a] * I_k[b];
 		}
 	    }
 	}
@@ -2676,7 +2682,7 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 	        int n_start = basisset_->shell(N).function_index();
    		int num_n = basisset_->shell(N).nfunction();
 		three_int->compute_shell(A, 0, M, N);
-		const double* buff = three_int->buffer();
+		const double* buff = (three_int->buffers())[0];
 		for (int a = a_start; a < a_start + num_a; a++) {
 		    for (int m = m_start; m < m_start + num_m; m++) {
 			for (int n = n_start; n < n_start + num_n; n++) {
@@ -2712,7 +2718,6 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 
     for (int atom = 0; atom < num_atoms; atom++) {
 	int atom_nshell = aux->nshell_on_center(atom);
-	// int naux_bf = 0;
 	for (int s = 0; s < atom_nshell; s++) {
 	    const GaussianShell& gshell = aux->shell(aux->shell_on_center(atom, s));
 	    if (s == 0) saux_atom[atom] = gshell.start();
@@ -2758,6 +2763,7 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
             int naux = naux_atom[atom];
             for (int a = start; a < start + naux; a++) {
 	        for (int point = 0; point < total_points; point++) {
+		    if (sum_weights_a[point] == 0.0) continue;
 	            double val = weights[point] * aux_values[point][a] * rho[point] * weights_a[atom * total_points + point] / sum_weights_a[point];
 		    T_tilde[a] += zeta * val;
 	        }
@@ -2777,8 +2783,10 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 	    std::vector<double> S_tilde_a(naux * naux);
 
 	    for (int a = start; a < start + naux; a++) {
-	        for (int b = a; b < start + naux; b++) {
-                    S_tilde_a[a * naux + b] = S_tilde_a[b * naux + a] = S_tilde[a * a_nbf + b];
+	        for (int b = start; b < start + naux; b++) {
+		    int da = a - start;
+		    int db = b - start;
+                    S_tilde_a[da * naux + db] = S_tilde[a * a_nbf + b];
 	        }
 	    }
 
@@ -2804,11 +2812,21 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 
     for (int atom = 0; atom < num_atoms; atom++) {
 	double charge = mol->Z(atom);
+	// int start = saux_atom[atom];
+        // int naux = naux_atom[atom];
         for (int point = 0; point < total_points; point++) {
 	    if (sum_weights_a[point] == 0.0) continue;
 	    rho_a[atom * total_points + point] = rho[point] * weights_a[atom * total_points + point] / sum_weights_a[point];
 	    charge -= weights[point] * rho_a[atom * total_points + point];
 	}
+	/*
+	for (int point = 0; point < total_points; point++) {
+	    for (int a = start; a < start + naux; a++) {
+	        rho_a[atom * total_points + point] += d_tilde[a] * aux_values[point][a]; 
+	    }
+	    charge -= weights[point] * rho_a[atom * total_points + point];
+	}
+	*/
 	mpole->set(atom, 0, charge);
     }
 
