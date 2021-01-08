@@ -2465,7 +2465,7 @@ double gaussian_integral_helper(int n, double coeff, double exp) {
 
     double integral = coeff * sqrt(PI) * pow(2.0,-n/2.0) * pow(exp,-(n+1) / 2.0);
 
-    for (int i = 1; i <= n + 1; i += 2) {
+    for (int i = 1; i < n + 1; i += 2) {
         integral *= i;
     }
 
@@ -2511,17 +2511,26 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
     int p_nbf = basisset_->nbf();
     int p_nshell = basisset_->nshell();
 
+    // ISA Auxiliary Basis Functions
+    auto isa = wfn_->get_basisset("ISA_BASIS_BSISA");
+    int i_nbf = isa->nbf();
+    int i_nshell = isa->nshell();
+
     auto zero = BasisSet::zero_ao_basis_set();
 
     auto two_int_factory = std::make_shared<IntegralFactory>(aux, zero, aux, zero);
     auto three_int_factory = std::make_shared<IntegralFactory>(aux, zero, basisset_, basisset_);
+    auto isa_two_int_factory = std::make_shared<IntegralFactory>(isa, zero, isa, zero);
 
     auto two_int = std::shared_ptr<TwoBodyAOInt>(two_int_factory->eri());
     auto three_int = std::shared_ptr<TwoBodyAOInt>(three_int_factory->eri());
+    auto isa_two_int = std::shared_ptr<TwoBodyAOInt>(isa_two_int_factory->eri());
 
-    outfile->Printf("TWO INT 1 2 3 4 %d %d %d %d\n\n", two_int->basis1()->nbf(), two_int->basis2()->nbf(), two_int->basis3()->nbf(), two_int->basis4()->nbf());
+    outfile->Printf("AUX NBF: %d, ISA NBF: %d\n\n", a_nbf, i_nbf);
 
-    outfile->Printf("THREE INT 1 2 3 4 %d %d %d %d\n\n", three_int->basis1()->nbf(), three_int->basis2()->nbf(), three_int->basis3()->nbf(), three_int->basis4()->nbf());
+    // outfile->Printf("TWO INT 1 2 3 4 %d %d %d %d\n\n", two_int->basis1()->nbf(), two_int->basis2()->nbf(), two_int->basis3()->nbf(), two_int->basis4()->nbf());
+
+    // outfile->Printf("THREE INT 1 2 3 4 %d %d %d %d\n\n", three_int->basis1()->nbf(), three_int->basis2()->nbf(), three_int->basis3()->nbf(), three_int->basis4()->nbf());
 
     int num_atoms = mol->natom();
     size_t total_points = grid->npoints();
@@ -2550,6 +2559,7 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
     std::vector<double> weights(total_points, 0.0);
     std::vector<double> rho(total_points, 0.0);
     std::vector<std::vector<double>> aux_values(total_points, std::vector<double>(a_nbf, 0.0));
+    std::vector<std::vector<double>> isa_values(total_points, std::vector<double>(i_nbf, 0.0));
 
     for (int b = 0; b < blocks.size(); b++) {
         std::shared_ptr<BlockOPoints> block = blocks[b];
@@ -2577,7 +2587,8 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
             weights[running_points + p] = w[p];
             rho[running_points + p] = rho_block->get(p);
 	    aux->compute_phi(aux_values[running_points + p].data(), x[p], y[p], z[p]);
-        }
+            isa->compute_phi(isa_values[running_points + p].data(), x[p], y[p], z[p]);
+	}
 
         running_points += num_points;
     }
@@ -2613,14 +2624,14 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
     std::vector<double> D_k(a_nbf, 0.0);
 
     std::vector<double> I_k(a_nbf, 0.0);
+    std::vector<double> I_k_ref(a_nbf, 0.0);
 
     for (int a = 0; a < a_nbf; a++) {
         for (int point = 0; point < total_points; point++) {
-            I_k[a] += weights[point] * aux_values[point][a];  	
-	}
+            I_k_ref[a] += weights[point] * aux_values[point][a];  	
+    	}
     }
 
-    /*
     for (int A = 0; A < a_nshell; A++) {
 	const GaussianShell& shell_A = aux->shell(A);
 	int a_start = shell_A.function_index();
@@ -2652,7 +2663,9 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 	}
     }
 
-    */
+    for (int a = 0; a < a_nbf; a++) {
+        outfile->Printf("FUNC %d, REF %8.5f, ACTUAL %8.5f\n", a, I_k_ref[a], I_k[a]); 
+    }
 
     for (int A = 0; A < a_nshell; A++) {
 	int a_start = aux->shell(A).function_index();
@@ -2712,99 +2725,139 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 
     C_DGESV(a_nbf, 1, S_df.data(), a_nbf, ipiv.data(), D_k.data(), a_nbf);
 
-    // Starting basis set number of an atom in an auxiliary basis set
-    std::vector<int> saux_atom(num_atoms, 0);
-    std::vector<int> naux_atom(num_atoms, 0);
+    // Weights for DF-Part of Algorithm
+    std::vector<double> weights_a_df(num_atoms * total_points, 0.0);
+    std::vector<double> sum_weights_a_df(total_points, 0.0);
+
+    for (int A = 0; A < a_nshell; A++) {
+        const GaussianShell& gshell = aux->shell(A);
+        if (gshell.am() > 0) continue;
+        int atom = gshell.ncenter();
+        int a_start = gshell.start();
+        int num_a = gshell.nfunction();
+        for (int a = a_start; a < a_start + num_a; a++) {
+            for (size_t point = 0; point < total_points; point++) {
+                double val = D_k[a] * aux_values[point][a];
+                weights_a_df[atom * total_points + point] += val;
+                sum_weights_a_df[point] += val;
+            }
+        }
+    }
+
+    // Starting basis set number of an atom in isa basis set
+    std::vector<int> sisa_atom(num_atoms, 0);
+    std::vector<int> nisa_atom(num_atoms, 0);
 
     for (int atom = 0; atom < num_atoms; atom++) {
-	int atom_nshell = aux->nshell_on_center(atom);
+	int atom_nshell = isa->nshell_on_center(atom);
 	for (int s = 0; s < atom_nshell; s++) {
-	    const GaussianShell& gshell = aux->shell(aux->shell_on_center(atom, s));
-	    if (s == 0) saux_atom[atom] = gshell.start();
-	    naux_atom[atom] += gshell.nfunction();
+	    const GaussianShell& gshell = isa->shell(isa->shell_on_center(atom, s));
+	    if (s == 0) sisa_atom[atom] = gshell.start();
+	    nisa_atom[atom] += gshell.nfunction();
 	}
     }
 
-    std::vector<double> S_tilde(a_nbf * a_nbf, 0.0);
-    std::vector<double> d_tilde(a_nbf, 0.0);
-    std::vector<double> T_tilde(a_nbf, 0.0);
+    std::vector<double> S_tilde(i_nbf * i_nbf, 0.0);
+    std::vector<double> d_tilde(i_nbf, 0.0);
+    std::vector<double> T_tilde(i_nbf, 0.0);
 
-    for (int a = 0; a < a_nbf; a++) {
-	d_tilde[a] = D_k[a];
-	for (int b = 0; b < a_nbf; b++) {
-	    S_tilde[a * a_nbf + b] = S_df[a * a_nbf + b] - zeta * lambda * I_k[a] * I_k[b];
-	}
+    for (int I = 0; I < i_nshell; I++) {
+        int i_start = aux->shell(I).function_index();
+        int num_i = aux->shell(I).nfunction();
+        for (int J = 0; J < i_nshell; J++) {
+            int j_start = aux->shell(J).function_index();
+            int num_j = aux->shell(J).nfunction();
+            isa_two_int->compute_shell(I, 0, J, 0);
+            const double* buff = (isa_two_int->buffers())[0];
+            for (int i = i_start; i < i_start + num_i; i++) {
+                for (int j = j_start; j < j_start + num_j; j++) {
+                    int di = i - i_start;
+                    int dj = j - j_start;
+                    S_df[i * i_nbf + j] = buff[di * num_j + dj];
+                }
+            }
+        }
     }
 
-    std::vector<double> weights_a(num_atoms * total_points, 0.0);
-    std::vector<double> sum_weights_a(total_points, 0.0);
+    for (int atom = 0; atom < num_atoms; atom++) {
+        d_tilde[sisa_atom[atom]] = 1.0;
+    }
+
+    std::vector<double> weights_a_isa(num_atoms * total_points, 0.0);
+    std::vector<double> sum_weights_a_isa(total_points, 0.0);
 
     int iter = 1;
 
     while (iter < maxiter + 1) {
 	
-	for (int A = 0; A < a_nshell; A++) {
-            const GaussianShell& gshell = aux->shell(A);
-	    if (gshell.am() != 0) continue;
+	for (int I = 0; I < i_nshell; I++) {
+            const GaussianShell& gshell = isa->shell(I);
+	    if (gshell.am() > 0) continue;
 	    int atom = gshell.ncenter();
-	    int a_start = gshell.start();
-	    int num_a = gshell.nfunction();
-	    for (int a = a_start; a < a_start + num_a; a++) {
+	    int i_start = gshell.start();
+	    int num_i = gshell.nfunction();
+	    for (int i = i_start; i < i_start + num_i; i++) {
 	        for (size_t point = 0; point < total_points; point++) {
-	            double val = d_tilde[a] * aux_values[point][a];
-		    weights_a[atom * total_points + point] += val;
-		    sum_weights_a[point] += val;
+	            double val = d_tilde[i] * isa_values[point][i];
+		    weights_a_isa[atom * total_points + point] += val;
+		    sum_weights_a_isa[point] += val;
 	        }
 	    }
         }
 
+	for (size_t point = 0; point < total_points; point++) {
+	    sum_weights_a_isa[point] = zeta * sum_weights_a_isa[point] + (1 - zeta) * sum_weights_a_df[point];
+	    for (int atom = 0; atom < num_atoms; atom++) {
+	        weights_a_isa[atom * total_points + point] = zeta * weights_a_isa[atom * total_points + point] + (1 - zeta) * weights_a_df[atom * total_points + point];
+	    }
+	}
+
         for (int atom = 0; atom < num_atoms; atom++) {
-            int start = saux_atom[atom];
-            int naux = naux_atom[atom];
-            for (int a = start; a < start + naux; a++) {
+            int start = sisa_atom[atom];
+            int nisa = nisa_atom[atom];
+            for (int i = start; i < start + nisa; i++) {
 	        for (int point = 0; point < total_points; point++) {
-		    if (sum_weights_a[point] == 0.0) continue;
-	            double val = weights[point] * aux_values[point][a] * rho[point] * weights_a[atom * total_points + point] / sum_weights_a[point];
-		    T_tilde[a] += zeta * val;
+		    if (sum_weights_a_isa[point] == 0.0) continue;
+	            double val = weights[point] * isa_values[point][i] * rho[point] * weights_a_isa[atom * total_points + point] / sum_weights_a_isa[point];
+		    T_tilde[i] += val;
 	        }
-		T_tilde[a] += (1 - zeta) * T_df[a];
 	    }
         }
 
         for (int atom = 0; atom < num_atoms; atom++) {
-	    int start = saux_atom[atom];
-            int naux = naux_atom[atom];
+	    int start = sisa_atom[atom];
+            int nisa = nisa_atom[atom];
 
 	    std::vector<int> a_ipiv;
-            for (int i = 0; i < naux; i++) {
+            for (int i = 0; i < nisa; i++) {
                 a_ipiv.push_back(i);
             }
 
-	    std::vector<double> S_tilde_a(naux * naux);
+	    std::vector<double> S_tilde_a(nisa * nisa);
 
-	    for (int a = start; a < start + naux; a++) {
-	        for (int b = start; b < start + naux; b++) {
-		    int da = a - start;
-		    int db = b - start;
-                    S_tilde_a[da * naux + db] = S_tilde[a * a_nbf + b];
+	    for (int i = start; i < start + nisa; i++) {
+	        for (int j = start; j < start + nisa; j++) {
+		    int di = i - start;
+		    int dj = j - start;
+                    S_tilde_a[di * nisa + dj] = S_tilde[i * i_nbf + j];
 	        }
 	    }
 
-            C_DGESV(naux, 1, S_tilde_a.data(), naux, a_ipiv.data(), &(T_tilde.data()[start]), naux);
+            C_DGESV(nisa, 1, S_tilde_a.data(), nisa, a_ipiv.data(), &(T_tilde.data()[start]), nisa);
 
         }
 
-        for (int a = 0; a < a_nbf; a++) {
-	    d_tilde[a] = T_tilde[a];
+        for (int i = 0; i < i_nbf; i++) {
+	    d_tilde[i] = T_tilde[i];
 	}
 
 	if (iter >= maxiter) break;
 
 	std::fill(T_tilde.begin(), T_tilde.end(), 0.0);
-	std::fill(weights_a.begin(), weights_a.end(), 0.0);
-        std::fill(sum_weights_a.begin(), sum_weights_a.end(), 0.0);
+	std::fill(weights_a_isa.begin(), weights_a_isa.end(), 0.0);
+        std::fill(sum_weights_a_isa.begin(), sum_weights_a_isa.end(), 0.0);
 
-        iter += 1;	
+        iter += 1;
     }
 
     auto mpole = std::make_shared<Matrix>("BSISA Charges", num_atoms, 1);
@@ -2812,21 +2865,11 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 
     for (int atom = 0; atom < num_atoms; atom++) {
 	double charge = mol->Z(atom);
-	// int start = saux_atom[atom];
-        // int naux = naux_atom[atom];
         for (int point = 0; point < total_points; point++) {
-	    if (sum_weights_a[point] == 0.0) continue;
-	    rho_a[atom * total_points + point] = rho[point] * weights_a[atom * total_points + point] / sum_weights_a[point];
+	    if (sum_weights_a_isa[point] == 0.0) continue;
+	    rho_a[atom * total_points + point] = rho[point] * weights_a_isa[atom * total_points + point] / sum_weights_a_isa[point];
 	    charge -= weights[point] * rho_a[atom * total_points + point];
 	}
-	/*
-	for (int point = 0; point < total_points; point++) {
-	    for (int a = start; a < start + naux; a++) {
-	        rho_a[atom * total_points + point] += d_tilde[a] * aux_values[point][a]; 
-	    }
-	    charge -= weights[point] * rho_a[atom * total_points + point];
-	}
-	*/
 	mpole->set(atom, 0, charge);
     }
 

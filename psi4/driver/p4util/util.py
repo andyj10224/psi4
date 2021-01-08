@@ -73,6 +73,7 @@ def oeprop(wfn: core.Wavefunction, *args, **kwargs):
 
         if 'BSISA_CHARGES' in prop:
             proc.bsisa_df_factory(wfn)
+            proc.bsisa_basis_factory(wfn)
     
     oe.compute()
 

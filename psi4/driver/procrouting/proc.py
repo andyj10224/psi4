@@ -1165,11 +1165,14 @@ def build_disp_functor(name, restricted, save_pairwise_disp=False, **kwargs):
     else:
         return superfunc, None
 
-def bsisa_df_factory(wfn):
-    """Sets the df basis used in BSISA Charge Calculations
+def bsisa_basis_factory(wfn):
+    """Sets the df and isa basis used in BSISA Charge Calculations
     """
     aux_basis = core.BasisSet.build(wfn.molecule(), "DF_BASIS_BSISA", core.get_option("", "DF_BASIS_BSISA"), puream=False)
+    isa_basis = core.BasisSet.build(wfn.molecule(), "ISA_BASIS_BSISA", core.get_option("", "ISA_BASIS_BSISA"), puream=False)
+
     wfn.set_basisset("DF_BASIS_BSISA", aux_basis)
+    wfn.set_basisset("ISA_BASIS_BSISA", isa_basis)
 
 def scf_wavefunction_factory(name, ref_wfn, reference, **kwargs):
     """Builds the correct (R/U/RO/CU HF/KS) wavefunction from the
