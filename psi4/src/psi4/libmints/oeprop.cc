@@ -2606,42 +2606,6 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 	}
     }
 
-    /*
-    for (int I = 0; I < i_nshell; I++) {
-        const GaussianShell& gshell = isa->shell(I);
-	int i_start = gshell.start();
-	int num_i = gshell.nfunction();
-
-	int L = gshell.am();
-
-        for (int i = i_start; i < i_start + num_i; i++) {
-            double norm = normalize[i];
-	    double integral = 0.0;
-	    for (size_t point = 0; point < total_points; point++) {
-	        integral += weights[point] * aux_values[point][i] * aux_values[point][i];
-	    }
-	    outfile->Printf("\tISA BF %d, AM %d, GRID %8.5f, ANALY %8.5f\n", i+1, L, integral, norm);
-        }
-    }
-
-
-    for (int i = 0; i < i_nbf; i++) {
-        for (size_t point = 0; point < total_points; point++) {
-            aux_values[point][i] /= sqrt(normalize[i]);
-    	    isa_values[point][i] /= sqrt(normalize[i]);
-    	}
-    }
-
-    for (int i = 0; i < i_nbf; i++) {
-        double norm = normalize[i];
-        double integral = 0.0;
-        for (size_t point = 0; point < total_points; point++) {
-            integral += weights[point] * aux_values[point][i] * aux_values[point][i];
-        }
-        outfile->Printf("\tISA BF %d, GRID %8.5f, ANALY %8.5f\n", i+1, integral, norm);
-    }
-    */
-    
     // Electron count via numerical interagration
     double grid_electrons = 0.0;
     for (int p = 0; p < total_points; p++) {
@@ -2669,8 +2633,11 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 
     // Equations 15-24 in BSISA Paper
     
-    // S and T as defined in Equation 22    
-    // Start by initializing S and T as S_df and T_df (Equations 16 and 17)
+    // S_df and T_df (Equations 16 and 17)
+    std::vector<double> S_df(a_nbf * a_nbf, 0.0);
+    std::vector<double> T_df(a_nbf, 0.0);
+
+    // Overall S and T
     std::vector<double> S_final(a_nbf * a_nbf, 0.0);
     std::vector<double> T_final(a_nbf, 0.0);
 
@@ -2725,7 +2692,8 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 		for (int b = b_start; b < b_start + num_b; b++) {
 		    int da = a - a_start;
 		    int db = b - b_start;
-	            S_final[a * a_nbf + b] = buff[da * num_b + db] + lambda * I_k[a] * I_k[b];
+	            S_df[a * a_nbf + b] = buff[da * num_b + db] + lambda * I_k[a] * I_k[b];
+		    S_final[a * a_nbf + b] = S_df[a * a_nbf + b];
 		}
 	    }
 	}
@@ -2752,7 +2720,8 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 			    double integral = buff[da * num_m * num_n + dm * num_n + dn];
 			    
 			    T_final[a] += 2.0 * Da->get(m, n) * integral;
-			
+		            T_df[a] += 2.0 * Da->get(m, n) * integral;
+
 			}
 		    }
 		}
@@ -2765,12 +2734,13 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
     // Sets d_coeff as T_df for Matrix Equation Solver Call
     for (int a = 0; a < a_nbf; a++) {
 	ipiv.push_back(a);
+	T_df[a] += lambda * mol_electrons * I_k[a];
         T_final[a] += lambda * mol_electrons * I_k[a];
         d_coeff[a] = T_final[a];
     }
 
     // d_coeff becomes guess values for atomic densities
-    C_DGESV(a_nbf, 1, S_final.data(), a_nbf, ipiv.data(), d_coeff.data(), a_nbf);
+    C_DGESV(a_nbf, 1, S_df.data(), a_nbf, ipiv.data(), d_coeff.data(), a_nbf);
 
     // Starting basis set number of an atom in isa aux basis set
     std::vector<int> saux_atom(num_atoms, 0);
@@ -2780,14 +2750,14 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
     std::vector<bool> is_S(a_nbf, false);
 
     for (int A = 0; A < a_nshell; A++) {
+	
 	int a_start = aux->shell(A).function_index();
         int num_a = aux->shell(A).nfunction();
 	int L = aux->shell(A).am();
 
 	if (L == 0) {
-            for (int a = a_start; a < a_start + num_a; a++) {
-		is_S[a] = true;
-	        outfile->Printf("\tAUX FUNC: %d IS SPHERICAL\n", a); 
+	    for (int a = a_start; a < a_start + num_a; a++) {
+	        is_S[a] = true;
 	    }
 	}
     }
@@ -2805,10 +2775,9 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
     std::vector<double> S_tilde(a_nbf * a_nbf, 0.0);
     std::vector<double> T_tilde(a_nbf, 0.0);
 
-    // auto aux_mints = std::make_shared<MintsHelper>(aux);
-    // SharedMatrix S_aux = aux_mints->ao_overlap(aux, aux);
+    auto aux_mints = std::make_shared<MintsHelper>(aux);
+    SharedMatrix S_aux = aux_mints->ao_overlap(aux, aux);
 
-    /*
     for (int A = 0; A < a_nshell; A++) {
 	for (int B = 0; B < a_nshell; B++) {
             const GaussianShell& a_shell = aux->shell(A);
@@ -2825,32 +2794,12 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 	    }
 	}
     }
-    */
-
-    for (int A = 0; A < a_nshell; A++) {
-        for (int B = 0; B < a_nshell; B++) {
-            const GaussianShell& a_shell = aux->shell(A);
-            const GaussianShell& b_shell = aux->shell(B);
-            if (a_shell.ncenter() != b_shell.ncenter()) continue;
-            int a_start = a_shell.function_index();
-            int num_a = a_shell.nfunction();
-            int b_start = b_shell.function_index();
-            int num_b = b_shell.nfunction();
-            for (int a = a_start; a < a_start + num_a; a++) {
-                for (int b = b_start; b < b_start + num_b; b++) {
-                    for (size_t point = 0; point < total_points; point++) {			
-		        S_tilde[a * a_nbf + b] += weights[point] * aux_values[point][a] * aux_values[point][b];
-                    }
-		}
-            }
-        }
-    }
-
 
     for (int a = 0; a < a_nbf; a++) {
 	for (int b = 0; b < a_nbf; b++) {
 	    S_final[a * a_nbf + b] *= (1 - zeta);
 	    S_final[a * a_nbf + b] += zeta * S_tilde[a * a_nbf + b];
+            S_tilde[a * a_nbf + b] = S_final[a * a_nbf + b];
 	}
     }
 
@@ -2878,7 +2827,7 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
             int num = naux_atom[atom];
             for (int a = start; a < start + num; a++) {
 	        for (size_t point = 0; point < total_points; point++) {
-	            if (isa_sum_weights[point] < 1.0e-12) continue;
+		    if (isa_sum_weights[point] == 0.0) continue;
 		    double val = weights[point] * aux_values[point][a] * rho[point] * isa_a_weights[atom * total_points + point] / isa_sum_weights[point];
 		    T_tilde[a] += zeta * val;
 	        }
@@ -2886,49 +2835,35 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 	    }
         }
 
-	for (int atom = 0; atom < num_atoms; atom++) {
-            
-	    int start = saux_atom[atom];
-            int num = naux_atom[atom];
-
-	    std::vector<double> S_final_a(num * num, 0.0);
-
-	    for (int a = start; a < start + num; a++) {
-	        for (int b = start; b < start + num; b++) {
-		    
-		    int da = a - start;
-		    int db = b - start;
-	            
-		    S_final_a[da * num + db] = S_final[a * a_nbf + b];
-		}
-	    }
-
-	    std::vector<int> a_ipiv(num, 0.0);
-
-	    for (int i = 0; i < num; i++) {
-		a_ipiv[i] = i;
-	    }
-
-	    double* T_tilde_p = T_tilde.data();
-
-	    C_DGESV(num, 1, S_final_a.data(), num, a_ipiv.data(), &(T_tilde_p[start]), num); 
+        // for (int atom = 0; atom < num_atoms; atom++) {
+	    
+	// int start = saux_atom[atom];
+        // int num = naux_atom[atom];
 	
-	}
+	int start = 0;
+	int num = a_nbf;
 
-	/*
-	std::vector<int> ipiv2;
+	std::vector<int> ipiv_a;
 
-        for (int a = 0; a < a_nbf; a++) {
-            ipiv2.push_back(a);
+        for (int a = 0; a < num; a++) {
+            ipiv_a.push_back(a);
         }
 
-	C_DGESV(a_nbf, 1, S_final.data(), a_nbf, ipiv2.data(), T_tilde.data(), a_nbf);
+	std::vector<double> S_temp(num * num, 0.0);
 
-	*/
-
-        for (int a = 0; a < a_nbf; a++) {
-	    d_coeff[a] = T_tilde[a];
+	for (int a = start; a < start + num; a++) {
+	    for (int b = start; b < start + num; b++) {
+		int da = a - start;
+		int db = b - start;
+		S_temp[da * num + db] = S_final[a * a_nbf + b];
+	    }
 	}
+
+	C_DGESV(num, 1, S_temp.data(), num, ipiv_a.data(), &(T_tilde.data()[start]), num);
+
+        // }
+
+	d_coeff = T_tilde;
 
 	if (iter >= maxiter) break;
 
