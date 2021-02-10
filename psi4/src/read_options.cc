@@ -271,6 +271,7 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
 
     /// BSISA Options (libmints/oeprop.cc)
     // options.add_str("DF_BASIS_BSISA", "");
+    options.add_str("DF_BASIS_BSISA", "");
     options.add_str("ISA_BASIS_BSISA", "");
     options.add_int("BSISA_MAXITER", 100);
     options.add_double("BSISA_LAMBDA", 1000.0);
