@@ -115,6 +115,14 @@ void RHF::common_init() {
 
     same_a_b_dens_ = true;
     same_a_b_orbs_ = true;
+    
+    incr_fock_ = (Process::environment.options).get_bool("INCR_FOCK_BUILD");
+    
+    if (incr_fock_) {
+        J_->zero();
+        K_->zero();
+    }
+    
 }
 
 void RHF::finalize() {
@@ -200,9 +208,14 @@ void RHF::form_G() {
     const std::vector<SharedMatrix>& J = jk_->J();
     const std::vector<SharedMatrix>& K = jk_->K();
     const std::vector<SharedMatrix>& wK = jk_->wK();
-    J_ = J[0];
+    
+    
+    if (!incr_fock_) J_ = J[0];
+    else J_->add(J[0]);
+    
     if (functional_->is_x_hybrid()) {
-        K_ = K[0];
+        if (!incr_fock_) K_ = K[0];
+        else K_->add(K[0]);
     }
     if (functional_->is_x_lrc()) {
         wK_ = wK[0];
