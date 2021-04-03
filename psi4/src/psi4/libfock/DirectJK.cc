@@ -340,6 +340,11 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::v
                         std::vector<std::shared_ptr<Matrix>>& J, std::vector<std::shared_ptr<Matrix>>& K) {
     
     timer_on("build_JK()");
+    static int ncalls = 0;
+
+    Options& options = Process::environment.options;
+    bool dens_screen = options.get_bool("SCF_DENSITY_SCREENING");
+    bool dens_pair_screen = options.get_bool("SCF_DENSITY_PAIR_SCREENING");
 
     // => Zeroing <= //
     for (size_t ind = 0; ind < J.size(); ind++) {
@@ -495,6 +500,7 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::v
                 int P = task_shells[P2];
                 int Q = task_shells[Q2];
                 if (!ints[0]->shell_pair_significant(P, Q)) continue;
+                if (ncalls >= 1 && dens_pair_screen && !ints[0]->shell_pair_significant_density(P, Q)) continue;
                 for (int R2 = R2start; R2 < R2start + nRtask; R2++) {
                     for (int S2 = S2start; S2 < S2start + nStask; S2++) {
                         if (S2 > R2) continue;
@@ -503,6 +509,7 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::v
                         if (R2 * nshell + S2 > P2 * nshell + Q2) continue;
                         if (!ints[0]->shell_pair_significant(R, S)) continue;
                         if (!ints[0]->shell_significant(P, Q, R, S)) continue;
+                        if (dens_screen && !ints[0]->shell_significant_density(P, Q, R, S)) continue;
 
                         // printf("Quartet: %2d %2d %2d %2d\n", P, Q, R, S);
                         // timer_on("compute_shell(P, Q, R, S)");
@@ -805,6 +812,7 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::v
         printer->Printf("Computed %20zu Shell Quartets out of %20zu, (%11.3E ratio)\n", computed_shells,
                         possible_shells, computed_shells / (double)possible_shells);
     }
+    ncalls += 1;
     timer_off("build_JK()");
 }
 

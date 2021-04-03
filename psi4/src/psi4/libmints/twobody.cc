@@ -86,6 +86,7 @@ TwoBodyAOInt::TwoBodyAOInt(const IntegralFactory *intsfactory, int deriv)
     if (screening_threshold_ == 0.0) screening_type_ = ScreeningType::None;
 
     max_dens_shell_pair_.resize(bs1_->nshell(), std::vector<double>(bs1_->nshell(), 1.0));
+    max_dens_shell_.resize(bs1_->nshell(), 1.0);
 }
 
 TwoBodyAOInt::TwoBodyAOInt(const TwoBodyAOInt &rhs) : TwoBodyAOInt(rhs.integral_, rhs.deriv_) {
@@ -124,6 +125,7 @@ void TwoBodyAOInt::update_density(const std::vector<SharedMatrix>& D) {
     timer_on("Density Screen");
 #pragma omp parallel for
     for (int M = 0; M < nshell_; M++) {
+        max_dens_shell_[M] = 0.0;
         for (int N = 0; N < nshell_; N++) {
             int m_start = bs1_->shell(M).function_index();
             int num_m = bs1_->shell(M).nfunction();
@@ -142,6 +144,7 @@ void TwoBodyAOInt::update_density(const std::vector<SharedMatrix>& D) {
                 }
             }
             max_dens_shell_pair_[M][N] = max_dens;
+            max_dens_shell_[M] = std::max(max_dens_shell_[M], max_dens);
         }
     }
     timer_off("Density Screen");
@@ -177,6 +180,23 @@ bool TwoBodyAOInt::shell_significant_density(int M, int N, int R, int S) {
 
 }
 
+// Extension of Density Screening on Shell Pairs
+bool TwoBodyAOInt::shell_pair_significant_density(int shell1, int shell2) {
+    double density_threshold = dens_screen_threshold_;
+
+    double Q_MN_sq = shell_pair_values_[shell1 * nshell_ + shell2];
+
+    double max_dens_factor = max_dens_shell_[shell1];
+    max_dens_factor = std::max(max_dens_factor, max_dens_shell_[shell2]);
+
+    max_dens_factor *= max_dens_factor;
+    density_threshold *= density_threshold;
+
+    if (Q_MN_sq * max_integral_ * max_dens_factor > density_threshold) return true;
+    
+    return false;
+}
+
 bool TwoBodyAOInt::shell_significant_csam(int M, int N, int R, int S) { 
     // Square of standard Cauchy-Schwarz Q_mu_nu terms (Eq. 1)
     double mn_mn = shell_pair_values_[N * nshell_ + M];
@@ -194,29 +214,29 @@ bool TwoBodyAOInt::shell_significant_csam(int M, int N, int R, int S) {
     // Square of Eq. 11
     double mnrs_2 = mn_mn * rs_rs * csam_2;
 
-    bool dens = true;
+    // bool dens = true;
 
-    if (do_dens_screen_) dens = shell_significant_density(M, N, R, S);
+    // if (do_dens_screen_) dens = shell_significant_density(M, N, R, S);
 
-    return (std::abs(mnrs_2) >= screening_threshold_squared_ && dens);
+    return std::abs(mnrs_2) >= screening_threshold_squared_;
 }
 
 bool TwoBodyAOInt::shell_significant_schwarz(int M, int N, int R, int S) {
 
-    bool dens = true;
+    // bool dens = true;
 
-    if (do_dens_screen_) dens = shell_significant_density(M, N, R, S);
+    // if (do_dens_screen_) dens = shell_significant_density(M, N, R, S);
 
-    return (shell_pair_values_[N * nshell_ + M] * shell_pair_values_[R * nshell_ + S] >= screening_threshold_squared_ && dens);
+    return shell_pair_values_[N * nshell_ + M] * shell_pair_values_[R * nshell_ + S] >= screening_threshold_squared_;
 }
 
 bool TwoBodyAOInt::shell_significant_none(int M, int N, int R, int S) {
 
-    bool dens = true;
+    // bool dens = true;
 
-    if (do_dens_screen_) dens = shell_significant_density(M, N, R, S);
+    // if (do_dens_screen_) dens = shell_significant_density(M, N, R, S);
 
-    return dens; 
+    return true; 
 
 }
 

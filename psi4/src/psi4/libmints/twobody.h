@@ -151,12 +151,12 @@ class PSI_API TwoBodyAOInt {
     double dens_screen_threshold_;
     /// Max Density per Shell Pair
     std::vector<std::vector<double>> max_dens_shell_pair_;
+    /// Max Density per Shell Block
+    std::vector<double> max_dens_shell_;
 
     void setup_sieve();
     void create_sieve_pair_info(const std::shared_ptr<BasisSet> bs, PairList &shell_pairs, bool is_bra);
 
-    /// Density Screening of a shell quartet (Haser 1989)
-    bool shell_significant_density(int M, int N, int R, int S);
     /// Implements CSAM screening of a shell quartet
     bool shell_significant_csam(int M, int N, int R, int S);
     /// Implements Schwarz inequality screening of a shell quartet
@@ -211,10 +211,14 @@ class PSI_API TwoBodyAOInt {
     void update_density(const std::vector<SharedMatrix>& D);
     /// Ask the built in sieve whether this quartet contributes
     bool shell_significant(int M, int N, int R, int S) const { return sieve_impl_(M, N, R, S); };
+    /// Density Screening of a shell quartet (Haser 1989)
+    bool shell_significant_density(int M, int N, int R, int S);
     /// Are any of the quartets within a given shellpair list significant
     bool shell_block_significant(int shellpair12, int shellpair34) const;
     /// Does a given shell pair contribute to any significant integrals?
     bool shell_pair_significant(int shell1, int shell2) const;
+    /// Density Screening on a Shell Pair
+    bool shell_pair_significant_density(int shell1, int shell2);
     /// Square of ceiling of shell quartet (MN|RS)
      inline double shell_ceiling2(int M, int N, int R, int S) {
         return shell_pair_values_[N * nshell_ + M] * shell_pair_values_[R * nshell_ + S];
