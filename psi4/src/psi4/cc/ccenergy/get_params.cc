@@ -3,7 +3,7 @@
  *
  * Psi4: an open-source quantum chemistry software package
  *
- * Copyright (c) 2007-2019 The Psi4 Developers.
+ * Copyright (c) 2007-2021 The Psi4 Developers.
  *
  * The copyrights for code used from other parties are included in
  * the corresponding files.
@@ -88,7 +88,7 @@ void CCEnergyWavefunction::get_params(Options &options) {
     // Allow user to force semicanonical
     if (options["SEMICANONICAL"].has_changed()) {
         params_.semicanonical = options.get_bool("SEMICANONICAL");
-        params_.ref = 2;
+        if (params_.semicanonical) params_.ref = 2;
     }
 
     params_.analyze = options.get_bool("ANALYZE");

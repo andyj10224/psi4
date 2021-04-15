@@ -3,7 +3,7 @@
 #
 # Psi4: an open-source quantum chemistry software package
 #
-# Copyright (c) 2007-2019 The Psi4 Developers.
+# Copyright (c) 2007-2021 The Psi4 Developers.
 #
 # The copyrights for code used from other parties are included in
 # the corresponding files.
@@ -1124,7 +1124,7 @@ def cbs(func, label, **kwargs):
     stage_wfn keyword, or as a field in the ```cbs_metadata``` list, and is only
     allowed if all preceding stages are active.
 
-    .. include:: ../cbs_eqn.rst
+    .. include:: /cbs_eqn.rst
 
     * Energy Methods
         The presence of a stage_wfn keyword is the indicator to incorporate
@@ -1376,9 +1376,7 @@ def cbs(func, label, **kwargs):
         * ```treatment```: treat extrapolation stage as ```scf``` or ```corl```, by default only the first stage is ```scf``` and every later one is ```corl```.
         * ```stage```: tag for the stage used in tables.
 
-        |  The next items in the ```cbs_metadata``` array extrapolate correlation. All of the above parameters
-        are available, with only the ```wfn``` and ```basis``` keywords required. Other supported parameters
-        are:
+        |  The next items in the ```cbs_metadata``` array extrapolate correlation. All of the above parameters are available, with only the ```wfn``` and ```basis``` keywords required. Other supported parameters are:
 
         * ```wfn_lo```: the lower method from which the delta correction is to be calculated. By default, it is set to ```wfn``` from the previous field in the ```cbs_metadata``` array.
         * ```basis_lo```: basis set to be used for the delta correction. By default, it is the same as the ```basis``` specified above.
@@ -1733,10 +1731,12 @@ def cbs(func, label, **kwargs):
     if len(metadata) > 2:
         dc = 3
         for delta in metadata[2:]:
+            deltaE_total = GRAND_NEED[dc]['d_energy'] - GRAND_NEED[dc + 1]['d_energy']
             tables += """     %6s %20s %1s %-27s %2s %16.8f   %-s\n""" % (
                 GRAND_NEED[dc]['d_stage'], GRAND_NEED[dc]['d_wfn'] + ' - ' + GRAND_NEED[dc + 1]['d_wfn'], '/',
-                GRAND_NEED[dc]['d_basis'], '', GRAND_NEED[dc]['d_energy'] - GRAND_NEED[dc + 1]['d_energy'],
+                GRAND_NEED[dc]['d_basis'], '', deltaE_total,
                 GRAND_NEED[dc]['d_scheme'].__name__)
+            core.set_variable(f"CBS {GRAND_NEED[dc]['d_stage'].upper()} TOTAL ENERGY", deltaE_total)
             dc += 2
 
     tables += """     %6s %20s %1s %-27s %2s %16.8f   %-s\n""" % ('total', 'CBS', '', '', '', finalenergy, '')
@@ -1958,8 +1958,8 @@ def _cbs_gufunc(func, total_method_name, **kwargs):
         optstash = p4util.OptionsState(['BASIS'])
         core.set_global_option('BASIS', basis)
         ptype_value, wfn = func(method_name, return_wfn=True, molecule=molecule, **kwargs)
-        core.clean()
-
+        if core.get_option("SCF", "DF_INTS_IO") != "SAVE":
+            core.clean()
         optstash.restore()
 
         if return_wfn:

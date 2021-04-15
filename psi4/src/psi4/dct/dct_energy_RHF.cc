@@ -3,7 +3,7 @@
  *
  * Psi4: an open-source quantum chemistry software package
  *
- * Copyright (c) 2007-2019 The Psi4 Developers.
+ * Copyright (c) 2007-2021 The Psi4 Developers.
  *
  * The copyrights for code used from other parties are included in
  * the corresponding files.
@@ -50,12 +50,12 @@ void DCTSolver::compute_dct_energy_RHF() {
     psio_->open(PSIF_LIBTRANS_DPD, PSIO_OPEN_OLD);
 
     global_dpd_->buf4_init(&L, PSIF_DCT_DPD, 0, ID("[O,O]"), ID("[V,V]"), ID("[O,O]"), ID("[V,V]"), 0,
-                           "Lambda SF <OO|VV>");  // Lambda <Oo|Vv>
+                           "Amplitude SF <OO|VV>");  // Amplitude <Oo|Vv>
 
     dct_timer_on("DCTSolver::G_IjAb + g_IjAb");
     // M_IjAb = G_IjAb
     global_dpd_->buf4_init(&G, PSIF_DCT_DPD, 0, ID("[O,O]"), ID("[V,V]"), ID("[O,O]"), ID("[V,V]"), 0,
-                           "G <OO|VV>");                     // G <Oo|Vv>
+                           "G <OO|VV>");                    // G <Oo|Vv>
     global_dpd_->buf4_copy(&G, PSIF_DCT_DPD, "M <OO|VV>");  // M <Oo|Vv>
     global_dpd_->buf4_close(&G);
     // M_IjAb += gbar_IjAb

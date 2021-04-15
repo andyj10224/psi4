@@ -5,7 +5,7 @@
 #
 # Psi4: an open-source quantum chemistry software package
 #
-# Copyright (c) 2007-2019 The Psi4 Developers.
+# Copyright (c) 2007-2021 The Psi4 Developers.
 #
 # The copyrights for code used from other parties are included in
 # the corresponding files.
@@ -69,6 +69,8 @@ my %ExeFolder = (
    "json/"      => "json",
    "psi4numpy/" => "psi4numpy",
    "python/"    => "python",
+   "adcc/"      => "adcc",
+   "brianqc/"   => "brianqc",
 );
 
 foreach my $exe (keys %ExeFolder) {
@@ -100,6 +102,8 @@ foreach my $File(readdir SAMPLES){
     next if $File =~ /^python$/;
     next if $File =~ /^json$/;
     next if $File =~ /^psi4numpy$/;
+    next if $File =~ /^adcc$/;
+    next if $File =~ /^brianqc$/;
     next if (-d $File);  # Don't remove subdirectories
     remove_tree("$SamplesFolder/$File");
 }
@@ -117,13 +121,13 @@ open(RSTSUMMARY,">$RstSummary") or die "I can't write to $RstSummary\n";
 print "Auto-documenting samples/" . $exe . " directory inputs\n";
 if ($ExeFolder{$exe} ne "corepsi4") {
    print RSTSUMMARY "\n.. _`apdx:testSuite$ExeFolder{$exe}`:\n";
-   print RSTSUMMARY "\n=============================================\n";
+   print RSTSUMMARY "\n=======================================================\n";
    print RSTSUMMARY   uc($ExeFolder{$exe});
-   print RSTSUMMARY "\n=============================================\n";
+   print RSTSUMMARY "\n=======================================================\n";
 }
-print RSTSUMMARY "\n=============================================   ============\n";
-print RSTSUMMARY   "Input File                                      Description \n";
-print RSTSUMMARY   "=============================================   ============\n";
+print RSTSUMMARY "\n=======================================================   ============\n";
+print RSTSUMMARY   "Input File                                                Description \n";
+print RSTSUMMARY   "=======================================================   ============\n";
 
 my @pytestdirs = qw( python/ json/ psi4numpy/ );
 my $iext;
@@ -202,14 +206,14 @@ foreach my $Dir(readdir TESTS){
             } else {
                 $srcfilename = ":srcsample:`" . $exe . $Dir_tex . "`";
             }
-            printf RSTSUMMARY "%-45s  %s\n", $srcfilename, $Description_rst;
+            printf RSTSUMMARY "%-55s  %s\n", $srcfilename, $Description_rst;
             printf SUMMARY "%-12s %s\n\n\n", $Dir.":", $Description;
         }
     }else{
         warn "Warning!!! Undocumented input: $Input\n";
     }
 }
-print RSTSUMMARY "=============================================   ============\n\n";
+print RSTSUMMARY "=======================================================   ============\n\n";
 close TEXSUMMARY ;
 unlink("tests_descriptions_" . $ExeFolder{$exe} . ".tex");
 close RSTSUMMARY;

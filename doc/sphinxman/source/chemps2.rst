@@ -3,7 +3,7 @@
 .. #
 .. # Psi4: an open-source quantum chemistry software package
 .. #
-.. # Copyright (c) 2007-2019 The Psi4 Developers.
+.. # Copyright (c) 2007-2021 The Psi4 Developers.
 .. #
 .. # The copyrights for code used from other parties are included in
 .. # the corresponding files.
@@ -37,7 +37,7 @@ Interface to CheMPS2 by S. Wouters
 .. codeauthor:: Sebastian Wouters
 .. sectionauthor:: Lori A. Burns
 
-*Module:* :ref:`Keywords <apdx:dmrg>`, :ref:`PSI Variables <apdx:dmrg_psivar>`, :ref:`Samples <apdx:testSuitedmrg>`
+*Module:* :ref:`Keywords <apdx:dmrg>`, :ref:`PSI Variables <apdx:dmrg_psivar>`, :ref:`Samples <apdx:testSuitechemps2>`
 
 .. comment|PSIfour| contains code to interface to the CheMPS2
 .. library of S. Wouters, which is based at `GitHub
@@ -84,8 +84,8 @@ Installation
   hint its location with :makevar:`CMAKE_PREFIX_PATH`,
   and rebuild |PSIfour| to detect CheMPS2 and activate dependent code.
 
-* Previous bullet had details. To build |PSIfour| from source and use
-  Libint from conda without thinking, consult :ref:`sec:condapsi4dev`.
+.. * Previous bullet had details. To build |PSIfour| from source and use
+..   Libint from conda without thinking, consult.
 
 * To remove a conda installation, ``conda remove chemps2``.
 

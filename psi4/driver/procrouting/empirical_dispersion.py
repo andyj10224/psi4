@@ -3,7 +3,7 @@
 #
 # Psi4: an open-source quantum chemistry software package
 #
-# Copyright (c) 2007-2019 The Psi4 Developers.
+# Copyright (c) 2007-2021 The Psi4 Developers.
 #
 # The copyrights for code used from other parties are included in
 # the corresponding files.
@@ -81,7 +81,7 @@ class EmpiricalDispersion(object):
     dashcoeff_supplement : dict
         See description in `qcengine.programs.empirical_dispersion_resources.from_arrays`. Used
         here to "bless" the dispersion definitions attached to
-        the procedures/dft/*_functionals-defined dictionaries
+        the procedures/dft/<rung>_functionals-defined dictionaries
         as legit, non-custom, and of equal validity to
         `qcengine.programs.empirical_dispersion_resources.dashcoeff` itself for purposes of
         validating `fctldash`.
@@ -101,8 +101,8 @@ class EmpiricalDispersion(object):
         Name of functional (func only, func & disp, or disp only) for
         which to compute dispersion (e.g., blyp, BLYP-D2, blyp-d3bj,
         blyp-d3(bj), hf+d). Any or all parameters initialized from
-        `dashcoeff[dashlevel][functional-without-dashlevel]` or
-        `dashcoeff_supplement[dashlevel][functional-with-dashlevel]
+        ``dashcoeff[dashlevel][functional-without-dashlevel]`` or
+        ``dashcoeff_supplement[dashlevel][functional-with-dashlevel]``
         can be overwritten via `param_tweaks`.
     level_hint : str, optional
         Name of dispersion correction to be applied (e.g., d, D2,
@@ -118,10 +118,10 @@ class EmpiricalDispersion(object):
         libdisp or dftd3.
 
     """
-
-    def __init__(self, name_hint=None, level_hint=None, param_tweaks=None, **kwargs):
+    def __init__(self, name_hint=None, level_hint=None, param_tweaks=None, save_pairwise_disp=False, **kwargs):
         from .dft import dashcoeff_supplement
         self.dashcoeff_supplement = dashcoeff_supplement
+        self.save_pairwise_disp = save_pairwise_disp
 
         resolved = qcng.programs.empirical_dispersion_resources.from_arrays(
             name_hint=name_hint,
@@ -201,19 +201,30 @@ class EmpiricalDispersion(object):
                         'level_hint': self.dashlevel,
                         'params_tweaks': self.dashparams,
                         'dashcoeff_supplement': self.dashcoeff_supplement,
+                        'save_pairwise_dispersion': self.save_pairwise_disp,
                         'verbose': 1,
                     },
                     'molecule': molecule.to_schema(dtype=2),
                     'provenance': p4util.provenance_stamp(__name__),
                 })
-            jobrec = qcng.compute(resi, self.engine, raise_error=True,
-                                  local_options={"scratch_directory": core.IOManager.shared_object().get_default_path()})
+            jobrec = qcng.compute(
+                resi,
+                self.engine,
+                raise_error=True,
+                local_options={"scratch_directory": core.IOManager.shared_object().get_default_path()})
 
             dashd_part = float(jobrec.extras['qcvars']['DISPERSION CORRECTION ENERGY'])
             if wfn is not None:
                 for k, qca in jobrec.extras['qcvars'].items():
-                    if 'CURRENT' not in k:
+                    # The pairwise dispersion analysis is already a nparray
+                    # Do we always want to save it?
+                    if ('CURRENT' not in k) and ('PAIRWISE' not in k):
                         wfn.set_variable(k, p4util.plump_qcvar(qca, k))
+
+                # Pass along the pairwise dispersion decomposition if we need it
+                if self.save_pairwise_disp is True:
+                    wfn.set_variable("PAIRWISE DISPERSION CORRECTION ANALYSIS",
+                                     jobrec.extras['qcvars']["PAIRWISE DISPERSION CORRECTION ANALYSIS"])
 
             if self.fctldash in ['hf3c', 'pbeh3c']:
                 gcp_part = gcp.run_gcp(molecule, self.fctldash, verbose=False, dertype=0)
@@ -228,7 +239,8 @@ class EmpiricalDispersion(object):
                 core.set_variable('{} DISPERSION CORRECTION ENERGY'.format(self.fctldash), ene)
             return ene
 
-    def compute_gradient(self, molecule: 'psi4.core.Molecule',
+    def compute_gradient(self,
+                         molecule: 'psi4.core.Molecule',
                          wfn: 'psi4.core.Wavefunction' = None) -> 'psi4.core.Matrix':
         """Compute dispersion gradient based on engine, dispersion level, and parameters in `self`.
 
@@ -262,8 +274,11 @@ class EmpiricalDispersion(object):
                     'molecule': molecule.to_schema(dtype=2),
                     'provenance': p4util.provenance_stamp(__name__),
                 })
-            jobrec = qcng.compute(resi, self.engine, raise_error=True,
-                                  local_options={"scratch_directory": core.IOManager.shared_object().get_default_path()})
+            jobrec = qcng.compute(
+                resi,
+                self.engine,
+                raise_error=True,
+                local_options={"scratch_directory": core.IOManager.shared_object().get_default_path()})
 
             dashd_part = core.Matrix.from_array(
                 np.array(jobrec.extras['qcvars']['DISPERSION CORRECTION GRADIENT']).reshape(-1, 3))
@@ -280,7 +295,8 @@ class EmpiricalDispersion(object):
         else:
             return self.disp.compute_gradient(molecule)
 
-    def compute_hessian(self, molecule: 'psi4.core.Molecule',
+    def compute_hessian(self,
+                        molecule: 'psi4.core.Molecule',
                         wfn: 'psi4.core.Wavefunction' = None) -> 'psi4.core.Matrix':
         """Compute dispersion Hessian based on engine, dispersion level, and parameters in `self`.
         Uses finite difference, as no dispersion engine has analytic second derivatives.

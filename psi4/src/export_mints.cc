@@ -3,7 +3,7 @@
  *
  * Psi4: an open-source quantum chemistry software package
  *
- * Copyright (c) 2007-2019 The Psi4 Developers.
+ * Copyright (c) 2007-2021 The Psi4 Developers.
  *
  * The copyrights for code used from other parties are included in
  * the corresponding files.
@@ -306,16 +306,6 @@ std::shared_ptr<Molecule> from_dict(py::dict molrec) {
 }
 
 void export_mints(py::module& m) {
-    // This is needed to wrap an STL vector into Boost.Python. Since the vector
-    // is going to contain std::shared_ptr's we MUST set the no_proxy flag to true
-    // (as it is) to tell Boost.Python to not create a proxy class to handle
-    // the vector's data type.
-    py::bind_vector<std::vector<std::shared_ptr<Matrix>>>(m, "VectorMatrix");
-
-    // Other vector types
-    // py::class_<std::vector<double> >(m, "vector_of_doubles", "docstring").
-    //        def(vector_indexing_suite<std::vector<double>, true >());
-    //    py::bind_vector<double>(m, "VectorDouble");
 
     typedef void (Vector::*vector_setitem_1)(int, double);
     typedef void (Vector::*vector_setitem_2)(int, int, double);
@@ -642,10 +632,12 @@ void export_mints(py::module& m) {
             py::return_value_policy::reference_internal);
 
     // Free functions
-    m.def("doublet", &linalg::doublet,
+    typedef Matrix (*doublet_shared)(const Matrix&, const Matrix&, bool, bool);
+    typedef Matrix (*triplet_shared)(const Matrix&, const Matrix&, const Matrix&, bool, bool, bool);
+    m.def("doublet", doublet_shared(&linalg::doublet),
           "Returns the multiplication of two matrices A and B, with options to transpose each beforehand", "A"_a, "B"_a,
           "transA"_a = false, "transB"_a = false);
-    m.def("triplet", &linalg::triplet,
+    m.def("triplet", triplet_shared(&linalg::triplet),
           "Returns the multiplication of three matrics A, B, and C, with options to transpose each beforehand", "A"_a,
           "B"_a, "C"_a, "transA"_a = false, "transB"_a = false, "transC"_a = false);
 
@@ -664,7 +656,8 @@ void export_mints(py::module& m) {
              "Ignore reference contributions to the gradient? Default is False", "val"_a = false)
         .def("set_deriv_density_backtransformed", &Deriv::set_deriv_density_backtransformed,
              "Is the deriv_density already backtransformed? Default is False", "val"_a = false)
-        .def("compute", &Deriv::compute, "Compute the gradient", "deriv_calc_type"_a = DerivCalcType::Default);
+        .def("compute", &Deriv::compute, "Compute the gradient", "deriv_calc_type"_a = DerivCalcType::Default)
+        .def("compute_df", &Deriv::compute_df, "Compute the density-fitted gradient");
 
     typedef SharedMatrix (MatrixFactory::*create_shared_matrix)() const;
     typedef SharedMatrix (MatrixFactory::*create_shared_matrix_name)(const std::string&) const;
@@ -759,8 +752,8 @@ void export_mints(py::module& m) {
         .export_values();
 
     py::enum_<GaussianType>(m, "GaussianType", "0 if Cartesian, 1 if Pure")
-        .value("Cartesian", Cartesian)
-        .value("Pure", Pure)
+        .value("Cartesian", Cartesian, "(n+1)(n+2)/2 functions")
+        .value("Pure", Pure, "2n+1 functions")
         .export_values();
 
     py::class_<ShellInfo, std::shared_ptr<ShellInfo>>(m, "ShellInfo")
@@ -1075,6 +1068,12 @@ void export_mints(py::module& m) {
              "atom"_a, "omega"_a = 0.0, "factory"_a = nullptr)
         .def("ao_tei_deriv2", &MintsHelper::ao_tei_deriv2,
              "Hessian  of AO basis TEI integrals: returns (3 * natoms)^2 matrices", "atom1"_a, "atom2"_a)
+        .def("ao_metric_deriv1", &MintsHelper::ao_metric_deriv1,
+             "Gradient of AO basis metric integrals: returns 3 matrices",
+             "atom"_a, "aux_name"_a)
+        .def("ao_3center_deriv1", &MintsHelper::ao_3center_deriv1,
+             "Gradient of AO basis 3-center, density-fitted integrals: returns 3 matrices",
+             "atom"_a, "aux_name"_a)
         .def("mo_oei_deriv1", &MintsHelper::mo_oei_deriv1,
              "Gradient of MO basis OEI integrals: returns (3 * natoms) matrices",
              "oei_type"_a, "atom"_a, "C1"_a, "C2"_a)
@@ -1481,7 +1480,7 @@ void export_mints(py::module& m) {
              "Return the si'th Gaussian shell on center", "center"_a, "si"_a)
         .def("n_frozen_core", &BasisSet::n_frozen_core,
              "Returns the number of orbital (non-ECP) frozen core electrons. For a given molecule and "
-             "|globals__freeze_core|, `(n_ecp_core()/2 + n_frozen_core()) = constant`.")
+             ":term:`FREEZE_CORE <FREEZE_CORE (GLOBALS)>`, `(n_ecp_core()/2 + n_frozen_core()) = constant`.")
         .def("n_ecp_core", ncore_no_args(&BasisSet::n_ecp_core),
              "Returns the total number of core electrons associated with all ECPs in this basis.")
         .def("n_ecp_core", ncore_one_arg(&BasisSet::n_ecp_core),

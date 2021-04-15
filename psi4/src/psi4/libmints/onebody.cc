@@ -3,7 +3,7 @@
  *
  * Psi4: an open-source quantum chemistry software package
  *
- * Copyright (c) 2007-2019 The Psi4 Developers.
+ * Copyright (c) 2007-2021 The Psi4 Developers.
  *
  * The copyrights for code used from other parties are included in
  * the corresponding files.
@@ -62,6 +62,9 @@ static void transform1e_2(int am, SphericalTransformIter &sti, double *s, double
     memset(t, 0, nk * tl * sizeof(double));
 
     for (sti.first(); !sti.is_done(); sti.next()) {
+        // In the standard spherical transform, cartindex() inverses the order
+        // per shell (s + (L*(L-1)/2), s + (L*(L-1)/2) -1, ...), and
+        // pureindex() is just a sequence 0, 1, ..., 2*L + 1
         double *sptr = s + sti.cartindex();
         double *tptr = t + sti.pureindex();
         double coef = sti.coef();

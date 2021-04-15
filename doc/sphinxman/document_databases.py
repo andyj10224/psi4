@@ -5,7 +5,7 @@
 #
 # Psi4: an open-source quantum chemistry software package
 #
-# Copyright (c) 2007-2019 The Psi4 Developers.
+# Copyright (c) 2007-2021 The Psi4 Developers.
 #
 # The copyrights for code used from other parties are included in
 # the corresponding files.
@@ -58,7 +58,8 @@ for pyfile in glob.glob(DriverPath + '../../psi4/share/psi4/databases/*.py'):
         pts('database', basename)
 
         fdriver.write(':srcdb:`%s`\n%s\n\n' % (basename, '"' * (9 + len(basename))))
-        fdriver.write('.. automodule:: %s\n\n' % (basename))
+        fdriver.write('.. automodule:: %s\n' % (basename))
+        fdriver.write('   :noindex:\n\n')
         fdriver.write('----\n')
 
     fdriver.write('\n')

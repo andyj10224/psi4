@@ -3,7 +3,7 @@
 .. #
 .. # Psi4: an open-source quantum chemistry software package
 .. #
-.. # Copyright (c) 2007-2019 The Psi4 Developers.
+.. # Copyright (c) 2007-2021 The Psi4 Developers.
 .. #
 .. # The copyrights for code used from other parties are included in
 .. # the corresponding files.
@@ -55,13 +55,13 @@ by M. F. Herbst *et. al.*. No additional licence or configuration
 is required to use adcc. The module serves as the backend for
 most algebraic-diagrammatic construction methods for correlated
 excited states in |PSIfour|. For more details on ADC methods,
-see :req:`sec:adc`.
+see :ref:`sec:adc`.
 
 Installation
 ~~~~~~~~~~~~
 
 For up to date information and more details,
-see the `adcc documentation <https://adc-connect.org/latest/installation.html>`_.
+see the `adcc installation documentation <https://adc-connect.org/latest/installation.html>`_.
 
 **Binary**
 

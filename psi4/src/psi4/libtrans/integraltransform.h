@@ -3,7 +3,7 @@
  *
  * Psi4: an open-source quantum chemistry software package
  *
- * Copyright (c) 2007-2019 The Psi4 Developers.
+ * Copyright (c) 2007-2021 The Psi4 Developers.
  *
  * The copyrights for code used from other parties are included in
  * the corresponding files.
@@ -48,6 +48,7 @@ class Matrix;
 class Dimension;
 class Wavefunction;
 class PSIO;
+class SOBasisSet;
 
 typedef std::vector<std::shared_ptr<MOSpace> > SpaceVec;
 
@@ -267,8 +268,8 @@ class PSI_API IntegralTransform {
     // contributions due to the valence orbitals feeling the electric field of the core orbitals
     // are accounted for by writing a "frozen core operator" to disk.
     double frozen_core_energy_;
-    // The wavefunction object, containing the orbital infomation
-    std::shared_ptr<Wavefunction> wfn_;
+    // Contains information about the SOs, needed when iterating
+    std::shared_ptr<SOBasisSet> sobasis_;
     // Pointer to the PSIO object to use for file I/O
     std::shared_ptr<PSIO> psio_;
     // The type of transformation

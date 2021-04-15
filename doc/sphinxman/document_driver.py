@@ -5,7 +5,7 @@
 #
 # Psi4: an open-source quantum chemistry software package
 #
-# Copyright (c) 2007-2019 The Psi4 Developers.
+# Copyright (c) 2007-2021 The Psi4 Developers.
 #
 # The copyrights for code used from other parties are included in
 # the corresponding files.
@@ -118,7 +118,7 @@ for basename in os.walk(DriverPath + '../../psi4/driver').next()[1]:
             fdriver.write('   :members:\n')
             fdriver.write('   :undoc-members:\n')
 
-        if basename == 'qcdb' and basename2 == 'interface_dftd3':
+        if basename == 'qcdb' and basename2 == 'molecule':
             fdriver.write('   :exclude-members: run_dftd3\n')
 
         fdriver.write('\n')

@@ -3,7 +3,7 @@
 #
 # Psi4: an open-source quantum chemistry software package
 #
-# Copyright (c) 2007-2019 The Psi4 Developers.
+# Copyright (c) 2007-2021 The Psi4 Developers.
 #
 # The copyrights for code used from other parties are included in
 # the corresponding files.
@@ -948,7 +948,6 @@ GEOS['%s-%s-%s' % (dbse, 'H2O', 'mono-RLX')] = qcdb.Molecule("""
 O        0.00000000     0.00000000     0.00000000
 H        0.00000000     0.00000000     0.96183119
 H        0.00000000     0.93357861    -0.23140921 
-O
 units angstrom
 """)
 

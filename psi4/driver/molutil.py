@@ -3,7 +3,7 @@
 #
 # Psi4: an open-source quantum chemistry software package
 #
-# Copyright (c) 2007-2019 The Psi4 Developers.
+# Copyright (c) 2007-2021 The Psi4 Developers.
 #
 # The copyrights for code used from other parties are included in
 # the corresponding files.
@@ -61,7 +61,7 @@ def molecule_get_attr(self, name):
 
 
 @classmethod
-def molecule_from_string(cls,
+def _molecule_from_string(cls,
                          molstr,
                          dtype=None,
                          name=None,
@@ -94,7 +94,7 @@ def molecule_from_string(cls,
 
 
 @classmethod
-def molecule_from_arrays(cls,
+def _molecule_from_arrays(cls,
                          geom=None,
                          elea=None,
                          elez=None,
@@ -175,7 +175,7 @@ def molecule_from_arrays(cls,
 
 
 @classmethod
-def molecule_from_schema(cls, molschema, return_dict=False, nonphysical=False, verbose=1):
+def _molecule_from_schema(cls, molschema, return_dict=False, nonphysical=False, verbose=1):
     """Construct Molecule from non-Psi4 schema.
 
     Light wrapper around :py:func:`~psi4.core.Molecule.from_arrays`.
@@ -201,10 +201,14 @@ def molecule_from_schema(cls, molschema, return_dict=False, nonphysical=False, v
     """
     molrec = qcel.molparse.from_schema(molschema, nonphysical=nonphysical, verbose=verbose)
 
+    qmol = core.Molecule.from_dict(molrec)
+    geom = np.array(molrec["geom"]).reshape((-1, 3))
+    qmol._initial_cartesian = core.Matrix.from_array(geom)
+
     if return_dict:
-        return core.Molecule.from_dict(molrec), molrec
+        return qmol, molrec
     else:
-        return core.Molecule.from_dict(molrec)
+        return qmol
 
 
 def dynamic_variable_bind(cls):
@@ -220,10 +224,10 @@ def dynamic_variable_bind(cls):
     cls.BFS = qcdb.Molecule.BFS
     cls.B787 = qcdb.Molecule.B787
     cls.scramble = qcdb.Molecule.scramble
-    cls.from_arrays = molecule_from_arrays
-    cls.from_string = molecule_from_string
+    cls.from_arrays = _molecule_from_arrays
+    cls.from_string = _molecule_from_string
     cls.to_string = qcdb.Molecule.to_string
-    cls.from_schema = molecule_from_schema
+    cls.from_schema = _molecule_from_schema
     cls.to_schema = qcdb.Molecule.to_schema
     cls.run_dftd3 = qcdb.Molecule.run_dftd3
     cls.format_molecule_for_mol = qcdb.Molecule.format_molecule_for_mol
@@ -252,6 +256,11 @@ def geometry(geom, name="default"):
         geom, enable_qm=True, missing_enabled_return_qm='minimal', enable_efp=True, missing_enabled_return_efp='none')
 
     molecule = core.Molecule.from_dict(molrec['qm'])
+    if "geom" in molrec["qm"]:
+        geom = np.array(molrec["qm"]["geom"]).reshape((-1, 3))
+        if molrec["qm"]["units"] == "Angstrom":
+            geom = geom / qcel.constants.bohr2angstroms
+        molecule._initial_cartesian = core.Matrix.from_array(geom)
     molecule.set_name(name)
 
     if 'efp' in molrec:

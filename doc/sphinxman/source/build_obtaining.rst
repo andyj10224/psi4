@@ -3,7 +3,7 @@
 .. #
 .. # Psi4: an open-source quantum chemistry software package
 .. #
-.. # Copyright (c) 2007-2019 The Psi4 Developers.
+.. # Copyright (c) 2007-2021 The Psi4 Developers.
 .. #
 .. # The copyrights for code used from other parties are included in
 .. # the corresponding files.
@@ -48,7 +48,6 @@ select outright among:
 #. :ref:`faq:clonepsi4public`
 #. :ref:`faq:forkpsi4public` (only path to develop |PSIfour|)
 #. :ref:`faq:tarballpsi4public`
-#. :ref:`faq:psi3sourceforge`
 
 
 .. _`faq:quiz`:
@@ -106,7 +105,7 @@ though the below remains valid.
       :ref:`plugins through conda <sec:condaplugins>`
 
 * I really like parentheses and/or DBOC, so I want Psi3. |w---w|
-  :ref:`Goto Psi3-from-SourceForge <faq:psi3sourceforge>`
+  Psi3 is available from `sourceforge <https://sourceforge.net/projects/psicode/files/psi/3.4.0/>`_, but you're on your own.
 
 .. comment * I am a core |PSIfour| developer, yet I'm still taking this quiz.
 .. comment 

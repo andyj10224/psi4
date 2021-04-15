@@ -3,7 +3,7 @@
 .. #
 .. # Psi4: an open-source quantum chemistry software package
 .. #
-.. # Copyright (c) 2007-2019 The Psi4 Developers.
+.. # Copyright (c) 2007-2021 The Psi4 Developers.
 .. #
 .. # The copyrights for code used from other parties are included in
 .. # the corresponding files.
@@ -197,7 +197,7 @@ Running the Script
 3. As an example, take the cube files generated from the water calculation from the above input file.
    Using vmd_cube the alpha molecular orbitals can be rendered and output in one image with::
 
-  python vmd_cube.py /path/to/cube/files/ --opacity=0.5 --rx=90 --ry=60
+    python vmd_cube.py /path/to/cube/files/ --opacity=0.5 --rx=90 --ry=60
 
 The desired image in this case is called "AlphaMOs.tga", and looks like	this:
 
