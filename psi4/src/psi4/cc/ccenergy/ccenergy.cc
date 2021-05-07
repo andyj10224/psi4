@@ -3,7 +3,7 @@
  *
  * Psi4: an open-source quantum chemistry software package
  *
- * Copyright (c) 2007-2019 The Psi4 Developers.
+ * Copyright (c) 2007-2021 The Psi4 Developers.
  *
  * The copyrights for code used from other parties are included in
  * the corresponding files.
@@ -314,12 +314,11 @@ double CCEnergyWavefunction::compute_energy() {
     if (!done) {
         outfile->Printf("     ** Wave function not converged to %2.1e ** \n", params_.convergence);
 
-        if (params_.aobasis != "NONE") dpd_close(1);
+        if (params_.aobasis != "NONE" || params_.df) dpd_close(1);
         dpd_close(0);
         cleanup();
-        timer_off("ccenergy");
         exit_io();
-        return Failure;
+        throw PSIEXCEPTION("Coupled Cluster wave function not converged.");
     }
 
     outfile->Printf("    SCF energy       (wfn)                    = %20.15f\n", moinfo_.escf);
@@ -481,7 +480,7 @@ double CCEnergyWavefunction::compute_energy() {
 
     if (params_.brueckner) Process::environment.globals["BRUECKNER CONVERGED"] = rotate();
 
-    if (params_.aobasis != "NONE") dpd_close(1);
+    if (params_.aobasis != "NONE" || params_.df) dpd_close(1);
     dpd_close(0);
 
     if (params_.ref == 2)

@@ -3,7 +3,7 @@
  *
  * Psi4: an open-source quantum chemistry software package
  *
- * Copyright (c) 2007-2019 The Psi4 Developers.
+ * Copyright (c) 2007-2021 The Psi4 Developers.
  *
  * The copyrights for code used from other parties are included in
  * the corresponding files.
@@ -76,7 +76,6 @@ class OCCWave : public Wavefunction {
     void compute_sigma_vector();
     void orb_resp_pcg_rhf();
     void orb_resp_pcg_uhf();
-    void dump_ints();
     void denominators_rhf();
     void denominators_uhf();
     void gfock();

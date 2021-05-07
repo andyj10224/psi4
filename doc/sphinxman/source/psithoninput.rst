@@ -3,7 +3,7 @@
 .. #
 .. # Psi4: an open-source quantum chemistry software package
 .. #
-.. # Copyright (c) 2007-2019 The Psi4 Developers.
+.. # Copyright (c) 2007-2021 The Psi4 Developers.
 .. #
 .. # The copyrights for code used from other parties are included in
 .. # the corresponding files.
@@ -367,7 +367,9 @@ Loops
 
 Python provides many control structures, any of which can be used within |PSIfour|
 input files. For example, to loop over three basis sets, the following code can
-be used::
+be used:
+
+.. code-block:: none
 
     basis_sets = ["cc-pVDZ", "cc-pVTZ", "cc-pVQZ"]
     for basis_set in basis_sets:

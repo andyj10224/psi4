@@ -1,6 +1,7 @@
 #! Tests CAM gradients with and without XC pieces to narrow grid error
 
 
+
 molecule {
     H  0.000  0.000  0.000
     F  0.000  0.000  1.100
@@ -13,7 +14,7 @@ set {
     dft_radial_points     120
     dft_spherical_points  434
     e_convergence         12
-    d_convergence         12
+    d_convergence         10
     points 5
 }
 

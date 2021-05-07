@@ -3,7 +3,7 @@
 .. #
 .. # Psi4: an open-source quantum chemistry software package
 .. #
-.. # Copyright (c) 2007-2019 The Psi4 Developers.
+.. # Copyright (c) 2007-2021 The Psi4 Developers.
 .. #
 .. # The copyrights for code used from other parties are included in
 .. # the corresponding files.
@@ -358,6 +358,7 @@ publication-quality renderings.
     :scale: 50%
     :alt: ESP of monomer A
 
+
 F/I-SAPT Keywords
 ^^^^^^^^^^^^^^^^^
 
@@ -365,9 +366,8 @@ The input files described above cover roughly 90% of all F/I-SAPT analyses. For
 more delicate or involved problems, there are a large number of user options
 that permit the customization of the I-SAPT subsystem partition, the convergence
 of the IBO localization procedure, numerical thresholds, etc. We have an entire
-video tutorial devoted to these options `F/I-SAPT Options <https://www.youtube.com/watch?v=KFkPKSUZVfI&index=5&list=PLg_zUQpVYlA1Tc1X_HgAbqnFcHNydqN7W>`_.
-Direct source-code documentation on these options is available :ref:`here
-<apdx:fisapt_psivar>`_.
+`video tutorial devoted to F/I-SAPT Options <https://www.youtube.com/watch?v=KFkPKSUZVfI&index=5&list=PLg_zUQpVYlA1Tc1X_HgAbqnFcHNydqN7W>`_ .
+Direct source-code documentation on these options is available :ref:`here <apdx:fisapt>`.
 
 Additional Notes
 ^^^^^^^^^^^^^^^^

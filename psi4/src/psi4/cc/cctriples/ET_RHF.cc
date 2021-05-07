@@ -3,7 +3,7 @@
  *
  * Psi4: an open-source quantum chemistry software package
  *
- * Copyright (c) 2007-2019 The Psi4 Developers.
+ * Copyright (c) 2007-2021 The Psi4 Developers.
  *
  * The copyrights for code used from other parties are included in
  * the corresponding files.
@@ -98,8 +98,8 @@ double ET_RHF() {
         if (virtpi[h] > max_a) max_a = virtpi[h];
     long int thread_mem_estimate = 4 * max_a * max_a * max_a;
 
-    outfile->Printf("    Memory available in words        : %15ld\n", mem_avail);
-    outfile->Printf("    ~Words needed per explicit thread: %15ld\n", thread_mem_estimate);
+    outfile->Printf("    Memory available in words               : %15ld\n", mem_avail);
+    outfile->Printf("    Approx. words needed per explicit thread: %15ld\n", thread_mem_estimate);
 
     // subtract at least 1/2 for non-abc quantities (mainly 2 ijab's + other buffers)
     double tval = (double)mem_avail / (double)thread_mem_estimate;

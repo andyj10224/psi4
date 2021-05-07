@@ -3,7 +3,7 @@
 .. #
 .. # Psi4: an open-source quantum chemistry software package
 .. #
-.. # Copyright (c) 2007-2019 The Psi4 Developers.
+.. # Copyright (c) 2007-2021 The Psi4 Developers.
 .. #
 .. # The copyrights for code used from other parties are included in
 .. # the corresponding files.
@@ -55,7 +55,7 @@ approaches.
 
 The Psi4FockCI plugin allows one to perform spin-flip (SF), ionization 
 potential (IP), and electron affinity (EA) calculations, as well as 
-combined RAS-SF-IP/EA calculations, through the DETCI (:ref:`CI`) module. 
+combined RAS-SF-IP/EA calculations, through the DETCI (:ref:`sec:ci`) module.
 
 Installation
 ~~~~~~~~~~~~

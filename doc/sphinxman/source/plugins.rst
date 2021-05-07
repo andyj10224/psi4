@@ -3,7 +3,7 @@
 .. #
 .. # Psi4: an open-source quantum chemistry software package
 .. #
-.. # Copyright (c) 2007-2019 The Psi4 Developers.
+.. # Copyright (c) 2007-2021 The Psi4 Developers.
 .. #
 .. # The copyrights for code used from other parties are included in
 .. # the corresponding files.
@@ -64,7 +64,9 @@ If the name you provide is not valid, |PSIfour| will complain.
 plugin. In this example, a directory named myplugin will be created.
 All you need to do is ``cd`` into the directory, use |PSIfour| to generate
 a Makefile, and type make. Then execute ``psi4`` in the directory on the
-default input file. ::
+default input file.
+
+.. code-block:: bash
 
    >>> cd myplugin
    >>> `psi4 --plugin-compile`
@@ -123,7 +125,9 @@ or environment (below, ``$PSI4CONDA``). On Mac, one must use
 installing XCode from the App Store that provides ``clang`` and
 ``clang++`` compilers.
 
-* Check environment ::
+* Check environment:
+
+.. code-block:: bash
 
     # yes, the following returns a blank line. yes, LD_LIBRARY_PATH irrelevant
     >>> echo $PYTHONHOME $PYTHONPATH $DYLD_LIBRARY_PATH $PSIDATADIR
@@ -144,7 +148,9 @@ installing XCode from the App Store that provides ``clang`` and
     $PSI4CONDA/bin/cmake
     # if above empty, ``conda install cmake``
 
-* Create and compile plugin ::
+* Create and compile plugin:
+
+.. code-block:: bash
 
     >>> psi4 --plugin-name testplugin
     -- Creating "testplugin" with "basic" template. -----------------

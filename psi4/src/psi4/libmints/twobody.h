@@ -3,7 +3,7 @@
  *
  * Psi4: an open-source quantum chemistry software package
  *
- * Copyright (c) 2007-2019 The Psi4 Developers.
+ * Copyright (c) 2007-2021 The Psi4 Developers.
  *
  * The copyrights for code used from other parties are included in
  * the corresponding files.
@@ -146,16 +146,15 @@ class PSI_API TwoBodyAOInt {
     std::vector<std::vector<int>> function_to_function_;
     std::function<bool(int, int, int, int)> sieve_impl_;
     /// Do Density Screening?
-    bool do_dens_screen_;
-    /// Density Screening Threshold
-    double dens_screen_threshold_;
+    bool density_screening_;
+    /// Density Screening Tolerance
+    double density_screening_threshold_;
     /// Max Density per Shell Pair
     std::vector<std::vector<double>> max_dens_shell_pair_;
 
     void setup_sieve();
     void create_sieve_pair_info(const std::shared_ptr<BasisSet> bs, PairList &shell_pairs, bool is_bra);
-    
-    
+
     /// Implements CSAM screening of a shell quartet
     bool shell_significant_csam(int M, int N, int R, int S);
     /// Implements Schwarz inequality screening of a shell quartet
@@ -208,14 +207,14 @@ class PSI_API TwoBodyAOInt {
      */
     /// Update the Max Density Per Shell Pair given an updated Density Matrix (Haser 1989)
     void update_density(const std::vector<SharedMatrix>& D);
+
+    /// Density Screening of a shell quartet (Haser 1989)
+    bool shell_significant_density(int M, int N, int R, int S) const;
     
     /// Pair Screening used in the linK algorithm
     double pair_screen_linK(int M, int N);
     /// Quartet Screening used in the linK algorithm
     double quart_screen_linK(int M, int N, int R, int S);
-    
-    /// Density Screening of a shell quartet (Haser 1989)
-    bool shell_significant_density(int M, int N, int R, int S);
     
     /// Separate J and K density screening
     bool shell_significant_density_J(int M, int N, int R, int S);

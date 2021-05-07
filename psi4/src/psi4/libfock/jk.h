@@ -3,7 +3,7 @@
  *
  * Psi4: an open-source quantum chemistry software package
  *
- * Copyright (c) 2007-2019 The Psi4 Developers.
+ * Copyright (c) 2007-2021 The Psi4 Developers.
  *
  * The copyrights for code used from other parties are included in
  * the corresponding files.
@@ -258,6 +258,11 @@ class PSI_API JK {
     
     /// Perform an incremental fock build?
     bool incr_fock_;
+
+    /// Perform Density Screening for ERIs?
+    bool density_screening_;
+    /// Perform Incremental Fock Build for J and K Matrices?
+    bool ifb_;
 
     /// Combine (pq|rs) and (pq|w|rs) integrals before contracting?
     bool wcombine_;
@@ -717,6 +722,23 @@ class PSI_API DirectJK : public JK {
 
     std::string name() override { return "DirectJK"; }
     size_t memory_estimate() override;
+
+    // => Required Algorithm-Specific Variables <= //
+
+    // Previous Iteration Matrices for Incremental Fock Build
+    std::vector<SharedMatrix> D_prev_;
+    std::vector<SharedMatrix> J_prev_;
+    std::vector<SharedMatrix> K_prev_;
+    std::vector<SharedMatrix> wK_prev_;
+
+    // Delta Matrices for Incremental Fock Build
+    std::vector<SharedMatrix> del_D_;
+    std::vector<SharedMatrix> del_J_;
+    std::vector<SharedMatrix> del_K_;
+    std::vector<SharedMatrix> del_wK_;
+
+    // Current Direct SCF Iteration
+    int iteration_ = 0;
 
     // => Required Algorithm-Specific Methods <= //
 

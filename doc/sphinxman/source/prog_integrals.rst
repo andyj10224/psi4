@@ -3,7 +3,7 @@
 .. #
 .. # Psi4: an open-source quantum chemistry software package
 .. #
-.. # Copyright (c) 2007-2019 The Psi4 Developers.
+.. # Copyright (c) 2007-2021 The Psi4 Developers.
 .. #
 .. # The copyrights for code used from other parties are included in
 .. # the corresponding files.
@@ -52,6 +52,7 @@ A very simple loop that does not use permutational symmetry might look
 something like this in the old scheme:
 
 .. code-block:: cpp
+
     auto sieve = std::make_shared<ERISieve>(basisset, cutoff);
     auto factory= std::make_shared<IntegralFactory>(basisset);
     int deriv_level = 0;

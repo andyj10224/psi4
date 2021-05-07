@@ -3,7 +3,7 @@
  *
  * Psi4: an open-source quantum chemistry software package
  *
- * Copyright (c) 2007-2019 The Psi4 Developers.
+ * Copyright (c) 2007-2021 The Psi4 Developers.
  *
  * The copyrights for code used from other parties are included in
  * the corresponding files.
@@ -73,8 +73,11 @@ SharedMatrix vertcat(const std::vector<SharedMatrix>& mats);
  * \param transA Transpose the first matrix
  * \param transB Transpose the second matrix
  */
+
 PSI_API
 SharedMatrix doublet(const SharedMatrix& A, const SharedMatrix& B, bool transA = false, bool transB = false);
+
+Matrix doublet(const Matrix& A, const Matrix& B, bool transA = false, bool transB = false);
 
 /** Simple triplet GEMM with on-the-fly allocation
  * \param A The first matrix
@@ -87,6 +90,8 @@ SharedMatrix doublet(const SharedMatrix& A, const SharedMatrix& B, bool transA =
 PSI_API
 SharedMatrix triplet(const SharedMatrix& A, const SharedMatrix& B, const SharedMatrix& C, bool transA = false,
                      bool transB = false, bool transC = false);
+
+Matrix triplet(const Matrix&A, const Matrix& B, const Matrix& C, bool transA = false, bool transB = false, bool transC = false);
 
 namespace detail {
 /*!
@@ -115,9 +120,9 @@ class PSI_API Matrix : public std::enable_shared_from_this<Matrix> {
     double*** matrix_;
     /// Number of irreps
     int nirrep_;
-    /// Rows per irrep array
+    /// Rows per irrep array. Element "h" is associated with matrix block h.
     Dimension rowspi_;
-    /// Columns per irrep array
+    /// Columns per irrep array. Element "h" is associated with matrix block h ^ symmetry_.
     Dimension colspi_;
     /// Name of the matrix
     std::string name_;
@@ -281,7 +286,11 @@ class PSI_API Matrix : public std::enable_shared_from_this<Matrix> {
     /// Copies data to the row specified. Assumes data is of correct length.
     void copy_to_row(int h, int row, double const* const data);
 
-    enum SaveType { Full, SubBlocks, LowerTriangle };
+    enum SaveType { Full
+    PSI_DEPRECATED(
+        "Using `Matrix::SaveType::Full` instead of `Matrix::SaveType::SubBlocks` is deprecated, "
+        "and in 1.5 it will stop working"),
+    SubBlocks, LowerTriangle, ThreeIndexLowerTriangle };
 
     /**
      * @{
@@ -674,7 +683,7 @@ class PSI_API Matrix : public std::enable_shared_from_this<Matrix> {
     /// Returns the trace of this
     double trace();
     /// Creates a new matrix which is the transpose of this
-    SharedMatrix transpose();
+    SharedMatrix transpose() const;
 
     /// In place transposition
     void transpose_this();
@@ -690,6 +699,7 @@ class PSI_API Matrix : public std::enable_shared_from_this<Matrix> {
     void subtract(const Matrix* const);
     /// Subtracts a matrix from this
     void subtract(const SharedMatrix&);
+    void subtract(const Matrix&);
     /// Multiplies the two arguments and adds their result to this
     void accumulate_product(const Matrix* const, const Matrix* const);
     void accumulate_product(const SharedMatrix&, const SharedMatrix&);

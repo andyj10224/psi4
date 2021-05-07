@@ -3,7 +3,7 @@
  *
  * Psi4: an open-source quantum chemistry software package
  *
- * Copyright (c) 2007-2019 The Psi4 Developers.
+ * Copyright (c) 2007-2021 The Psi4 Developers.
  *
  * The copyrights for code used from other parties are included in
  * the corresponding files.
@@ -208,14 +208,9 @@ void RHF::form_G() {
     const std::vector<SharedMatrix>& J = jk_->J();
     const std::vector<SharedMatrix>& K = jk_->K();
     const std::vector<SharedMatrix>& wK = jk_->wK();
-    
-    
-    if (!incr_fock_) J_ = J[0];
-    else J_->add(J[0]);
-    
+    J_ = J[0];
     if (functional_->is_x_hybrid()) {
-        if (!incr_fock_) K_ = K[0];
-        else K_->add(K[0]);
+        K_ = K[0];
     }
     if (functional_->is_x_lrc()) {
         wK_ = wK[0];

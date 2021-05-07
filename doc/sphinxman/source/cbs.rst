@@ -3,7 +3,7 @@
 .. #
 .. # Psi4: an open-source quantum chemistry software package
 .. #
-.. # Copyright (c) 2007-2019 The Psi4 Developers.
+.. # Copyright (c) 2007-2021 The Psi4 Developers.
 .. #
 .. # The copyrights for code used from other parties are included in
 .. # the corresponding files.
@@ -153,12 +153,12 @@ of the cbs procedure. The stage energies of this section sum outright to the tot
      total            CBS                         -1.16281105
     ----------------------------------------------------------------------------------
 
-.. _`sec:cbs_xtpl`:
-
 .. index::
    single: cbs(); extrapolation schemes
    single: extrapolation schemes
    single: basis set; extrapolation
+
+.. _`sec:cbs_xtpl`:
 
 Extrapolation Schemes
 ^^^^^^^^^^^^^^^^^^^^^
