@@ -244,6 +244,8 @@ class PSI_API JK {
     double do_csam_;
     /// Whether to all desymmetrization, for cases when it's already been performed elsewhere
     std::vector<bool> input_symmetry_cast_map_;
+    /// Current SCF Iteration
+    int iteration_ = 0;
 
     // => Tasks <= //
 
@@ -253,6 +255,9 @@ class PSI_API JK {
     bool do_K_;
     /// Do wK matrices? Defaults to false
     bool do_wK_;
+    
+    /// Perform an incremental fock build?
+    bool incr_fock_;
 
     /// Perform Density Screening for ERIs?
     bool density_screening_;
@@ -288,6 +293,8 @@ class PSI_API JK {
     std::vector<SharedMatrix> K_;
     /// wK matrices: \f$K_{mn}(\omega)=(ml|\omega|ns)C_{li}^{left}C_{si}^{right}\f$
     std::vector<SharedMatrix> wK_;
+    /// Previous D Matrix, used in Incremental Fock build
+    std::vector<SharedMatrix> D_prev_;
 
     // => Microarchitecture-Level State Variables (No Spatial Symmetry) <= //
 
@@ -307,6 +314,8 @@ class PSI_API JK {
     std::vector<SharedMatrix> K_ao_;
     /// wK matrices: wK_mn = (ml|w|ns) C_li^left C_si^right
     std::vector<SharedMatrix> wK_ao_;
+    /// Previous D Matrix (AO) used in Incremental Fock build
+    std::vector<SharedMatrix> D_ao_prev_;
 
     // => Per-Iteration Setup/Finalize Routines <= //
 
@@ -745,6 +754,14 @@ class PSI_API DirectJK : public JK {
     /// Build the J and K matrices for this integral class
     void build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints, std::vector<std::shared_ptr<Matrix> >& D,
                   std::vector<std::shared_ptr<Matrix> >& J, std::vector<std::shared_ptr<Matrix> >& K);
+    
+    /// Build J and K matrices separately for linear scaling methods
+    
+    void build_J(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints, std::vector<std::shared_ptr<Matrix> >& D,
+                  std::vector<std::shared_ptr<Matrix> >& J);
+    
+    void build_K(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints, std::vector<std::shared_ptr<Matrix> >& D,
+                  std::vector<std::shared_ptr<Matrix> >& K);
 
     /// Common initialization
     void common_init();

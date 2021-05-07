@@ -207,8 +207,19 @@ class PSI_API TwoBodyAOInt {
      */
     /// Update the Max Density Per Shell Pair given an updated Density Matrix (Haser 1989)
     void update_density(const std::vector<SharedMatrix>& D);
+
     /// Density Screening of a shell quartet (Haser 1989)
     bool shell_significant_density(int M, int N, int R, int S) const;
+    
+    /// Pair Screening used in the linK algorithm
+    double pair_screen_linK(int M, int N);
+    /// Quartet Screening used in the linK algorithm
+    double quart_screen_linK(int M, int N, int R, int S);
+    
+    /// Separate J and K density screening
+    bool shell_significant_density_J(int M, int N, int R, int S);
+    bool shell_significant_density_K(int M, int N, int R, int S);
+    
     /// Ask the built in sieve whether this quartet contributes
     bool shell_significant(int M, int N, int R, int S) const { return sieve_impl_(M, N, R, S); };
     /// Are any of the quartets within a given shellpair list significant
