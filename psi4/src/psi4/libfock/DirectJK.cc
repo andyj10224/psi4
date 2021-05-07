@@ -342,7 +342,7 @@ void DirectJK::compute_JK() {
         std::vector<std::shared_ptr<TwoBodyAOInt>> ints;
         for (int thread = 0; thread < df_ints_num_threads_; thread++) {
             ints.push_back(std::shared_ptr<TwoBodyAOInt>(factory->erf_eri(omega_)));
-            if (dens_screen) ints[thread]->update_density(D_ref);
+            if (density_screening_) ints[thread]->update_density(D_ref);
         }
         // TODO: Fast K algorithm
         if (do_J_) {
