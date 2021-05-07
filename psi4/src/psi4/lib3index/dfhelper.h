@@ -342,6 +342,7 @@ class PSI_API DFHelper {
     double omega_alpha_;
     double omega_beta_;
     bool debug_ = false;
+    bool cosx_ = false;
     bool sparsity_prepared_ = false;
     int print_lvl_ = 1;
 
@@ -516,6 +517,8 @@ class PSI_API DFHelper {
                                                           bool lr_symmetric);
     void compute_wK(std::vector<SharedMatrix> Cleft, std::vector<SharedMatrix> Cright, std::vector<SharedMatrix> wK,
                     size_t max_nocc, bool do_J, bool do_K, bool do_wK);
+    
+    void compute_cosx_K(std::vector<SharedMatrix> D, std::vector<SharedMatrix> K);
 
     // => misc <=
     void fill(double* b, size_t count, double value);

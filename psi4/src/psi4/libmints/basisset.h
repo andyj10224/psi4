@@ -168,6 +168,7 @@ class PSI_API BasisSet {
 
    public:
     BasisSet();
+    BasisSet(double x, double y, double z);
 
     BasisSet(const std::string &basistype, SharedMolecule mol,
              std::map<std::string, std::map<std::string, std::vector<ShellInfo> > > &shell_map,
@@ -368,6 +369,14 @@ class PSI_API BasisSet {
      *  @return A new empty BasisSet object.
      */
     static std::shared_ptr<BasisSet> zero_ao_basis_set();
+
+    /** Returns an empty basis set object (non-zero origin)
+     * 
+     *  Returns a BasisSet object that actually has a single s-function
+     *  centered at (x, y, z) with an exponent of 0.0 and contraction of 1.0.
+     *  @return A new empty BasisSet object.
+     */
+    static std::shared_ptr<BasisSet> zero_ao_basis_set(double x, double y, double z);
 
     /** Returns an empty SO basis set object.
      *

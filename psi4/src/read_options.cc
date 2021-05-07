@@ -1516,6 +1516,8 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_double("DF_BUMP_R0", 0.0);
         /*- Bump function max radius -*/
         options.add_double("DF_BUMP_R1", 0.0);
+        /*- Do cosx Exchange? -*/
+        options.add_bool("DF_COSX", false);
 
         /*- SUBSECTION SAD Guess Algorithm -*/
 

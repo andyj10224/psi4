@@ -144,6 +144,68 @@ BasisSet::BasisSet() {
                                uexponents_, GaussianType(0), 0, xyz_, 0);
 }
 
+// Constructed a shifted-center zero AO basis set
+BasisSet::BasisSet(double x, double y, double z) {
+    initialize_singletons();
+
+    // Add a dummy atom at the origin, to hold this basis function
+    molecule_ = std::make_shared<Molecule>();
+    molecule_->add_atom(0, 0.0, 0.0, 0.0);
+    // Fill with data representing a single S function, at the origin, with 0 exponent
+    n_uprimitive_ = 1;
+    n_shells_ = 1;
+    nprimitive_ = 1;
+    nao_ = 1;
+    nbf_ = 1;
+    n_prim_per_shell_ = new int[1];
+    uexponents_ = new double[1];
+    ucoefficients_ = new double[1];
+    uerd_coefficients_ = new double[1];
+    uoriginal_coefficients_ = new double[1];
+    shell_first_ao_ = new int[1];
+    shell_first_basis_function_ = new int[1];
+    shells_ = new GaussianShell[1];
+    l2_shells_.push_back(libint2::Shell::unit());
+    ao_to_shell_ = new int[1];
+    function_to_shell_ = new int[1];
+    function_center_ = new int[1];
+    shell_center_ = new int[1];
+    center_to_nshell_ = new int[1];
+    center_to_shell_ = new int[1];
+    xyz_ = new double[3];
+    ecp_shell_center_ = nullptr;
+    center_to_ecp_nshell_ = nullptr;
+    center_to_ecp_shell_ = nullptr;
+    uecpexponents_ = nullptr;
+    uecpcoefficients_ = nullptr;
+    uecpns_ = nullptr;
+    ecp_shells_ = nullptr;
+    n_prim_per_shell_[0] = 1;
+    uexponents_[0] = 0.0;
+    ucoefficients_[0] = 1.0;
+    uerd_coefficients_[0] = 1.0;
+    uoriginal_coefficients_[0] = 1.0;
+    shell_first_ao_[0] = 0;
+    shell_first_basis_function_[0] = 0;
+    ao_to_shell_[0] = 0;
+    function_to_shell_[0] = 0;
+    function_center_[0] = 0;
+    shell_center_[0] = 0;
+    center_to_nshell_[0] = 1;
+    center_to_shell_[0] = 0;
+    puream_ = false;
+    max_am_ = 0;
+    max_nprimitive_ = 1;
+    xyz_[0] = x;
+    xyz_[1] = y;
+    xyz_[2] = z;
+    name_ = "(Empty Basis Set)";
+    key_ = "(Empty Basis Set)";
+    target_ = "(Empty Basis Set)";
+    shells_[0] = GaussianShell(Gaussian, 0, nprimitive_, uoriginal_coefficients_, ucoefficients_, uerd_coefficients_,
+                               uexponents_, GaussianType(0), 0, xyz_, 0);
+}
+
 BasisSet::~BasisSet() {
     delete[] n_prim_per_shell_;
     delete[] uexponents_;
@@ -663,6 +725,12 @@ const GaussianShell &BasisSet::shell(int center, int si) const { return shell(ce
 std::shared_ptr<BasisSet> BasisSet::zero_ao_basis_set() {
     // In the new implementation, we simply call the default constructor
     auto new_basis = std::make_shared<BasisSet>();
+    return new_basis;
+}
+
+std::shared_ptr<BasisSet> BasisSet::zero_ao_basis_set(double x, double y, double z) {
+    // Call the constructor that takes in 3 doubles to account for the shifted origin
+    auto new_basis = std::make_shared<BasisSet>(x, y, z);
     return new_basis;
 }
 
