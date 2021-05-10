@@ -728,11 +728,13 @@ std::shared_ptr<BasisSet> BasisSet::zero_ao_basis_set() {
     return new_basis;
 }
 
+/*
 std::shared_ptr<BasisSet> BasisSet::zero_ao_basis_set(double x, double y, double z) {
     // Call the constructor that takes in 3 doubles to account for the shifted origin
     auto new_basis = std::make_shared<BasisSet>(x, y, z);
     return new_basis;
 }
+*/
 
 BasisSet::BasisSet(const std::string &basistype, SharedMolecule mol,
                    std::map<std::string, std::map<std::string, std::vector<ShellInfo>>> &shell_map,

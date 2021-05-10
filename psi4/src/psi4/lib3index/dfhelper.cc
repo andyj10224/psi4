@@ -50,7 +50,9 @@
 #include "psi4/libmints/molecule.h"
 #include "psi4/libmints/matrix.h"
 #include "psi4/libmints/basisset.h"
+#include "psi4/libmints/pseudospectral.h"
 #include "psi4/libmints/twobody.h"
+#include "psi4/libmints/mintshelper.h"
 #include "psi4/libpsi4util/PsiOutStream.h"
 #include "psi4/libqt/qt.h"
 #include "psi4/libpsio/psio.hpp"
@@ -3010,7 +3012,7 @@ void DFHelper::compute_JK(std::vector<SharedMatrix> Cleft, std::vector<SharedMat
 
     // size checks for C matrices occur in jk.cc
     // computing D occurs inside of jk.cc
-    if (cosx_) do_K = false;
+    if (iteration_ > 0 && cosx_) do_K = false;
 
     // determine buffer sizes and blocking scheme
     // would love to move this to initialize(), but
@@ -3116,7 +3118,9 @@ void DFHelper::compute_JK(std::vector<SharedMatrix> Cleft, std::vector<SharedMat
 
         bcount += block_size;
     }
-    if (cosx_) compute_cosx_K(D, K);
+    if (iteration_ > 0 && cosx_) compute_cosx_K(D, K);
+    
+    iteration_ += 1;
     // outfile->Printf("\n     ==> DFHelper:--End J/K Builds (disk)<==\n\n");
 }
 void DFHelper::compute_J_symm(std::vector<SharedMatrix> D, std::vector<SharedMatrix> J, double* Mp, double* T1p,
@@ -3395,7 +3399,7 @@ void DFHelper::compute_wK(std::vector<SharedMatrix> Cleft, std::vector<SharedMat
     }
 }
 
-void DFHelper::compute_cosx_K(std::vector<SharedMatrix> D, std::vector<SharedMatrix> K) {
+void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& K) {
 
     Options& options = Process::environment.options;
     auto mol = primary_->molecule();
@@ -3403,13 +3407,14 @@ void DFHelper::compute_cosx_K(std::vector<SharedMatrix> D, std::vector<SharedMat
     auto blocks = grid->blocks();
 
     size_t npoints = grid->npoints();
-    std::vector<double> weights(npoints, 0.0);
-    std::vector<double> x_points(npoints, 0.0);
-    std::vector<double> y_points(npoints, 0.0);
-    std::vector<double> z_points(npoints, 0.0);
-    std::vector<double> phi_ao(npoints * nbf_, 0.0);
+    std::vector<double> weights(npoints);
+    std::vector<double> x_points(npoints);
+    std::vector<double> y_points(npoints);
+    std::vector<double> z_points(npoints);
+    std::vector<double> phi_ao(npoints * nbf_);
 
-    auto mints = std::shared_ptr<MintsHelper>(primary_);
+    auto integral = std::make_shared<IntegralFactory>(primary_);
+    auto ao_pseudo = (PseudospectralInt *) (integral->ao_pseudospectral(0));
 
     size_t rpoints = 0;
     for (int b = 0; b < blocks.size(); b++) {
@@ -3425,68 +3430,71 @@ void DFHelper::compute_cosx_K(std::vector<SharedMatrix> D, std::vector<SharedMat
             x_points[rpoints + p] = x[p];
             y_points[rpoints + p] = y[p];
             z_points[rpoints + p] = z[p];
-            w_points[rpoints + p] = w[p];
+            weights[rpoints + p] = w[p];
             primary_->compute_phi(&(phi_ao.data()[(rpoints + p) * nbf_]), x[p], y[p], z[p]);
         }
+        rpoints += bpoints;
     }
 
     for (size_t i = 0; i < D.size(); i++) {
         double* Dp = D[i]->pointer()[0];
         double* Kp = K[i]->pointer()[0];
         memset((void *) Kp, 0, nbf_ * nbf_ * sizeof(double));
-        double* Ap = (double *) calloc(nbf_ * nbf_ * npoints, sizeof(double));
-        if (!Ap) {
-            throw PsiException("Out of memory for DFHelper::compute_cosx_K", __FILE__, __LINE__);
-        }
-        double* T1p = (double *) calloc(nbf_ * npoints, sizeof(double));
-        if (!T1p) {
-            throw PsiException("Out of memory for DFHelper::compute_cosx_K", __FILE__, __LINE__);
-        }
-        double* T2p = (double *) calloc(nbf_ * npoints, sizeof(double));
-        if (!T2p) {
-            throw PsiException("Out of memory for DFHelper::compute_cosx_K", __FILE__, __LINE__);
-        }
+        std::vector<double> Xkg(nbf_ * npoints); // Izsak Eq. 4
+        std::vector<double> Avtg(nbf_ * nbf_ * npoints); // Izsak Eq. 5
+        
+        std::vector<double> Ftg(nbf_ * npoints, 0.0); // Izsak Eq. 6
+        std::vector<double> Gvg(nbf_ * npoints, 0.0); // Izsak Eq. 7
 
-        // Compute analytical integrals
-        for (size_t pt = 0; pt < npoints; pt++) {
-            auto zero = BasisSet::zero_ao_basis_set(x_points[pt], y_points[pt], z_points[pt]);
-            auto ints = mints->ao_eri(primary_, primary_, zero, zero);
-            double* intvals = ints->pointer()[0];
-            for (int l = 0; l < nbf_; l++) {
-                for (int v = 0; v < nbf_; v++) {
-                    Ap[l * nbf_ * npoints + v * npoints + pt] = intvals[l * nbf_ + v];
-                }
+        // Compute X (Equation 4)
+        for (size_t g = 0; g < npoints; g++) {
+            for (int k = 0; k < nbf_; k++) {
+                Xkg[k * npoints + g] = std::sqrt(weights[g]) * phi_ao[g * nbf_ + k];
             }
         }
 
-        // Compute T1 contraction
-        for (size_t pt = 0; pt < npoints; pt++) {
-            for (int l = 0; l < nbf_; l++) {
-                for (int s = 0; l < nbf_; l++) {
-                    T1p[s * npoints + pt] += D[l * npoints + s] * phi_ao[pt * nbf_ + l];
-                }
-            }
-        }
-
-        // Compute T2 contraction
-        for (size_t pt = 0; pt < npoints; pt++) {
+        // Compute analytical integrals (A, Equation 5)
+        for (size_t g = 0; g < npoints; g++) {
+            ao_pseudo->set_point(x_points[g], y_points[g], z_points[g]);
+            auto Amat = std::make_shared<Matrix>(nbf_, nbf_);
+            ao_pseudo->compute(Amat);
             for (int v = 0; v < nbf_; v++) {
-                for (int s = 0; s < nbf_; s++) {
-                    T2p[v * npoints + pt] += T1p[s * npoints + pt] * Ap[v * npoints * nbf_ + s * npoints + pt];
+                for (int t = 0; t < nbf_; t++) {
+                    Avtg[v * nbf_ * npoints + t * npoints + g] = Amat->get(v, t);
                 }
             }
         }
 
-        // Compute K matrix (O(N^3) work)
-        for (size_t pt = 0; pt < npoints; pt++) {
-            for (int u = 0; u < nbf_; u++) {
-                for (int v = 0; v < nbf_; v++) {
-                    Kp[u * nbf_ + v] += weights[pt] * phi_ao[pt * nbf_ + u] * T2p[v * npoints + pt];
+        // Compute F contraction (Equation 6)
+        for (int t = 0; t < nbf_; t++) {
+            for (int k = 0; k < nbf_; k++) {
+                for (size_t g = 0; g < npoints; g++) {
+                    Ftg[t * npoints + g] += Dp[t * nbf_ + k] * Xkg[k * npoints + g];
+                }
+            }
+        }
+
+        // Compute G contraction (Equation 7)
+        for (int v = 0; v < nbf_; v++) {
+            for (int t = 0; t < nbf_; t++) {
+                for (size_t g = 0; g < npoints; g++) {
+                    Gvg[v * npoints + g] += Avtg[v * nbf_ * npoints + t * npoints + g] * Ftg[t * npoints + g];
+                }
+            }
+        }
+
+        // Compute K matrix (O(N^3) work, Equation 8)
+        for (int u = 0; u < nbf_; u++) {
+            for (int v = 0; v < nbf_; v++) {
+                for (size_t g = 0; g < npoints; g++) {
+                    Kp[u * nbf_ + v] += Xkg[u * npoints + g] * Gvg[v * npoints + g];
                 }
             }
         }
 
     }
+
+    delete ao_pseudo;
 }
 
 }  // End namespaces

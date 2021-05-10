@@ -345,6 +345,7 @@ class PSI_API DFHelper {
     bool cosx_ = false;
     bool sparsity_prepared_ = false;
     int print_lvl_ = 1;
+    int iteration_ = 0;
 
     // => in-core machinery <=
     void AO_core();
@@ -518,7 +519,7 @@ class PSI_API DFHelper {
     void compute_wK(std::vector<SharedMatrix> Cleft, std::vector<SharedMatrix> Cright, std::vector<SharedMatrix> wK,
                     size_t max_nocc, bool do_J, bool do_K, bool do_wK);
     
-    void compute_cosx_K(std::vector<SharedMatrix> D, std::vector<SharedMatrix> K);
+    void compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& K);
 
     // => misc <=
     void fill(double* b, size_t count, double value);

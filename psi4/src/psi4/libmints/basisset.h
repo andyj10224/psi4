@@ -376,7 +376,7 @@ class PSI_API BasisSet {
      *  centered at (x, y, z) with an exponent of 0.0 and contraction of 1.0.
      *  @return A new empty BasisSet object.
      */
-    static std::shared_ptr<BasisSet> zero_ao_basis_set(double x, double y, double z);
+    // static std::shared_ptr<BasisSet> zero_ao_basis_set(double x, double y, double z);
 
     /** Returns an empty SO basis set object.
      *
