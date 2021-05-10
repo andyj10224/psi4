@@ -53,6 +53,7 @@
 #include "psi4/libmints/pseudospectral.h"
 #include "psi4/libmints/twobody.h"
 #include "psi4/libmints/mintshelper.h"
+#include "psi4/libmints/potential.h"
 #include "psi4/libpsi4util/PsiOutStream.h"
 #include "psi4/libqt/qt.h"
 #include "psi4/libpsio/psio.hpp"
@@ -3119,7 +3120,7 @@ void DFHelper::compute_JK(std::vector<SharedMatrix> Cleft, std::vector<SharedMat
         bcount += block_size;
     }
     if (iteration_ > 0 && cosx_) compute_cosx_K(D, K);
-    
+
     iteration_ += 1;
     // outfile->Printf("\n     ==> DFHelper:--End J/K Builds (disk)<==\n\n");
 }
@@ -3414,7 +3415,7 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
     std::vector<double> phi_ao(npoints * nbf_);
 
     auto integral = std::make_shared<IntegralFactory>(primary_);
-    auto ao_pseudo = (PseudospectralInt *) (integral->ao_pseudospectral(0));
+    auto ao_pointpot = (PotentialInt *) (integral->ao_potential());
 
     size_t rpoints = 0;
     for (int b = 0; b < blocks.size(); b++) {
@@ -3437,9 +3438,11 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
     }
 
     for (size_t i = 0; i < D.size(); i++) {
-        double* Dp = D[i]->pointer()[0];
-        double* Kp = K[i]->pointer()[0];
-        memset((void *) Kp, 0, nbf_ * nbf_ * sizeof(double));
+        // double* Dp = D[i]->pointer()[0];
+        // double* Kp = K[i]->pointer()[0];
+        // memset((void *) Kp, 0, nbf_ * nbf_ * sizeof(double));
+        K[i]->zero();
+
         std::vector<double> Xkg(nbf_ * npoints); // Izsak Eq. 4
         std::vector<double> Avtg(nbf_ * nbf_ * npoints); // Izsak Eq. 5
         
@@ -3455,9 +3458,14 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
 
         // Compute analytical integrals (A, Equation 5)
         for (size_t g = 0; g < npoints; g++) {
-            ao_pseudo->set_point(x_points[g], y_points[g], z_points[g]);
+            auto Zxyz = std::make_shared<Matrix>("COSX Point Integration Field", 1, 4);
+            Zxyz->set(0, 0, -1.0);
+            Zxyz->set(0, 1, x_points[g]);
+            Zxyz->set(0, 2, y_points[g]);
+            Zxyz->set(0, 3, z_points[g]);
+            ao_pointpot->set_charge_field(Zxyz);
             auto Amat = std::make_shared<Matrix>(nbf_, nbf_);
-            ao_pseudo->compute(Amat);
+            ao_pointpot->compute(Amat);
             for (int v = 0; v < nbf_; v++) {
                 for (int t = 0; t < nbf_; t++) {
                     Avtg[v * nbf_ * npoints + t * npoints + g] = Amat->get(v, t);
@@ -3469,7 +3477,7 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
         for (int t = 0; t < nbf_; t++) {
             for (int k = 0; k < nbf_; k++) {
                 for (size_t g = 0; g < npoints; g++) {
-                    Ftg[t * npoints + g] += Dp[t * nbf_ + k] * Xkg[k * npoints + g];
+                    Ftg[t * npoints + g] += D[i]->get(t, k) * Xkg[k * npoints + g];
                 }
             }
         }
@@ -3486,15 +3494,17 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
         // Compute K matrix (O(N^3) work, Equation 8)
         for (int u = 0; u < nbf_; u++) {
             for (int v = 0; v < nbf_; v++) {
+                double temp = 0.0;
                 for (size_t g = 0; g < npoints; g++) {
-                    Kp[u * nbf_ + v] += Xkg[u * npoints + g] * Gvg[v * npoints + g];
+                    temp += Xkg[u * npoints + g] * Gvg[v * npoints + g];
                 }
+                K[i]->set(u, v, temp);
             }
         }
 
     }
 
-    delete ao_pseudo;
+    delete ao_pointpot;
 }
 
 }  // End namespaces
