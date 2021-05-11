@@ -3402,23 +3402,25 @@ void DFHelper::compute_wK(std::vector<SharedMatrix> Cleft, std::vector<SharedMat
 
 void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& K) {
 
+    timer_on("DFH: compute_cosx_K");
+
     Options& options = Process::environment.options;
     auto mol = primary_->molecule();
     auto grid = std::make_shared<DFTGrid>(mol, primary_, options);
     auto blocks = grid->blocks();
 
     size_t npoints = grid->npoints();
-    std::vector<double> weights(npoints);
-    std::vector<double> x_points(npoints);
-    std::vector<double> y_points(npoints);
-    std::vector<double> z_points(npoints);
-    std::vector<double> phi_ao(npoints * nbf_);
+    std::vector<double> weights(npoints, 0.0);
+    std::vector<double> x_points(npoints, 0.0);
+    std::vector<double> y_points(npoints, 0.0);
+    std::vector<double> z_points(npoints, 0.0);
+    std::vector<double> phi_ao(npoints * ((size_t) nbf_), 0.0);
 
     auto integral = std::make_shared<IntegralFactory>(primary_);
-    auto ao_pointpot = (PotentialInt *) (integral->ao_potential());
+    std::shared_ptr<PotentialInt> ao_pointpot((PotentialInt *) (integral->ao_potential()));
 
     size_t rpoints = 0;
-    for (int b = 0; b < blocks.size(); b++) {
+    for (size_t b = 0; b < blocks.size(); b++) {
         auto block = blocks[b];
         size_t bpoints = block->npoints();
 
@@ -3443,16 +3445,16 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
         // memset((void *) Kp, 0, nbf_ * nbf_ * sizeof(double));
         K[i]->zero();
 
-        std::vector<double> Xkg(nbf_ * npoints); // Izsak Eq. 4
-        std::vector<double> Avtg(nbf_ * nbf_ * npoints); // Izsak Eq. 5
+        std::vector<double> Xkg((size_t) nbf_ * npoints, 0.0); // Izsak Eq. 4
+        std::vector<double> Avtg((size_t) nbf_ * nbf_ * npoints, 0.0); // Izsak Eq. 5
         
-        std::vector<double> Ftg(nbf_ * npoints, 0.0); // Izsak Eq. 6
-        std::vector<double> Gvg(nbf_ * npoints, 0.0); // Izsak Eq. 7
+        std::vector<double> Ftg((size_t) nbf_ * npoints, 0.0); // Izsak Eq. 6
+        std::vector<double> Gvg((size_t) nbf_ * npoints, 0.0); // Izsak Eq. 7
 
         // Compute X (Equation 4)
         for (size_t g = 0; g < npoints; g++) {
-            for (int k = 0; k < nbf_; k++) {
-                Xkg[k * npoints + g] = std::sqrt(weights[g]) * phi_ao[g * nbf_ + k];
+            for (size_t k = 0; k < nbf_; k++) {
+                Xkg[k * npoints + g] = phi_ao[g * nbf_ + k];
             }
         }
 
@@ -3466,16 +3468,16 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
             ao_pointpot->set_charge_field(Zxyz);
             auto Amat = std::make_shared<Matrix>(nbf_, nbf_);
             ao_pointpot->compute(Amat);
-            for (int v = 0; v < nbf_; v++) {
-                for (int t = 0; t < nbf_; t++) {
+            for (size_t v = 0; v < nbf_; v++) {
+                for (size_t t = 0; t < nbf_; t++) {
                     Avtg[v * nbf_ * npoints + t * npoints + g] = Amat->get(v, t);
                 }
             }
         }
 
         // Compute F contraction (Equation 6)
-        for (int t = 0; t < nbf_; t++) {
-            for (int k = 0; k < nbf_; k++) {
+        for (size_t t = 0; t < nbf_; t++) {
+            for (size_t k = 0; k < nbf_; k++) {
                 for (size_t g = 0; g < npoints; g++) {
                     Ftg[t * npoints + g] += D[i]->get(t, k) * Xkg[k * npoints + g];
                 }
@@ -3483,8 +3485,8 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
         }
 
         // Compute G contraction (Equation 7)
-        for (int v = 0; v < nbf_; v++) {
-            for (int t = 0; t < nbf_; t++) {
+        for (size_t v = 0; v < nbf_; v++) {
+            for (size_t t = 0; t < nbf_; t++) {
                 for (size_t g = 0; g < npoints; g++) {
                     Gvg[v * npoints + g] += Avtg[v * nbf_ * npoints + t * npoints + g] * Ftg[t * npoints + g];
                 }
@@ -3492,11 +3494,11 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
         }
 
         // Compute K matrix (O(N^3) work, Equation 8)
-        for (int u = 0; u < nbf_; u++) {
-            for (int v = 0; v < nbf_; v++) {
+        for (size_t u = 0; u < nbf_; u++) {
+            for (size_t v = 0; v < nbf_; v++) {
                 double temp = 0.0;
                 for (size_t g = 0; g < npoints; g++) {
-                    temp += Xkg[u * npoints + g] * Gvg[v * npoints + g];
+                    temp += weights[g] * Xkg[u * npoints + g] * Gvg[v * npoints + g];
                 }
                 K[i]->set(u, v, temp);
             }
@@ -3504,7 +3506,7 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
 
     }
 
-    delete ao_pointpot;
+    timer_off("DFH: compute_cosx_K");
 }
 
 }  // End namespaces
