@@ -72,6 +72,28 @@ DFHelper::DFHelper(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> 
     naux_ = aux_->nbf();
     cosx_ = (Process::environment.options).get_bool("DF_COSX");
     prepare_blocking();
+
+    if (cosx_) {
+        std::vector<double> max_r(nbf_, 0.0);
+        primary_->compute_phi_r_max(&(max_r.data()[0]), 2.0, 1.0e-10);
+
+        auto mol = primary_->molecule();
+        s_junction_.resize(nbf_);
+
+        for (int u = 0; u < nbf_; u++) {
+            int A = primary_->function_to_center(u);
+            auto Axyz = mol->xyz(A);
+            for (int v = 0; v < nbf_; v++) {
+                int B = primary_->function_to_center(v);
+                auto Bxyz = mol->xyz(B);
+                double dist = Axyz.distance(Bxyz);
+                if (dist < max_r[u]) {
+                    s_junction_[u].push_back(v);
+                }
+            }
+        }
+    }
+
 }
 
 DFHelper::~DFHelper() { clear_all(); }
@@ -3469,7 +3491,8 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
             auto Amat = std::make_shared<Matrix>(nbf_, nbf_);
             ao_pointpot->compute(Amat);
             for (size_t v = 0; v < nbf_; v++) {
-                for (size_t t = 0; t < nbf_; t++) {
+                for (size_t n = 0; n < s_junction_[v].size(); n++) {
+                    size_t t = s_junction_[v][n];
                     Avtg[v * nbf_ * npoints + t * npoints + g] = Amat->get(v, t);
                 }
             }
@@ -3477,7 +3500,8 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
 
         // Compute F contraction (Equation 6)
         for (size_t t = 0; t < nbf_; t++) {
-            for (size_t k = 0; k < nbf_; k++) {
+            for (size_t n = 0; n < s_junction_[t].size(); n++) {
+                size_t k = s_junction_[t][n];
                 for (size_t g = 0; g < npoints; g++) {
                     Ftg[t * npoints + g] += D[i]->get(t, k) * Xkg[k * npoints + g];
                 }
@@ -3486,7 +3510,8 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
 
         // Compute G contraction (Equation 7)
         for (size_t v = 0; v < nbf_; v++) {
-            for (size_t t = 0; t < nbf_; t++) {
+            for (size_t n = 0; n < s_junction_[v].size(); n++) {
+                size_t t = s_junction_[v][n];
                 for (size_t g = 0; g < npoints; g++) {
                     Gvg[v * npoints + g] += Avtg[v * nbf_ * npoints + t * npoints + g] * Ftg[t * npoints + g];
                 }
@@ -3495,7 +3520,8 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
 
         // Compute K matrix (O(N^3) work, Equation 8)
         for (size_t u = 0; u < nbf_; u++) {
-            for (size_t v = 0; v < nbf_; v++) {
+            for (size_t n = 0; n < s_junction_[u].size(); n++) {
+                size_t v = s_junction_[u][n];
                 double temp = 0.0;
                 for (size_t g = 0; g < npoints; g++) {
                     temp += weights[g] * Xkg[u * npoints + g] * Gvg[v * npoints + g];
@@ -3503,6 +3529,8 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
                 K[i]->set(u, v, temp);
             }
         }
+
+        K[i]->hermitivitize();
 
     }
 

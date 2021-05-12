@@ -347,6 +347,9 @@ class PSI_API DFHelper {
     int print_lvl_ = 1;
     int iteration_ = 0;
 
+    // => cosx machinery <=
+    std::vector<std::vector<double>> s_junction_;
+
     // => in-core machinery <=
     void AO_core();
     std::unique_ptr<double[]> Ppq_;
@@ -370,8 +373,6 @@ class PSI_API DFHelper {
     void compute_sparse_pQq_blocking_p_symm_abw(const size_t start, const size_t stop, double* just_Mp, double* param_Mp,
                                         std::vector<std::shared_ptr<TwoBodyAOInt>> eri,
                                         std::vector<std::shared_ptr<TwoBodyAOInt>> weri);
-
-
 
     void contract_metric_AO_core_symm(double* Qpq, double* Ppq, double* metp, size_t begin, size_t end);
     void grab_AO(const size_t start, const size_t stop, double* Mp);

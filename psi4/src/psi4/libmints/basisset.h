@@ -168,7 +168,6 @@ class PSI_API BasisSet {
 
    public:
     BasisSet();
-    BasisSet(double x, double y, double z);
 
     BasisSet(const std::string &basistype, SharedMolecule mol,
              std::map<std::string, std::map<std::string, std::vector<ShellInfo> > > &shell_map,
@@ -370,14 +369,6 @@ class PSI_API BasisSet {
      */
     static std::shared_ptr<BasisSet> zero_ao_basis_set();
 
-    /** Returns an empty basis set object (non-zero origin)
-     * 
-     *  Returns a BasisSet object that actually has a single s-function
-     *  centered at (x, y, z) with an exponent of 0.0 and contraction of 1.0.
-     *  @return A new empty BasisSet object.
-     */
-    // static std::shared_ptr<BasisSet> zero_ao_basis_set(double x, double y, double z);
-
     /** Returns an empty SO basis set object.
      *
      *  Returns an SOBasis object that actually has a single s-function
@@ -409,6 +400,8 @@ class PSI_API BasisSet {
     void move_atom(int atom, const Vector3 &trans);
     // Returns the values of the basis functions at a point
     void compute_phi(double *phi_ao, double x, double y, double z);
+    // Returns the radius of at which the values of the atomic orbitals fall below a certain threshold
+    void compute_phi_r_max(double *phi_ao, double r_start, double threshold);
     
    private: 
     /// Helper functions for frozen core to reduce LOC
