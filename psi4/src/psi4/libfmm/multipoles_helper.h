@@ -22,27 +22,54 @@ class MultipoleRotationFactory {
       Vector3 R_b_;
 
       // New Z axis in rotated frame of reference
-      Vector3 Uz_;
+      SharedMatrix Uz_;
+
+      // Maximal Angular Momentum
+      int lmax_;
 
       // Cached Rotation Matrices in a vector of Matrices
       std::vector<SharedMatrix> D_cache_;
 
-      SharedMatrix U(int l, int m, int M);
-      SharedMatrix V(int l, int m, int M);
-      SharedMatrix W(int l, int m, int M);
-      SharedMatrix P(int i, int l, int mu, int M);
-
-      double u(int l, int m, int M);
-      double v(int l, int m, int M);
-      double w(int l, int m, int M);
+      double U(int l, int m, int M);
+      double V(int l, int m, int M);
+      double W(int l, int m, int M);
+      double P(int i, int l, int mu, int M);
 
     public:
       // Constructor
-      MultipoleRotationFactory(Vector3 R_a, Vector3 R_b);
+      MultipoleRotationFactory(Vector3 R_a, Vector3 R_b, int lmax);
 
-      SharedMatrix get_D();
+      SharedMatrix get_D(int l);
 
 }; // End MultipoleRotationFactory
+
+inline double MultipoleRotationFactory::u(int l, int m, int M) {
+    if (std::abs(M) < l) {
+        return std::sqrt((l+m)*(l-m) /((l+M)*(l-M)));
+    } else {
+        return std::sqrt((l+m)/(l-m)/(2*l*(2*l-1)));
+    }
+}
+
+inline double MultipoleRotationFactory::v(int l, int m, int M) {
+    double dm0 = 0.0;
+    if (m == 0) dm0 = 1.0;
+    if (std::abs(M) < l) {
+        return 0.5 * (1.0 - 2.0*dm0) * std::sqrt((1.0+dm0)*(l+std::abs(m)-1)*(l+std::abs(m)) / ((l+M)*(l-M)));
+    } else {
+        return 0.5 * (1.0 - 2.0*dm0) * std::sqrt((1.0+dm0)*(l+std::abs(m)-1)*(l+std::abs(m)) / ((2*l)*(2*l-1)));
+    }
+}
+
+inline double MultipoleRotationFactory::w(int l, int m, int M) {
+    double dm0 = 0.0;
+    if (m == 0) dm0 = 1.0;
+    if (std::abs(M) < l) {
+        return 0.5 * (dm0 - 1) * std::sqrt((l-std:;abs(m)-1)*(l-std::abs(m)) / ((l+M)*(l-M)));
+    } else {
+        return 0.5 * (dm0 - 1) * std::sqrt((l-std:;abs(m)-1)*(l-std::abs(m)) / ((2*l)*(2*l-1)));
+    }
+}
     
 class RealSolidHarmonics {
 
