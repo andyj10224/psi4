@@ -1516,8 +1516,23 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_double("DF_BUMP_R0", 0.0);
         /*- Bump function max radius -*/
         options.add_double("DF_BUMP_R1", 0.0);
+
+        /*- SUBSECTION COS Exchange Algorithm -*/
+
         /*- Do cosx Exchange? -*/
         options.add_bool("DF_COSX", false);
+        /*- COSX Number of Radial Points -*/
+        options.add_int("COSX_RADIAL_POINTS", 75);
+        /*- COSX Number of Spherical Points -*/
+        options.add_int("COSX_SPHERICAL_POINTS", 302);
+        /*- Pruning scheme for COSX Grid -*/
+        options.add_str("COSX_PRUNING_SCHEME", "ROBUST", 
+                    "ROBUST TREUTLER NONE FLAT P_GAUSSIAN D_GAUSSIAN P_SLATER D_SLATER LOG_GAUSSIAN LOG_SLATER NONE");
+        /*- Numerical tolerance for the formation of S (Overlap) and P (Density) junctions -*/
+        options.add_double("COSX_BASIS_TOLERANCE", 1.0e-10);
+        /*- Starting radius to search for s junction radius (in bohr) -*/
+        options.add_double("COSX_START_RADIUS", 2.0);
+
 
         /*- SUBSECTION SAD Guess Algorithm -*/
 

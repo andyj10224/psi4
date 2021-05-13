@@ -30,6 +30,8 @@
 #define three_index_dfhelper
 
 #include "psi4/psi4-dec.h"
+#include "psi4/libmints/onebody.h"
+#include "psi4/libmints/potential.h"
 #include <psi4/libmints/typedefs.h>
 
 #include <map>
@@ -348,7 +350,19 @@ class PSI_API DFHelper {
     int iteration_ = 0;
 
     // => cosx machinery <=
-    std::vector<std::vector<double>> s_junction_;
+    std::vector<std::vector<int>> s_junction_shell_;
+    std::vector<std::vector<int>> s_junction_func_;
+    double start_search_radius_;
+    double cosx_basis_tolerance_;
+
+    std::vector<double> cosx_grid_x_;
+    std::vector<double> cosx_grid_y_;
+    std::vector<double> cosx_grid_z_;
+    std::vector<double> cosx_grid_w_;
+    std::vector<double> cosx_phi_ao_;
+
+    std::shared_ptr<IntegralFactory> cosx_int_factory_;
+    PotentialInt *cosx_point_int_;
 
     // => in-core machinery <=
     void AO_core();
@@ -520,6 +534,7 @@ class PSI_API DFHelper {
     void compute_wK(std::vector<SharedMatrix> Cleft, std::vector<SharedMatrix> Cright, std::vector<SharedMatrix> wK,
                     size_t max_nocc, bool do_J, bool do_K, bool do_wK);
     
+    void prepare_cosx_K();
     void compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& K);
 
     // => misc <=

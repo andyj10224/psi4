@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <map>
 #ifdef _MSC_VER
 #include <process.h>
 #define SYSTEM_GETPID ::_getpid
@@ -51,6 +52,7 @@
 #include "psi4/libmints/matrix.h"
 #include "psi4/libmints/basisset.h"
 #include "psi4/libmints/pseudospectral.h"
+#include "psi4/libmints/onebody.h"
 #include "psi4/libmints/twobody.h"
 #include "psi4/libmints/mintshelper.h"
 #include "psi4/libmints/potential.h"
@@ -70,29 +72,12 @@ DFHelper::DFHelper(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> 
 
     nbf_ = primary_->nbf();
     naux_ = aux_->nbf();
-    cosx_ = (Process::environment.options).get_bool("DF_COSX");
+
+    Options& options = Process::environment.options;
+    cosx_ = options.get_bool("DF_COSX");
+
     prepare_blocking();
-
-    if (cosx_) {
-        std::vector<double> max_r(nbf_, 0.0);
-        primary_->compute_phi_r_max(&(max_r.data()[0]), 2.0, 1.0e-10);
-
-        auto mol = primary_->molecule();
-        s_junction_.resize(nbf_);
-
-        for (int u = 0; u < nbf_; u++) {
-            int A = primary_->function_to_center(u);
-            auto Axyz = mol->xyz(A);
-            for (int v = 0; v < nbf_; v++) {
-                int B = primary_->function_to_center(v);
-                auto Bxyz = mol->xyz(B);
-                double dist = Axyz.distance(Bxyz);
-                if (dist < max_r[u]) {
-                    s_junction_[u].push_back(v);
-                }
-            }
-        }
-    }
+    if (cosx_) prepare_cosx_K();
 
 }
 
@@ -3422,24 +3407,77 @@ void DFHelper::compute_wK(std::vector<SharedMatrix> Cleft, std::vector<SharedMat
     }
 }
 
-void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& K) {
+void DFHelper::prepare_cosx_K() {
 
-    timer_on("DFH: compute_cosx_K");
+    timer_on("DFH: prepare_cosx_K");
 
     Options& options = Process::environment.options;
+
+    start_search_radius_ = options.get_double("COSX_START_RADIUS");
+    cosx_basis_tolerance_ = options.get_double("COSX_BASIS_TOLERANCE");
+
+    std::vector<double> max_r(nbf_, 0.0);
+    primary_->compute_phi_r_max(&(max_r.data()[0]), start_search_radius_, cosx_basis_tolerance_);
+
+    int nshell = primary_->nshell();
+
     auto mol = primary_->molecule();
-    auto grid = std::make_shared<DFTGrid>(mol, primary_, options);
+    s_junction_shell_.resize(nshell);
+    s_junction_func_.resize(nbf_);
+
+    // => Prepare the relavent S-junction pairs <= //
+
+    for (int M = 0; M < nshell; M++) {
+        const GaussianShell& m_shell = primary_->shell(M);
+        int m_start = m_shell.start();
+        int num_m = m_shell.nfunction();
+        for (int N = 0; N < nshell; N++) {
+            bool added = false;
+            const GaussianShell& n_shell = primary_->shell(N);
+            int n_start = n_shell.start();
+            int num_n = n_shell.nfunction();
+            for (int m = m_start; m < m_start + num_m; m++) {
+                int A = primary_->function_to_center(m);
+                auto Axyz = mol->xyz(A);
+                for (int n = n_start; n < n_start + num_n; n++) {
+                    int B = primary_->function_to_center(n);
+                    auto Bxyz = mol->xyz(B);
+                    double dist = Axyz.distance(Bxyz);
+                    if (dist < max_r[m]) {
+                        s_junction_func_[m].push_back(n);
+                        if (!added) {
+                            s_junction_shell_[M].push_back(N);
+                            added = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // => Prepare grid, with its integration points <= //
+
+    // COSX Grid Options
+    std::map<std::string, int> cosx_grid_options_int;
+    std::map<std::string, std::string> cosx_grid_options_str;
+
+    cosx_grid_options_int["DFT_RADIAL_POINTS"] = options.get_int("COSX_RADIAL_POINTS");
+    cosx_grid_options_int["DFT_SPHERICAL_POINTS"] = options.get_int("COSX_SPHERICAL_POINTS");
+    cosx_grid_options_str["DFT_PRUNING_SCHEME"] = options.get_str("COSX_PRUNING_SCHEME");
+
+    auto grid = std::make_shared<DFTGrid>(mol, primary_, cosx_grid_options_int, cosx_grid_options_str, options);
     auto blocks = grid->blocks();
 
     size_t npoints = grid->npoints();
-    std::vector<double> weights(npoints, 0.0);
-    std::vector<double> x_points(npoints, 0.0);
-    std::vector<double> y_points(npoints, 0.0);
-    std::vector<double> z_points(npoints, 0.0);
-    std::vector<double> phi_ao(npoints * ((size_t) nbf_), 0.0);
 
-    auto integral = std::make_shared<IntegralFactory>(primary_);
-    std::shared_ptr<PotentialInt> ao_pointpot((PotentialInt *) (integral->ao_potential()));
+    cosx_grid_x_.resize(npoints);
+    cosx_grid_y_.resize(npoints);
+    cosx_grid_z_.resize(npoints);
+    cosx_grid_w_.resize(npoints);
+    cosx_phi_ao_.resize(npoints * nbf_);
+
+    cosx_int_factory_ = std::make_shared<IntegralFactory>(primary_);
+    cosx_point_int_ = (PotentialInt *) cosx_int_factory_->ao_potential();
 
     size_t rpoints = 0;
     for (size_t b = 0; b < blocks.size(); b++) {
@@ -3452,81 +3490,92 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
         double* w = block->w();
 
         for (size_t p = 0; p < bpoints; p++) {
-            x_points[rpoints + p] = x[p];
-            y_points[rpoints + p] = y[p];
-            z_points[rpoints + p] = z[p];
-            weights[rpoints + p] = w[p];
-            primary_->compute_phi(&(phi_ao.data()[(rpoints + p) * nbf_]), x[p], y[p], z[p]);
+            cosx_grid_x_[rpoints + p] = x[p];
+            cosx_grid_y_[rpoints + p] = y[p];
+            cosx_grid_z_[rpoints + p] = z[p];
+            cosx_grid_w_[rpoints + p] = w[p];
+            primary_->compute_phi(&(cosx_phi_ao_.data()[(rpoints + p) * nbf_]), x[p], y[p], z[p]);
         }
         rpoints += bpoints;
     }
 
-    for (size_t i = 0; i < D.size(); i++) {
-        // double* Dp = D[i]->pointer()[0];
-        // double* Kp = K[i]->pointer()[0];
-        // memset((void *) Kp, 0, nbf_ * nbf_ * sizeof(double));
-        K[i]->zero();
+    timer_off("DFH: prepare_cosx_K");
+}
 
-        std::vector<double> Xkg((size_t) nbf_ * npoints, 0.0); // Izsak Eq. 4
-        std::vector<double> Avtg((size_t) nbf_ * nbf_ * npoints, 0.0); // Izsak Eq. 5
-        
-        std::vector<double> Ftg((size_t) nbf_ * npoints, 0.0); // Izsak Eq. 6
-        std::vector<double> Gvg((size_t) nbf_ * npoints, 0.0); // Izsak Eq. 7
+void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& K) {
+
+    timer_on("DFH: compute_cosx_K");
+
+    int nshell = primary_->nshell();
+    int npoints = cosx_grid_x_.size();
+
+    // Compute A, X, F, and G
+    for (size_t i = 0; i < D.size(); i++) {
+        double* Dp = D[i]->pointer()[0];
+        double* Kp = K[i]->pointer()[0];
+        memset((void *) Kp, 0, nbf_ * nbf_ * sizeof(double));
+
+        std::vector<double> Xkg(nbf_ * npoints); // Izsak Eq. 4 
+        std::vector<double> Ftg(nbf_ * npoints, 0.0); // Izsak Eq. 6
+        std::vector<double> Gvg(nbf_ * npoints, 0.0); // Izsak Eq. 7
 
         // Compute X (Equation 4)
         for (size_t g = 0; g < npoints; g++) {
             for (size_t k = 0; k < nbf_; k++) {
-                Xkg[k * npoints + g] = phi_ao[g * nbf_ + k];
+                Xkg[k * npoints + g] = cosx_phi_ao_[g * nbf_ + k];
             }
         }
 
-        // Compute analytical integrals (A, Equation 5)
+        // Compute F (Equation 6)
         for (size_t g = 0; g < npoints; g++) {
-            auto Zxyz = std::make_shared<Matrix>("COSX Point Integration Field", 1, 4);
-            Zxyz->set(0, 0, -1.0);
-            Zxyz->set(0, 1, x_points[g]);
-            Zxyz->set(0, 2, y_points[g]);
-            Zxyz->set(0, 3, z_points[g]);
-            ao_pointpot->set_charge_field(Zxyz);
-            auto Amat = std::make_shared<Matrix>(nbf_, nbf_);
-            ao_pointpot->compute(Amat);
-            for (size_t v = 0; v < nbf_; v++) {
-                for (size_t n = 0; n < s_junction_[v].size(); n++) {
-                    size_t t = s_junction_[v][n];
-                    Avtg[v * nbf_ * npoints + t * npoints + g] = Amat->get(v, t);
+            for (size_t t = 0; t < nbf_; t++) {
+                for (size_t v = 0; v < s_junction_func_[t].size(); v++) {
+                    size_t k = s_junction_func_[t][v];
+                    Ftg[t * npoints + g] += Dp[t * nbf_ + k] * Xkg[k * npoints + g];
                 }
             }
         }
 
-        // Compute F contraction (Equation 6)
-        for (size_t t = 0; t < nbf_; t++) {
-            for (size_t n = 0; n < s_junction_[t].size(); n++) {
-                size_t k = s_junction_[t][n];
+        // Compute G (Equation 7)
+        for (int M = 0; M < nshell; M++) {
+            const GaussianShell& m_shell = primary_->shell(M);
+            size_t m_start = m_shell.start();
+            size_t num_m = m_shell.nfunction();
+            for (int T = 0; T < s_junction_shell_[M].size(); T++) {
+                int N = s_junction_shell_[M][T];
+                const GaussianShell& n_shell = primary_->shell(N);
+                size_t n_start = n_shell.start();
+                size_t num_n = n_shell.nfunction();
+
                 for (size_t g = 0; g < npoints; g++) {
-                    Ftg[t * npoints + g] += D[i]->get(t, k) * Xkg[k * npoints + g];
+                    auto Zxyz = std::make_shared<Matrix>("COSX Point Integration Field", 1, 4);
+                    Zxyz->set(0, 0, -1.0);
+                    Zxyz->set(0, 1, cosx_grid_x_[g]);
+                    Zxyz->set(0, 2, cosx_grid_y_[g]);
+                    Zxyz->set(0, 3, cosx_grid_z_[g]);
+                    cosx_point_int_->set_charge_field(Zxyz);
+
+                    cosx_point_int_->compute_shell(M, N);
+                    const double *A_buffer = cosx_point_int_->buffer();
+
+                    for (size_t m = m_start; m < m_start + num_m; m++) {
+                        int dm = m - m_start;
+                        for (size_t n = n_start; n < n_start + num_n; n++) {
+                            int dn = n - n_start;
+                            Gvg[m * npoints + g] += A_buffer[dm * num_n + dn] * Ftg[n * npoints + g];
+                        }
+                    }
                 }
             }
         }
 
-        // Compute G contraction (Equation 7)
-        for (size_t v = 0; v < nbf_; v++) {
-            for (size_t n = 0; n < s_junction_[v].size(); n++) {
-                size_t t = s_junction_[v][n];
-                for (size_t g = 0; g < npoints; g++) {
-                    Gvg[v * npoints + g] += Avtg[v * nbf_ * npoints + t * npoints + g] * Ftg[t * npoints + g];
-                }
-            }
-        }
-
-        // Compute K matrix (O(N^3) work, Equation 8)
+        // Compute K matrix (Equation 8)
         for (size_t u = 0; u < nbf_; u++) {
-            for (size_t n = 0; n < s_junction_[u].size(); n++) {
-                size_t v = s_junction_[u][n];
-                double temp = 0.0;
+            for (size_t n = 0; n < s_junction_func_[u].size(); n++) {
+                size_t v = s_junction_func_[u][n];
                 for (size_t g = 0; g < npoints; g++) {
-                    temp += weights[g] * Xkg[u * npoints + g] * Gvg[v * npoints + g];
+                    Kp[u * nbf_ + v] += cosx_grid_w_[g] * Xkg[u * npoints + g] * Gvg[v * npoints + g];
                 }
-                K[i]->set(u, v, temp);
             }
         }
 
