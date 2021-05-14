@@ -400,6 +400,8 @@ class PSI_API BasisSet {
     void move_atom(int atom, const Vector3 &trans);
     // Returns the values of the basis functions at a point
     void compute_phi(double *phi_ao, double x, double y, double z);
+    // Returns the values of all the basis functions in a given shell at a point (NOTE: BASIS FUNCTIONS, NOT ATOMIC ORBITALS)
+    void compute_phi_shell(double *phi_shell, int sh, double x, double y, double z);
     // Returns the radius of at which the values of the atomic orbitals fall below a certain threshold
     void compute_phi_r_max(double *phi_ao, double r_start, double threshold);
     

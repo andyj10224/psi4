@@ -1270,6 +1270,29 @@ void BasisSet::compute_phi(double *phi_ao, double x, double y, double z) {
     }  // nshell
 }
 
+void BasisSet::compute_phi_shell(double *phi_shell, int sh, double x, double y, double z) {
+    const GaussianShell &shell = shells_[sh];
+    int am = shell.am();
+    int nprim = shell.nprimitive();
+    const double *a = shell.exps();
+    const double *c = shell.coefs();
+
+    const double *xyz = shell.center();
+    double dx = x - xyz[0];
+    double dy = y - xyz[1];
+    double dz = z - xyz[2];
+    double rr = dx * dx + dy * dy + dz * dz;
+
+    double cexpr = 0;
+    for (int np = 0; np < nprim; np++) cexpr += c[np] * exp(-a[np] * rr);
+
+    for (int l = 0; l < INT_NCART(am); l++) {
+        Vector3 &components = exp_ao[am][l];
+        phi_shell[l] = pow(dx, (double)components[0]) * pow(dy, (double)components[1]) *
+                        pow(dz, (double)components[2]) * cexpr;
+    }
+}
+
 void BasisSet::compute_phi_r_max(double *phi_ao, double r_start, double threshold) {
     zero_arr(phi_ao, nao());
 

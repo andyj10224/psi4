@@ -39,6 +39,7 @@
 #include <vector>
 #include <tuple>
 #include <string>
+#include <set>
 
 namespace psi {
 
@@ -351,15 +352,21 @@ class PSI_API DFHelper {
 
     // => cosx machinery <=
     std::vector<std::vector<int>> s_junction_shell_;
-    std::vector<std::vector<int>> s_junction_func_;
-    double start_search_radius_;
+    // Includes a shell's significant atoms within it's radius
+    std::vector<std::set<int>> shell_significant_atoms_;
+    // Includes significant atoms from a shell's neighbors (NOT in shell)
+    std::vector<std::set<int>> shell_secondary_atoms_;
+    // Includes both a shell's significant and secondary atoms
+    std::vector<std::set<int>> shell_grid_atoms_;
+    std::vector<int> center_to_function_;
+
     double cosx_basis_tolerance_;
 
-    std::vector<double> cosx_grid_x_;
-    std::vector<double> cosx_grid_y_;
-    std::vector<double> cosx_grid_z_;
-    std::vector<double> cosx_grid_w_;
-    std::vector<double> cosx_phi_ao_;
+    std::vector<std::vector<double>> cosx_atomic_grid_x_;
+    std::vector<std::vector<double>> cosx_atomic_grid_y_;
+    std::vector<std::vector<double>> cosx_atomic_grid_z_;
+    std::vector<std::vector<double>> cosx_atomic_grid_w_;
+    std::vector<std::vector<double>> cosx_atomic_phi_ao_;
 
     std::shared_ptr<IntegralFactory> cosx_int_factory_;
     PotentialInt *cosx_point_int_;
