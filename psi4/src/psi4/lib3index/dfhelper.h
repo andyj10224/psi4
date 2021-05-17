@@ -40,6 +40,7 @@
 #include <tuple>
 #include <string>
 #include <set>
+#include <utility>
 
 namespace psi {
 
@@ -354,10 +355,9 @@ class PSI_API DFHelper {
     std::vector<std::vector<int>> s_junction_shell_;
     // Includes a shell's significant atoms within it's radius
     std::vector<std::set<int>> shell_significant_atoms_;
-    // Includes significant atoms from a shell's neighbors (NOT in shell)
-    std::vector<std::set<int>> shell_secondary_atoms_;
-    // Includes both a shell's significant and secondary atoms
-    std::vector<std::set<int>> shell_grid_atoms_;
+    // Includes significant atoms at the INTERSECTION of two shell pairs
+    std::map<std::pair<int, int>, std::set<int>> shell_pair_atoms_;
+    // Starting basis function of an atomic center
     std::vector<int> center_to_function_;
 
     double cosx_basis_tolerance_;

@@ -32,6 +32,7 @@
 #include <cstdlib>
 #include <map>
 #include <set>
+#include <utility>
 #ifdef _MSC_VER
 #include <process.h>
 #define SYSTEM_GETPID ::_getpid
@@ -3022,7 +3023,7 @@ void DFHelper::compute_JK(std::vector<SharedMatrix> Cleft, std::vector<SharedMat
 
     // size checks for C matrices occur in jk.cc
     // computing D occurs inside of jk.cc
-    if (cosx_) do_K = false;
+    if (iteration_ >= 1 && cosx_) do_K = false;
 
     // determine buffer sizes and blocking scheme
     // would love to move this to initialize(), but
@@ -3128,7 +3129,7 @@ void DFHelper::compute_JK(std::vector<SharedMatrix> Cleft, std::vector<SharedMat
 
         bcount += block_size;
     }
-    if (cosx_) compute_cosx_K(D, K);
+    if (iteration_ >= 1 && cosx_) compute_cosx_K(D, K);
 
     iteration_ += 1;
     // outfile->Printf("\n     ==> DFHelper:--End J/K Builds (disk)<==\n\n");
@@ -3430,8 +3431,6 @@ void DFHelper::prepare_cosx_K() {
 
     s_junction_shell_.resize(nshell);
     shell_significant_atoms_.resize(nshell);
-    shell_secondary_atoms_.resize(nshell);
-    shell_grid_atoms_.resize(nshell);
 
     // => Prepare the relavent S-junction shell pairs <= //
 
@@ -3459,31 +3458,22 @@ void DFHelper::prepare_cosx_K() {
         }
     }
 
-    // => Prepare secondary atoms for shells (grid purposes) <= //
+    // => Prepare significant atoms for shell pairs (grid purposes) <= //
 
     for (int M = 0; M < nshell; M++) {
         const std::set<int>& Mset = shell_significant_atoms_[M];
         for (int T = 0; T < s_junction_shell_[M].size(); T++) {
             int N = s_junction_shell_[M][T];
             const std::set<int>& Nset = shell_significant_atoms_[N];
-            for (int atom : Nset) {
-                if (!Mset.count(atom)) {
-                    shell_secondary_atoms_[M].insert(atom);
+            std::pair<int, int> shell_pair(M, N);
+            std::set<int> temp;
+            shell_pair_atoms_[shell_pair] = temp;
+            for (int atom : Mset) {
+                if (Nset.count(atom)) {
+                    shell_pair_atoms_[shell_pair].insert(atom);
+                    // outfile->Printf("  SHELL %d, SHELL %d, ATOM %d", M, N, atom);
                 }
             }
-        }
-    }
-
-    for (int M = 0; M < nshell; M++) {
-        const std::set<int>& Msig = shell_significant_atoms_[M];
-        const std::set<int>& Msec = shell_secondary_atoms_[M];
-        for (int atom : Msig) {
-            shell_grid_atoms_[M].insert(atom);
-            // outfile->Printf("  Shell %d, Sig Atom %d\n", M, atom);
-        }
-        for (int atom : Msec) {
-            shell_grid_atoms_[M].insert(atom);
-            // outfile->Printf("  Shell %d, Sec Atom %d\n", M, atom);
         }
     }
 
@@ -3571,9 +3561,9 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& Dref, std::vector
             const GaussianShell& k_shell = primary_->shell(K);
             int k_start = k_shell.start();
             int num_k = k_shell.nfunction();
-            const std::set<int>& grid_atoms = shell_grid_atoms_[K];
+            const std::set<int>& k_atoms = shell_significant_atoms_[K];
             for (int k = k_start; k < k_start + num_k; k++) {
-                for (int atom : grid_atoms) {
+                for (int atom : k_atoms) {
                     int npoints = cosx_atomic_grid_x_[atom].size();
                     for (size_t g = 0; g < npoints; g++) {
                         Xkg[k].push_back(cosx_atomic_phi_ao_[atom][g * nbf_ + k]);
@@ -3594,27 +3584,35 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& Dref, std::vector
             int t_start = t_shell.start();
             int numt = t_shell.nfunction();
             const std::vector<int>& s_junction = s_junction_shell_[T];
-            const std::set<int>& grid_atoms = shell_grid_atoms_[T];
+            const std::set<int>& t_atoms = shell_significant_atoms_[T];
             for (int V = 0; V < s_junction.size(); V++) {
                 int K = s_junction[V];
                 const GaussianShell& k_shell = primary_->shell(K);
                 int k_start = k_shell.start();
                 int num_k = k_shell.nfunction();
-                const std::set<int>& grid_atoms_k = shell_grid_atoms_[K];
-
+                const std::set<int>& k_atoms = shell_significant_atoms_[K];
+                std::pair<int, int> shell_pair(T, K);
+                const std::set<int>& common_atoms = shell_pair_atoms_[shell_pair];
                 for (int t = t_start; t < t_start + numt; t++) {
-                    for (int k = k_start; k < k_start + num_k; k++) {
-                        int running_points = 0;
-                        for (int atom : grid_atoms) {
-                            int npoints = cosx_atomic_grid_x_[atom].size();
-                            if (!grid_atoms_k.count(atom)) {
-                                running_points += npoints;
-                                continue;
+                    for (int atom : common_atoms) {
+                        int npoints = cosx_atomic_grid_x_[atom].size();
+
+                        int t_offset = 0;
+                        for (int ta : t_atoms) {
+                            if (ta == atom) break;
+                            t_offset += cosx_atomic_grid_x_[ta].size();
+                        }
+
+                        int k_offset = 0;
+                        for (int ka : k_atoms) {
+                            if (ka == atom) break;
+                            k_offset += cosx_atomic_grid_x_[ka].size();
+                        }
+                        
+                        for (size_t g = 0; g < npoints; g++) {
+                            for (int k = k_start; k < k_start + num_k; k++) {
+                                Ftg[t][t_offset + g] += Dp[t * nbf_ + k] * Xkg[k][k_offset + g];
                             }
-                            for (size_t g = 0; g < npoints; g++) {
-                                Ftg[t][running_points + g] += Dp[t * nbf_ + k] * cosx_atomic_phi_ao_[atom][g * nbf_ + k];
-                            }
-                            running_points += npoints;
                         }
                     }
                 }
@@ -3627,27 +3625,32 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& Dref, std::vector
             int m_start = m_shell.start();
             int num_m = m_shell.nfunction();
             const std::vector<int>& s_junction = s_junction_shell_[M];
-            const std::set<int>& grid_atoms = shell_grid_atoms_[M];
+            const std::set<int>& m_atoms = shell_significant_atoms_[M];
             for (int T = 0; T < s_junction.size(); T++) {
                 int N = s_junction[T];
                 const GaussianShell& n_shell = primary_->shell(N);
                 int n_start = n_shell.start();
                 int num_n = n_shell.nfunction();
-                const std::set<int>& grid_atoms_n = shell_grid_atoms_[N];
-                size_t running_points = 0;
-                for (int atom : grid_atoms) {
-                    // outfile->Printf("  SHELL %d, GRID ATOM %d\n", M, atom);
+                const std::set<int>& n_atoms = shell_significant_atoms_[N];
+                std::pair<int, int> shell_pair(M, N);
+                const std::set<int>& common_atoms = shell_pair_atoms_[shell_pair];
+
+                for (int atom : common_atoms) {
+                    outfile->Printf("  Blessed is he who trusts in the Lord.\n");
                     int npoints = cosx_atomic_grid_x_[atom].size();
-                    if (!grid_atoms_n.count(atom)) {
-                        running_points += npoints;
-                        continue;
+                    
+                    int m_offset = 0;
+                    for (int ma : m_atoms) {
+                        if (ma == atom) break;
+                        m_offset += cosx_atomic_grid_x_[ma].size();
                     }
+
                     int n_offset = 0;
-                    for (int atom_n : grid_atoms_n) {
-                        // outfile->Printf("  SHELL %d, GRID ATOM %d\n", M, atom_n);
-                        if (atom_n == atom) break;
-                        n_offset += cosx_atomic_grid_x_[atom_n].size();
+                    for (int na : n_atoms) {
+                        if (na == atom) break;
+                        n_offset += cosx_atomic_grid_x_[na].size();
                     }
+
                     for (size_t g = 0; g < npoints; g++) {
                         SharedMatrix Zxyz = std::make_shared<Matrix>("COSX Point Integration Field", 1, 4);
                         Zxyz->set(0, 0, -1.0);
@@ -3663,12 +3666,10 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& Dref, std::vector
                             int dm = m - m_start;
                             for (int n = n_start; n < n_start + num_n; n++) {
                                 int dn = n - n_start;
-                                Gvg[m][running_points + g] += A_buffer[dm * num_n + dn] * Ftg[n][n_offset + g];
+                                Gvg[m][m_offset + g] += A_buffer[dm * num_n + dn] * Ftg[n][n_offset + g];
                             }
                         }
-
                     }
-                    running_points += npoints;
                 }
             }
         }
@@ -3679,37 +3680,41 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& Dref, std::vector
             int u_start = u_shell.start();
             int num_u = u_shell.nfunction();
             const std::vector<int>& s_junction = s_junction_shell_[U];
-            const std::set<int>& grid_atoms = shell_grid_atoms_[U];
+            const std::set<int>& u_atoms = shell_significant_atoms_[U];
             for (int N = 0; N < s_junction.size(); N++) {
                 int V = s_junction[N];
                 const GaussianShell& v_shell = primary_->shell(V);
                 int v_start = v_shell.start();
                 int num_v = v_shell.nfunction();
-                const std::set<int>& grid_atoms_v = shell_grid_atoms_[V];
-                size_t running_points = 0;
-                for (int atom : grid_atoms) {
+                const std::set<int>& v_atoms = shell_significant_atoms_[V];
+                std::pair<int, int> shell_pair(U, V);
+                const std::set<int>& common_atoms = shell_pair_atoms_[shell_pair];
+
+                for (int atom : common_atoms) {
                     int npoints = cosx_atomic_grid_x_[atom].size();
-                    if (!grid_atoms_v.count(atom)) {
-                        running_points += npoints;
-                        continue;
+                    
+                    int u_offset = 0;
+                    for (int ua : u_atoms) {
+                        if (ua == atom) break;
+                        u_offset += cosx_atomic_grid_x_[ua].size();
                     }
+
                     int v_offset = 0;
-                    for (int atom_v : grid_atoms_v) {
-                        if (atom_v == atom) break;
-                        v_offset += cosx_atomic_grid_x_[atom_v].size();
+                    for (int va : v_atoms) {
+                        if (va == atom) break;
+                        v_offset += cosx_atomic_grid_x_[va].size();
                     }
+
                     for (size_t g = 0; g < npoints; g++) {
                         for (int u = u_start; u < u_start + num_u; u++) {
                             int du = u - u_start;
                             for (int v = v_start; v < v_start + num_v; v++) {
                                 int dv = v - v_start;
-                                Kp[u * nbf_ + v] += cosx_atomic_grid_w_[atom][running_points + g] * 
-                                    cosx_atomic_phi_ao_[atom][g * nbf_ + u] * Gvg[v][v_offset + g];
+                                Kp[u * nbf_ + v] += cosx_atomic_grid_w_[atom][g] * 
+                                    Xkg[u][u_offset + g] * Gvg[v][v_offset + g];
                             }
                         }
-
                     }
-                    running_points += npoints;
                 }
             }
         }
