@@ -361,6 +361,7 @@ class PSI_API DFHelper {
     std::vector<int> center_to_function_;
 
     double cosx_basis_tolerance_;
+    bool cosx_init_;
 
     std::vector<std::vector<double>> cosx_atomic_grid_x_;
     std::vector<std::vector<double>> cosx_atomic_grid_y_;
@@ -542,7 +543,7 @@ class PSI_API DFHelper {
                     size_t max_nocc, bool do_J, bool do_K, bool do_wK);
     
     void prepare_cosx_K();
-    void compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& K);
+    void compute_cosx_K(const std::vector<SharedMatrix>& Dref, std::vector<SharedMatrix>& Kref);
 
     // => misc <=
     void fill(double* b, size_t count, double value);

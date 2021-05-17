@@ -77,10 +77,10 @@ DFHelper::DFHelper(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> 
 
     Options& options = Process::environment.options;
     cosx_ = options.get_bool("DF_COSX");
+    cosx_init_ = false;
 
     prepare_blocking();
     if (cosx_) prepare_cosx_K();
-
 }
 
 DFHelper::~DFHelper() { clear_all(); }
@@ -3022,7 +3022,7 @@ void DFHelper::compute_JK(std::vector<SharedMatrix> Cleft, std::vector<SharedMat
 
     // size checks for C matrices occur in jk.cc
     // computing D occurs inside of jk.cc
-    if (iteration_ > 0 && cosx_) do_K = false;
+    if (cosx_) do_K = false;
 
     // determine buffer sizes and blocking scheme
     // would love to move this to initialize(), but
@@ -3128,7 +3128,7 @@ void DFHelper::compute_JK(std::vector<SharedMatrix> Cleft, std::vector<SharedMat
 
         bcount += block_size;
     }
-    if (iteration_ > 0 && cosx_) compute_cosx_K(D, K);
+    if (cosx_) compute_cosx_K(D, K);
 
     iteration_ += 1;
     // outfile->Printf("\n     ==> DFHelper:--End J/K Builds (disk)<==\n\n");
@@ -3436,18 +3436,14 @@ void DFHelper::prepare_cosx_K() {
     // => Prepare the relavent S-junction shell pairs <= //
 
     for (int M = 0; M < nshell; M++) {
-
         int A = primary_->shell_to_center(M);
         auto Axyz = mol->xyz(A);
-
+        // outfile->Printf("  SHELL %d, EXTENT %.2f\n", M, shell_extents->get(M));
         for (int N = 0; N < nshell; N++) {
-            const GaussianShell& n_shell = primary_->shell(N);
-
             int B = primary_->shell_to_center(N);
             auto Bxyz = mol->xyz(B);
             double dist = Axyz.distance(Bxyz);
             if (dist < shell_extents->get(M)) s_junction_shell_[M].push_back(N);
-
         }
     }
 
@@ -3459,7 +3455,7 @@ void DFHelper::prepare_cosx_K() {
         for (int C = 0; C < natom; C++) {
             auto Cxyz = mol->xyz(C);
             double dist = Axyz.distance(Cxyz);
-            if (dist < shell_extents[M]) shell_significant_atoms_[M].insert(C);
+            if (dist < shell_extents->get(M)) shell_significant_atoms_[M].insert(C);
         }
     }
 
@@ -3480,12 +3476,14 @@ void DFHelper::prepare_cosx_K() {
 
     for (int M = 0; M < nshell; M++) {
         const std::set<int>& Msig = shell_significant_atoms_[M];
-        const std::set<int>& Msec = shell_significant_atoms_[M];
+        const std::set<int>& Msec = shell_secondary_atoms_[M];
         for (int atom : Msig) {
             shell_grid_atoms_[M].insert(atom);
+            // outfile->Printf("  Shell %d, Sig Atom %d\n", M, atom);
         }
         for (int atom : Msec) {
             shell_grid_atoms_[M].insert(atom);
+            // outfile->Printf("  Shell %d, Sec Atom %d\n", M, atom);
         }
     }
 
@@ -3517,27 +3515,15 @@ void DFHelper::prepare_cosx_K() {
     for (int A = 0; A < natom; A++) {
         auto atomic_spherical_grids = spherical_grids[A];
 
-        int sh0 = primary_->shell_on_center(A, 0);
-        int func0 = primary_->shell_to_basis_function(sh0);
-        int nshell_atom = primary_->nshell_on_center(A);
-        int nfunc_atom = 0;
-
-        center_to_function_[A] = func0;
-
-        for (int sh = sh0; sh < sh0 + nshell_atom; sh++) {
-            const GaussianShell& gshell = primary_->shell(sh);
-            nfunc_atom += sh.nfunction();
-        }
-
         // Loop over all radial points
         for (int r = 0; r < atomic_spherical_grids.size(); r++) {
             auto sgrid = atomic_spherical_grids[r];
             int spoints = sgrid->npoints();
 
-            double* x = grid->x();
-            double* y = grid->y();
-            double* z = grid->z();
-            double* w = grid->w();
+            double* x = sgrid->x();
+            double* y = sgrid->y();
+            double* z = sgrid->z();
+            double* w = sgrid->w();
 
             for (int p = 0; p < spoints; p++) {
                 cosx_atomic_grid_x_[A].push_back(x[p]);
@@ -3549,8 +3535,11 @@ void DFHelper::prepare_cosx_K() {
     }
 
     for (int A = 0; A < natom; A++) {
-        int npoints = cosx_atomic_grid_x_.size();
+        int npoints = cosx_atomic_grid_x_[A].size();
         cosx_atomic_phi_ao_[A].resize(npoints * nbf_);
+        const std::vector<double>& x = cosx_atomic_grid_x_[A];
+        const std::vector<double>& y = cosx_atomic_grid_y_[A];
+        const std::vector<double>& z = cosx_atomic_grid_z_[A];
         for (size_t g = 0; g < npoints; g++) {
             primary_->compute_phi(&(cosx_atomic_phi_ao_[A].data()[g * nbf_]), x[g], y[g], z[g]);
         }
@@ -3559,7 +3548,7 @@ void DFHelper::prepare_cosx_K() {
     timer_off("DFH: prepare_cosx_K");
 }
 
-void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& K) {
+void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& Dref, std::vector<SharedMatrix>& Kref) {
 
     timer_on("DFH: compute_cosx_K");
 
@@ -3568,9 +3557,9 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
     int nshell = primary_->nshell();
 
     // Compute A, X, F, and G
-    for (size_t i = 0; i < D.size(); i++) {
-        double* Dp = D[i]->pointer()[0];
-        double* Kp = K[i]->pointer()[0];
+    for (size_t i = 0; i < Dref.size(); i++) {
+        double* Dp = Dref[i]->pointer()[0];
+        double* Kp = Kref[i]->pointer()[0];
         memset((void *) Kp, 0, nbf_ * nbf_ * sizeof(double));
 
         std::vector<std::vector<double>> Xkg(nbf_); // Izsak Eq. 4 
@@ -3617,15 +3606,13 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
                     for (int k = k_start; k < k_start + num_k; k++) {
                         int running_points = 0;
                         for (int atom : grid_atoms) {
-                            if (!grid_atoms_k.count(atom)) continue;
-                            int k_offset = 0;
-                            for (int atom_k : grid_atoms_k) {
-                                if (atom_k == atom) break;
-                                k_offset += cosx_atomic_grid_x_[atom_k].size();
-                            }
                             int npoints = cosx_atomic_grid_x_[atom].size();
+                            if (!grid_atoms_k.count(atom)) {
+                                running_points += npoints;
+                                continue;
+                            }
                             for (size_t g = 0; g < npoints; g++) {
-                                Ftg[t][running_points + g] += Dp[t * nbf_ + k] * Xkg[k][k_offset + g];
+                                Ftg[t][running_points + g] += Dp[t * nbf_ + k] * cosx_atomic_phi_ao_[atom][g * nbf_ + k];
                             }
                             running_points += npoints;
                         }
@@ -3635,7 +3622,7 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
         }
 
         // Compute G (Equation 7)
-        for (int M = 0; M < mshell; M++) {
+        for (int M = 0; M < nshell; M++) {
             const GaussianShell& m_shell = primary_->shell(M);
             int m_start = m_shell.start();
             int num_m = m_shell.nfunction();
@@ -3649,13 +3636,18 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
                 const std::set<int>& grid_atoms_n = shell_grid_atoms_[N];
                 size_t running_points = 0;
                 for (int atom : grid_atoms) {
-                    if (!grid_atoms_n.count(atom)) continue;
+                    // outfile->Printf("  SHELL %d, GRID ATOM %d\n", M, atom);
+                    int npoints = cosx_atomic_grid_x_[atom].size();
+                    if (!grid_atoms_n.count(atom)) {
+                        running_points += npoints;
+                        continue;
+                    }
                     int n_offset = 0;
                     for (int atom_n : grid_atoms_n) {
+                        // outfile->Printf("  SHELL %d, GRID ATOM %d\n", M, atom_n);
                         if (atom_n == atom) break;
                         n_offset += cosx_atomic_grid_x_[atom_n].size();
                     }
-                    int npoints = cosx_atomic_grid_x_[atom].size();
                     for (size_t g = 0; g < npoints; g++) {
                         SharedMatrix Zxyz = std::make_shared<Matrix>("COSX Point Integration Field", 1, 4);
                         Zxyz->set(0, 0, -1.0);
@@ -3682,7 +3674,7 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
         }
 
         // Compute K (Equation 8)
-        for (int U = 0; U < mshell; U++) {
+        for (int U = 0; U < nshell; U++) {
             const GaussianShell& u_shell = primary_->shell(U);
             int u_start = u_shell.start();
             int num_u = u_shell.nfunction();
@@ -3696,20 +3688,23 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
                 const std::set<int>& grid_atoms_v = shell_grid_atoms_[V];
                 size_t running_points = 0;
                 for (int atom : grid_atoms) {
-                    if (!grid_atoms_v.count(atom)) continue;
+                    int npoints = cosx_atomic_grid_x_[atom].size();
+                    if (!grid_atoms_v.count(atom)) {
+                        running_points += npoints;
+                        continue;
+                    }
                     int v_offset = 0;
                     for (int atom_v : grid_atoms_v) {
                         if (atom_v == atom) break;
                         v_offset += cosx_atomic_grid_x_[atom_v].size();
                     }
-                    int npoints = cosx_atomic_grid_x_[atom].size();
                     for (size_t g = 0; g < npoints; g++) {
-                        for (int m = m_start; m < m_start + num_m; m++) {
-                            int dm = m - m_start;
-                            for (int n = n_start; n < n_start + num_n; n++) {
-                                int dn = n - n_start;
+                        for (int u = u_start; u < u_start + num_u; u++) {
+                            int du = u - u_start;
+                            for (int v = v_start; v < v_start + num_v; v++) {
+                                int dv = v - v_start;
                                 Kp[u * nbf_ + v] += cosx_atomic_grid_w_[atom][running_points + g] * 
-                                    Xkg[u][running_points + g] * Ftg[v][v_offset + g];
+                                    cosx_atomic_phi_ao_[atom][g * nbf_ + u] * Gvg[v][v_offset + g];
                             }
                         }
 
@@ -3719,7 +3714,7 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
             }
         }
 
-        K[i]->hermitivitize();
+        Kref[i]->hermitivitize();
 
         /*
 
