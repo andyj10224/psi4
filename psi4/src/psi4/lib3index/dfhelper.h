@@ -359,6 +359,10 @@ class PSI_API DFHelper {
     std::map<std::pair<int, int>, std::set<int>> shell_pair_atoms_;
     // Starting basis function of an atomic center
     std::vector<int> center_to_function_;
+    // Atomic grid offsets per shell
+    std::vector<std::map<int, int>> shell_atom_grid_offsets_;
+    // Total grid points per shell
+    std::vector<int> shell_grid_npoints_;
 
     double cosx_basis_tolerance_;
     bool cosx_init_;
