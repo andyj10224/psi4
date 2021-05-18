@@ -1530,8 +1530,6 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
                     "ROBUST TREUTLER NONE FLAT P_GAUSSIAN D_GAUSSIAN P_SLATER D_SLATER LOG_GAUSSIAN LOG_SLATER NONE");
         /*- Numerical tolerance for the formation of S (Overlap) and P (Density) junctions -*/
         options.add_double("COSX_BASIS_TOLERANCE", 1.0e-10);
-        /*- Starting radius to search for s junction radius (in bohr) -*/
-        options.add_double("COSX_START_RADIUS", 2.0);
 
 
         /*- SUBSECTION SAD Guess Algorithm -*/

@@ -3412,46 +3412,26 @@ void DFHelper::prepare_cosx_K() {
     timer_on("DFH: prepare_cosx_K");
 
     Options& options = Process::environment.options;
-
-    start_search_radius_ = options.get_double("COSX_START_RADIUS");
     cosx_basis_tolerance_ = options.get_double("COSX_BASIS_TOLERANCE");
 
-    std::vector<double> max_r(nbf_, 0.0);
-    primary_->compute_phi_r_max(&(max_r.data()[0]), start_search_radius_, cosx_basis_tolerance_);
+    std::shared_ptr<BasisExtents> extents = std::make_shared<BasisExtents>(primary_, cosx_basis_tolerance_);
+    auto shell_extents = extents->shell_extents();
 
     int nshell = primary_->nshell();
 
     auto mol = primary_->molecule();
     s_junction_shell_.resize(nshell);
-    s_junction_func_.resize(nbf_);
 
     // => Prepare the relavent S-junction pairs <= //
 
     for (int M = 0; M < nshell; M++) {
-        const GaussianShell& m_shell = primary_->shell(M);
-        int m_start = m_shell.start();
-        int num_m = m_shell.nfunction();
+        int A = primary_->shell_to_center(M);
+        auto Axyz = mol->xyz(A);
         for (int N = 0; N < nshell; N++) {
-            bool added = false;
-            const GaussianShell& n_shell = primary_->shell(N);
-            int n_start = n_shell.start();
-            int num_n = n_shell.nfunction();
-            for (int m = m_start; m < m_start + num_m; m++) {
-                int A = primary_->function_to_center(m);
-                auto Axyz = mol->xyz(A);
-                for (int n = n_start; n < n_start + num_n; n++) {
-                    int B = primary_->function_to_center(n);
-                    auto Bxyz = mol->xyz(B);
-                    double dist = Axyz.distance(Bxyz);
-                    if (dist < max_r[m]) {
-                        s_junction_func_[m].push_back(n);
-                        if (!added) {
-                            s_junction_shell_[M].push_back(N);
-                            added = true;
-                        }
-                    }
-                }
-            }
+            int B = primary_->shell_to_center(M);
+            auto Bxyz = mol->xyz(B);
+            double dist = Axyz.distance(Bxyz);
+            if (dist < shell_extents->get(M)) s_junction_shell_[M].push_back(N);
         }
     }
 
@@ -3515,7 +3495,7 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
         double* Kp = K[i]->pointer()[0];
         memset((void *) Kp, 0, nbf_ * nbf_ * sizeof(double));
 
-        std::vector<double> Xkg(nbf_ * npoints); // Izsak Eq. 4 
+        std::vector<double> Xkg(nbf_ * npoints, 0.0); // Izsak Eq. 4 
         std::vector<double> Ftg(nbf_ * npoints, 0.0); // Izsak Eq. 6
         std::vector<double> Gvg(nbf_ * npoints, 0.0); // Izsak Eq. 7
 
@@ -3527,12 +3507,31 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
         }
 
         // Compute F (Equation 6)
-        for (size_t g = 0; g < npoints; g++) {
-            for (size_t t = 0; t < nbf_; t++) {
-                for (size_t v = 0; v < s_junction_func_[t].size(); v++) {
-                    size_t k = s_junction_func_[t][v];
-                    Ftg[t * npoints + g] += Dp[t * nbf_ + k] * Xkg[k * npoints + g];
+        for (int M = 0; M < nshell; M++) {
+            const GaussianShell& m_shell = primary_->shell(M);
+            size_t m_start = m_shell.start();
+            size_t num_m = m_shell.nfunction();
+            for (int ind = 0; ind < s_junction_shell_[M].size(); ind++) {
+                int N = s_junction_shell_[M][ind];
+                const GaussianShell& n_shell = primary_->shell(N);
+                size_t n_start = n_shell.start();
+                size_t num_n = n_shell.nfunction();
+
+                double *Dbuff = &(Dp[m_start * nbf_ + n_start]);
+                double *Xbuff = &(Xkg.data()[n_start * npoints]);
+                double *Fbuff = &(Ftg.data()[m_start * npoints]);
+
+                C_DGEMM('N', 'N', num_m, npoints, num_n, 1.0, Dbuff, nbf_, Xbuff, npoints, 1.0, Fbuff, npoints);
+
+                /*
+                for (size_t g = 0; g < npoints; g++) {
+                   for (int m = m_start; m < m_start + num_m; m++) {
+                       for (int n = n_start; n < n_start + num_n; n++) {
+                           Ftg[m * npoints + g] += Dp[m * nbf_ + n] * Xkg[n * npoints + g];
+                       }
+                   }
                 }
+                */
             }
         }
 
@@ -3541,8 +3540,8 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
             const GaussianShell& m_shell = primary_->shell(M);
             size_t m_start = m_shell.start();
             size_t num_m = m_shell.nfunction();
-            for (int T = 0; T < s_junction_shell_[M].size(); T++) {
-                int N = s_junction_shell_[M][T];
+            for (int ind = 0; ind < s_junction_shell_[M].size(); ind++) {
+                int N = s_junction_shell_[M][ind];
                 const GaussianShell& n_shell = primary_->shell(N);
                 size_t n_start = n_shell.start();
                 size_t num_n = n_shell.nfunction();
@@ -3556,8 +3555,14 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
                     cosx_point_int_->set_charge_field(Zxyz);
 
                     cosx_point_int_->compute_shell(M, N);
-                    const double *A_buffer = cosx_point_int_->buffer();
+                    double *A_buffer = (double *) cosx_point_int_->buffer();
 
+                    double* Fbuff = &(Ftg.data()[n_start * npoints + g]);
+                    double* Gbuff = &(Gvg.data()[m_start * npoints + g]);
+
+                    C_DGEMV('N', num_m, num_n, 1.0, A_buffer, num_n, Fbuff, npoints, 1.0, Gbuff, npoints);
+
+                    /*
                     for (size_t m = m_start; m < m_start + num_m; m++) {
                         int dm = m - m_start;
                         for (size_t n = n_start; n < n_start + num_n; n++) {
@@ -3565,16 +3570,28 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
                             Gvg[m * npoints + g] += A_buffer[dm * num_n + dn] * Ftg[n * npoints + g];
                         }
                     }
+                    */
                 }
             }
         }
 
-        // Compute K matrix (Equation 8)
-        for (size_t u = 0; u < nbf_; u++) {
-            for (size_t n = 0; n < s_junction_func_[u].size(); n++) {
-                size_t v = s_junction_func_[u][n];
-                for (size_t g = 0; g < npoints; g++) {
-                    Kp[u * nbf_ + v] += cosx_grid_w_[g] * Xkg[u * npoints + g] * Gvg[v * npoints + g];
+        // Compute K Matrix (Equation 8)
+        for (int M = 0; M < nshell; M++) {
+            const GaussianShell& m_shell = primary_->shell(M);
+            size_t m_start = m_shell.start();
+            size_t num_m = m_shell.nfunction();
+            for (int ind = 0; ind < s_junction_shell_[M].size(); ind++) {
+                int N = s_junction_shell_[M][ind];
+                const GaussianShell& n_shell = primary_->shell(N);
+                size_t n_start = n_shell.start();
+                size_t num_n = n_shell.nfunction();
+
+                for (int m = m_start; m < m_start + num_m; m++) {
+                    for (int n = n_start; n < n_start + num_n; n++) {
+                        for (int g = 0; g < npoints; g++) {
+                            Kp[m * nbf_ + n] += cosx_grid_w_[g] * Xkg[m * npoints + g] * Gvg[n * npoints + g];
+                        }
+                    }
                 }
             }
         }

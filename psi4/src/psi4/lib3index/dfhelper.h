@@ -351,8 +351,6 @@ class PSI_API DFHelper {
 
     // => cosx machinery <=
     std::vector<std::vector<int>> s_junction_shell_;
-    std::vector<std::vector<int>> s_junction_func_;
-    double start_search_radius_;
     double cosx_basis_tolerance_;
 
     std::vector<double> cosx_grid_x_;
