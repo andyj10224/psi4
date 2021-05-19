@@ -401,12 +401,15 @@ class PSI_API BasisSet {
     // Returns the values of the basis functions at a point
     void compute_phi(double *phi_ao, double x, double y, double z);
     // Returns the radius of at which the values of the atomic orbitals fall below a certain threshold
-    void compute_phi_r_max(double *phi_ao, double r_start, double threshold);
+    // void compute_phi_r_max(double *phi_ao, double r_start, double threshold);
     
    private: 
     /// Helper functions for frozen core to reduce LOC
     int atom_to_period(int Z);
     int period_to_full_shell(int p);
+    /// Helper functions for compute_phi
+    void compute_phi_cart(double *phi_ao, double x, double y, double z);
+    void compute_phi_pure(double *phi_ao, double x, double y, double z);
 };
 
 }  // namespace psi
