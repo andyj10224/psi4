@@ -8,11 +8,12 @@
 #include <memory>
 #include <tuple>
 #include <vector>
+#include <cmath>
 
 namespace psi {
 
 int m_addr(int m) {
-    /*- Return the unsigned (array) address of m" -*/
+    /*- Return the unsigned (array) address of m -*/
     if (m <= 0) {
         // 0, 1s, 2s, 3s, ...
         return 2*(-m);
@@ -147,6 +148,192 @@ SharedMatrix MultipoleRotationFactory::get_D(int l) {
 
     D_cache_[l] = Drot;
     return D_cache_[l];
+}
+
+void RealSolidHarmonics::compute_terms_regular(double q, double x, double y, double z) {
+    
+    double r2 = x*x + y*y + z*z;
+
+    Rc_.resize(lmax_+1);
+    Rs_.resize(lmax_+1);
+    mpole_terms_.resize(lmax_+1);
+
+    for (int l = 0; l <= lmax_; l++) {
+        Rc_[l].resize(l+1);
+        Rs_[l].resize(l+1);
+        mpole_terms_[l].resize(2*l+1);
+
+        if (l == 0) {
+            Rc_[0][0].push_back(std::make_tuple(1.0, 0, 0, 0));
+            Rs_[0][0].push_back(std::make_tuple(0.0, 0, 0, 0));
+        }
+
+        else {
+            // m < l-1 terms
+            for (int m = 0; m < l-1; m++) {
+                int denom = (l+m)*(l-m);
+
+                // Rc_[l-1][m] contributions to Rc_[l][m]
+                for (int ind = 0; ind < Rc_[l-1][m].size(); ind++) {
+                    auto term_tuple = Rc_[l-1][m][ind];
+                    double coef = std::get<0>(term_tuple);
+                    int a = std::get<1>(term_tuple);
+                    int b = std::get<2>(term_tuple);
+                    int c = std::get<3>(term_tuple);
+
+                    coef *= (2*l-1) / denom;
+                    Rc_[l][m].push_back(std::make_tuple(coef, a, b, c+1));
+                }
+
+                // Rc_[l-2][m] contributions to Rc_[l][m]
+                for (int ind = 0; ind < Rc_[l-2][m].size(); ind++) {
+                    auto term_tuple = Rc_[l-2][m][ind];
+                    double coef = std::get<0>(term_tuple);
+                    int a = std::get<1>(term_tuple);
+                    int b = std::get<2>(term_tuple);
+                    int c = std::get<3>(term_tuple);
+
+                    coef /= denom;
+                    Rc_[l][m].push_back(std::make_tuple(-coef, a+2, b, c));
+                    Rc_[l][m].push_back(std::make_tuple(-coef, a, b+2, c));
+                    Rc_[l][m].push_back(std::make_tuple(-coef, a, b, c+2));
+                }
+
+                // Rs_[l-1][m] contributions to Rs_[l][m]
+                for (int ind = 0; ind < Rs_[l-1][m].size(); ind++) {
+                    auto term_tuple = Rs_[l-1][m][ind];
+                    double coef = std::get<0>(term_tuple);
+                    int a = std::get<1>(term_tuple);
+                    int b = std::get<2>(term_tuple);
+                    int c = std::get<3>(term_tuple);
+
+                    coef *= (2*l-1) / denom;
+                    Rs_[l][m].push_back(std::make_tuple(coef, a, b, c+1));
+                }
+
+                // Rs_[l-2][m] contributions to Rs_[l][m]
+                for (int ind = 0; ind < Rs_[l-2][m].size(); ind++) {
+                    auto term_tuple = Rs_[l-2][m][ind];
+                    double coef = std::get<0>(term_tuple);
+                    int a = std::get<1>(term_tuple);
+                    int b = std::get<2>(term_tuple);
+                    int c = std::get<3>(term_tuple);
+
+                    coef /= denom;
+                    Rs_[l][m].push_back(std::make_tuple(-coef, a+2, b, c));
+                    Rs_[l][m].push_back(std::make_tuple(-coef, a, b+2, c));
+                    Rs_[l][m].push_back(std::make_tuple(-coef, a, b, c+2));
+                }
+            }
+
+            // => m = l-1 <= //
+
+            // Rc[l][l-1]
+            for (int ind = 0; ind < Rc_[l-1][l-1].size(); ind++) {
+                auto term_tuple = Rc_[l-1][l-1][ind];
+                double coef = std::get<0>(term_tuple);
+                int a = std::get<1>(term_tuple);
+                int b = std::get<2>(term_tuple);
+                int c = std::get<3>(term_tuple);
+
+                Rc_[l][l-1].push_back(coef, a, b, c+1);
+            }
+
+            // Rs[l][l-1]
+            for (int ind = 0; ind < Rs_[l-1][l-1].size(); ind++) {
+                auto term_tuple = Rs_[l-1][l-1][ind];
+                double coef = std::get<0>(term_tuple);
+                int a = std::get<1>(term_tuple);
+                int b = std::get<2>(term_tuple);
+                int c = std::get<3>(term_tuple);
+
+                Rs_[l][l-1].push_back(coef, a, b, c+1);
+            }
+
+            // => m = l <= //
+
+            // Rc[l-1][l-1] contribution to Rc[l][l]
+            for (int ind = 0; ind < Rc_[l-1][l-1].size(); ind++) {
+                auto term_tuple = Rc_[l-1][l-1][ind];
+                double coef = std::get<0>(term_tuple);
+                int a = std::get<1>(term_tuple);
+                int b = std::get<2>(term_tuple);
+                int c = std::get<3>(term_tuple);
+
+                Rc_[l][l].push_back(-coef/(2*l), a+1, b, c);
+            }
+
+            // Rs[l-1][l-1] contribution to Rc[l][l]
+            for (int ind = 0; ind < Rs_[l-1][l-1].size(); ind++) {
+                auto term_tuple = Rs_[l-1][l-1][ind];
+                double coef = std::get<0>(term_tuple);
+                int a = std::get<1>(term_tuple);
+                int b = std::get<2>(term_tuple);
+                int c = std::get<3>(term_tuple);
+
+                Rc_[l][l].push_back(coef/(2*l), a, b+1, c);
+            }
+
+            // Rc[l-1][l-1] contribution to Rs[l][l]
+            for (int ind = 0; ind < Rc_[l-1][l-1].size(); ind++) {
+                auto term_tuple = Rc_[l-1][l-1][ind];
+                double coef = std::get<0>(term_tuple);
+                int a = std::get<1>(term_tuple);
+                int b = std::get<2>(term_tuple);
+                int c = std::get<3>(term_tuple);
+
+                Rs_[l][l].push_back(-coef/(2*l), a, b+1, c);
+            }
+
+            // Rs[l-1][l-1] contribution to Rs[l][l]
+            for (int ind = 0; ind < Rs_[l-1][l-1].size(); ind++) {
+                auto term_tuple = Rs_[l-1][l-1][ind];
+                double coef = std::get<0>(term_tuple);
+                int a = std::get<1>(term_tuple);
+                int b = std::get<2>(term_tuple);
+                int c = std::get<3>(term_tuple);
+
+                Rs_[l][l].push_back(-coef/(2*l), a+1, b, c);
+            }
+        }
+
+        for (int m = -l; m <= l; m++) {
+            // m is signed address
+            // mu is unsigned address
+            int mu = m_addr(m);
+            double prefactor = 1.0;
+            if ((mu == 0) || (mu % 2 == 1)) {
+                if (mu == 0) {
+                    prefactor = std::tgamma(l+1);
+                } else {
+                    prefactor = std::pow(-1.0, (double) m) * std::sqrt(2.0 * std::tgamma(l-m+1) * std::tgamma(l+m+1));
+                }
+                for (int ind = 0; ind < Rc_[l][m].size(); ind++) {
+                    auto term_tuple = Rc_[l][m][ind];
+                    double coef = std::get<0>(term_tuple);
+                    int a = std::get<1>(term_tuple);
+                    int b = std::get<2>(term_tuple);
+                    int c = std::get<3>(term_tuple);
+
+                    mpole_terms_[l][mu].push_back(prefactor * coef, a, b, c);
+                }
+            } else {
+                prefactor = std::pow(-1.0, (double) m) * std::sqrt(2.0 * std::tgamma(l-m+1) * std::tgamma(l+m+1));
+
+                for (int ind = 0; ind < Rs_[l][-m].size(); ind++) {
+                    auto term_tuple = Rs_[l][-m][ind];
+                    double coef = std::get<0>(term_tuple);
+                    int a = std::get<1>(term_tuple);
+                    int b = std::get<2>(term_tuple);
+                    int c = std::get<3>(term_tuple);
+
+                    mpole_terms_[l][mu].push_back(prefactor * coef, a, b, c);
+                }
+            }
+        }
+    }
+
+
 }
 
 } // namespace psi

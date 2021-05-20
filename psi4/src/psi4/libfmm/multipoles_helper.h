@@ -76,6 +76,10 @@ class RealSolidHarmonics {
     protected:
       // Ylm[l][m] = sum (coeff * x^a * y^b * z^c), stores a tuple of (coeff, a, b, c)
       std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>> mpole_terms_;
+      // Helgaker Rs terms (used in generating mpole_terms_)
+      std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>> Rc_;
+      // Helgaker Rc terms (used in generating mpole_terms_)
+      std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>> Rs_;
       // Real Solid Harmonics, normalized according to Stone's convention
       std::vector<std::vector<double>> Ylm_;
       // Maximum angular momentum
@@ -84,14 +88,14 @@ class RealSolidHarmonics {
       SolidHarmonicsType type_;
 
       // Compute terms if it were regular
-      void compute_terms_regular();
+      void compute_terms_regular(double q, double x, double y, double z);
       // Compute terms if it were irregular
-      void compute_terms_irregular();
+      void compute_terms_irregular(double q, double x, double y, double z);
 
       // Compute multipoles if it were regular
       void compute_mpoles_regular();
       // Compute multipoles if it were irregular
-      void compute_mpoles_regular();
+      void compute_mpoles_irregular();
 
       // Translate multipoles if it were regular
       void translate_regular();
@@ -106,7 +110,7 @@ class RealSolidHarmonics {
       void add(const RealSolidHarmonics& rsh);
 
       // Compute the terms (regular)
-      void compute_terms();
+      void compute_terms(double q, double x, double y, double z);
       // Compute multipoles from terms
       void compute_mpoles();
       // Translate the solid harmonics
