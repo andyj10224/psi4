@@ -40,6 +40,7 @@
 #endif
 #ifdef _OPENMP
 #include <omp.h>
+#include "psi4/libpsi4util/process.h"
 #endif
 
 #include "psi4/psi4-dec.h"
@@ -3414,6 +3415,11 @@ void DFHelper::prepare_cosx_K() {
     Options& options = Process::environment.options;
     cosx_basis_tolerance_ = options.get_double("COSX_BASIS_TOLERANCE");
 
+    nthreads_ = 1;
+#ifdef _OPENMP
+    nthreads_ = Process::environment.get_n_threads();
+#endif
+
     std::shared_ptr<BasisExtents> extents = std::make_shared<BasisExtents>(primary_, cosx_basis_tolerance_);
     auto shell_extents = extents->shell_extents();
 
@@ -3456,8 +3462,10 @@ void DFHelper::prepare_cosx_K() {
     cosx_grid_w_.resize(npoints);
     cosx_phi_ao_.resize(npoints * nbf_);
 
-    cosx_int_factory_ = std::make_shared<IntegralFactory>(primary_);
-    cosx_point_int_ = (PotentialInt *) cosx_int_factory_->ao_potential();
+    for (int thread = 0; thread < nthreads_; thread++) {
+        cosx_int_factory_.push_back(std::make_shared<IntegralFactory>(primary_));
+        cosx_point_int_.push_back(std::shared_ptr<PotentialInt>((PotentialInt *) cosx_int_factory_[thread]->ao_potential()));
+    }
 
     size_t rpoints = 0;
     for (size_t b = 0; b < blocks.size(); b++) {
@@ -3485,6 +3493,10 @@ void DFHelper::prepare_cosx_K() {
 void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& K) {
 
     timer_on("DFH: compute_cosx_K");
+
+#ifdef _OPENMP
+    nthreads_ = Process::environment.get_n_threads();
+#endif
 
     int nshell = primary_->nshell();
     int npoints = cosx_grid_x_.size();
@@ -3519,12 +3531,13 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
                 size_t n_start = n_shell.start();
                 size_t num_n = n_shell.nfunction();
 
-                // double *Dbuff = &(Dp[m_start * nbf_ + n_start]);
-                // double *Xbuff = &(Xkg[n_start * npoints]);
-                // double *Fbuff = &(Ftg[m_start * npoints]);
+                double *Dbuff = &(Dp[m_start * nbf_ + n_start]);
+                double *Xbuff = &(Xkg[n_start * npoints]);
+                double *Fbuff = &(Ftg[m_start * npoints]);
 
-                // C_DGEMM('N', 'N', num_m, npoints, num_n, 1.0, Dbuff, nbf_, Xbuff, npoints, 1.0, Fbuff, npoints);
+                C_DGEMM('N', 'N', num_m, npoints, num_n, 1.0, Dbuff, nbf_, Xbuff, npoints, 1.0, Fbuff, npoints);
 
+                /*
                 for (size_t g = 0; g < npoints; g++) {
                    for (int m = m_start; m < m_start + num_m; m++) {
                        for (int n = n_start; n < n_start + num_n; n++) {
@@ -3532,18 +3545,29 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
                        }
                    }
                 }
+                */
 
             }
         }
 
         // Compute G (Equation 7)
+
+        size_t computed_shells = 0L;
+
 #pragma omp parallel for
-        for (int M = 0; M < nshell; M++) {
+        for (size_t M = 0L; M < nshell; M++) {
             const GaussianShell& m_shell = primary_->shell(M);
             size_t m_start = m_shell.start();
             size_t num_m = m_shell.nfunction();
-            for (int ind = 0; ind < s_junction_shell_[M].size(); ind++) {
-                int N = s_junction_shell_[M][ind];
+
+            int thread = 0;
+
+#ifdef _OPENMP
+    thread = omp_get_thread_num();
+#endif
+
+            for (size_t ind = 0; ind < s_junction_shell_[M].size(); ind++) {
+                size_t N = s_junction_shell_[M][ind];
                 const GaussianShell& n_shell = primary_->shell(N);
                 size_t n_start = n_shell.start();
                 size_t num_n = n_shell.nfunction();
@@ -3554,15 +3578,17 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
                     Zxyz->set(0, 1, cosx_grid_x_[g]);
                     Zxyz->set(0, 2, cosx_grid_y_[g]);
                     Zxyz->set(0, 3, cosx_grid_z_[g]);
-                    cosx_point_int_->set_charge_field(Zxyz);
+                    cosx_point_int_[thread]->set_charge_field(Zxyz);
 
-                    cosx_point_int_->compute_shell(M, N);
-                    double *A_buffer = (double *) cosx_point_int_->buffer();
+                    cosx_point_int_[thread]->compute_shell(M, N);
+                    computed_shells++;
+                    double *A_buffer = (double *) cosx_point_int_[thread]->buffer();
+                    double* Fbuff = &(Ftg[n_start * npoints + g]);
+                    double* Gbuff = &(Gvg[m_start * npoints + g]);
 
-                    // double* Fbuff = &(Ftg[n_start * npoints + g]);
-                    // double* Gbuff = &(Gvg[m_start * npoints + g]);
+                    C_DGEMV('N', num_m, num_n, 1.0, A_buffer, num_n, Fbuff, npoints, 1.0, Gbuff, npoints);
 
-                    // C_DGEMV('N', num_m, num_n, 1.0, A_buffer, num_n, Fbuff, npoints, 1.0, Gbuff, npoints);
+                    /*
 
                     for (size_t m = m_start; m < m_start + num_m; m++) {
                         int dm = m - m_start;
@@ -3571,6 +3597,8 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
                             Gvg[m * npoints + g] += A_buffer[dm * num_n + dn] * Ftg[n * npoints + g];
                         }
                     }
+
+                    */
                     
                 }
             }
@@ -3588,12 +3616,13 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
                 size_t n_start = n_shell.start();
                 size_t num_n = n_shell.nfunction();
 
-                // double *Xbuff = &(cosx_phi_ao_[m_start]);
-                // double *Gbuff = &(Gvg[n_start * npoints]);
-                // double *Kbuff = &(Kp[m_start * nbf_ + n_start]);
+                double *Xbuff = &(cosx_phi_ao_[m_start]);
+                double *Gbuff = &(Gvg[n_start * npoints]);
+                double *Kbuff = &(Kp[m_start * nbf_ + n_start]);
 
-                // C_DGEMM('T', 'T', num_m, num_n, npoints, 1.0, Xbuff, nbf_, Gbuff, npoints, 1.0, Kbuff, nbf_);
+                C_DGEMM('T', 'T', num_m, num_n, npoints, 1.0, Xbuff, nbf_, Gbuff, npoints, 1.0, Kbuff, nbf_);
 
+                /*
                 for (int m = m_start; m < m_start + num_m; m++) {
                     for (int n = n_start; n < n_start + num_n; n++) {
                         for (int g = 0; g < npoints; g++) {
@@ -3601,6 +3630,7 @@ void DFHelper::compute_cosx_K(const std::vector<SharedMatrix>& D, std::vector<Sh
                         }
                     }
                 }
+                */
 
             }
         }

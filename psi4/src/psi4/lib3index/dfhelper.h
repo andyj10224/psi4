@@ -359,8 +359,8 @@ class PSI_API DFHelper {
     std::vector<double> cosx_grid_w_;
     std::vector<double> cosx_phi_ao_;
 
-    std::shared_ptr<IntegralFactory> cosx_int_factory_;
-    PotentialInt *cosx_point_int_;
+    std::vector<std::shared_ptr<IntegralFactory>> cosx_int_factory_;
+    std::vector<std::shared_ptr<PotentialInt>> cosx_point_int_;
 
     // => in-core machinery <=
     void AO_core();
