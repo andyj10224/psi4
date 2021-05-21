@@ -86,35 +86,34 @@ class RealSolidHarmonics {
       const int lmax_;
       // Regular or Irregular?
       SolidHarmonicsType type_;
+      // Center of the Harmonics
+      Vector3 center_;
 
       // Compute terms if it were regular
-      void compute_terms_regular(double q, double x, double y, double z);
+      void compute_terms_regular();
       // Compute terms if it were irregular
-      void compute_terms_irregular(double q, double x, double y, double z);
+      void compute_terms_irregular();
 
-      // Compute multipoles if it were regular
-      void compute_mpoles_regular();
-      // Compute multipoles if it were irregular
-      void compute_mpoles_irregular();
-
-      // Translate multipoles if it were regular
-      void translate_regular();
-      // Translate multipoles if it were irregular
-      void translate_irregular();
+      // Return a translated copy of the multipoles if it were regular
+      std::shared_ptr<RealSolidHarmonics> translate_regular(Vector3 new_center);
+      // Return a translated copy of the multipoles if it were irregular
+      std::shared_ptr<RealSolidHarmonics> translate_irregular(Vector3 new_center);
 
     public:
       // Constructor
-      RealSolidHarmonics(int lmax, SolidHarmonicsType type);
+      RealSolidHarmonics(int lmax, Vector3 center, SolidHarmonicsType type);
 
       // Adds two harmonics together
       void add(const RealSolidHarmonics& rsh);
+      void add(std::shared_ptr<RealSolidHarmonics> rsh);
+      
+      // Returns a reference of Ylm
+      std::vector<std::vector<double>>& get_multipoles() { return Ylm_; }
 
       // Compute the terms (regular)
-      void compute_terms(double q, double x, double y, double z);
-      // Compute multipoles from terms
-      void compute_mpoles();
+      void compute_terms();
       // Translate the solid harmonics
-      void translate();
+      std::shared_ptr<RealSolidHarmonics> translate(Vector3 new_center);
 
 }; // End RealSolidHarmonics class
 
