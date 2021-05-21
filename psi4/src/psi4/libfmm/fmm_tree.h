@@ -32,7 +32,7 @@ class CFMMBox {
       // The molecule that is referenced by this box
       std::shared_ptr<Molecule> molecule_;
       // The basis set that the molecule uses
-      std::shared_ptr<BasisSet> basis_set_;
+      std::shared_ptr<BasisSet> basisset_;
       // The atoms in the molecule which are centered within the bounds of the box
       std::vector<int> atoms_;
       // Length of the box
@@ -63,9 +63,9 @@ class CFMMBox {
       // Calculates far field vector from local and parent far field vectors
     public:
       // Constructor for a root box
-      CFMMBox(std::shared_ptr<Molecule> molecule);
+      CFMMBox(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset);
       // Constructor for child boxes
-      CFMMBox(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, Vector3 origin, double length, int level, int lmax);
+      CFMMBox(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, Vector3 origin, double length, int level, int lmax);
       // Compute multipoles directly
       void compute_mpoles();
       // Compute multipoles from children
@@ -96,7 +96,7 @@ class CFMMTree {
     
     public:
       // Constructor
-      CFMMTree(int nlevels, std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset);
+      CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, int nlevels);
 
 }; // End class CFMMTree
 
