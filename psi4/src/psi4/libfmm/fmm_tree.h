@@ -33,6 +33,8 @@ class CFMMBox {
       std::shared_ptr<Molecule> molecule_;
       // The basis set that the molecule uses
       std::shared_ptr<BasisSet> basisset_;
+      // Density Matrix of Molecule
+      std::vector<SharedMatrix>& D_;
       // The atoms in the molecule which are centered within the bounds of the box
       std::vector<int> atoms_;
       // Length of the box
@@ -66,6 +68,8 @@ class CFMMBox {
       void compute_mpoles();
       // Compute multipoles from children
       void compute_mpoles_from_children();
+      // Set the Density Matrix
+      void set_density(std::vector<SharedMatrix>& D) { D_ = D; }
 
 }; // End class CFMMBox
 
@@ -84,6 +88,8 @@ class CFMMTree {
       double length_;
       // Root of this tree structure
       std::shared_ptr<CFMMBox> root_;
+      // Density Matrix of Molecule
+      std::vector<SharedMatrix> D_;
 
       // Create children
       void make_children_helper(std::shared_ptr<CFMMBox>& box);

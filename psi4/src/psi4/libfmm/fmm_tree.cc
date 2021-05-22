@@ -136,16 +136,71 @@ void CFMMBox::compute_mpoles() {
     auto mpole_terms = mpoles_->get_terms();
     auto raw_mpoles = mpoles_->get_multipoles();
 
-    for (int l = 0; l <= lmax_; l++) {
-        for (int m = -l; m <= l; l++) {
-            int mu = m_addr(m);
+    std::shared_ptr<IntegralFactory> int_factory = std::make_shared<IntegralFactory>(basisset_);
+    std::shared_ptr<OneBodyAOInt> multipole_int = int_factory->ao_multipoles(lmax_);
 
-            for (auto term : mpole_terms[l][mu]) {
+    int n_multipoles = (lmax_ + 1) * (lmax_ + 2) * (lmax_ + 3) / 6 - 1;
+
+    // Compute multipole integrals for all atoms in the shell pair
+    for (int i1 = 0; i1 < atoms_.size(); i1++) {
+        int atom1 = atoms_[i1];
+        int atom1_shell_start = basisset_->shell_on_center(atom1, 0);
+        int atom1_nshells = basisset_->nshell_on_center(atom1);
+        for (int i2 = 0; i2 < atoms_.size(); i2++) {
+            int atom2 = atoms_[i2];
+            int atom2_shell_start = basisset_->shell_on_center(atom2, 0);
+            int atom2_nshells = basisset_->nshell_on_center(atom2);
+
+            for (int M = atom1_shell_start; M < atom1_shell_start + atom1_nshells; M++) {
+                const GaussianShell& m_shell = basisset_->shell(M);
+                int m_start = m_shell.start();
+                int num_m = m_shell.nfunction();
+                for (int N = atom2_shell_start; N < atom2_shell_start + atom2_shells; N++) {
+                    const GaussianShell& n_shell = basisset_->shell(N);
+                    int n_start = n_shell.start();
+                    int num_n = n_shell.nfunction();
+
+                    multipole_int->compute(M, N);
+                    const double *buffer = multipole_int->buffer();
+                    
+                    int running_index = 0;
+                    for (int l = 0; l <= lmax_; l++) {
+                        if (l == 0) continue;
+                        
+                        for (int m = -l; m <= l; l++) {
+                            int mu = m_addr(m);
+                            for (int ind = 0; ind < mpole_terms[l][mu].size(); ind++) {
+                                auto term_tuple = mpole_terms[l][mu][ind];
+                                double coef = std::get<0>(term_tuple);
+                                int a = std::get<1>(term_tuple);
+                                int b = std::get<2>(term_tuple);
+                                int c = std::get<3>(term_tuple);
+
+                                int abcindex = running_index + icart(a, b, c);
+
+                                for (int p = m_start; p < m_start + num_m; m++) {
+                                    int dp = p - m_start;
+                                    for (int q = n_start; q < n_start + num_n; n++) {
+                                        int dq = q - n_start;
+                                        // put Dpq
+                                        for (size_t a = 0; a < D_.size(); a++) {
+                                            raw_mpoles[l][mu] += coef * D_[a]->get(p, q) * buffer[abc_index * num_m * num_n + dp * num_n + dq];
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        running_index += (l+1)*(l+1)/2;
+                    }
+
+                }
                 
             }
 
         }
     }
+
 }
 
 } // end namespace psi
