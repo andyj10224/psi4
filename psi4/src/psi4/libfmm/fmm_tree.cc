@@ -203,4 +203,13 @@ void CFMMBox::compute_mpoles() {
 
 }
 
+void CFMMBox::compute_mpoles_from_children() {
+    for (auto child : children_) {
+        if (child.atoms_.size() == 0) continue;
+
+        std::shared_ptr<RealSolidHarmonics> tmpoles = child.mpoles_->translate(center_);
+        mpoles_->add(tmpoles);
+    }
+}
+
 } // end namespace psi
