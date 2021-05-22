@@ -56,11 +56,7 @@ class CFMMBox {
       void set_nf_lff();
       // Make children for this multipole box
       void make_children();
-      // Calculates multipoles directly (only for lowest level boxes)
-      void calculate_multipoles();
-      // Calculates the multipoles of a box from it's children
-      void calculate_multipoles_from_children();
-      // Calculates far field vector from local and parent far field vectors
+      
     public:
       // Constructor for a root box
       CFMMBox(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset);

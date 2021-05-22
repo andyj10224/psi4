@@ -107,6 +107,8 @@ class RealSolidHarmonics {
       void add(const RealSolidHarmonics& rsh);
       void add(std::shared_ptr<RealSolidHarmonics> rsh);
       
+      // Returns a reference to the terms of the Harmonic
+      const std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>>& get_terms() { return mpole_terms_; }
       // Returns a reference of Ylm
       std::vector<std::vector<double>>& get_multipoles() { return Ylm_; }
 
