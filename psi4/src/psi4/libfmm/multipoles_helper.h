@@ -121,6 +121,8 @@ class RealSolidHarmonics {
       void compute_terms();
       // Translate the solid harmonics
       std::shared_ptr<RealSolidHarmonics> translate(Vector3 new_center);
+      // Calulate the far field effect this multipole series would have on another
+      std::shared_ptr<RealSolidHarmonics> far_field_vector(Vector3 far_center);
 
 }; // End RealSolidHarmonics class
 

@@ -16,7 +16,7 @@
 
 namespace psi {
 
-class CFMMBox {
+class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
 
     protected:
       // Parent of the CFMMBox
@@ -58,6 +58,8 @@ class CFMMBox {
       void set_nf_lff();
       // Make children for this multipole box
       void make_children();
+      // Calculate far field vector from local and parent far fields
+      void compute_far_field_vector();
       
     public:
       // Constructor for a root box

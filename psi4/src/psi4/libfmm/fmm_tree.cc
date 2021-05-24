@@ -212,4 +212,17 @@ void CFMMBox::compute_mpoles_from_children() {
     }
 }
 
+void CFMMBox::compute_far_field_vector() {
+    if (atoms_.size() == 0) continue;
+
+    for (auto box : local_far_field_) {
+        auto box_mpoles = box->mpoles_;
+        Vff_->add(box->mpoles_->far_field_vector(center_));
+
+        if (parent_) {
+            Vff_->add(parent_->Vff_->irregular_translate(center_));
+        }
+    }
+}
+
 } // end namespace psi

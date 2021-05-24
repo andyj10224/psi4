@@ -206,7 +206,52 @@ void RealSolidHarmonics::compute_terms() {
 }
 
 std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_irregular(Vector3 new_center) {
-    throw FeatureNotImplemented("libfmm", "RealSolidHarmonics::translate_irregular()", __FILE__, __LINE__);
+    auto trans_harmonics = std::make_shared<RealSolidHarmonics>(lmax_, new_center, Iregular);
+    auto rotation_factory = std::make_shared<MultipoleRotationFactory>(center_, new_center, lmax_);
+
+    Vector3 R_ab = new_center - center_;
+    double R = R_ab.norm();
+
+    std::vector<std::vector<double>> rot_mpoles(lmax_+1);
+    std::vector<std::vector<double>> trans_rot_mpoles(lmax_+1);
+
+    // Rotate Multipoles to direction of translation
+    for (int l = 0; l <= lmax_; l++) {
+        rot_mpoles[l].resize(2*l+1, 0.0);
+        trans_rot_mpoles.resize(2*l+1, 0.0);
+        int dim = 2*l+1;
+        SharedMatrix Dmat = rotation_factory->get_D(l);
+        for (int i = 0; i < dim; i++) {
+            for (int j = 0; j < dim; j++) {
+                rot_mpoles[l][i] += Dmat->get(i, j) * Ylm_[l][j];
+            }
+        }
+    }
+
+    // Translate Rotated Multipoles
+    for (int l = 0; l <= lmax_; l++) {
+        for (int j = l; j <= lmax_; j++) {
+            for (int m = -l; m <= l; m++) {
+                int mu = m_addr(m);
+                double coef = std::sqrt((double) choose(j+m,l+m)*choose(j-m,l-m));
+
+                trans_rot_mpoles[l][mu] += coef * std::pow(-R, j-l) * rot_mpoles[j][mu];
+            }
+        }
+    }
+
+    // Backrotation of Multipoles
+    for (int l = 0; l <= lmax_; l++) {
+        SharedMatrix Dmat = rotation_factory->get_D(l);
+        int dim = 2*l+1;
+        for (int i = 0; i < dim; i++) {
+            for (int j = 0; j < dim; j++) {
+                trans_harmonics.Ylm_[l][i] += Dmat->get(j, i) * trans_rot_mpoles[l][j];
+            }
+        }
+    }
+
+    return trans_harmonics;
 }
 
 void RealSolidHarmonics::compute_terms_irregular() {
@@ -214,7 +259,7 @@ void RealSolidHarmonics::compute_terms_irregular() {
 }
 
 std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_regular(Vector3 new_center) {
-    auto trans_harmonics = std::make_shared<RealSolidHarmonics>(lmax_, new_center, type_);
+    auto trans_harmonics = std::make_shared<RealSolidHarmonics>(lmax_, new_center, Regular);
     auto rotation_factory = std::make_shared<MultipoleRotationFactory>(center_, new_center, lmax_);
 
     Vector3 R_ab = new_center - center_;
@@ -444,6 +489,53 @@ void RealSolidHarmonics::compute_terms_regular() {
     }
 
 
+}
+
+// A helper method to compute the interaction tensor between aligned multipoles after rotation
+std::vector<double> build_T_spherical(int la, int lb, double R) {
+    int lmin = std::min(la, lb)
+    std::vector<double> Tvec(2*lmin+1);
+
+    for (int m = -lmin; m <= lmin; lmin++) {
+        int mu = m_addr(m);
+        Tvec[mu] = std::pow(-1.0, (double) (lb-m)) * std::sqrt((double) choose(la+lb, la+m) * choose(la+lb, la-m)) / std::pow(R, la+lb+1);
+    }
+}
+
+std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::far_field_vector(Vector3 far_center) {
+    
+    Vector3 R_ab = far_center - center_;
+    double R = R_ab.norm();
+
+    auto Vff = std::make_shared<RealSolidHarmonics>(lmax_, far_center, Irregular);
+    auto rotation_factory = std::make_shared<MultipoleRotationFactory>(far_center, center_, lmax_);
+
+    for (int l = 0; l <= lmax_; l++) {
+        for (int j = 0; j <= lmax_; j++) {
+            std::vector<double> Tvec = build_T_spherical(l, j, R);
+            int nterms = 2*std::min(l,j)+1
+            std::vector<double> rotated_mpole(2*j+1, 0.0);
+            SharedMatrix Dmat = rotation_factory->get_D(j);
+            for (int u = 0; u < 2*j+1; u++) {
+                for (int v = 0; v < 2*j+1; v++) {
+                    rotated_mpole[u] = Dmat->get(u, v) * Ylm_[j][v];
+                }
+            }
+            std::vector<double> temp(nterms);
+            for (int u = 0; u < nterms; u++) {
+                temp[u] = Tvec[u] * rotated_mpoles[u];
+            }
+            
+            for (int r = 0; r < 2*l+1; r++) {
+                for (int s = 0; s < nterms; s++) {
+                    Vff.Ylm_[l][r] += Dmat->get(s, r) * temp[s];
+                }
+            }
+
+        }
+    }
+
+    return Vff;
 }
 
 } // namespace psi
