@@ -328,6 +328,10 @@ def scf_iterate(self, e_conv=None, d_conv=None):
             self.Fa().print_out()
             self.Fb().print_out()
 
+        if verbose > 4:
+            self.jk().J()[0].print_out()
+            self.jk().K()[0].print_out()
+
         SCFE += self.compute_E()
         if efp_enabled:
             global efp_Dt_psi4_yo
