@@ -3429,15 +3429,18 @@ void DFHelper::prepare_cosx_K() {
     s_junction_shell_.resize(nshell);
 
     // => Prepare the relavent S-junction pairs <= //
-#pragma omp parallel for
     for (int M = 0; M < nshell; M++) {
         int A = primary_->shell_to_center(M);
         auto Axyz = mol->xyz(A);
-        for (int N = 0; N < nshell; N++) {
+        s_junction_shell_[M].push_back(M);
+        for (int N = M+1; N < nshell; N++) {
             int B = primary_->shell_to_center(N);
             auto Bxyz = mol->xyz(B);
             double dist = Axyz.distance(Bxyz);
-            if (dist < shell_extents->get(M)) s_junction_shell_[M].push_back(N);
+            if (dist < shell_extents->get(M) || dist < shell_extents->get(N)) { 
+                s_junction_shell_[M].push_back(N);
+                s_junction_shell_[N].push_back(M);
+            }
         }
     }
 
