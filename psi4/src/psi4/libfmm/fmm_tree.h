@@ -54,6 +54,9 @@ class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       // A list of all of the local-far-field boxes to this box
       std::vector<std::shared_ptr<CFMMBox>> local_far_field_;
 
+      // Common function used by constructor
+      void common_init(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, Vector3 origin, double length, int level, int lmax);
+
       // Sets the near field and local far field vectors
       void set_nf_lff();
       // Make children for this multipole box
@@ -63,7 +66,7 @@ class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       
     public:
       // Constructor for a root box
-      CFMMBox(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset);
+      CFMMBox(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, int lmax);
       // Constructor for child boxes
       CFMMBox(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, Vector3 origin, double length, int level, int lmax);
       // Compute multipoles directly
@@ -72,6 +75,10 @@ class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       void compute_mpoles_from_children();
       // Set the Density Matrix
       void set_density(std::vector<SharedMatrix>& D) { D_ = D; }
+      // Get the multipole level the box is on
+      int get_level() { return level_; }
+      // Get the children of the box
+      std::vector<std::shared_ptr<CFMMBox>>& get_children() { return children_; }
 
 }; // End class CFMMBox
 
@@ -86,8 +93,6 @@ class CFMMTree {
       std::shared_ptr<BasisSet> basisset_;
       // Maximum Multipole Angular Momentum
       int lmax_;
-      // Length of root
-      double length_;
       // Root of this tree structure
       std::shared_ptr<CFMMBox> root_;
       // Density Matrix of Molecule
@@ -100,7 +105,7 @@ class CFMMTree {
     
     public:
       // Constructor
-      CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, int nlevels);
+      CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, int nlevels, int lmax);
 
 }; // End class CFMMTree
 

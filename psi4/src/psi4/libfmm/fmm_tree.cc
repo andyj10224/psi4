@@ -36,7 +36,34 @@ int m_addr(int m) {
     }
 }
 
+CFMMBox(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, int lmax) {
+    double min_dim = mol->x(0);
+    double max_dim = mol->x(0);
+
+    for (int atom = 0; atom < mol->natom(); atom++) {
+        double x = mol->x(atom);
+        double y = mol->y(atom);
+        double z = mol->z(atom);
+        min_dim = std::min(x, min_dim);
+        min_dim = std::min(y, min_dim);
+        min_dim = std::min(z, min_dim);
+        max_dim = std::max(x, max_dim);
+        max_dim = std::max(y, max_dim);
+        max_dim = std::max(z, max_dim);
+    }
+
+    Vector3 origin = Vector3(min_dim, min_dim, min_dim);
+    double length = (max_dim - min_dim);
+
+    common_init(nullptr, molecule, basisset, origin, length, 0, lmax);
+}
+
 CFMMBox::CFMMBox(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, 
+                std::shared_ptr<BasisSet> basisset, Vector3 origin, double length, int level, int lmax) {
+    common_init(parent, molecule, basisset, origin, length, level, lmax);
+}
+
+CFMMBox::common_init(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, 
                 std::shared_ptr<BasisSet> basisset, Vector3 origin, double length, int level, int lmax) {
     parent_ = parent;
     molecule_ = molecule;
@@ -138,6 +165,7 @@ void CFMMBox::compute_mpoles() {
 
     std::shared_ptr<IntegralFactory> int_factory = std::make_shared<IntegralFactory>(basisset_);
     std::shared_ptr<OneBodyAOInt> multipole_int = int_factory->ao_multipoles(lmax_);
+    std::shared_ptr<OneBodyAOInt> overlap_int = int_factory->ao_overlap();
 
     int n_multipoles = (lmax_ + 1) * (lmax_ + 2) * (lmax_ + 3) / 6 - 1;
 
@@ -162,6 +190,21 @@ void CFMMBox::compute_mpoles() {
 
                     multipole_int->compute(M, N);
                     const double *buffer = multipole_int->buffer();
+
+                    overlap_int->compute(M, N);
+                    const double *overlap_buffer = overlap_int->buffer();
+
+                    // Compute monopoles
+                    for (int p = m_start; p < m_start + num_m; m++) {
+                        int dp = p - m_start;
+                        for (int q = n_start; q < n_start + num_n; n++) {
+                            int dq = q - n_start;
+                            // put Dpq
+                            for (size_t a = 0; a < D_.size(); a++) {
+                                raw_mpoles[0][0] += D_[a]->get(p, q) * buffer[dp * num_n + dq];
+                            }
+                        }
+                    }
                     
                     int running_index = 0;
                     for (int l = 0; l <= lmax_; l++) {
@@ -222,6 +265,42 @@ void CFMMBox::compute_far_field_vector() {
         if (parent_) {
             Vff_->add(parent_->Vff_->irregular_translate(center_));
         }
+    }
+}
+
+CFMMTree::CFMMTree(std::shared_ptr<Molecule> molecule, 
+                    std::shared_ptr<BasisSet> basisset, int nlevels, int lmax) {
+    molecule_ = molecule;
+    basisset_ = basisset;
+    nlevels_ = nlevels;
+    lmax_ = lmax;
+    root_ = std::make_shared<CFMMBox>(molecule_, basisset_, lmax_);
+}
+
+void CFMMTree::make_children_helper(std::shared_ptr<CFMMBox>& box) {
+    if (box->get_level() == nlevels_ - 1) return;
+
+    box->make_children();
+
+    auto children = box->get_children();
+    
+    for (auto child : children) {
+        make_children_helper(child);
+    }
+}
+
+void CFMMTree::calculate_multipoles_helper(std::shared_ptr<CFMMBox>& box) {
+    if (!box) return;
+
+    for (auto child : children) {
+        calculate_mulipoles_helper(child);
+    }
+
+    if (box->get_level() == nlevels_ - 1) {
+        box->compute_mpoles();
+        return;
+    } else {
+        box->compute_mpoles_from_children();
     }
 }
 
