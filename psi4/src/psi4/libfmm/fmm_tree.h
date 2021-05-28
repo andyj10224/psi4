@@ -7,7 +7,7 @@
 #include "psi4/libmints/matrix.h"
 #include "psi4/libmints/molecule.h"
 #include "psi4/libmints/basisset.h"
-#include "psi4/libfmm/multipole_helper.h"
+#include "psi4/libfmm/multipoles_helper.h"
 
 #include <functional>
 #include <memory>
@@ -66,7 +66,7 @@ class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
 
       // Calculate far field vector from local and parent far fields
       void compute_far_field_vector();
-      
+
       // Compute the J matrix contributions at each level
       void compute_self_J();
       void compute_nf_J();
@@ -119,6 +119,8 @@ class CFMMTree {
       void make_children_helper(std::shared_ptr<CFMMBox>& box);
       // Calculate multipoles
       void calculate_multipoles_helper(std::shared_ptr<CFMMBox>& box);
+      // Helper method to build the J Matrix recursively
+      void calculate_J(std::shared_ptr<CFMMBox>& box);
     
     public:
       // Constructor

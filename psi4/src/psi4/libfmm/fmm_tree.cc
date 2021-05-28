@@ -2,12 +2,34 @@
 
 #include "psi4/libfmm/multipoles_helper.h"
 #include "psi4/libfmm/fmm_tree.h"
+#include "psi4/libmints/molecule.h"
+#include "psi4/libmints/basisset.h"
+#include "psi4/libmints/matrix.h"
+#include "psi4/libmints/vector3.h"
+#include "psi4/libmints/gshell.h"
+#include "psi4/libmints/integral.h"
+#include "psi4/libmints/onebody.h"
+#include "psi4/libmints/multipoles.h"
+#include "psi4/libmints/overlap.h"
+#include "psi4/libmints/twobody.h"
 
 #include <functional>
 #include <memory>
 #include <tuple>
 #include <vector>
 #include <cmath>
+#include <unordered_map>
+#include <utility>
+
+#ifdef _OPENMP
+#include <omp.h>
+#include "psi4/libpsi4util/process.h"
+int threads = Process::environment.get_n_threads();
+#endif
+int thread = 0;
+#ifdef _OPENMP
+thread = omp_get_thread_num();
+#endif
 
 namespace psi {
 
@@ -36,7 +58,7 @@ int m_addr(int m) {
     }
 }
 
-CFMMBox(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
+CFMMBox::CFMMBox(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
         std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J, int lmax) {
 
     double min_dim = mol->x(0);

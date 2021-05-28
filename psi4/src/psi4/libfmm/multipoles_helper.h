@@ -125,10 +125,13 @@ class RealSolidHarmonics {
 
       // Adds two harmonics together
       void add(const RealSolidHarmonics& rsh);
-      void add(std::shared_ptr<RealSolidHarmonics> rsh);
+      void add(const std::shared_ptr<RealSolidHarmonics>& rsh);
       
       // Returns a reference of Ylm, to be computed by something else
       std::vector<std::vector<double>>& get_multipoles() { return Ylm_; }
+
+      // Get an "internuclear" interaction tensor between two points separated by a distance R
+      static std::vector<double> build_T_spherical(int la, int lb, double R);
 
       // Translate the solid harmonics
       std::shared_ptr<RealSolidHarmonics> translate(Vector3 new_center);

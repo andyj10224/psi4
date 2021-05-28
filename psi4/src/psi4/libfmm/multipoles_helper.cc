@@ -380,7 +380,7 @@ void RealSolidHarmonics::add(const RealSolidHarmonics& rsh) {
     }
 }
 
-void RealSolidHarmonics::add(std::shared_ptr<RealSolidHarmonics> rsh) {
+void RealSolidHarmonics::add(const std::shared_ptr<RealSolidHarmonics>& rsh) {
     for (int l = 0; l <= lmax_; l++) {
         for (int mu = 0; mu < 2*l+1; mu++) {
             Ylm_[l][mu] += rsh->Ylm_[l][mu];
@@ -492,7 +492,7 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_regular(Vector
 }
 
 // A helper method to compute the interaction tensor between aligned multipoles after rotation
-std::vector<double> build_T_spherical(int la, int lb, double R) {
+static std::vector<double> RealSolidHarmonics::build_T_spherical(int la, int lb, double R) {
     int lmin = std::min(la, lb)
     std::vector<double> Tvec(2*lmin+1);
 
