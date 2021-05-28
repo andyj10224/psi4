@@ -165,149 +165,18 @@ SharedMatrix MultipoleRotationFactory::get_D(int l) {
     return D_cache_[l];
 }
 
-void RealSolidHarmonics::RealSolidHarmonics(int lmax, Vector3 center, SolidHarmonicsType type) {
+HarmonicCoefficients::HarmonicCoefficients(int lmax, SolidHarmonicsType type) {
     lmax_ = lmax;
-    center_ = center;
     type_ = type;
-
-    // Set all multipoles to zero
-    Ylm_.resize(lmax_+1);
-
-    for (int l = 0; l <= lmax_; l++) {
-        Ylm_[l].resize(2*l+1, 0.0);
-    }
-    
-}
-
-void RealSolidHarmonics::add(const RealSolidHarmonics& rsh) {
-    for (int l = 0; l <= lmax_; l++) {
-        for (int mu = 0; mu < 2*l+1; mu++) {
-            Ylm_[l][mu] += rsh.Ylm_[l][mu];
-        }
-    }
-}
-
-void RealSolidHarmonics::add(std::shared_ptr<RealSolidHarmonics> rsh) {
-    for (int l = 0; l <= lmax_; l++) {
-        for (int mu = 0; mu < 2*l+1; mu++) {
-            Ylm_[l][mu] += rsh->Ylm_[l][mu];
-        }
-    }
-}
-
-std::shared_ptr<ReadlSolidHarmonics> RealSolidHarmonics::translate(Vector3 new_center) {
-    if (type_ == Regular) return translate_regular(new_center);
-    if (type_ == Irregular) return translate_irregular(new_center);
-}
-
-void RealSolidHarmonics::compute_terms() {
     if (type_ == Regular) compute_terms_regular();
     if (type_ == Irregular) compute_terms_irregular();
 }
 
-std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_irregular(Vector3 new_center) {
-    auto trans_harmonics = std::make_shared<RealSolidHarmonics>(lmax_, new_center, Iregular);
-    auto rotation_factory = std::make_shared<MultipoleRotationFactory>(center_, new_center, lmax_);
-
-    Vector3 R_ab = new_center - center_;
-    double R = R_ab.norm();
-
-    std::vector<std::vector<double>> rot_mpoles(lmax_+1);
-    std::vector<std::vector<double>> trans_rot_mpoles(lmax_+1);
-
-    // Rotate Multipoles to direction of translation
-    for (int l = 0; l <= lmax_; l++) {
-        rot_mpoles[l].resize(2*l+1, 0.0);
-        trans_rot_mpoles.resize(2*l+1, 0.0);
-        int dim = 2*l+1;
-        SharedMatrix Dmat = rotation_factory->get_D(l);
-        for (int i = 0; i < dim; i++) {
-            for (int j = 0; j < dim; j++) {
-                rot_mpoles[l][i] += Dmat->get(i, j) * Ylm_[l][j];
-            }
-        }
-    }
-
-    // Translate Rotated Multipoles
-    for (int l = 0; l <= lmax_; l++) {
-        for (int j = l; j <= lmax_; j++) {
-            for (int m = -l; m <= l; m++) {
-                int mu = m_addr(m);
-                double coef = std::sqrt((double) choose(j+m,l+m)*choose(j-m,l-m));
-
-                trans_rot_mpoles[l][mu] += coef * std::pow(-R, j-l) * rot_mpoles[j][mu];
-            }
-        }
-    }
-
-    // Backrotation of Multipoles
-    for (int l = 0; l <= lmax_; l++) {
-        SharedMatrix Dmat = rotation_factory->get_D(l);
-        int dim = 2*l+1;
-        for (int i = 0; i < dim; i++) {
-            for (int j = 0; j < dim; j++) {
-                trans_harmonics.Ylm_[l][i] += Dmat->get(j, i) * trans_rot_mpoles[l][j];
-            }
-        }
-    }
-
-    return trans_harmonics;
-}
-
-void RealSolidHarmonics::compute_terms_irregular() {
+void HarmonicCoefficients::compute_terms_irregular() {
     throw FeatureNotImplemented("libfmm", "RealSolidHarmonics::compute_terms_irregular()", __FILE__, __LINE__);
 }
 
-std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_regular(Vector3 new_center) {
-    auto trans_harmonics = std::make_shared<RealSolidHarmonics>(lmax_, new_center, Regular);
-    auto rotation_factory = std::make_shared<MultipoleRotationFactory>(center_, new_center, lmax_);
-
-    Vector3 R_ab = new_center - center_;
-    double R = R_ab.norm();
-
-    std::vector<std::vector<double>> rot_mpoles(lmax_+1);
-    std::vector<std::vector<double>> trans_rot_mpoles(lmax_+1);
-
-    // Rotate Multipoles to direction of translation
-    for (int l = 0; l <= lmax_; l++) {
-        rot_mpoles[l].resize(2*l+1, 0.0);
-        trans_rot_mpoles.resize(2*l+1, 0.0);
-        int dim = 2*l+1;
-        SharedMatrix Dmat = rotation_factory->get_D(l);
-        for (int i = 0; i < dim; i++) {
-            for (int j = 0; j < dim; j++) {
-                rot_mpoles[l][i] += Dmat->get(i, j) * Ylm_[l][j];
-            }
-        }
-    }
-
-    // Translate Rotated Multipoles
-    for (int l = 0; l <= lmax_; l++) {
-        for (int j = 0; j <= l; j++) {
-            for (int m = -j; m <= j; m++) {
-                int mu = m_addr(m);
-                double coef = std::sqrt((double) choose(l+m,j+m)*choose(l-m,j-m));
-
-                trans_rot_mpoles[l][mu] += coef * std::pow(-R, l-j) * rot_mpoles[j][mu];
-            }
-        }
-    }
-
-    // Backrotation of Multipoles
-    for (int l = 0; l <= lmax_; l++) {
-        SharedMatrix Dmat = rotation_factory->get_D(l);
-        int dim = 2*l+1;
-        for (int i = 0; i < dim; i++) {
-            for (int j = 0; j < dim; j++) {
-                trans_harmonics.Ylm_[l][i] += Dmat->get(j, i) * trans_rot_mpoles[l][j];
-            }
-        }
-    }
-
-    return trans_harmonics;
-}
-
-void RealSolidHarmonics::compute_terms_regular() {
+void HarmonicCoefficients::compute_terms_regular() {
 
     Rc_.resize(lmax_+1);
     Rs_.resize(lmax_+1);
@@ -487,8 +356,139 @@ void RealSolidHarmonics::compute_terms_regular() {
             }
         }
     }
+}
 
+void RealSolidHarmonics::RealSolidHarmonics(int lmax, Vector3 center, SolidHarmonicsType type) {
+    lmax_ = lmax;
+    center_ = center;
+    type_ = type;
 
+    // Set all multipoles to zero
+    Ylm_.resize(lmax_+1);
+
+    for (int l = 0; l <= lmax_; l++) {
+        Ylm_[l].resize(2*l+1, 0.0);
+    }
+    
+}
+
+void RealSolidHarmonics::add(const RealSolidHarmonics& rsh) {
+    for (int l = 0; l <= lmax_; l++) {
+        for (int mu = 0; mu < 2*l+1; mu++) {
+            Ylm_[l][mu] += rsh.Ylm_[l][mu];
+        }
+    }
+}
+
+void RealSolidHarmonics::add(std::shared_ptr<RealSolidHarmonics> rsh) {
+    for (int l = 0; l <= lmax_; l++) {
+        for (int mu = 0; mu < 2*l+1; mu++) {
+            Ylm_[l][mu] += rsh->Ylm_[l][mu];
+        }
+    }
+}
+
+std::shared_ptr<ReadlSolidHarmonics> RealSolidHarmonics::translate(Vector3 new_center) {
+    if (type_ == Regular) return translate_regular(new_center);
+    if (type_ == Irregular) return translate_irregular(new_center);
+}
+
+std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_irregular(Vector3 new_center) {
+    auto trans_harmonics = std::make_shared<RealSolidHarmonics>(lmax_, new_center, Iregular);
+    auto rotation_factory = std::make_shared<MultipoleRotationFactory>(center_, new_center, lmax_);
+
+    Vector3 R_ab = new_center - center_;
+    double R = R_ab.norm();
+
+    std::vector<std::vector<double>> rot_mpoles(lmax_+1);
+    std::vector<std::vector<double>> trans_rot_mpoles(lmax_+1);
+
+    // Rotate Multipoles to direction of translation
+    for (int l = 0; l <= lmax_; l++) {
+        rot_mpoles[l].resize(2*l+1, 0.0);
+        trans_rot_mpoles.resize(2*l+1, 0.0);
+        int dim = 2*l+1;
+        SharedMatrix Dmat = rotation_factory->get_D(l);
+        for (int i = 0; i < dim; i++) {
+            for (int j = 0; j < dim; j++) {
+                rot_mpoles[l][i] += Dmat->get(i, j) * Ylm_[l][j];
+            }
+        }
+    }
+
+    // Translate Rotated Multipoles
+    for (int l = 0; l <= lmax_; l++) {
+        for (int j = l; j <= lmax_; j++) {
+            for (int m = -l; m <= l; m++) {
+                int mu = m_addr(m);
+                double coef = std::sqrt((double) choose(j+m,l+m)*choose(j-m,l-m));
+
+                trans_rot_mpoles[l][mu] += coef * std::pow(-R, j-l) * rot_mpoles[j][mu];
+            }
+        }
+    }
+
+    // Backrotation of Multipoles
+    for (int l = 0; l <= lmax_; l++) {
+        SharedMatrix Dmat = rotation_factory->get_D(l);
+        int dim = 2*l+1;
+        for (int i = 0; i < dim; i++) {
+            for (int j = 0; j < dim; j++) {
+                trans_harmonics.Ylm_[l][i] += Dmat->get(j, i) * trans_rot_mpoles[l][j];
+            }
+        }
+    }
+
+    return trans_harmonics;
+}
+
+std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_regular(Vector3 new_center) {
+    auto trans_harmonics = std::make_shared<RealSolidHarmonics>(lmax_, new_center, Regular);
+    auto rotation_factory = std::make_shared<MultipoleRotationFactory>(center_, new_center, lmax_);
+
+    Vector3 R_ab = new_center - center_;
+    double R = R_ab.norm();
+
+    std::vector<std::vector<double>> rot_mpoles(lmax_+1);
+    std::vector<std::vector<double>> trans_rot_mpoles(lmax_+1);
+
+    // Rotate Multipoles to direction of translation
+    for (int l = 0; l <= lmax_; l++) {
+        rot_mpoles[l].resize(2*l+1, 0.0);
+        trans_rot_mpoles.resize(2*l+1, 0.0);
+        int dim = 2*l+1;
+        SharedMatrix Dmat = rotation_factory->get_D(l);
+        for (int i = 0; i < dim; i++) {
+            for (int j = 0; j < dim; j++) {
+                rot_mpoles[l][i] += Dmat->get(i, j) * Ylm_[l][j];
+            }
+        }
+    }
+
+    // Translate Rotated Multipoles
+    for (int l = 0; l <= lmax_; l++) {
+        for (int j = 0; j <= l; j++) {
+            for (int m = -j; m <= j; m++) {
+                int mu = m_addr(m);
+                double coef = std::sqrt((double) choose(l+m,j+m)*choose(l-m,j-m));
+
+                trans_rot_mpoles[l][mu] += coef * std::pow(-R, l-j) * rot_mpoles[j][mu];
+            }
+        }
+    }
+
+    // Backrotation of Multipoles
+    for (int l = 0; l <= lmax_; l++) {
+        SharedMatrix Dmat = rotation_factory->get_D(l);
+        int dim = 2*l+1;
+        for (int i = 0; i < dim; i++) {
+            for (int j = 0; j < dim; j++) {
+                trans_harmonics.Ylm_[l][i] += Dmat->get(j, i) * trans_rot_mpoles[l][j];
+            }
+        }
+    }
+
+    return trans_harmonics;
 }
 
 // A helper method to compute the interaction tensor between aligned multipoles after rotation

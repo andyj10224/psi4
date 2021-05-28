@@ -13,6 +13,7 @@
 #include <memory>
 #include <tuple>
 #include <vector>
+#include <unordered_map>
 
 namespace psi {
 
@@ -35,6 +36,8 @@ class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       std::shared_ptr<BasisSet> basisset_;
       // Density Matrix of Molecule
       std::vector<SharedMatrix>& D_;
+      // A reference to the Coulomb Matrix of the molecule (every box can modify it)
+      std::vector<SharedMatrix>& J_;
       // The atoms in the molecule which are centered within the bounds of the box
       std::vector<int> atoms_;
       // Length of the box
@@ -44,10 +47,13 @@ class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       // Center of the box
       Vector3 center_;
 
-      // Multipoles of the box
-      std::shared_ptr<RealSolidHarmonics> mpoles_;
-      // Far field vector of the box
-      std::shared_ptr<RealSolidHarmonics> Vff_;
+      // Solid Harmonics Coefficients of Box
+      std::shared_ptr<HarmonicCoefficients> mpole_coefs_;
+
+      // Multipoles of the box, per basis pair
+      std::unordered_map<int, std::shared_ptr<RealSolidHarmonics>> mpoles_;
+      // Far field vector of the box, per basis pair
+      std::unordered_map<int, std::shared_ptr<RealSolidHarmonics>> Vff_;
 
       // A list of all the near-field boxes to this box
       std::vector<std::shared_ptr<CFMMBox>> near_field_;
@@ -55,30 +61,39 @@ class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       std::vector<std::shared_ptr<CFMMBox>> local_far_field_;
 
       // Common function used by constructor
-      void common_init(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, Vector3 origin, double length, int level, int lmax);
+      void common_init(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
+                        std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J, Vector3 origin, double length, int level, int lmax);
 
-      // Sets the near field and local far field vectors
-      void set_nf_lff();
-      // Make children for this multipole box
-      void make_children();
       // Calculate far field vector from local and parent far fields
       void compute_far_field_vector();
       
+      // Compute the J matrix contributions at each level
+      void compute_self_J();
+      void compute_nf_J();
+      void compute_ff_J();
+      
     public:
       // Constructor for a root box
-      CFMMBox(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, int lmax);
+      CFMMBox(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
+                std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J, int lmax);
       // Constructor for child boxes
-      CFMMBox(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, Vector3 origin, double length, int level, int lmax);
+      CFMMBox(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
+                std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J, Vector3 origin, double length, int level, int lmax);
       // Compute multipoles directly
       void compute_mpoles();
       // Compute multipoles from children
       void compute_mpoles_from_children();
-      // Set the Density Matrix
-      void set_density(std::vector<SharedMatrix>& D) { D_ = D; }
+      // Sets the near field and local far field vectors
+      void set_nf_lff();
+      // Make children for this multipole box
+      void make_children();
       // Get the multipole level the box is on
       int get_level() { return level_; }
       // Get the children of the box
       std::vector<std::shared_ptr<CFMMBox>>& get_children() { return children_; }
+      // Compute the box's contribution to the J matrix
+      void compute_J();
+      
 
 }; // End class CFMMBox
 
@@ -96,7 +111,9 @@ class CFMMTree {
       // Root of this tree structure
       std::shared_ptr<CFMMBox> root_;
       // Density Matrix of Molecule
-      std::vector<SharedMatrix> D_;
+      std::vector<SharedMatrix>& D_;
+      // Coulomb Matrix of Molecule
+      std::vector<SharedMatrix>& J_;
 
       // Create children
       void make_children_helper(std::shared_ptr<CFMMBox>& box);
@@ -105,7 +122,11 @@ class CFMMTree {
     
     public:
       // Constructor
-      CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, int nlevels, int lmax);
+      CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
+                std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J, int nlevels, int lmax);
+
+      // Build the J matrix of CFMMTree
+      void build_J();
 
 }; // End class CFMMTree
 

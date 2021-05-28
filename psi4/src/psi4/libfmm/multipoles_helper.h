@@ -52,7 +52,7 @@ inline double MultipoleRotationFactory::u(int l, int m, int M) {
     if (std::abs(M) < l) {
         return std::sqrt((l+m)*(l-m) /((l+M)*(l-M)));
     } else {
-        return std::sqrt((l+m)/(l-m)/(2*l*(2*l-1)));
+        return std::sqrt((l+m)*(l-m)/(2*l*(2*l-1)));
     }
 }
 
@@ -70,22 +70,42 @@ inline double MultipoleRotationFactory::w(int l, int m, int M) {
     double dm0 = 0.0;
     if (m == 0) dm0 = 1.0;
     if (std::abs(M) < l) {
-        return 0.5 * (dm0 - 1) * std::sqrt((l-std:;abs(m)-1)*(l-std::abs(m)) / ((l+M)*(l-M)));
+        return 0.5 * (dm0 - 1) * std::sqrt((l-std::abs(m)-1)*(l-std::abs(m)) / ((l+M)*(l-M)));
     } else {
-        return 0.5 * (dm0 - 1) * std::sqrt((l-std:;abs(m)-1)*(l-std::abs(m)) / ((2*l)*(2*l-1)));
+        return 0.5 * (dm0 - 1) * std::sqrt((l-std::abs(m)-1)*(l-std::abs(m)) / ((2*l)*(2*l-1)));
     }
 }
-    
-class RealSolidHarmonics {
 
+class HarmonicCoefficients {
     protected:
-      // Ylm[l][m] = sum (coeff * x^a * y^b * z^c), stores a tuple of (coeff, a, b, c)
+      // Ylm[l][m] = sum (coeff * x^a * y^b * z^c), stores a tuple of (coeff, a, b, c), normalized according to Stone's convention
       std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>> mpole_terms_;
       // Helgaker Rs terms (used in generating mpole_terms_)
       std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>> Rc_;
       // Helgaker Rc terms (used in generating mpole_terms_)
       std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>> Rs_;
-      // Real Solid Harmonics, normalized according to Stone's convention
+      // Maximum angular momentum
+      const int lmax_;
+      // Regular or Irregular?
+      SolidHarmonicsType type_;
+
+      // Compute terms if it were regular
+      void compute_terms_regular();
+      // Compute terms if it were irregular
+      void compute_terms_irregular();
+
+    public:
+      // Constructor
+      HarmonicCoefficients(int lmax, SolidHarmonicsType type);
+      // Returns a reference to the terms
+      const std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>>& get_terms() { return mpole_terms_; }
+    
+};
+    
+class RealSolidHarmonics {
+
+    protected:
+      // Values of the Real Solid Harmonics, normalized according to Stone's convention
       std::vector<std::vector<double>> Ylm_;
       // Maximum angular momentum
       const int lmax_;
@@ -93,11 +113,6 @@ class RealSolidHarmonics {
       SolidHarmonicsType type_;
       // Center of the Harmonics
       Vector3 center_;
-
-      // Compute terms if it were regular
-      void compute_terms_regular();
-      // Compute terms if it were irregular
-      void compute_terms_irregular();
 
       // Return a translated copy of the multipoles if it were regular
       std::shared_ptr<RealSolidHarmonics> translate_regular(Vector3 new_center);
@@ -112,13 +127,9 @@ class RealSolidHarmonics {
       void add(const RealSolidHarmonics& rsh);
       void add(std::shared_ptr<RealSolidHarmonics> rsh);
       
-      // Returns a reference to the terms of the Harmonic
-      const std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>>& get_terms() { return mpole_terms_; }
-      // Returns a reference of Ylm
+      // Returns a reference of Ylm, to be computed by something else
       std::vector<std::vector<double>>& get_multipoles() { return Ylm_; }
 
-      // Compute the terms (regular)
-      void compute_terms();
       // Translate the solid harmonics
       std::shared_ptr<RealSolidHarmonics> translate(Vector3 new_center);
       // Calulate the far field effect this multipole series would have on another
