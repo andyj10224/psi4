@@ -2,6 +2,7 @@
 
 #include "psi4/libfmm/multipoles_helper.h"
 #include "psi4/libfmm/fmm_tree.h"
+#include "psi4/libmints/vector.h"
 #include "psi4/libmints/vector3.h"
 #include "psi4/libmints/matrix.h"
 
@@ -290,7 +291,6 @@ void HarmonicCoefficients::compute_terms_regular() {
 
             // Rs[l-1][l-1] contribution to Rc[l][l]
             for (int ind = 0; ind < Rs_[l-1][l-1].size(); ind++) {
-             
                 auto term_tuple = Rs_[l-1][l-1][ind];
                 double coef = std::get<0>(term_tuple);
                 int a = std::get<1>(term_tuple);
@@ -390,13 +390,13 @@ void RealSolidHarmonics::add(const std::shared_ptr<RealSolidHarmonics>& rsh) {
     }
 }
 
-std::shared_ptr<ReadlSolidHarmonics> RealSolidHarmonics::translate(Vector3 new_center) {
+std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate(Vector3 new_center) {
     if (type_ == Regular) return translate_regular(new_center);
     if (type_ == Irregular) return translate_irregular(new_center);
 }
 
 std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_irregular(Vector3 new_center) {
-    auto trans_harmonics = std::make_shared<RealSolidHarmonics>(lmax_, new_center, Iregular);
+    auto trans_harmonics = std::make_shared<RealSolidHarmonics>(lmax_, new_center, Irregular);
     auto rotation_factory = std::make_shared<MultipoleRotationFactory>(center_, new_center, lmax_);
 
     Vector3 R_ab = new_center - center_;
@@ -408,7 +408,6 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_irregular(Vect
     // Rotate Multipoles to direction of translation
     for (int l = 0; l <= lmax_; l++) {
         rot_mpoles[l].resize(2*l+1, 0.0);
-        trans_rot_mpoles.resize(2*l+1, 0.0);
         int dim = 2*l+1;
         SharedMatrix Dmat = rotation_factory->get_D(l);
         for (int i = 0; i < dim; i++) {
@@ -420,6 +419,7 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_irregular(Vect
 
     // Translate Rotated Multipoles
     for (int l = 0; l <= lmax_; l++) {
+        trans_rot_mpoles[l].resize(2*l+1, 0.0);
         for (int j = l; j <= lmax_; j++) {
             for (int m = -l; m <= l; m++) {
                 int mu = m_addr(m);
@@ -457,7 +457,6 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_regular(Vector
     // Rotate Multipoles to direction of translation
     for (int l = 0; l <= lmax_; l++) {
         rot_mpoles[l].resize(2*l+1, 0.0);
-        trans_rot_mpoles.resize(2*l+1, 0.0);
         int dim = 2*l+1;
         SharedMatrix Dmat = rotation_factory->get_D(l);
         for (int i = 0; i < dim; i++) {
@@ -469,6 +468,7 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_regular(Vector
 
     // Translate Rotated Multipoles
     for (int l = 0; l <= lmax_; l++) {
+        trans_rot_mpoles[l].resize(2*l+1, 0.0);
         for (int j = 0; j <= l; j++) {
             for (int m = -j; m <= j; m++) {
                 int mu = m_addr(m);
@@ -494,14 +494,18 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_regular(Vector
 }
 
 // A helper method to compute the interaction tensor between aligned multipoles after rotation
-static std::vector<double> RealSolidHarmonics::build_T_spherical(int la, int lb, double R) {
+static SharedVector RealSolidHarmonics::build_T_spherical(int la, int lb, double R) {
     int lmin = std::min(la, lb)
-    std::vector<double> Tvec(2*lmin+1);
+    SharedVector Tvec = std::make_shared<Vector>(2*lmin+1);
+    double denom = std::pow(R, la+lb+1);
 
     for (int m = -lmin; m <= lmin; lmin++) {
         int mu = m_addr(m);
-        Tvec[mu] = std::pow(-1.0, (double) (lb-m)) * std::sqrt((double) choose(la+lb, la+m) * choose(la+lb, la-m)) / std::pow(R, la+lb+1);
+        double Tval = std::pow(-1.0, (double) (lb-m)) * std::sqrt((double) choose(la+lb, la+m) * choose(la+lb, la-m)) / denom;
+        Tvec->set(mu, Tval);
     }
+
+    return Tvec;
 }
 
 std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::far_field_vector(Vector3 far_center) {
@@ -514,8 +518,9 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::far_field_vector(Vector3
 
     for (int l = 0; l <= lmax_; l++) {
         for (int j = 0; j <= lmax_; j++) {
-            std::vector<double> Tvec = build_T_spherical(l, j, R);
+            SharedVector Tvec = build_T_spherical(l, j, R);
             int nterms = 2*std::min(l,j)+1
+
             std::vector<double> rotated_mpole(2*j+1, 0.0);
             SharedMatrix Dmat = rotation_factory->get_D(j);
             for (int u = 0; u < 2*j+1; u++) {
@@ -523,14 +528,16 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::far_field_vector(Vector3
                     rotated_mpole[u] = Dmat->get(u, v) * Ylm_[j][v];
                 }
             }
-            std::vector<double> temp(nterms);
+
+            std::vector<double> temp(nterms, 0.0);
             for (int u = 0; u < nterms; u++) {
                 temp[u] = Tvec[u] * rotated_mpoles[u];
             }
-            
+
+            SharedMatrix Dl = rotation_factory->get_D(l);
             for (int r = 0; r < 2*l+1; r++) {
                 for (int s = 0; s < nterms; s++) {
-                    Vff.Ylm_[l][r] += Dmat->get(s, r) * temp[s];
+                    Vff.Ylm_[l][r] += Dl->get(s, r) * temp[s];
                 }
             }
 

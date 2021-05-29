@@ -3,6 +3,7 @@
 
 #include "psi4/pragma.h"
 
+#include "psi4/libmints/vector.h"
 #include "psi4/libmints/vector3.h"
 #include "psi4/libmints/matrix.h"
 
@@ -131,7 +132,7 @@ class RealSolidHarmonics {
       std::vector<std::vector<double>>& get_multipoles() { return Ylm_; }
 
       // Get an "internuclear" interaction tensor between two points separated by a distance R
-      static std::vector<double> build_T_spherical(int la, int lb, double R);
+      static SharedVector build_T_spherical(int la, int lb, double R);
 
       // Translate the solid harmonics
       std::shared_ptr<RealSolidHarmonics> translate(Vector3 new_center);
