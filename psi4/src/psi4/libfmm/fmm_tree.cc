@@ -12,6 +12,7 @@
 #include "psi4/libmints/multipoles.h"
 #include "psi4/libmints/overlap.h"
 #include "psi4/libmints/twobody.h"
+#include "psi4/libqt/qt.h"
 
 #include <functional>
 #include <memory>
@@ -24,11 +25,6 @@
 #ifdef _OPENMP
 #include <omp.h>
 #include "psi4/libpsi4util/process.h"
-int threads = Process::environment.get_n_threads();
-#endif
-int thread = 0;
-#ifdef _OPENMP
-thread = omp_get_thread_num();
 #endif
 
 namespace psi {
@@ -99,11 +95,16 @@ CFMMBox::common_init(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> 
     level_ = level;
     lmax_ = lmax;
 
+    nthread_ = 1;
+
+#ifdef _OPENMP
+    nthread_ = Process::environment.get_n_threads();
+#endif
+
     center_ = origin_ + Vector3(length_, length_, length_);
     children_.resize(8, nullptr);
 
-    ws_ = 2;
-
+    // Make the multipole coefficients
     if (!parent_) {
         mpole_coefs_ = std::make_shared<HarmonicCoefficients>(lmax_, Regular);
     } else {
@@ -131,33 +132,51 @@ CFMMBox::common_init(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> 
         }
     }
 
+    // Calculate the well separated criterion for the box
+    ws_ = 2;
+    for (int Ptask = 0; Ptask < atoms_.size(); Ptask++) {
+        int Patom = atoms_[Ptask];
+        int Pstart = basisset_->shell_on_center(Patom, 0);
+        int nPshell = basisset_->nshell_on_center(Patom);
+
+        for (int P = Pstart; P < Pstart + nPshell; P++) {
+            int Pshell = basisset_->shell(P);
+            int nprim = Pshell->nprimitive();
+            for (int prim = 0; prim < nprim; prim++) {
+                double exp = Pshell->exp(prim);
+                double rp = ERFCI10 / std::sqrt(exp);
+                int ext = 2 * std::ceil(rp / length_);
+                ws_ = std::max(ws_, ext);
+            }
+        }
+    }
+
     int nbf = basisset_->nbf();
 
-    for (int i1 = 0; i1 < atoms_.size(); i1++) {
-        int atom1 = atoms_[i1];
-        int atom1_shell_start = basisset_->shell_on_center(atom1, 0);
-        int atom1_nshells = basisset_->nshell_on_center(atom1);
-        for (int i2 = 0; i2 < atoms_.size(); i2++) {
-            int atom2 = atoms_[i2];
-            int atom2_shell_start = basisset_->shell_on_center(atom2, 0);
-            int atom2_nshells = basisset_->nshell_on_center(atom2);
+    for (int Ptask = 0; Ptask < atoms_.size(); Ptask++) {
+        int Patom = atoms_[Ptask];
+        int Pstart = basisset_->shell_on_center(Patom, 0);
+        int nPshells = basisset_->nshell_on_center(Patom);
 
-            for (int M = atom1_shell_start; M < atom1_shell_start + atom1_nshells; M++) {
-                const GaussianShell& m_shell = basisset_->shell(M);
-                int m_start = m_shell.start();
-                int num_m = m_shell.nfunction();
-                for (int N = atom2_shell_start; N < atom2_shell_start + atom2_shells; N++) {
-                    const GaussianShell& n_shell = basisset_->shell(N);
-                    int n_start = n_shell.start();
-                    int num_n = n_shell.nfunction();
+        for (int Qtask = 0; Qtask < atoms_.size(); Qtask++) {
+            int Qatom = atoms_[Qtask];
+            int Qstart = basisset_->shell_on_center(Qatom, 0);
+            int nQshells = basisset_->nshell_on_center(Qatom);
 
-                    for (int m = m_start; m < m_start + num_m; m++) {
-                        for (int n = n_start; n < n_start + num_n; n++) {
-                            auto temp_mpoles = std::make_shared<RealSolidHarmonics>(lmax_, center_, Regular);
-                            // auto temp_vff = std::make_shared<RealSolidHarmonics>(lmax_, center_, Irregular);
-                            int basis_ind = m * nbf + n;
-                            mpoles_.emplace(std::make_pair<int, std::shared_ptr<RealSolidHarmonics>(basis_ind, temp_mpoles));
-                            // Vff_.emplace(std::make_pair<int, std::shared_ptr<RealSolidHarmonics>(basis_ind, temp_vff));
+            for (int P = Pstart; P < Pstart + nPshells; P++) {
+                const GaussianShell& Pshell = basisset_->shell(P);
+                int p_start = Pshell.start();
+                int num_p = Pshell.nfunction();
+
+                for (int Q = Qstart; Q < Qstart + nQshells; Q++) {
+                    const GaussianShell& Qshell = basisset_->shell(Q);
+                    int q_start = Qshell.start();
+                    int num_q = Qshell.nfunction();
+
+                    for (int p = p_start; p < p_start + num_p; p++) {
+                        for (int q = q_start; q < q_start + num_q; q++) {
+                            auto pq_mpoles = std::make_shared<RealSolidHarmonics>(lmax_, center_, Regular);
+                            mpoles_.emplace(std::make_pair<int, std::shared_ptr<RealSolidHarmonics>>(m * nbf + n, pq_mpoles));
                         }
                     }
                 }
@@ -168,17 +187,16 @@ CFMMBox::common_init(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> 
 
 void CFMMBox::set_nf_lff() {
 
-    if (!atoms_.size()) {
-        return;
-    }
+    timer_on("CFMMBox::set_nf_lff()");
+
+    if (atoms_.size() == 0) return;
 
     // Parent is not a nullpointer
     if (parent_) {
         // Siblings of this box
-        for (auto sibling : parent_.children_) {
-            if ((CFMMBox *) sibling == this) {
-                continue;
-            }
+        for (std::shared_ptr<CFMMBox>& sibling : parent_.children_) {
+            if ((CFMMBox *) sibling == this) continue;
+
             Vector3 Rab = center_ - sibling->center_;
             double dist = Rab.norm();
 
@@ -190,8 +208,9 @@ void CFMMBox::set_nf_lff() {
         }
 
         // Parent's near field (Cousins)
-        for (auto box : parent_.near_field_) {
-            for (auto cousin : box->children_) {
+        for (const std::shared_ptr<CFMMBox>& uncle : parent_.near_field_) {
+            for (std::shared_ptr<CFMMBox>& cousin : uncle->children_) {
+
                 Vector3 Rab = center - cousin->center_;
                 double dist = Rab.norm();
 
@@ -202,12 +221,15 @@ void CFMMBox::set_nf_lff() {
                 }
             }
         }
-
     }
 
+    timer_off("CFMMBox::set_nf_lff()");
 }
 
 void CFMMBox::make_children() {
+
+    timer_on("CFMMBox::make_children()");
+
     for (int c = 0; c < 8; c++) {
         double half_length = length_ / 2.0;
         int dx = (c & 4) >> 2; // 0 or 1
@@ -216,79 +238,109 @@ void CFMMBox::make_children() {
 
         Vector3 child_origin = origin_ + Vector3(half_length * dx, half_length * dy, half_length * dz);
 
-        auto child = std::make_shared<CFMMBox>(std::shared_ptr<CFMMBox>(this), molecule_, basisset_, D_, J_, child_origin, half_length, level_+1, lmax_);
+        std::shared_ptr<CFMMBox> child = std::make_shared<CFMMBox>(std::shared_ptr<CFMMBox>(this), molecule_, basisset_, D_, J_, child_origin, half_length, level_+1, lmax_);
         children_.add(child);
     }
+
+    timer_off("CFMMBox::make_children()");
+
 }
 
 void CFMMBox::compute_mpoles() {
+
+    timer_on("CFMMBox::compute_mpoles()");
+
     auto mpole_terms = mpole_coefs_->get_terms();
 
     std::shared_ptr<IntegralFactory> int_factory = std::make_shared<IntegralFactory>(basisset_);
-    std::shared_ptr<OneBodyAOInt> multipole_int = int_factory->ao_multipoles(lmax_);
-    std::shared_ptr<OneBodyAOInt> overlap_int = int_factory->ao_overlap();
+
+    std::vector<std::shared_ptr<OneBodyAOInt>> mpints(nthread_);
+    std::vector<std::shared_ptr<OneBodyAOInt>> oints(nthread_);
+
+    for (int thread = 0; thread < nthread_; thread++) {
+        mpints.push_back(int_factory->ao_multipoles(lmax_));
+        oints.push_back(int_factory->ao_overlap());
+    }
 
     int n_multipoles = (lmax_ + 1) * (lmax_ + 2) * (lmax_ + 3) / 6 - 1;
     int nbf = primary_->nbf();
 
     // Compute multipole integrals for all atoms in the shell pair
-    for (int i1 = 0; i1 < atoms_.size(); i1++) {
-        int atom1 = atoms_[i1];
-        int atom1_shell_start = basisset_->shell_on_center(atom1, 0);
-        int atom1_nshells = basisset_->nshell_on_center(atom1);
-        for (int i2 = 0; i2 < atoms_.size(); i2++) {
-            int atom2 = atoms_[i2];
-            int atom2_shell_start = basisset_->shell_on_center(atom2, 0);
-            int atom2_nshells = basisset_->nshell_on_center(atom2);
+#pragma omp parallel for
+    for (int Ptask = 0; Ptask < atoms_.size(); Ptask++) {
+        int Patom = atoms_[Ptask];
+        int Pstart = basisset_->shell_on_center(Patom, 0);
+        int nPshell = basisset_->nshell_on_center(Patom);
 
-            for (int M = atom1_shell_start; M < atom1_shell_start + atom1_nshells; M++) {
-                const GaussianShell& m_shell = basisset_->shell(M);
-                int m_start = m_shell.start();
-                int num_m = m_shell.nfunction();
-                for (int N = atom2_shell_start; N < atom2_shell_start + atom2_shells; N++) {
-                    const GaussianShell& n_shell = basisset_->shell(N);
-                    int n_start = n_shell.start();
-                    int num_n = n_shell.nfunction();
+        int thread = 0;
+#ifdef _OPENMP
+        thread = omp_get_thread_num();
+#endif
 
-                    multipole_int->compute(M, N);
-                    const double *buffer = multipole_int->buffer();
+        for (int Qtask = 0; Qtask < atoms_.size(); Qtask++) {
+            int Qatom = atoms_[Qtask];
+            int Qstart = basisset_->shell_on_center(Qatom, 0);
+            int nQshell = basisset_->nshell_on_center(Qatom);
 
-                    overlap_int->compute(M, N);
-                    const double *overlap_buffer = overlap_int->buffer();
+            for (int P = Pstart; P < Pstart + nPshell; P++) {
+                const GaussianShell& Pshell = basisset_->shell(P);
+                int p_start = Pshell.start();
+                int num_p = Pshell.nfunction();
+
+                for (int Q = Qstart; Q < Qstart + nQshell; Q++) {
+                    const GaussianShell& Qshell = basisset_->shell(Q);
+                    int q_start = Qshell.start();
+                    int num_q = Qshell.nfunction();
+
+                    mpints[thread]->compute(P, Q);
+                    const double *mpole_buffer = mpints[thread]->buffer();
+
+                    oints[thread]->compute(P, Q);
+                    const double *overlap_buffer = oints[thread]->buffer();
 
                     // Compute multipoles
-                    for (int p = m_start; p < m_start + num_m; m++) {
-                        int dp = p - m_start;
-                        for (int q = n_start; q < n_start + num_n; n++) {
-                            int dq = q - n_start;
-                            auto raw_mpoles = mpoles_[p * nbf + q]->get_multipoles();
+                    for (int p = p_start; p < p_start + num_p; p++) {
+                        int dp = p - p_start;
+
+                        for (int q = q_start; q < q_start + num_q; q++) {
+                            int dq = q - q_start;
+                            std::shared_ptr<RealSolidHarmonics> mpoles = mpoles_[p * nbf + q]->get_multipoles();
                             raw_mpoles[0][0] += overlap_buffer[dp * num_n + dq];
 
                             int running_index = 0;
                             for (int l = 1; l <= lmax_; l++) {
                                 for (int m = -l; m <= l; l++) {
                                     int mu = m_addr(m);
+
                                     for (int ind = 0; ind < mpole_terms[l][mu].size(); ind++) {
-                                        auto term_tuple = mpole_terms[l][mu][ind];
+                                        std::tuple<double, int, int, int>& term_tuple = mpole_terms[l][mu][ind];
                                         double coef = std::get<0>(term_tuple);
                                         int a = std::get<1>(term_tuple);
                                         int b = std::get<2>(term_tuple);
                                         int c = std::get<3>(term_tuple);
+
                                         int abcindex = running_index + icart(a, b, c);
-                                        raw_mpoles[l][mu] += coef * buffer[abc_index * num_m * num_n + dp * num_n + dq];
+                                        raw_mpoles[l][mu] += coef * buffer[abc_index * num_p * num_q + dp * num_q + dq];
                                     }
-                                }
-                                running_index += (l+1)*(l+1)/2;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+
+                                } // end m loop
+
+                                running_index += (l+1)*(l+2)/2;
+                            } // end l loop
+                        } // end q loop
+                    } // end p loop
+                } // end Q
+            } // end P
+        } // end Qtask
+    } // end Ptask
+
+    timer_off("CFMMBox::compute_mpoles()");
+
 }
 
 void CFMMBox::compute_mpoles_from_children() {
+
+    timer_on("CFMMBox::compute_mpoles_from_children()");
 
     int nbf = primary_->nbf();
 
@@ -325,6 +377,8 @@ void CFMMBox::compute_mpoles_from_children() {
             }
         }
     }
+
+    timer_off("CFMMBox::compute_mpoles_from_children()");
 
 }
 

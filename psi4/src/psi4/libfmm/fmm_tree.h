@@ -15,6 +15,8 @@
 #include <vector>
 #include <unordered_map>
 
+#define ERFCI10 (4.572824967389485)
+
 namespace psi {
 
 class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
@@ -46,6 +48,9 @@ class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       Vector3 origin_;
       // Center of the box
       Vector3 center_;
+
+      // Number of threads the calculation is running on
+      int nthread_;
 
       // Solid Harmonics Coefficients of Box
       std::shared_ptr<HarmonicCoefficients> mpole_coefs_;
