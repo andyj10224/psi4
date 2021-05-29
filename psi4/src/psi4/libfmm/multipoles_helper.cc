@@ -53,6 +53,7 @@ MultipoleRotationFactory::MultipoleRotationFactory(Vector3 R_a, Vector3 R_b, int
     }
 
     double this_dot = ca.dot(z_axis);
+    ca -= (z_axis * this_dot);
 
     Vector3 x_axis = ca / ca.norm();
     Vector3 y_axis = z_axis.cross(x_axis);
@@ -125,7 +126,7 @@ SharedMatrix MultipoleRotationFactory::get_D(int l) {
         throw PsiException("Input l is larger than the set lmax for the Rotation Matrix", __FILE__, __LINE__);
     }
 
-    if (D_cache_[l] != nullptr) {
+    if (D_cache_[l]) {
         return D_cache_[l];
     }
 
@@ -136,7 +137,7 @@ SharedMatrix MultipoleRotationFactory::get_D(int l) {
         Drot->set(0, 0, 1.0);
     } else if (l == 1) {
         Drot = std::make_shared<Matrix>("D Rotation Matrix", 3, 3);
-        std::vector<int> permute(2, 0, 1);
+        std::vector<int> permute {2, 0, 1};
         for (int i = 0; i < 3; i++) {
             int ip = permute[i];
             for (int j = 0; j < 3; j++) {
@@ -151,11 +152,11 @@ SharedMatrix MultipoleRotationFactory::get_D(int l) {
             for (int m2 = -l; m2 <= l; m2++) {
                 int k2 = m_addr(m2);
                 double Uterm = u(l, m1, m2);
-                if (Uterm != 0) Uterm *= U(l, m1, m2);
+                if (Uterm != 0.0) Uterm *= U(l, m1, m2);
                 double Vterm = v(l, m1, m2);
-                if (Vterm != 0) Vterm *= V(l, m1, m2);
+                if (Vterm != 0.0) Vterm *= V(l, m1, m2);
                 double Wterm = w(l, m1, m2);
-                if (Wterm != 0) Wterm *= W(l, m1, m2);
+                if (Wterm != 0.0) Wterm *= W(l, m1, m2);
                 Drot->set(k1, k2, Uterm + Vterm + Wterm);
             }
         }
@@ -289,6 +290,7 @@ void HarmonicCoefficients::compute_terms_regular() {
 
             // Rs[l-1][l-1] contribution to Rc[l][l]
             for (int ind = 0; ind < Rs_[l-1][l-1].size(); ind++) {
+             
                 auto term_tuple = Rs_[l-1][l-1][ind];
                 double coef = std::get<0>(term_tuple);
                 int a = std::get<1>(term_tuple);
