@@ -189,8 +189,6 @@ void CFMMBox::set_nf_lff() {
 
     timer_on("CFMMBox::set_nf_lff()");
 
-    if (atoms_.size() == 0) return;
-
     // Parent is not a nullpointer
     if (parent_) {
         // Siblings of this box
@@ -344,39 +342,41 @@ void CFMMBox::compute_mpoles_from_children() {
 
     int nbf = primary_->nbf();
 
-    for (auto child : children_) {
-
+    for (std::shared_ptr<CFMMBox> child : children_) {
         if (child->atoms_.size() == 0) continue;
 
-        for (int i1 = 0; i1 < child->atoms_.size(); i1++) {
-            int atom1 = atoms_[i1];
-            int atom1_shell_start = basisset_->shell_on_center(atom1, 0);
-            int atom1_nshells = basisset_->nshell_on_center(atom1);
-            for (int i2 = 0; i2 < child->atoms_.size(); i2++) {
-                int atom2 = atoms_[i2];
-                int atom2_shell_start = basisset_->shell_on_center(atom2, 0);
-                int atom2_nshells = basisset_->nshell_on_center(atom2);
+#pragma omp parallel for
+        for (int Ptask = 0; Ptask < child->atoms_.size(); Ptask++) {
+            int Patom = child->atoms_[Ptask];
+            int Pstart = basisset_->shell_on_center(Patom, 0);
+            int nPshell = basisset_->nshell_on_center(Patom);
 
-                for (int M = atom1_shell_start; M < atom1_shell_start + atom1_nshells; M++) {
-                    const GaussianShell& m_shell = basisset_->shell(M);
-                    int m_start = m_shell.start();
-                    int num_m = m_shell.nfunction();
-                    for (int N = atom2_shell_start; N < atom2_shell_start + atom2_shells; N++) {
-                        const GaussianShell& n_shell = basisset_->shell(N);
-                        int n_start = n_shell.start();
-                        int num_n = n_shell.nfunction();
+            for (int Qtask = 0; Qtask < child->atoms_.size(); Qtask++) {
+                int Qatom = child->atoms_[Qtask];
+                int Qstart = basisset_->shell_on_center(Qatom, 0);
+                int nQshell = basisset_->nshell_on_center(Qatom);
 
-                        for (int m = m_start; m < m_start + num_m; m++) {
-                            for (int n = n_start; n < n_start + num_n; n++) {
-                                std::shared_ptr<RealSolidHarmonics> tmpoles = child->mpoles_[m * nbf + n]->translate(center_);
-                                mpoles_[m * nbf + n]->add(tmpoles);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+                for (int P = Pstart; P < Pstart + nPshell; P++) {
+                    const GaussianShell& p_shell = basisset_->shell(P);
+                    int p_start = p_shell.start();
+                    int num_p = p_shell.nfunction();
+
+                    for (int Q = Qstart; Q < Qstart + nQshell; Q++) {
+                        const GaussianShell& q_shell = basisset_->shell(Q);
+                        int q_start = q_shell.start();
+                        int num_q = q_shell.nfunction();
+
+                        for (int p = p_start; p < p_start + num_p; p++) {
+                            for (int q = q_start; q < q_start + num_q; q++) {
+                                std::shared_ptr<RealSolidHarmonics> child_mpoles = child->mpoles_[p * nbf + q]->translate(center_);
+                                mpoles_[p * nbf + q]->add(child_mpoles);
+                            } // End q
+                        } // End p
+                    } // End Q
+                } // End P
+            } // End Qtask
+        } // End Ptask
+    } // End children
 
     timer_off("CFMMBox::compute_mpoles_from_children()");
 
@@ -384,165 +384,210 @@ void CFMMBox::compute_mpoles_from_children() {
 
 void CFMMBox::compute_far_field_vector() {
 
-    if (atoms_.size() == 0) continue;
+    timer_on("CFMMBox::compute_far_field_vector()");
 
     int nbf = primary_->nbf();
 
-    for (auto box : local_far_field_) {
+#pragma omp parallel for
+    for (std::shared_ptr<CFMMBox>& box : local_far_field_) {
+        for (int Ptask = 0; Ptask < box->atoms_.size(); Ptask++) {
+            int Patom = box->atoms_[Ptask];
+            int Pstart = basisset_->shell_on_center(Patom, 0);
+            int nPshell = basisset_->nshell_on_center(Patom);
 
-        for (int i1 = 0; i1 < box->atoms_.size(); i1++) {
-            int atom1 = atoms_[i1];
-            int atom1_shell_start = basisset_->shell_on_center(atom1, 0);
-            int atom1_nshells = basisset_->nshell_on_center(atom1);
-            for (int i2 = 0; i2 < box->atoms_.size(); i2++) {
-                int atom2 = atoms_[i2];
-                int atom2_shell_start = basisset_->shell_on_center(atom2, 0);
-                int atom2_nshells = basisset_->nshell_on_center(atom2);
+            for (int Qtask = 0; Qtask < box->atoms_.size(); Qtask++) {
+                int Qatom = atoms_[Qtask];
+                int Qstart = basisset_->shell_on_center(Qatom, 0);
+                int nQshell = basisset_->nshell_on_center(Qatom);
 
-                for (int M = atom1_shell_start; M < atom1_shell_start + atom1_nshells; M++) {
-                    const GaussianShell& m_shell = basisset_->shell(M);
-                    int m_start = m_shell.start();
-                    int num_m = m_shell.nfunction();
-                    for (int N = atom2_shell_start; N < atom2_shell_start + atom2_shells; N++) {
-                        const GaussianShell& n_shell = basisset_->shell(N);
-                        int n_start = n_shell.start();
-                        int num_n = n_shell.nfunction();
+                for (int P = Pstart; P < Pstart + nPshell; P++) {
+                    const GaussianShell& p_shell = basisset_->shell(P);
+                    int p_start = p_shell.start();
+                    int num_p = p_shell.nfunction();
 
-                        for (int m = m_start; m < m_start + num_m; m++) {
-                            for (int n = n_start; n < n_start + num_n; n++) {
-                                auto box_mpoles = box->mpoles_[m * nbf + n];
+                    for (int Q = Qstart; Q < Qstart + nQshell; Q++) {
+                        const GaussianShell& q_shell = basisset_->shell(Q);
+                        int q_start = q_shell.start();
+                        int num_q = q_shell.nfunction();
+
+                        for (int p = p_start; p < p_start + num_p; p++) {
+                            for (int q = q_start; q < q_start + num_q; q++) {
+                                // Of type std::shared_ptr<RealSolidHarmonics>
+                                auto box_mpoles = box->mpoles_[p * nbf + q];
+                                // The far field effect the boxes have on this particular box
                                 auto far_field = box_mpoles->far_field_vector(center_);
-                                if (!(Vff_.count(m * nbf + n))) {
-                                    Vff_.emplace(std::make_pair<int, std::shared_ptr<RealSolidHarmonics>(m * nbf + n, far_field));
+
+                                if (!(Vff_.count(p * nbf + q))) {
+                                    Vff_.emplace(std::make_pair<int, std::shared_ptr<RealSolidHarmonics>(p * nbf + q, far_field));
                                 } else {
-                                    Vff_[m * nbf + n]->add(far_field);
+                                    Vff_[p * nbf + q]->add(far_field);
                                 }
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
-        if (parent_) {
-            for (std::pair<int, std::shared_ptr<RealSolidHarmonics> pair : parent_->Vff_) {
-                int basis_ind = pair.first;
-                auto vff = pair.second;
-                int m = basis_ind / nbf;
-                int n = basis_ind % nbf;
-                auto trans_vff = vff->irregular_translate(center_);
+                            } // q
+                        } // p
+                    } // Q
+                } // P
+            } // Qtask
+        } // Ptask
+    } // box
 
-                if (!(Vff_.count(m * nbf + n))) {
-                    Vff_.emplace(std::make_pair<int, std::shared_ptr<RealSolidHarmonics>(m * nbf + n, trans_vff));
-                } else {
-                    Vff_[m * nbf + n]->add(trans_vff);
-                }
+    // Parent is not null
+    if (parent_) {
+        for (std::pair<int, std::shared_ptr<RealSolidHarmonics>> pair : parent_->Vff_) {
+
+            int basis_ind = pair.first;
+            std::shared_ptr<RealSolidHarmonics> vff = pair.second;
+
+            int m = basis_ind / nbf;
+            int n = basis_ind % nbf;
+            std::shared_ptr<RealSolidHarmonics> trans_vff = vff->irregular_translate(center_);
+
+            if (!(Vff_.count(m * nbf + n))) {
+                Vff_.emplace(std::make_pair<int, std::shared_ptr<RealSolidHarmonics>(m * nbf + n, trans_vff));
+            } else {
+                Vff_[m * nbf + n]->add(trans_vff);
             }
+
         }
     }
-}
+
+    timer_off("CFMMBox::compute_far_field_vector()");
+
+
 
 void CFMMBox::compute_self_J() {
 
-    if (atoms_.size() == 0) return;
+    timer_on("CFMMBox::compute_self_J()");
 
-    auto factory = std::make_shared<IntegralFactory>(primary_);
-    auto eri = std::shared_ptr<TwoBodyAOInt>(primary_->eri());
+    std::vector<std::shared_ptr<TwoBodyAOInt>> ints;
+
+    std::shared_ptr<IntegralFactory> factory = std::make_shared<IntegralFactory>(primary_);
+    std::shared_ptr<TwoBodyAOInt> eri = std::shared_ptr<TwoBodyAOInt>(primary_->eri());
+    ints.push_back(eri);
+
+    for (int thread = 1; thread < nthread_; thread++) {
+        ints.push_back(eri->clone());
+    }
+
+    int nbf = basisset_->nbf();
 
     // Self-interactions
+#pragma omp parallel for
     for (int Ptask = 0; Ptask < atoms_.size(); Ptask++) {
+        int Patom = atoms_[Ptask];
+        int Pstart = basisset_->shell_on_center(Patom, 0);
+        int nPshell = basisset_->nshell_on_center(Patom);
+
+        int thread = 0;
+#ifdef _OPENMP
+        thread = omp_get_thread_num();
+#endif
+
         for (int Qtask = 0; Qtask < atoms_.size(); Qtask++) {
+            int Qatom = atoms_[Qtask];
+            int Qstart = basisset_->shell_on_center(Qatom, 0);
+            int nQshell = basisset_->shell_on_center(Qatom, 0);
+
             for (int Rtask = 0; Rtask < atoms_.size(); Rtask++) {
+                int Ratom = atoms_[Rtask];
+                int Rstart = basisset_->shell_on_center(Ratom, 0);
+                int nRshell = basisset_->shell_on_center(Ratom, 0);
+
                 for (int Stask = 0; Stask < atoms_.size(); Stask++) {
-                    int Patom = atoms_[Ptask];
-                    int Qatom = atoms_[Qtask];
-                    int Ratom = atoms_[Rtask];
                     int Satom = atoms_[Stask];
-
-                    int Pstart = basisset_->shell_on_center(Patom, 0);
-                    int Qstart = basisset_->shell_on_center(Qatom, 0);
-                    int Rstart = basisset_->shell_on_center(Ratom, 0);
                     int Sstart = basisset_->shell_on_center(Satom, 0);
-
-                    int nPshell = basisset_->shell_on_center(Patom, 0);
-                    int nQshell = basisset_->shell_on_center(Qatom, 0);
-                    int nRshell = basisset_->shell_on_center(Ratom, 0);
                     int nSshell = basisset_->shell_on_center(Satom, 0);
 
                     for (int P = Pstart; P < Pstart + nPshell; P++) {
+                        int p_start = basisset_->shell(P).start();
+                        int num_p = basisset_->shell(P).nfunction();
+
                         for (int Q = Pstart; Q < Pstart + nQshell; Q++) {
+                            int q_start = basisset_->shell(Q).start();
+                            int num_q = basisset_->shell(Q).nfunction();
+
                             for (int R = Rstart; R < Rstart + nRshell; R++) {
+                                int r_start = basisset_->shell(R).start();
+                                int num_r = basisset_->shell(R).nfunction();
+
                                 for (int S = Sstart; S < Sstart + nSshell; S++) {
-
-                                    eri->compute_shell(P, Q, R, S);
-                                    const double *buffer = eri->buffer();
-
-                                    int p_start = basisset_->shell(P).start();
-                                    int q_start = basisset_->shell(Q).start();
-                                    int r_start = basisset_->shell(R).start();
                                     int s_start = basisset_->shell(S).start();
-
-                                    int num_p = basisset_->shell(P).nfunction();
-                                    int num_q = basisset_->shell(Q).nfunction();
-                                    int num_r = basisset_->shell(R).nfunction();
                                     int num_s = basisset_->shell(S).nfunction();
+
+                                    ints[thread]->compute_shell(P, Q, R, S);
+                                    const double *buffer = ints->buffer();
 
                                     for (int ind = 0; ind < D_.size(); ind++) {
                                         double *Jp = J_[ind]->pointer()[0];
                                         double *Dp = D_[ind]->pointer()[0];
+
                                         for (int p = p_start; p < p_start + num_p; p++) {
+                                            int dp = p - p_start;
                                             for (int q = q_start; q < q_start + num_q; q++) {
+                                                int dq = q - q_start;
                                                 for (int r = r_start; r < r_start + num_r; r++) {
+                                                    int dr = r - r_start;
                                                     for (int s = s_start; s < s_start + num_s; s++) {
-                                                        int dp = p - p_start;
-                                                        int dq = q - q_start;
-                                                        int dr = r - r_start;
                                                         int ds = s - s_start;
 
                                                         double int_val = buffer[dp * num_q * num_r * num_s + dq * num_r * num_s + dr * num_s + ds];
                                                         Jp[p * nbf + q] = int_val * Dp[r * nbf + s];
 
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+                                                    } // s
+                                                } // r
+                                            } // q
+                                        } // p
+                                    } // ind
+                                } // S
+                            } // R
+                        } // Q
+                    } // P
+                } // Stask
+            } // Rtask
+        } // Qtask
+    } // Ptask
+
+    timer_off("CFMMBox::compute_self_J()");
 }
 
 void CFMMBox::compute_nf_J() {
 
-    if (atoms_.size() == 0) return;
+    timer_on("CFMMBox::compute_nf_J()");
 
-    auto factory = std::make_shared<IntegralFactory>(primary_);
-    auto eri = std::shared_ptr<TwoBodyAOInt>(primary_->eri());
+    std::vector<std::shared_ptr<TwoBodyAOInt>> ints;
+
+    std::shared_ptr<IntegralFactory> factory = std::make_shared<IntegralFactory>(primary_);
+    std::shared_ptr<TwoBodyAOInt> eri = std::shared_ptr<TwoBodyAOInt>(primary_->eri());
+    ints.push_back(eri);
+
+    for (int thread = 1; thread < nthread_; thread++) {
+        ints.push_back(eri->clone());
+    }
+
+    int nbf = basisset_->nbf();
 
     // Near field interactions
-    for (auto box : near_field_) {
+    for (std::shared_ptr<CFMMBox> box : near_field_) {
+
+#pragma omp parallel for
         for (int Ptask = 0; Ptask < atoms_.size(); Ptask++) {
+            int Patom = atoms_[Ptask];
+            int Pstart = basisset_->shell_on_center(Patom, 0);
+            int nPshell = basisset_->shell_on_center(Patom, 0);
+
             for (int Qtask = 0; Qtask < atoms_.size(); Qtask++) {
+                int Qatom = atoms_[Qtask];
+                int Qstart = basisset_->shell_on_center(Qatom, 0);
+                int nQshell = basisset_->shell_on_center(Qatom, 0);
+
                 for (int Rtask = 0; Rtask < box->atoms_.size(); Rtask++) {
+                    int Ratom = atoms_[Rtask];
+                    int Rstart = basisset_->shell_on_center(Ratom, 0);
+                    int nRshell = basisset_->shell_on_center(Ratom, 0);
+
                     for (int Stask = 0; Stask < box->atoms_.size(); Stask++) {
-                        int Patom = atoms_[Ptask];
-                        int Qatom = atoms_[Qtask];
-                        int Ratom = atoms_[Rtask];
                         int Satom = atoms_[Stask];
-
-                        int Pstart = basisset_->shell_on_center(Patom, 0);
-                        int Qstart = basisset_->shell_on_center(Qatom, 0);
-                        int Rstart = basisset_->shell_on_center(Ratom, 0);
                         int Sstart = basisset_->shell_on_center(Satom, 0);
-
-                        int nPshell = basisset_->shell_on_center(Patom, 0);
-                        int nQshell = basisset_->shell_on_center(Qatom, 0);
-                        int nRshell = basisset_->shell_on_center(Ratom, 0);
                         int nSshell = basisset_->shell_on_center(Satom, 0);
 
                         for (int P = Pstart; P < Pstart + nPshell; P++) {
@@ -592,6 +637,8 @@ void CFMMBox::compute_nf_J() {
             }
         }
     }
+
+    timer_off("CFMMBox::compute_nf_J()");
 }
 
 void CFMMBox::compute_ff_J() {
