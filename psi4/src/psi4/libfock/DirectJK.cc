@@ -41,7 +41,7 @@
 #include "psi4/libmints/twobody.h"
 #include "psi4/libmints/integral.h"
 #include "psi4/lib3index/cholesky.h"
-#include "psi4/libfmm/fmmtree.h"
+#include "psi4/libfmm/fmm_tree.h"
 #include "psi4/libpsi4util/process.h"
 #include "psi4/liboptions/liboptions.h"
 

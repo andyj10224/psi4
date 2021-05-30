@@ -41,6 +41,10 @@ class MultipoleRotationFactory {
       double W(int l, int m, int M);
       double P(int i, int l, int mu, int M);
 
+      double u(int l, int m, int M) const;
+      double v(int l, int m, int M) const;
+      double w(int l, int m, int M) const;
+
     public:
       // Constructor
       MultipoleRotationFactory(Vector3 R_a, Vector3 R_b, int lmax);
