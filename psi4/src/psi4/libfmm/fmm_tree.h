@@ -37,9 +37,9 @@ class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       // The basis set that the molecule uses
       std::shared_ptr<BasisSet> basisset_;
       // Density Matrix of Molecule
-      std::vector<SharedMatrix>& D_;
+      std::vector<SharedMatrix> D_;
       // A reference to the Coulomb Matrix of the molecule (every box can modify it)
-      std::vector<SharedMatrix>& J_;
+      std::vector<SharedMatrix> J_;
       // The atoms in the molecule which are centered within the bounds of the box
       std::vector<int> atoms_;
       // Length of the box
@@ -66,8 +66,8 @@ class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       std::vector<std::shared_ptr<CFMMBox>> local_far_field_;
 
       // Common function used by constructor
-      void common_init(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
-                        std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J, Vector3 origin, double length, int level, int lmax);
+      void common_init(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, 
+                        std::shared_ptr<BasisSet> basisset, Vector3 origin, double length, int level, int lmax);
 
       // Compute the J matrix contributions at each level
       void compute_self_J();
@@ -118,9 +118,9 @@ class CFMMTree {
       // Root of this tree structure
       std::shared_ptr<CFMMBox> root_;
       // Density Matrix of Molecule
-      std::vector<SharedMatrix>& D_;
+      std::vector<SharedMatrix> D_;
       // Coulomb Matrix of Molecule
-      std::vector<SharedMatrix>& J_;
+      std::vector<SharedMatrix> J_;
 
       // Create children
       void make_children(std::shared_ptr<CFMMBox>& box);

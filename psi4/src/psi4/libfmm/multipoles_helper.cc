@@ -62,13 +62,13 @@ MultipoleRotationFactory::MultipoleRotationFactory(Vector3 R_a, Vector3 R_b, int
     Uz_ = std::make_shared<Matrix>("Uz Matrix", 3, 3);
 
     for (int i = 0; i < 3; i++) {
-        Uz->set(0, i, x_axis[i]);
-        Uz->set(1, i, y_axis[i]);
-        Uz->set(2, i, z_axis[i]);
+        Uz_->set(0, i, x_axis[i]);
+        Uz_->set(1, i, y_axis[i]);
+        Uz_->set(2, i, z_axis[i]);
     }
 
     for (int l = 0; l <= lmax_; l++) {
-        D_cache_.append(nullptr);
+        D_cache_.push_back(nullptr);
     }
 
 }
@@ -143,7 +143,7 @@ SharedMatrix MultipoleRotationFactory::get_D(int l) {
             int ip = permute[i];
             for (int j = 0; j < 3; j++) {
                 int jp = permute[j];
-                Drot->set(i, j, Uz_[ip][jp]);
+                Drot->set(i, j, Uz_->get(ip, jp));
             }
         }
     } else {
@@ -262,7 +262,7 @@ void HarmonicCoefficients::compute_terms_regular() {
                 int b = std::get<2>(term_tuple);
                 int c = std::get<3>(term_tuple);
 
-                Rc_[l][l-1].push_back(coef, a, b, c+1);
+                Rc_[l][l-1].push_back(std::make_tuple(coef, a, b, c+1));
             }
 
             // Rs[l][l-1]
@@ -273,7 +273,7 @@ void HarmonicCoefficients::compute_terms_regular() {
                 int b = std::get<2>(term_tuple);
                 int c = std::get<3>(term_tuple);
 
-                Rs_[l][l-1].push_back(coef, a, b, c+1);
+                Rs_[l][l-1].push_back(std::make_tuple(coef, a, b, c+1));
             }
 
             // => m = l <= //
@@ -286,7 +286,7 @@ void HarmonicCoefficients::compute_terms_regular() {
                 int b = std::get<2>(term_tuple);
                 int c = std::get<3>(term_tuple);
 
-                Rc_[l][l].push_back(-coef/(2*l), a+1, b, c);
+                Rc_[l][l].push_back(std::make_tuple(-coef/(2*l), a+1, b, c));
             }
 
             // Rs[l-1][l-1] contribution to Rc[l][l]
@@ -297,7 +297,7 @@ void HarmonicCoefficients::compute_terms_regular() {
                 int b = std::get<2>(term_tuple);
                 int c = std::get<3>(term_tuple);
 
-                Rc_[l][l].push_back(coef/(2*l), a, b+1, c);
+                Rc_[l][l].push_back(std::make_tuple(coef/(2*l), a, b+1, c));
             }
 
             // Rc[l-1][l-1] contribution to Rs[l][l]
@@ -308,7 +308,7 @@ void HarmonicCoefficients::compute_terms_regular() {
                 int b = std::get<2>(term_tuple);
                 int c = std::get<3>(term_tuple);
 
-                Rs_[l][l].push_back(-coef/(2*l), a, b+1, c);
+                Rs_[l][l].push_back(std::make_tuple(-coef/(2*l), a, b+1, c));
             }
 
             // Rs[l-1][l-1] contribution to Rs[l][l]
@@ -319,7 +319,7 @@ void HarmonicCoefficients::compute_terms_regular() {
                 int b = std::get<2>(term_tuple);
                 int c = std::get<3>(term_tuple);
 
-                Rs_[l][l].push_back(-coef/(2*l), a+1, b, c);
+                Rs_[l][l].push_back(std::make_tuple(-coef/(2*l), a+1, b, c));
             }
         }
 
@@ -341,7 +341,7 @@ void HarmonicCoefficients::compute_terms_regular() {
                     int b = std::get<2>(term_tuple);
                     int c = std::get<3>(term_tuple);
 
-                    mpole_terms_[l][mu].push_back(prefactor * coef, a, b, c);
+                    mpole_terms_[l][mu].push_back(std::make_tuple(prefactor * coef, a, b, c));
                 }
             } else {
                 prefactor = std::pow(-1.0, (double) m) * std::sqrt(2.0 * std::tgamma(l-m+1) * std::tgamma(l+m+1));
@@ -353,14 +353,14 @@ void HarmonicCoefficients::compute_terms_regular() {
                     int b = std::get<2>(term_tuple);
                     int c = std::get<3>(term_tuple);
 
-                    mpole_terms_[l][mu].push_back(prefactor * coef, a, b, c);
+                    mpole_terms_[l][mu].push_back(std::make_tuple(prefactor * coef, a, b, c));
                 }
             }
         }
     }
 }
 
-void RealSolidHarmonics::RealSolidHarmonics(int lmax, Vector3 center, SolidHarmonicsType type) {
+RealSolidHarmonics::RealSolidHarmonics(int lmax, Vector3 center, SolidHarmonicsType type) {
     lmax_ = lmax;
     center_ = center;
     type_ = type;
@@ -436,7 +436,7 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_irregular(Vect
         int dim = 2*l+1;
         for (int i = 0; i < dim; i++) {
             for (int j = 0; j < dim; j++) {
-                trans_harmonics.Ylm_[l][i] += Dmat->get(j, i) * trans_rot_mpoles[l][j];
+                trans_harmonics->Ylm_[l][i] += Dmat->get(j, i) * trans_rot_mpoles[l][j];
             }
         }
     }
@@ -485,7 +485,7 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_regular(Vector
         int dim = 2*l+1;
         for (int i = 0; i < dim; i++) {
             for (int j = 0; j < dim; j++) {
-                trans_harmonics.Ylm_[l][i] += Dmat->get(j, i) * trans_rot_mpoles[l][j];
+                trans_harmonics->Ylm_[l][i] += Dmat->get(j, i) * trans_rot_mpoles[l][j];
             }
         }
     }
@@ -494,8 +494,8 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_regular(Vector
 }
 
 // A helper method to compute the interaction tensor between aligned multipoles after rotation
-static SharedVector RealSolidHarmonics::build_T_spherical(int la, int lb, double R) {
-    int lmin = std::min(la, lb)
+SharedVector RealSolidHarmonics::build_T_spherical(int la, int lb, double R) {
+    int lmin = std::min(la, lb);
     SharedVector Tvec = std::make_shared<Vector>(2*lmin+1);
     double denom = std::pow(R, la+lb+1);
 
@@ -519,7 +519,7 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::far_field_vector(Vector3
     for (int l = 0; l <= lmax_; l++) {
         for (int j = 0; j <= lmax_; j++) {
             SharedVector Tvec = build_T_spherical(l, j, R);
-            int nterms = 2*std::min(l,j)+1
+            int nterms = 2*std::min(l,j)+1;
 
             std::vector<double> rotated_mpole(2*j+1, 0.0);
             SharedMatrix Dmat = rotation_factory->get_D(j);
@@ -531,13 +531,13 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::far_field_vector(Vector3
 
             std::vector<double> temp(nterms, 0.0);
             for (int u = 0; u < nterms; u++) {
-                temp[u] = Tvec[u] * rotated_mpoles[u];
+                temp[u] = Tvec->get(u) * rotated_mpole[u];
             }
 
             SharedMatrix Dl = rotation_factory->get_D(l);
             for (int r = 0; r < 2*l+1; r++) {
                 for (int s = 0; s < nterms; s++) {
-                    Vff.Ylm_[l][r] += Dl->get(s, r) * temp[s];
+                    Vff->Ylm_[l][r] += Dl->get(s, r) * temp[s];
                 }
             }
 

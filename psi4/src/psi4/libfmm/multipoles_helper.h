@@ -40,10 +40,34 @@ class MultipoleRotationFactory {
       double V(int l, int m, int M);
       double W(int l, int m, int M);
       double P(int i, int l, int mu, int M);
+      
+    inline double u(int l, int m, int M) {
+        if (std::abs(M) < l) {
+            return std::sqrt((l+m)*(l-m) /((l+M)*(l-M)));
+        } else {
+            return std::sqrt((l+m)*(l-m)/(2*l*(2*l-1)));
+        }
+    }
 
-      double u(int l, int m, int M) const;
-      double v(int l, int m, int M) const;
-      double w(int l, int m, int M) const;
+    inline double v(int l, int m, int M) {
+        double dm0 = 0.0;
+        if (m == 0) dm0 = 1.0;
+        if (std::abs(M) < l) {
+            return 0.5 * (1.0 - 2.0*dm0) * std::sqrt((1.0+dm0)*(l+std::abs(m)-1)*(l+std::abs(m)) / ((l+M)*(l-M)));
+        } else {
+        return 0.5 * (1.0 - 2.0*dm0) * std::sqrt((1.0+dm0)*(l+std::abs(m)-1)*(l+std::abs(m)) / ((2*l)*(2*l-1)));
+        }
+    }
+
+    inline double w(int l, int m, int M) {
+        double dm0 = 0.0;
+        if (m == 0) dm0 = 1.0;
+        if (std::abs(M) < l) {
+            return 0.5 * (dm0 - 1) * std::sqrt((l-std::abs(m)-1)*(l-std::abs(m)) / ((l+M)*(l-M)));
+        } else {
+            return 0.5 * (dm0 - 1) * std::sqrt((l-std::abs(m)-1)*(l-std::abs(m)) / ((2*l)*(2*l-1)));
+        }
+    }
 
     public:
       // Constructor
@@ -52,34 +76,6 @@ class MultipoleRotationFactory {
       SharedMatrix get_D(int l);
 
 }; // End MultipoleRotationFactory
-
-inline double MultipoleRotationFactory::u(int l, int m, int M) {
-    if (std::abs(M) < l) {
-        return std::sqrt((l+m)*(l-m) /((l+M)*(l-M)));
-    } else {
-        return std::sqrt((l+m)*(l-m)/(2*l*(2*l-1)));
-    }
-}
-
-inline double MultipoleRotationFactory::v(int l, int m, int M) {
-    double dm0 = 0.0;
-    if (m == 0) dm0 = 1.0;
-    if (std::abs(M) < l) {
-        return 0.5 * (1.0 - 2.0*dm0) * std::sqrt((1.0+dm0)*(l+std::abs(m)-1)*(l+std::abs(m)) / ((l+M)*(l-M)));
-    } else {
-        return 0.5 * (1.0 - 2.0*dm0) * std::sqrt((1.0+dm0)*(l+std::abs(m)-1)*(l+std::abs(m)) / ((2*l)*(2*l-1)));
-    }
-}
-
-inline double MultipoleRotationFactory::w(int l, int m, int M) {
-    double dm0 = 0.0;
-    if (m == 0) dm0 = 1.0;
-    if (std::abs(M) < l) {
-        return 0.5 * (dm0 - 1) * std::sqrt((l-std::abs(m)-1)*(l-std::abs(m)) / ((l+M)*(l-M)));
-    } else {
-        return 0.5 * (dm0 - 1) * std::sqrt((l-std::abs(m)-1)*(l-std::abs(m)) / ((2*l)*(2*l-1)));
-    }
-}
 
 class HarmonicCoefficients {
     protected:
@@ -90,7 +86,7 @@ class HarmonicCoefficients {
       // Helgaker Rc terms (used in generating mpole_terms_)
       std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>> Rs_;
       // Maximum angular momentum
-      const int lmax_;
+      int lmax_;
       // Regular or Irregular?
       SolidHarmonicsType type_;
 
@@ -113,7 +109,7 @@ class RealSolidHarmonics {
       // Values of the Real Solid Harmonics, normalized according to Stone's convention
       std::vector<std::vector<double>> Ylm_;
       // Maximum angular momentum
-      const int lmax_;
+      int lmax_;
       // Regular or Irregular?
       SolidHarmonicsType type_;
       // Center of the Harmonics
@@ -136,7 +132,7 @@ class RealSolidHarmonics {
       std::vector<std::vector<double>>& get_multipoles() { return Ylm_; }
 
       // Get an "internuclear" interaction tensor between two points separated by a distance R
-      static SharedVector build_T_spherical(int la, int lb, double R);
+      SharedVector build_T_spherical(int la, int lb, double R);
 
       // Translate the solid harmonics
       std::shared_ptr<RealSolidHarmonics> translate(Vector3 new_center);
