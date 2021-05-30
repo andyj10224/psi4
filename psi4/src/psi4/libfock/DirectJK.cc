@@ -275,7 +275,7 @@ void DirectJK::compute_JK() {
     auto factory = std::make_shared<IntegralFactory>(primary_, primary_, primary_, primary_);
 
     Options& options = Process::environment.options;
-    bool cfmm = options.get_bool("DO_CFMM_J");
+    bool cfmm = options.get_bool("DO_CFMM_J") && (iteration_ > 0);
 
     bool do_J = do_J_ && !cfmm;
 
@@ -326,6 +326,7 @@ void DirectJK::compute_JK() {
             build_JK(ints, D_ao_, temp, K_ao_);
         }
     }
+    iteration_ += 1;
 }
 void DirectJK::postiterations() {}
 

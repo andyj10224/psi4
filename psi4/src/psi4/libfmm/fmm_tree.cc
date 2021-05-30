@@ -29,8 +29,6 @@
 
 namespace psi {
 
-extern int m_addr(int m);
-
 CFMMBox::CFMMBox(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
         std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J, int lmax) {
     D_ = D;
@@ -113,19 +111,21 @@ void CFMMBox::common_init(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molec
 
     // Calculate the well separated criterion for the box
     ws_ = 2;
-    for (int Ptask = 0; Ptask < atoms_.size(); Ptask++) {
-        int Patom = atoms_[Ptask];
-        int Pstart = basisset_->shell_on_center(Patom, 0);
-        int nPshell = basisset_->nshell_on_center(Patom);
+    if (length_ > 0.0) {
+        for (int Ptask = 0; Ptask < atoms_.size(); Ptask++) {
+            int Patom = atoms_[Ptask];
+            int Pstart = basisset_->shell_on_center(Patom, 0);
+            int nPshell = basisset_->nshell_on_center(Patom);
 
-        for (int P = Pstart; P < Pstart + nPshell; P++) {
-            const GaussianShell& Pshell = basisset_->shell(P);
-            int nprim = Pshell.nprimitive();
-            for (int prim = 0; prim < nprim; prim++) {
-                double exp = Pshell.exp(prim);
-                double rp = ERFCI10 / std::sqrt(exp);
-                int ext = 2 * std::ceil(rp / length_);
-                ws_ = std::max(ws_, ext);
+            for (int P = Pstart; P < Pstart + nPshell; P++) {
+                const GaussianShell& Pshell = basisset_->shell(P);
+                int nprim = Pshell.nprimitive();
+                for (int prim = 0; prim < nprim; prim++) {
+                    double exp = Pshell.exp(prim);
+                    double rp = ERFCI10 / std::sqrt(exp);
+                    int ext = 2 * std::ceil(rp / length_);
+                    ws_ = std::max(ws_, ext);
+                }
             }
         }
     }
@@ -217,7 +217,7 @@ void CFMMBox::make_children() {
         Vector3 child_origin = origin_ + Vector3(half_length * dx, half_length * dy, half_length * dz);
 
         std::shared_ptr<CFMMBox> child = std::make_shared<CFMMBox>(std::shared_ptr<CFMMBox>(this), molecule_, basisset_, D_, J_, child_origin, half_length, level_+1, lmax_);
-        children_.push_back(child);
+        children_[c] = child;
     }
 
     timer_off("CFMMBox::make_children()");
@@ -228,7 +228,7 @@ void CFMMBox::compute_mpoles() {
 
     timer_on("CFMMBox::compute_mpoles()");
 
-    auto mpole_terms = mpole_coefs_->get_terms();
+    const auto &mpole_terms = mpole_coefs_->get_terms();
 
     std::shared_ptr<IntegralFactory> int_factory = std::make_shared<IntegralFactory>(basisset_);
 
@@ -236,8 +236,8 @@ void CFMMBox::compute_mpoles() {
     std::vector<std::shared_ptr<OneBodyAOInt>> oints(nthread_);
 
     for (int thread = 0; thread < nthread_; thread++) {
-        mpints.push_back(std::shared_ptr<OneBodyAOInt>(int_factory->ao_multipoles(lmax_)));
-        oints.push_back(std::shared_ptr<OneBodyAOInt>(int_factory->ao_overlap()));
+        mpints[thread] = std::shared_ptr<OneBodyAOInt>(int_factory->ao_multipoles(lmax_));
+        oints[thread] = std::shared_ptr<OneBodyAOInt>(int_factory->ao_overlap());
     }
 
     int n_multipoles = (lmax_ + 1) * (lmax_ + 2) * (lmax_ + 3) / 6 - 1;
@@ -291,7 +291,7 @@ void CFMMBox::compute_mpoles() {
                                     int mu = m_addr(m);
 
                                     for (int ind = 0; ind < mpole_terms[l][mu].size(); ind++) {
-                                        std::tuple<double, int, int, int>& term_tuple = mpole_terms[l][mu][ind];
+                                        const std::tuple<double, int, int, int>& term_tuple = mpole_terms[l][mu][ind];
                                         double coef = std::get<0>(term_tuple);
                                         int a = std::get<1>(term_tuple);
                                         int b = std::get<2>(term_tuple);

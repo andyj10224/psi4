@@ -21,6 +21,32 @@ static inline int npure(int l) { return 2 * l + 1; }
 static inline int icart(int a, int b, int c) { return (((((a + b + c + 1) << 1) - a) * (a + 1)) >> 1) - b - 1; }
 static inline int ipure(int, int m) { return m < 0 ? 2 * -m : (m == 0 ? 0 : 2 * m - 1); }
 
+// Some more useful Helper Functions
+static int choose(int n, int r) {
+    if (r < 0 || r > n) {
+        return 0;
+    }
+    int small = std::min(n, n-r);
+    int nCr = 1;
+    for (int t = 0; t < small; t++) {
+        nCr *= n;
+        nCr /= (t+1);
+        n -= 1;
+    }
+    return nCr;
+}
+
+static int m_addr(int m) {
+    /*- Return the unsigned (array) address of m -*/
+    if (m <= 0) {
+        // 0, 1s, 2s, 3s, ...
+        return 2*(-m);
+    } else {
+        // 1c, 2c, 3c, ...
+        return 2*m-1;
+    }
+}
+
 class MultipoleRotationFactory {
 
     protected:

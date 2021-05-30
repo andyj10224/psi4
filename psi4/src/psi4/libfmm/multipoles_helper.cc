@@ -14,31 +14,6 @@
 
 namespace psi {
 
-int choose(int n, int r) {
-    if (r < 0 || r > n) {
-        return 0;
-    }
-    int small = std::min(n, n-r);
-    int nCr = 1;
-    for (int t = 0; t < small; t++) {
-        nCr *= n;
-        nCr /= (t+1);
-        n -= 1;
-    }
-    return nCr;
-}
-
-int m_addr(int m) {
-    /*- Return the unsigned (array) address of m -*/
-    if (m <= 0) {
-        // 0, 1s, 2s, 3s, ...
-        return 2*(-m);
-    } else {
-        // 1c, 2c, 3c, ...
-        return 2*m-1;
-    }
-}
-
 MultipoleRotationFactory::MultipoleRotationFactory(Vector3 R_a, Vector3 R_b, int lmax) {
     lmax_ = lmax;
     Vector3 R_ab = R_a - R_b;
