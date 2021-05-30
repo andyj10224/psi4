@@ -80,7 +80,7 @@ CFMMBox::CFMMBox(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> b
 
 CFMMBox::CFMMBox(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
                     std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J, Vector3 origin, double length, int level, int lmax) {
-    common_init(parent, molecule, basisset, D, origin, length, level, lmax);
+    common_init(parent, molecule, basisset, D, J, origin, length, level, lmax);
 }
 
 CFMMBox::common_init(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
@@ -101,7 +101,7 @@ CFMMBox::common_init(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> 
     nthread_ = Process::environment.get_n_threads();
 #endif
 
-    center_ = origin_ + Vector3(length_, length_, length_);
+    center_ = origin_ + Vector3(length_ / 2, length_ / 2, length_ / 2);
     children_.resize(8, nullptr);
 
     // Make the multipole coefficients
@@ -140,10 +140,10 @@ CFMMBox::common_init(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> 
         int nPshell = basisset_->nshell_on_center(Patom);
 
         for (int P = Pstart; P < Pstart + nPshell; P++) {
-            int Pshell = basisset_->shell(P);
+            const GaussianShell& Pshell = basisset_->shell(P);
             int nprim = Pshell->nprimitive();
             for (int prim = 0; prim < nprim; prim++) {
-                double exp = Pshell->exp(prim);
+                double exp = Pshell.exp(prim);
                 double rp = ERFCI10 / std::sqrt(exp);
                 int ext = 2 * std::ceil(rp / length_);
                 ws_ = std::max(ws_, ext);
@@ -176,13 +176,14 @@ CFMMBox::common_init(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> 
                     for (int p = p_start; p < p_start + num_p; p++) {
                         for (int q = q_start; q < q_start + num_q; q++) {
                             auto pq_mpoles = std::make_shared<RealSolidHarmonics>(lmax_, center_, Regular);
-                            mpoles_.emplace(std::make_pair<int, std::shared_ptr<RealSolidHarmonics>>(m * nbf + n, pq_mpoles));
-                        }
-                    }
-                }
-            }
-        }
-    }
+                            mpoles_.emplace(std::make_pair<int, std::shared_ptr<RealSolidHarmonics>>(p * nbf + q, pq_mpoles));
+                        } // q
+                    } // p
+                } // Q
+            } // P
+        } // Qtask
+    } // Ptask
+
 }
 
 void CFMMBox::set_nf_lff() {
@@ -486,17 +487,17 @@ void CFMMBox::compute_self_J() {
         for (int Qtask = 0; Qtask < atoms_.size(); Qtask++) {
             int Qatom = atoms_[Qtask];
             int Qstart = basisset_->shell_on_center(Qatom, 0);
-            int nQshell = basisset_->shell_on_center(Qatom, 0);
+            int nQshell = basisset_->nshell_on_center(Qatom);
 
             for (int Rtask = 0; Rtask < atoms_.size(); Rtask++) {
                 int Ratom = atoms_[Rtask];
                 int Rstart = basisset_->shell_on_center(Ratom, 0);
-                int nRshell = basisset_->shell_on_center(Ratom, 0);
+                int nRshell = basisset_->nshell_on_center(Ratom);
 
                 for (int Stask = 0; Stask < atoms_.size(); Stask++) {
                     int Satom = atoms_[Stask];
                     int Sstart = basisset_->shell_on_center(Satom, 0);
-                    int nSshell = basisset_->shell_on_center(Satom, 0);
+                    int nSshell = basisset_->nshell_on_center(Satom);
 
                     for (int P = Pstart; P < Pstart + nPshell; P++) {
                         int p_start = basisset_->shell(P).start();
@@ -531,7 +532,7 @@ void CFMMBox::compute_self_J() {
                                                         int ds = s - s_start;
 
                                                         double int_val = buffer[dp * num_q * num_r * num_s + dq * num_r * num_s + dr * num_s + ds];
-                                                        Jp[p * nbf + q] = int_val * Dp[r * nbf + s];
+                                                        Jp[p * nbf + q] += int_val * Dp[r * nbf + s];
 
                                                     } // s
                                                 } // r
@@ -573,77 +574,86 @@ void CFMMBox::compute_nf_J() {
         for (int Ptask = 0; Ptask < atoms_.size(); Ptask++) {
             int Patom = atoms_[Ptask];
             int Pstart = basisset_->shell_on_center(Patom, 0);
-            int nPshell = basisset_->shell_on_center(Patom, 0);
+            int nPshell = basisset_->nshell_on_center(Patom);
+
+            int thread = 0;
+#ifdef _OPENMP
+            thread = omp_get_thread_num();
+#endif
 
             for (int Qtask = 0; Qtask < atoms_.size(); Qtask++) {
                 int Qatom = atoms_[Qtask];
                 int Qstart = basisset_->shell_on_center(Qatom, 0);
-                int nQshell = basisset_->shell_on_center(Qatom, 0);
+                int nQshell = basisset_->nshell_on_center(Qatom);
 
                 for (int Rtask = 0; Rtask < box->atoms_.size(); Rtask++) {
-                    int Ratom = atoms_[Rtask];
+                    int Ratom = box->atoms_[Rtask];
                     int Rstart = basisset_->shell_on_center(Ratom, 0);
-                    int nRshell = basisset_->shell_on_center(Ratom, 0);
+                    int nRshell = basisset_->nshell_on_center(Ratom);
 
                     for (int Stask = 0; Stask < box->atoms_.size(); Stask++) {
-                        int Satom = atoms_[Stask];
+                        int Satom = box->atoms_[Stask];
                         int Sstart = basisset_->shell_on_center(Satom, 0);
-                        int nSshell = basisset_->shell_on_center(Satom, 0);
+                        int nSshell = basisset_->nshell_on_center(Satom);
 
                         for (int P = Pstart; P < Pstart + nPshell; P++) {
+                            int p_start = basisset_->shell(P).start();
+                            int num_p = basisset_->shell(P).nfunction();
+
                             for (int Q = Pstart; Q < Pstart + nQshell; Q++) {
+                                int q_start = basisset_->shell(Q).start();
+                                int num_q = basisset_->shell(Q).nfunction();
+
                                 for (int R = Rstart; R < Rstart + nRshell; R++) {
+                                    int r_start = basisset_->shell(R).start();
+                                    int num_r = basisset_->shell(R).nfunction();
+
                                     for (int S = Sstart; S < Sstart + nSshell; S++) {
-
-                                        eri->compute_shell(P, Q, R, S);
-                                        const double *buffer = eri->buffer();
-
-                                        int p_start = basisset_->shell(P).start();
-                                        int q_start = basisset_->shell(Q).start();
-                                        int r_start = basisset_->shell(R).start();
                                         int s_start = basisset_->shell(S).start();
-
-                                        int num_p = basisset_->shell(P).nfunction();
-                                        int num_q = basisset_->shell(Q).nfunction();
-                                        int num_r = basisset_->shell(R).nfunction();
                                         int num_s = basisset_->shell(S).nfunction();
+
+                                        ints[thread]->compute_shell(P, Q, R, S);
+                                        const double *buffer = ints[thread]->buffer();
 
                                         for (int ind = 0; ind < D_.size(); ind++) {
                                             double *Jp = J_[ind]->pointer()[0];
                                             double *Dp = D_[ind]->pointer()[0];
                                             for (int p = p_start; p < p_start + num_p; p++) {
+                                                int dp = p - p_start;
+
                                                 for (int q = q_start; q < q_start + num_q; q++) {
+                                                    int dq = q - q_start;
+
                                                     for (int r = r_start; r < r_start + num_r; r++) {
+                                                        int dr = r - r_start;
+
                                                         for (int s = s_start; s < s_start + num_s; s++) {
-                                                            int dp = p - p_start;
-                                                            int dq = q - q_start;
-                                                            int dr = r - r_start;
                                                             int ds = s - s_start;
 
                                                             double int_val = buffer[dp * num_q * num_r * num_s + dq * num_r * num_s + dr * num_s + ds];
-                                                            Jp[p * nbf + q] = int_val * Dp[r * nbf + s];
+                                                            Jp[p * nbf + q] += int_val * Dp[r * nbf + s];
 
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+                                                        } // s
+                                                    } // r
+                                                } // q
+                                            } // p
+                                        } // ind
+                                    } // S
+                                } // R
+                            } // Q
+                        } // P
+                    } // Stask
+                } // Rtask
+            } // Qtask
+        } // Ptask
+    } // box
 
     timer_off("CFMMBox::compute_nf_J()");
 }
 
 void CFMMBox::compute_ff_J() {
 
-    if (atoms_.size() == 0) return;
+    timer_on("CFMMBox::compute_ff_J()");
 
     int nbf = primary_->nbf();
 
@@ -651,25 +661,32 @@ void CFMMBox::compute_ff_J() {
     for (int ind = 0; ind < D_.size(); ind++) {
         double *Jp = J_[ind]->pointer()[0];
         double *Dp = D_[ind]->pointer()[0];
-        for (const auto self_pair& : mpoles_) {
+#pragma omp parallel for
+        for (const auto &self_pair : mpoles_) {
             int pq_index = self_pair.first;
-            int pq_mpole = self_pair.second;
+            std::shared_ptr<RealSolidHarmonics> pq_mpole = self_pair.second;
             int p = pq_index / nbf;
             int q = pq_index % nbf;
-            for (const auto vff_pair& : Vff_) {
+
+            for (const auto &vff_pair : Vff_) {
                 int rs_index = vff_pair.first;
-                int rs_mpole = vff_pair.second;
+                std::shared_ptr<RealSolidHarmonics> rs_vff = vff_pair.second;
                 int r = rs_index / nbf;
                 int s = rs_index % nbf;
+
                 for (int l = 0; l <= lmax_; l++) {
                     for (int m = -l; m <= l; m++) {
                         int m_addr = m_addr(m);
-                        Jp[p * nbf + q] += pq_mpole[l][m_addr] * rs_mole[l][m_addr] * Dp[r * nbf + s];
+                        Jp[p * nbf + q] += pq_mpole[l][m_addr] * rs_vff[l][m_addr] * Dp[r * nbf + s];
                     }
                 }
+
             }
+
         }
     }
+
+    timer_off("CFMM::compute_ff_J()");
 }
 
 void CFMMBox::compute_J() {
@@ -681,6 +698,11 @@ void CFMMBox::compute_J() {
     compute_self_J();
     compute_nf_J();
     compute_ff_J();
+
+    // Hermitivitize J matrix afterwards
+    for (int ind = 0; ind < D_.size(); ind++) {
+        J[ind]->hermitivitize();
+    }
 
 }
 
@@ -696,23 +718,25 @@ CFMMTree::CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet>
     root_ = std::make_shared<CFMMBox>(molecule_, basisset_, D_, J_, lmax_);
 }
 
-void CFMMTree::make_children_helper(std::shared_ptr<CFMMBox>& box) {
+void CFMMTree::make_children(std::shared_ptr<CFMMBox>& box) {
     if (box->get_level() == nlevels_ - 1) return;
 
     box->make_children();
 
-    auto children = box->get_children();
+    std::vector<std::shared_ptr<CFMMBox>>& children = box->get_children();
     
-    for (auto child : children) {
-        make_children_helper(child);
+    for (std::shared_ptr<CFMMBox>& child : children) {
+        make_children(child);
     }
 }
 
-void CFMMTree::calculate_multipoles_helper(std::shared_ptr<CFMMBox>& box) {
+void CFMMTree::calculate_multipoles(std::shared_ptr<CFMMBox>& box) {
     if (!box) return;
 
-    for (auto child : children) {
-        calculate_mulipoles_helper(child);
+    std::vector<std::shared_ptr<CFMMBox>>& children = box->get_children();
+
+    for (std::shared_ptr<CFMMBox>& child : children) {
+        calculate_multipoles(child);
     }
 
     if (box->get_level() == nlevels_ - 1) {
@@ -721,23 +745,28 @@ void CFMMTree::calculate_multipoles_helper(std::shared_ptr<CFMMBox>& box) {
     } else {
         box->compute_mpoles_from_children();
     }
+
 }
 
-void CFMMTree::calculate_J_helper(std::shared_ptr<CFMMBox>& box) {
+void CFMMTree::calculate_J(std::shared_ptr<CFMMBox>& box) {
     if (!box) return;
 
     box->set_nf_lff();
-
+    box->compute_far_field_vector();
     if (box->get_level() == nlevels_ - 1) box->compute_J();
 
-    for (auto child : children) {
-        calculate_J_helper(child);
+    std::vector<std::shared_ptr<CFMMBox>>& children = box->get_children();
+
+    for (std::shared_ptr<CFMMBox>& child : children) {
+        calculate_J(child);
     }
 
 }
 
 void CFMMTree::build_J() {
-    calculate_J_helper(root_);
+    make_children(root_);
+    calculate_multipoles(root_);
+    calculate_J(root_);
 }
 
 } // end namespace psi

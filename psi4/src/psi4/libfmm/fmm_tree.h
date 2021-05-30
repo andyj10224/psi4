@@ -69,9 +69,6 @@ class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       void common_init(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
                         std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J, Vector3 origin, double length, int level, int lmax);
 
-      // Calculate far field vector from local and parent far fields
-      void compute_far_field_vector();
-
       // Compute the J matrix contributions at each level
       void compute_self_J();
       void compute_nf_J();
@@ -84,20 +81,25 @@ class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       // Constructor for child boxes
       CFMMBox(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
                 std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J, Vector3 origin, double length, int level, int lmax);
+      // Make children for this multipole box
+      void make_children();
       // Compute multipoles directly
       void compute_mpoles();
       // Compute multipoles from children
       void compute_mpoles_from_children();
       // Sets the near field and local far field vectors
       void set_nf_lff();
-      // Make children for this multipole box
-      void make_children();
+      // Calculate far field vector from local and parent far fields
+      void compute_far_field_vector();
+      // Compute the box's contribution to the J matrix
+      void compute_J();
+
+      // => USEFUL GETTER METHODS <= //
+
       // Get the multipole level the box is on
       int get_level() { return level_; }
       // Get the children of the box
       std::vector<std::shared_ptr<CFMMBox>>& get_children() { return children_; }
-      // Compute the box's contribution to the J matrix
-      void compute_J();
       
 
 }; // End class CFMMBox
@@ -121,9 +123,9 @@ class CFMMTree {
       std::vector<SharedMatrix>& J_;
 
       // Create children
-      void make_children_helper(std::shared_ptr<CFMMBox>& box);
+      void make_children(std::shared_ptr<CFMMBox>& box);
       // Calculate multipoles
-      void calculate_multipoles_helper(std::shared_ptr<CFMMBox>& box);
+      void calculate_multipoles(std::shared_ptr<CFMMBox>& box);
       // Helper method to build the J Matrix recursively
       void calculate_J(std::shared_ptr<CFMMBox>& box);
     
