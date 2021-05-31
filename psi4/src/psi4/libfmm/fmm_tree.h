@@ -100,6 +100,8 @@ class CFMMBox {
       int get_level() { return level_; }
       // Get the number of atoms in the box
       int natom() { return atoms_.size(); }
+      // Get the value of a particular multipole
+      double get_mpole_val(int p, int q, int l, int mu) { return mpoles_[p * basisset_->nbf() + q]->get_multipoles()[l][mu]; }
       // Get the children of the box
       std::vector<CFMMBox*>& get_children() { return children_; }
 

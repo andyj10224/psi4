@@ -252,6 +252,7 @@ void CFMMBox::compute_mpoles() {
     for (int thread = 0; thread < nthread_; thread++) {
         mpints[thread] = std::shared_ptr<OneBodyAOInt>(int_factory->ao_multipoles(lmax_));
         oints[thread] = std::shared_ptr<OneBodyAOInt>(int_factory->ao_overlap());
+        mpints[thread]->set_origin(center_);
     }
 
     int n_mult = (lmax_ + 1) * (lmax_ + 2) * (lmax_ + 3) / 6 - 1;
@@ -767,6 +768,14 @@ void CFMMTree::build_J() {
     for (int ind = 0; ind < D_.size(); ind++) {
         // J_[ind]->scale(2.0);
         J_[ind]->hermitivitize();
+    }
+
+    for (int l = 0; l <= lmax_; l++) {
+        for (int m = -l; m <= l; m++) {
+            int mu = m_addr(m);
+            double pole = root_->get_mpole_val(0, 0, l, mu);
+            outfile->Printf("  L: %d, M: %d, Ylm: %8.8f\n", l, m, pole);
+        }
     }
 
 }
