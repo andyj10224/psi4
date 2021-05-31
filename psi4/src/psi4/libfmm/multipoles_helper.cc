@@ -365,6 +365,14 @@ void RealSolidHarmonics::add(const std::shared_ptr<RealSolidHarmonics>& rsh) {
     }
 }
 
+void RealSolidHarmonics::scale(double val) {
+    for (int l = 0; l <= lmax_; l++) {
+        for (int mu = 0; mu < 2*l+1; mu++) {
+            Ylm_[l][mu] *= val;
+        }
+    }
+}
+
 std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate(Vector3 new_center) {
     if (type_ == Regular) return translate_regular(new_center);
     if (type_ == Irregular) return translate_irregular(new_center);

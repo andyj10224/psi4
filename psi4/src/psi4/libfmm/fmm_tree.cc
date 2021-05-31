@@ -157,14 +157,15 @@ void CFMMBox::common_init(CFMMBox* parent, std::shared_ptr<Molecule> molecule, s
 
                     for (int p = p_start; p < p_start + num_p; p++) {
                         for (int q = q_start; q < q_start + num_q; q++) {
-                            auto pq_mpoles = std::make_shared<RealSolidHarmonics>(lmax_, center_, Regular);
-                            mpoles_.emplace(std::make_pair(p * nbf + q, pq_mpoles));
+                            mpoles_[p * nbf + q] = std::make_shared<RealSolidHarmonics>(lmax_, center_, Regular);
                         } // q
                     } // p
                 } // Q
             } // P
         } // Qtask
     } // Ptask
+
+    Vff_ = std::make_shared<RealSolidHarmonics>(lmax_, center_, Irregular);
 
 }
 
@@ -179,7 +180,7 @@ void CFMMBox::set_nf_lff() {
         // Siblings of this box
         for (CFMMBox* sibling : parent_->children_) {
             if (sibling == this) continue;
-            if (sibling->atoms_.size() == 0) continue;
+            if (sibling->natom() == 0) continue;
 
             Vector3 Rab = center_ - sibling->center_;
             double dist = Rab.norm();
@@ -193,10 +194,10 @@ void CFMMBox::set_nf_lff() {
 
         // Parent's near field (Cousins)
         for (CFMMBox* uncle : parent_->near_field_) {
-            if (uncle->atoms_.size() == 0) continue;
+            if (uncle->natom() == 0) continue;
 
             for (CFMMBox* cousin : uncle->children_) {
-                if (cousin->atoms_.size() == 0) continue;
+                if (cousin->natom() == 0) continue;
 
                 Vector3 Rab = center_ - cousin->center_;
                 double dist = Rab.norm();
@@ -253,8 +254,12 @@ void CFMMBox::compute_mpoles() {
         oints[thread] = std::shared_ptr<OneBodyAOInt>(int_factory->ao_overlap());
     }
 
-    int n_multipoles = (lmax_ + 1) * (lmax_ + 2) * (lmax_ + 3) / 6 - 1;
+    int n_mult = (lmax_ + 1) * (lmax_ + 2) * (lmax_ + 3) / 6 - 1;
     int nbf = basisset_->nbf();
+
+    int max_am = basisset_->max_am();
+    int max_nao = (max_am + 1) * (max_am + 2) / 2;
+
 
     // Compute multipole integrals for all atoms in the shell pair
 #pragma omp parallel for
@@ -295,8 +300,8 @@ void CFMMBox::compute_mpoles() {
 
                         for (int q = q_start; q < q_start + num_q; q++) {
                             int dq = q - q_start;
-                            std::vector<std::vector<double>> mpoles = mpoles_[p * nbf + q]->get_multipoles();
-                            mpoles[0][0] += overlap_buffer[dp * num_q + dq];
+                            std::shared_ptr<RealSolidHarmonics> pq_mpoles = mpoles_[p * nbf + q];
+                            pq_mpoles->add(0, 0, overlap_buffer[dp * num_q + dq]);
 
                             int running_index = 0;
                             for (int l = 1; l <= lmax_; l++) {
@@ -312,7 +317,7 @@ void CFMMBox::compute_mpoles() {
                                         int c = std::get<3>(term_tuple);
 
                                         int abcindex = running_index + icart(a, b, c);
-                                        mpoles[l][mu] -= coef * mpole_buffer[abcindex * num_p * num_q + dp * num_q + dq];
+                                        pq_mpoles->add(l, mu, coef * mpole_buffer[abcindex * num_p * num_q + dp * num_q + dq]);
                                     }
 
                                 } // end m loop
@@ -408,19 +413,16 @@ void CFMMBox::compute_far_field_vector() {
                         int q_start = q_shell.start();
                         int num_q = q_shell.nfunction();
 
-                        for (int p = p_start; p < p_start + num_p; p++) {
-                            for (int q = q_start; q < q_start + num_q; q++) {
-                                // Of type std::shared_ptr<RealSolidHarmonics>
-                                auto box_mpoles = box->mpoles_[p * nbf + q];
-                                // The far field effect the boxes have on this particular box
-                                auto far_field = box_mpoles->far_field_vector(center_);
+                        for (int ind = 0; ind < D_.size(); ind++) {
+                            for (int p = p_start; p < p_start + num_p; p++) {
+                                for (int q = q_start; q < q_start + num_q; q++) {
+                                    std::shared_ptr<RealSolidHarmonics> box_mpoles = box->mpoles_[p * nbf + q];
+                                    // The far field effect the boxes have on this particular box
+                                    std::shared_ptr<RealSolidHarmonics> far_field = box_mpoles->far_field_vector(center_);
+                                    far_field->scale(D_[ind]->get(p, q));
 
-                                if (!(Vff_.count(p * nbf + q))) {
-                                    Vff_.emplace(std::make_pair(p * nbf + q, far_field));
-                                } else {
-                                    Vff_[p * nbf + q]->add(far_field);
+                                    Vff_->add(far_field);
                                 }
-
                             } // q
                         } // p
                     } // Q
@@ -431,22 +433,7 @@ void CFMMBox::compute_far_field_vector() {
 
     // Parent is not null
     if (parent_) {
-        for (std::pair<int, std::shared_ptr<RealSolidHarmonics>> pair : parent_->Vff_) {
-
-            int basis_ind = pair.first;
-            std::shared_ptr<RealSolidHarmonics> vff = pair.second;
-
-            int m = basis_ind / nbf;
-            int n = basis_ind % nbf;
-            std::shared_ptr<RealSolidHarmonics> trans_vff = vff->translate(center_);
-
-            if (!(Vff_.count(m * nbf + n))) {
-                Vff_.emplace(std::make_pair(m * nbf + n, trans_vff));
-            } else {
-                Vff_[m * nbf + n]->add(trans_vff);
-            }
-
-        }
+        Vff_->add(parent_->Vff_->translate(center_));
     }
 
     timer_off("CFMMBox::compute_far_field_vector()");
@@ -673,25 +660,19 @@ void CFMMBox::compute_ff_J() {
     for (int ind = 0; ind < D_.size(); ind++) {
         double **Jp = J_[ind]->pointer();
         double **Dp = D_[ind]->pointer();
-        for (const auto &self_pair : mpoles_) {
+        for (auto &self_pair : mpoles_) {
             int pq_index = self_pair.first;
             std::vector<std::vector<double>>& pq_mpole = self_pair.second->get_multipoles();
             int p = pq_index / nbf;
             int q = pq_index % nbf;
 
-            for (const auto &vff_pair : Vff_) {
-                int rs_index = vff_pair.first;
-                std::vector<std::vector<double>>& rs_vff = vff_pair.second->get_multipoles();
-                int r = rs_index / nbf;
-                int s = rs_index % nbf;
-
-                for (int l = 0; l <= lmax_; l++) {
-                    for (int m = -l; m <= l; m++) {
-                        int mu = m_addr(m);
-                        Jp[p][q] += pq_mpole[l][mu] * rs_vff[l][mu] * Dp[r][s];
-                    }
+            for (int l = 0; l <= lmax_; l++) {
+                for (int m = -l; m <= l; m++) {
+                    int mu = m_addr(m);
+                    Jp[p][q] += pq_mpole[l][mu] * Vff_->get_multipoles()[l][mu];
                 }
             }
+            
         }
     }
 
@@ -749,7 +730,6 @@ void CFMMTree::calculate_multipoles(CFMMBox* box) {
 
     if (box->get_level() == nlevels_ - 1) {
         box->compute_mpoles();
-        return;
     } else {
         box->compute_mpoles_from_children();
     }

@@ -55,10 +55,10 @@ class CFMMBox {
       // Solid Harmonics Coefficients of Box
       std::shared_ptr<HarmonicCoefficients> mpole_coefs_;
 
-      // Multipoles of the box, per basis pair
+      // Multipoles of the box, per basis pair (pq)
       std::unordered_map<int, std::shared_ptr<RealSolidHarmonics>> mpoles_;
-      // Far field vector of the box, per basis pair
-      std::unordered_map<int, std::shared_ptr<RealSolidHarmonics>> Vff_;
+      // Far field vector of the box, Density Contracted
+      std::shared_ptr<RealSolidHarmonics> Vff_;
 
       // A list of all the near-field boxes to this box
       std::vector<CFMMBox *> near_field_;

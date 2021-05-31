@@ -153,6 +153,10 @@ class RealSolidHarmonics {
       // Adds two harmonics together
       void add(const RealSolidHarmonics& rsh);
       void add(const std::shared_ptr<RealSolidHarmonics>& rsh);
+      // Scale the harmonics by a constant
+      void scale(double val);
+      // Adds to a specific harmonic term
+      void add(int l, int mu, double val) { Ylm_[l][mu] += val; }
       
       // Returns a reference of Ylm, to be computed by something else
       std::vector<std::vector<double>>& get_multipoles() { return Ylm_; }
