@@ -21,6 +21,7 @@
 #include <cmath>
 #include <unordered_map>
 #include <utility>
+#include <csignal>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -49,20 +50,22 @@ CFMMBox::CFMMBox(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> b
         max_dim = std::max(z, max_dim);
     }
 
+    max_dim += 0.1; // Add a small buffer to the box
+
     Vector3 origin = Vector3(min_dim, min_dim, min_dim);
     double length = (max_dim - min_dim);
 
     common_init(nullptr, molecule, basisset, origin, length, 0, lmax);
 }
 
-CFMMBox::CFMMBox(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
+CFMMBox::CFMMBox(CFMMBox* parent, std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
                     std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J, Vector3 origin, double length, int level, int lmax) {
     D_ = D;
     J_ = J;
     common_init(parent, molecule, basisset, origin, length, level, lmax);
 }
 
-void CFMMBox::common_init(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
+void CFMMBox::common_init(CFMMBox* parent, std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
                         Vector3 origin, double length, int level, int lmax) {
     parent_ = parent;
     molecule_ = molecule;
@@ -167,13 +170,16 @@ void CFMMBox::common_init(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molec
 
 void CFMMBox::set_nf_lff() {
 
+    // std::raise(SIGINT);
+
     timer_on("CFMMBox::set_nf_lff()");
 
     // Parent is not a nullpointer
     if (parent_) {
         // Siblings of this box
-        for (std::shared_ptr<CFMMBox>& sibling : parent_->children_) {
-            if (sibling.get() == this) continue;
+        for (CFMMBox* sibling : parent_->children_) {
+            if (sibling == this) continue;
+            if (sibling->atoms_.size() == 0) continue;
 
             Vector3 Rab = center_ - sibling->center_;
             double dist = Rab.norm();
@@ -186,8 +192,11 @@ void CFMMBox::set_nf_lff() {
         }
 
         // Parent's near field (Cousins)
-        for (const std::shared_ptr<CFMMBox>& uncle : parent_->near_field_) {
-            for (std::shared_ptr<CFMMBox>& cousin : uncle->children_) {
+        for (CFMMBox* uncle : parent_->near_field_) {
+            if (uncle->atoms_.size() == 0) continue;
+
+            for (CFMMBox* cousin : uncle->children_) {
+                if (cousin->atoms_.size() == 0) continue;
 
                 Vector3 Rab = center_ - cousin->center_;
                 double dist = Rab.norm();
@@ -206,6 +215,8 @@ void CFMMBox::set_nf_lff() {
 
 void CFMMBox::make_children() {
 
+    // std::raise(SIGINT);
+
     timer_on("CFMMBox::make_children()");
 
     for (int c = 0; c < 8; c++) {
@@ -216,7 +227,7 @@ void CFMMBox::make_children() {
 
         Vector3 child_origin = origin_ + Vector3(half_length * dx, half_length * dy, half_length * dz);
 
-        std::shared_ptr<CFMMBox> child = std::make_shared<CFMMBox>(std::shared_ptr<CFMMBox>(this), molecule_, basisset_, D_, J_, child_origin, half_length, level_+1, lmax_);
+        CFMMBox* child = new CFMMBox(this, molecule_, basisset_, D_, J_, child_origin, half_length, level_+1, lmax_);
         children_[c] = child;
     }
 
@@ -225,6 +236,8 @@ void CFMMBox::make_children() {
 }
 
 void CFMMBox::compute_mpoles() {
+
+    // std::raise(SIGINT);
 
     timer_on("CFMMBox::compute_mpoles()");
 
@@ -287,9 +300,10 @@ void CFMMBox::compute_mpoles() {
 
                             int running_index = 0;
                             for (int l = 1; l <= lmax_; l++) {
-                                for (int m = -l; m <= l; l++) {
+                                for (int m = -l; m <= l; m++) {
                                     int mu = m_addr(m);
 
+                                    // std::raise(SIGINT);
                                     for (int ind = 0; ind < mpole_terms[l][mu].size(); ind++) {
                                         const std::tuple<double, int, int, int>& term_tuple = mpole_terms[l][mu][ind];
                                         double coef = std::get<0>(term_tuple);
@@ -298,7 +312,7 @@ void CFMMBox::compute_mpoles() {
                                         int c = std::get<3>(term_tuple);
 
                                         int abcindex = running_index + icart(a, b, c);
-                                        mpoles[l][mu] += coef * mpole_buffer[abcindex * num_p * num_q + dp * num_q + dq];
+                                        mpoles[l][mu] -= coef * mpole_buffer[abcindex * num_p * num_q + dp * num_q + dq];
                                     }
 
                                 } // end m loop
@@ -318,11 +332,13 @@ void CFMMBox::compute_mpoles() {
 
 void CFMMBox::compute_mpoles_from_children() {
 
+    // std::raise(SIGINT);
+
     timer_on("CFMMBox::compute_mpoles_from_children()");
 
     int nbf = basisset_->nbf();
 
-    for (std::shared_ptr<CFMMBox> child : children_) {
+    for (CFMMBox* child : children_) {
         if (child->atoms_.size() == 0) continue;
 
 #pragma omp parallel for
@@ -364,11 +380,13 @@ void CFMMBox::compute_mpoles_from_children() {
 
 void CFMMBox::compute_far_field_vector() {
 
+    // std::raise(SIGINT);
+
     timer_on("CFMMBox::compute_far_field_vector()");
 
     int nbf = basisset_->nbf();
 
-    for (std::shared_ptr<CFMMBox>& box : local_far_field_) {
+    for (CFMMBox* box : local_far_field_) {
 #pragma omp parallel for
         for (int Ptask = 0; Ptask < box->atoms_.size(); Ptask++) {
             int Patom = box->atoms_[Ptask];
@@ -376,7 +394,7 @@ void CFMMBox::compute_far_field_vector() {
             int nPshell = basisset_->nshell_on_center(Patom);
 
             for (int Qtask = 0; Qtask < box->atoms_.size(); Qtask++) {
-                int Qatom = atoms_[Qtask];
+                int Qatom = box->atoms_[Qtask];
                 int Qstart = basisset_->shell_on_center(Qatom, 0);
                 int nQshell = basisset_->nshell_on_center(Qatom);
 
@@ -432,10 +450,13 @@ void CFMMBox::compute_far_field_vector() {
     }
 
     timer_off("CFMMBox::compute_far_field_vector()");
+
 }
 
 
 void CFMMBox::compute_self_J() {
+
+    // std::raise(SIGINT);
 
     timer_on("CFMMBox::compute_self_J()");
 
@@ -450,6 +471,8 @@ void CFMMBox::compute_self_J() {
     }
 
     int nbf = basisset_->nbf();
+
+    // outfile->Printf("   ATOMS SIZE: %d\n", atoms_.size());
 
     // Self-interactions
 #pragma omp parallel for
@@ -482,7 +505,7 @@ void CFMMBox::compute_self_J() {
                         int p_start = basisset_->shell(P).start();
                         int num_p = basisset_->shell(P).nfunction();
 
-                        for (int Q = Pstart; Q < Pstart + nQshell; Q++) {
+                        for (int Q = Qstart; Q < Qstart + nQshell; Q++) {
                             int q_start = basisset_->shell(Q).start();
                             int num_q = basisset_->shell(Q).nfunction();
 
@@ -498,8 +521,8 @@ void CFMMBox::compute_self_J() {
                                     const double *buffer = ints[thread]->buffer();
 
                                     for (int ind = 0; ind < D_.size(); ind++) {
-                                        double *Jp = J_[ind]->pointer()[0];
-                                        double *Dp = D_[ind]->pointer()[0];
+                                        double** Jp = J_[ind]->pointer();
+                                        double** Dp = D_[ind]->pointer();
 
                                         for (int p = p_start; p < p_start + num_p; p++) {
                                             int dp = p - p_start;
@@ -511,7 +534,7 @@ void CFMMBox::compute_self_J() {
                                                         int ds = s - s_start;
 
                                                         double int_val = buffer[dp * num_q * num_r * num_s + dq * num_r * num_s + dr * num_s + ds];
-                                                        Jp[p * nbf + q] += int_val * Dp[r * nbf + s];
+                                                        Jp[p][q] += int_val * Dp[r][s];
 
                                                     } // s
                                                 } // r
@@ -532,6 +555,8 @@ void CFMMBox::compute_self_J() {
 
 void CFMMBox::compute_nf_J() {
 
+    // std::raise(SIGINT);
+
     timer_on("CFMMBox::compute_nf_J()");
 
     std::vector<std::shared_ptr<TwoBodyAOInt>> ints;
@@ -547,61 +572,67 @@ void CFMMBox::compute_nf_J() {
     int nbf = basisset_->nbf();
 
     // Near field interactions
-    for (std::shared_ptr<CFMMBox> box : near_field_) {
+
+    // outfile->Printf("Near field Num Boxes: %d\n", near_field_.size());
 
 #pragma omp parallel for
-        for (int Ptask = 0; Ptask < atoms_.size(); Ptask++) {
-            int Patom = atoms_[Ptask];
-            int Pstart = basisset_->shell_on_center(Patom, 0);
-            int nPshell = basisset_->nshell_on_center(Patom);
+    for (int Ptask = 0; Ptask < atoms_.size(); Ptask++) {
+        int Patom = atoms_[Ptask];
+        int Pstart = basisset_->shell_on_center(Patom, 0);
+        int nPshell = basisset_->nshell_on_center(Patom);
 
-            int thread = 0;
+        int thread = 0;
 #ifdef _OPENMP
-            thread = omp_get_thread_num();
+        thread = omp_get_thread_num();
 #endif
 
-            for (int Qtask = 0; Qtask < atoms_.size(); Qtask++) {
-                int Qatom = atoms_[Qtask];
-                int Qstart = basisset_->shell_on_center(Qatom, 0);
-                int nQshell = basisset_->nshell_on_center(Qatom);
+        for (int Qtask = 0; Qtask < atoms_.size(); Qtask++) {
+            int Qatom = atoms_[Qtask];
+            int Qstart = basisset_->shell_on_center(Qatom, 0);
+            int nQshell = basisset_->nshell_on_center(Qatom);
 
-                for (int Rtask = 0; Rtask < box->atoms_.size(); Rtask++) {
-                    int Ratom = box->atoms_[Rtask];
-                    int Rstart = basisset_->shell_on_center(Ratom, 0);
-                    int nRshell = basisset_->nshell_on_center(Ratom);
+            for (int P = Pstart; P < Pstart + nPshell; P++) {
+                int p_start = basisset_->shell(P).start();
+                int num_p = basisset_->shell(P).nfunction();
 
-                    for (int Stask = 0; Stask < box->atoms_.size(); Stask++) {
-                        int Satom = box->atoms_[Stask];
-                        int Sstart = basisset_->shell_on_center(Satom, 0);
-                        int nSshell = basisset_->nshell_on_center(Satom);
+                for (int Q = Qstart; Q < Qstart + nQshell; Q++) {
+                    int q_start = basisset_->shell(Q).start();
+                    int num_q = basisset_->shell(Q).nfunction();
 
-                        for (int P = Pstart; P < Pstart + nPshell; P++) {
-                            int p_start = basisset_->shell(P).start();
-                            int num_p = basisset_->shell(P).nfunction();
+                    for (int p = p_start; p < p_start + num_p; p++) {
+                        int dp = p - p_start;
 
-                            for (int Q = Pstart; Q < Pstart + nQshell; Q++) {
-                                int q_start = basisset_->shell(Q).start();
-                                int num_q = basisset_->shell(Q).nfunction();
+                        for (int q = q_start; q < q_start + num_q; q++) {
+                            int dq = q - q_start;
 
-                                for (int R = Rstart; R < Rstart + nRshell; R++) {
-                                    int r_start = basisset_->shell(R).start();
-                                    int num_r = basisset_->shell(R).nfunction();
+                            for (int b = 0; b < near_field_.size(); b++) {
+                                CFMMBox* box = near_field_[b];
 
-                                    for (int S = Sstart; S < Sstart + nSshell; S++) {
-                                        int s_start = basisset_->shell(S).start();
-                                        int num_s = basisset_->shell(S).nfunction();
+                                for (int Rtask = 0; Rtask < box->atoms_.size(); Rtask++) {
+                                    int Ratom = box->atoms_[Rtask];
+                                    int Rstart = basisset_->shell_on_center(Ratom, 0);
+                                    int nRshell = basisset_->nshell_on_center(Ratom);
 
-                                        ints[thread]->compute_shell(P, Q, R, S);
-                                        const double *buffer = ints[thread]->buffer();
+                                    for (int Stask = 0; Stask < box->atoms_.size(); Stask++) {
+                                        int Satom = box->atoms_[Stask];
+                                        int Sstart = basisset_->shell_on_center(Satom, 0);
+                                        int nSshell = basisset_->nshell_on_center(Satom);
+                        
 
-                                        for (int ind = 0; ind < D_.size(); ind++) {
-                                            double *Jp = J_[ind]->pointer()[0];
-                                            double *Dp = D_[ind]->pointer()[0];
-                                            for (int p = p_start; p < p_start + num_p; p++) {
-                                                int dp = p - p_start;
+                                        for (int R = Rstart; R < Rstart + nRshell; R++) {
+                                            int r_start = basisset_->shell(R).start();
+                                            int num_r = basisset_->shell(R).nfunction();
 
-                                                for (int q = q_start; q < q_start + num_q; q++) {
-                                                    int dq = q - q_start;
+                                            for (int S = Sstart; S < Sstart + nSshell; S++) {
+                                                int s_start = basisset_->shell(S).start();
+                                                int num_s = basisset_->shell(S).nfunction();
+
+                                                ints[thread]->compute_shell(P, Q, R, S);
+                                                const double *buffer = ints[thread]->buffer();
+
+                                                for (int ind = 0; ind < D_.size(); ind++) {
+                                                    double **Jp = J_[ind]->pointer();
+                                                    double **Dp = D_[ind]->pointer();
 
                                                     for (int r = r_start; r < r_start + num_r; r++) {
                                                         int dr = r - r_start;
@@ -610,27 +641,29 @@ void CFMMBox::compute_nf_J() {
                                                             int ds = s - s_start;
 
                                                             double int_val = buffer[dp * num_q * num_r * num_s + dq * num_r * num_s + dr * num_s + ds];
-                                                            Jp[p * nbf + q] += int_val * Dp[r * nbf + s];
+                                                            Jp[p][q] += int_val * Dp[r][s];
 
                                                         } // s
                                                     } // r
-                                                } // q
-                                            } // p
-                                        } // ind
-                                    } // S
-                                } // R
-                            } // Q
-                        } // P
-                    } // Stask
-                } // Rtask
-            } // Qtask
-        } // Ptask
-    } // box
+                                                } // ind
+                                            } // S
+                                        } // R
+                                    } // Stask
+                                } // Rtask
+                            } // box
+                        } // q
+                    } // p
+                } // Q
+            } // P
+        } // Qtask
+    } // Ptask
 
     timer_off("CFMMBox::compute_nf_J()");
 }
 
 void CFMMBox::compute_ff_J() {
+
+    // std::raise(SIGINT);
 
     timer_on("CFMMBox::compute_ff_J()");
 
@@ -638,8 +671,8 @@ void CFMMBox::compute_ff_J() {
 
     // Far field interactions
     for (int ind = 0; ind < D_.size(); ind++) {
-        double *Jp = J_[ind]->pointer()[0];
-        double *Dp = D_[ind]->pointer()[0];
+        double **Jp = J_[ind]->pointer();
+        double **Dp = D_[ind]->pointer();
         for (const auto &self_pair : mpoles_) {
             int pq_index = self_pair.first;
             std::vector<std::vector<double>>& pq_mpole = self_pair.second->get_multipoles();
@@ -655,35 +688,31 @@ void CFMMBox::compute_ff_J() {
                 for (int l = 0; l <= lmax_; l++) {
                     for (int m = -l; m <= l; m++) {
                         int mu = m_addr(m);
-                        Jp[p * nbf + q] += pq_mpole[l][mu] * rs_vff[l][mu] * Dp[r * nbf + s];
+                        Jp[p][q] += pq_mpole[l][mu] * rs_vff[l][mu] * Dp[r][s];
                     }
                 }
-
             }
-
         }
     }
 
-    timer_off("CFMM::compute_ff_J()");
+    timer_off("CFMMBox::compute_ff_J()");
 }
 
 void CFMMBox::compute_J() {
-    // Zero the J matrix
-    for (int ind = 0; ind < D_.size(); ind++) {
-        J_[ind]->zero();
-    }
 
     compute_self_J();
     compute_nf_J();
     compute_ff_J();
 
-    // Hermitivitize J matrix afterwards
-    for (int ind = 0; ind < D_.size(); ind++) {
-        J_[ind]->hermitivitize();
+}
+
+CFMMBox::~CFMMBox() {
+
+    for (int c = 0; c < 8; c++) {
+        if (children_[c]) delete children_[c];
     }
 
 }
-
 
 CFMMTree::CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
                     std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J, int nlevels, int lmax) {
@@ -693,27 +722,28 @@ CFMMTree::CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet>
     lmax_ = lmax;
     D_ = D;
     J_ = J;
-    root_ = std::make_shared<CFMMBox>(molecule_, basisset_, D_, J_, lmax_);
+    root_ = new CFMMBox(molecule_, basisset_, D_, J_, lmax_);
 }
 
-void CFMMTree::make_children(std::shared_ptr<CFMMBox>& box) {
+void CFMMTree::make_children(CFMMBox* box) {
     if (box->get_level() == nlevels_ - 1) return;
 
     box->make_children();
 
-    std::vector<std::shared_ptr<CFMMBox>>& children = box->get_children();
+    std::vector<CFMMBox*> children = box->get_children();
     
-    for (std::shared_ptr<CFMMBox>& child : children) {
+    for (CFMMBox* child : children) {
         make_children(child);
     }
 }
 
-void CFMMTree::calculate_multipoles(std::shared_ptr<CFMMBox>& box) {
+void CFMMTree::calculate_multipoles(CFMMBox* box) {
     if (!box) return;
+    if (box->natom() == 0) return;
 
-    std::vector<std::shared_ptr<CFMMBox>>& children = box->get_children();
+    std::vector<CFMMBox*> children = box->get_children();
 
-    for (std::shared_ptr<CFMMBox>& child : children) {
+    for (CFMMBox* child : children) {
         calculate_multipoles(child);
     }
 
@@ -726,25 +756,43 @@ void CFMMTree::calculate_multipoles(std::shared_ptr<CFMMBox>& box) {
 
 }
 
-void CFMMTree::calculate_J(std::shared_ptr<CFMMBox>& box) {
+void CFMMTree::calculate_J(CFMMBox* box) {
     if (!box) return;
+    if (box->natom() == 0) return;
 
     box->set_nf_lff();
     box->compute_far_field_vector();
     if (box->get_level() == nlevels_ - 1) box->compute_J();
 
-    std::vector<std::shared_ptr<CFMMBox>>& children = box->get_children();
+    std::vector<CFMMBox*> children = box->get_children();
 
-    for (std::shared_ptr<CFMMBox>& child : children) {
+    for (CFMMBox* child : children) {
         calculate_J(child);
     }
 
 }
 
 void CFMMTree::build_J() {
+
+    // Zero the J matrix
+    for (int ind = 0; ind < D_.size(); ind++) {
+        J_[ind]->zero();
+    }
+
     make_children(root_);
     calculate_multipoles(root_);
     calculate_J(root_);
+
+    // Hermitivitize J matrix afterwards
+    for (int ind = 0; ind < D_.size(); ind++) {
+        // J_[ind]->scale(2.0);
+        J_[ind]->hermitivitize();
+    }
+
+}
+
+CFMMTree::~CFMMTree() {
+    delete root_;
 }
 
 } // end namespace psi

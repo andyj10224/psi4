@@ -19,13 +19,13 @@
 
 namespace psi {
 
-class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
+class CFMMBox {
 
     protected:
       // Parent of the CFMMBox
-      std::shared_ptr<CFMMBox> parent_;
+      CFMMBox* parent_;
       // Children of the CFMMBox
-      std::vector<std::shared_ptr<CFMMBox>> children_;
+      std::vector<CFMMBox *> children_;
       // Level the box is at (0 = root)
       int level_;
       // Maximum Multipole Angular Momentum
@@ -61,12 +61,12 @@ class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       std::unordered_map<int, std::shared_ptr<RealSolidHarmonics>> Vff_;
 
       // A list of all the near-field boxes to this box
-      std::vector<std::shared_ptr<CFMMBox>> near_field_;
+      std::vector<CFMMBox *> near_field_;
       // A list of all of the local-far-field boxes to this box
-      std::vector<std::shared_ptr<CFMMBox>> local_far_field_;
+      std::vector<CFMMBox *> local_far_field_;
 
       // Common function used by constructor
-      void common_init(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, 
+      void common_init(CFMMBox* parent, std::shared_ptr<Molecule> molecule, 
                         std::shared_ptr<BasisSet> basisset, Vector3 origin, double length, int level, int lmax);
 
       // Compute the J matrix contributions at each level
@@ -79,7 +79,7 @@ class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       CFMMBox(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
                 std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J, int lmax);
       // Constructor for child boxes
-      CFMMBox(std::shared_ptr<CFMMBox> parent, std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
+      CFMMBox(CFMMBox* parent, std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
                 std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J, Vector3 origin, double length, int level, int lmax);
       // Make children for this multipole box
       void make_children();
@@ -98,8 +98,13 @@ class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
 
       // Get the multipole level the box is on
       int get_level() { return level_; }
+      // Get the number of atoms in the box
+      int natom() { return atoms_.size(); }
       // Get the children of the box
-      std::vector<std::shared_ptr<CFMMBox>>& get_children() { return children_; }
+      std::vector<CFMMBox*>& get_children() { return children_; }
+
+      // Destructor
+      virtual ~CFMMBox();
       
 
 }; // End class CFMMBox
@@ -116,18 +121,18 @@ class CFMMTree {
       // Maximum Multipole Angular Momentum
       int lmax_;
       // Root of this tree structure
-      std::shared_ptr<CFMMBox> root_;
+      CFMMBox* root_;
       // Density Matrix of Molecule
       std::vector<SharedMatrix> D_;
       // Coulomb Matrix of Molecule
       std::vector<SharedMatrix> J_;
 
       // Create children
-      void make_children(std::shared_ptr<CFMMBox>& box);
+      void make_children(CFMMBox* box);
       // Calculate multipoles
-      void calculate_multipoles(std::shared_ptr<CFMMBox>& box);
+      void calculate_multipoles(CFMMBox* box);
       // Helper method to build the J Matrix recursively
-      void calculate_J(std::shared_ptr<CFMMBox>& box);
+      void calculate_J(CFMMBox* box);
     
     public:
       // Constructor
@@ -136,6 +141,9 @@ class CFMMTree {
 
       // Build the J matrix of CFMMTree
       void build_J();
+
+      // Destructor
+      virtual ~CFMMTree();
 
 }; // End class CFMMTree
 

@@ -60,7 +60,7 @@ double MultipoleRotationFactory::V(int l, int m, int M) {
         if (m == 1) {
             val = std::sqrt(2.0) * P(1, l, m-1, M);
         } else {
-            val = P(1, l, m-1, M) - P(-1, 1, -m+1, M);
+            val = P(1, l, m-1, M) - P(-1, l, -m+1, M);
         }
     } else {
         if (m == -1) {
@@ -500,7 +500,7 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::far_field_vector(Vector3
             SharedMatrix Dmat = rotation_factory->get_D(j);
             for (int u = 0; u < 2*j+1; u++) {
                 for (int v = 0; v < 2*j+1; v++) {
-                    rotated_mpole[u] = Dmat->get(u, v) * Ylm_[j][v];
+                    rotated_mpole[u] += Dmat->get(u, v) * Ylm_[j][v];
                 }
             }
 
