@@ -145,6 +145,17 @@ SharedMatrix MultipoleRotationFactory::get_D(int l) {
 HarmonicCoefficients::HarmonicCoefficients(int lmax, SolidHarmonicsType type) {
     lmax_ = lmax;
     type_ = type;
+
+    Rc_.resize(lmax_+1);
+    Rs_.resize(lmax_+1);
+    mpole_terms_.resize(lmax_+1);
+
+    for (int l = 0; l <= lmax_; l++) {
+        Rc_[l].resize(l+1, std::vector<std::tuple<double, int, int, int>>(0));
+        Rs_[l].resize(l+1, std::vector<std::tuple<double, int, int, int>>(0));
+        mpole_terms_[l].resize(2*l+1, std::vector<std::tuple<double, int, int, int>>(0));
+    }
+
     if (type_ == Regular) compute_terms_regular();
     if (type_ == Irregular) compute_terms_irregular();
 }
@@ -155,24 +166,17 @@ void HarmonicCoefficients::compute_terms_irregular() {
 
 void HarmonicCoefficients::compute_terms_regular() {
 
-    Rc_.resize(lmax_+1);
-    Rs_.resize(lmax_+1);
-    mpole_terms_.resize(lmax_+1);
-
     for (int l = 0; l <= lmax_; l++) {
-        Rc_[l].resize(l+1);
-        Rs_[l].resize(l+1);
-        mpole_terms_[l].resize(2*l+1);
 
         if (l == 0) {
-            Rc_[0][0].push_back(std::make_tuple(1.0, 0, 0, 0));
-            Rs_[0][0].push_back(std::make_tuple(0.0, 0, 0, 0));
+            Rc_[0][0].push_back(std::tuple<double, int, int, int>(1.0, 0, 0, 0));
+            Rs_[0][0].push_back(std::tuple<double, int, int, int>(0.0, 0, 0, 0));
         }
 
         else {
             // m < l-1 terms
             for (int m = 0; m < l-1; m++) {
-                int denom = (l+m)*(l-m);
+                double denom = (l+m)*(l-m);
 
                 // Rc_[l-1][m] contributions to Rc_[l][m]
                 for (int ind = 0; ind < Rc_[l-1][m].size(); ind++) {
@@ -182,8 +186,8 @@ void HarmonicCoefficients::compute_terms_regular() {
                     int b = std::get<2>(term_tuple);
                     int c = std::get<3>(term_tuple);
 
-                    coef *= (2*l-1) / denom;
-                    Rc_[l][m].push_back(std::make_tuple(coef, a, b, c+1));
+                    coef = coef * (2*l-1) / denom;
+                    Rc_[l][m].push_back(std::tuple<double, int, int, int>(coef, a, b, c+1));
                 }
 
                 // Rc_[l-2][m] contributions to Rc_[l][m]
@@ -194,10 +198,10 @@ void HarmonicCoefficients::compute_terms_regular() {
                     int b = std::get<2>(term_tuple);
                     int c = std::get<3>(term_tuple);
 
-                    coef /= denom;
-                    Rc_[l][m].push_back(std::make_tuple(-coef, a+2, b, c));
-                    Rc_[l][m].push_back(std::make_tuple(-coef, a, b+2, c));
-                    Rc_[l][m].push_back(std::make_tuple(-coef, a, b, c+2));
+                    coef = -coef / denom;
+                    Rc_[l][m].push_back(std::tuple<double, int, int, int>(coef, a+2, b, c));
+                    Rc_[l][m].push_back(std::tuple<double, int, int, int>(coef, a, b+2, c));
+                    Rc_[l][m].push_back(std::tuple<double, int, int, int>(coef, a, b, c+2));
                 }
 
                 // Rs_[l-1][m] contributions to Rs_[l][m]
@@ -208,8 +212,8 @@ void HarmonicCoefficients::compute_terms_regular() {
                     int b = std::get<2>(term_tuple);
                     int c = std::get<3>(term_tuple);
 
-                    coef *= (2*l-1) / denom;
-                    Rs_[l][m].push_back(std::make_tuple(coef, a, b, c+1));
+                    coef = coef * (2*l-1) / denom;
+                    Rs_[l][m].push_back(std::tuple<double, int, int, int>(coef, a, b, c+1));
                 }
 
                 // Rs_[l-2][m] contributions to Rs_[l][m]
@@ -220,10 +224,10 @@ void HarmonicCoefficients::compute_terms_regular() {
                     int b = std::get<2>(term_tuple);
                     int c = std::get<3>(term_tuple);
 
-                    coef /= denom;
-                    Rs_[l][m].push_back(std::make_tuple(-coef, a+2, b, c));
-                    Rs_[l][m].push_back(std::make_tuple(-coef, a, b+2, c));
-                    Rs_[l][m].push_back(std::make_tuple(-coef, a, b, c+2));
+                    coef = -coef / denom;
+                    Rs_[l][m].push_back(std::tuple<double, int, int, int>(coef, a+2, b, c));
+                    Rs_[l][m].push_back(std::tuple<double, int, int, int>(coef, a, b+2, c));
+                    Rs_[l][m].push_back(std::tuple<double, int, int, int>(coef, a, b, c+2));
                 }
             }
 
@@ -237,7 +241,7 @@ void HarmonicCoefficients::compute_terms_regular() {
                 int b = std::get<2>(term_tuple);
                 int c = std::get<3>(term_tuple);
 
-                Rc_[l][l-1].push_back(std::make_tuple(coef, a, b, c+1));
+                Rc_[l][l-1].push_back(std::tuple<double, int, int, int>(coef, a, b, c+1));
             }
 
             // Rs[l][l-1]
@@ -248,7 +252,7 @@ void HarmonicCoefficients::compute_terms_regular() {
                 int b = std::get<2>(term_tuple);
                 int c = std::get<3>(term_tuple);
 
-                Rs_[l][l-1].push_back(std::make_tuple(coef, a, b, c+1));
+                Rs_[l][l-1].push_back(std::tuple<double, int, int, int>(coef, a, b, c+1));
             }
 
             // => m = l <= //
@@ -261,7 +265,7 @@ void HarmonicCoefficients::compute_terms_regular() {
                 int b = std::get<2>(term_tuple);
                 int c = std::get<3>(term_tuple);
 
-                Rc_[l][l].push_back(std::make_tuple(-coef/(2*l), a+1, b, c));
+                Rc_[l][l].push_back(std::tuple<double, int, int, int>(-coef/(2*l), a+1, b, c));
             }
 
             // Rs[l-1][l-1] contribution to Rc[l][l]
@@ -272,7 +276,7 @@ void HarmonicCoefficients::compute_terms_regular() {
                 int b = std::get<2>(term_tuple);
                 int c = std::get<3>(term_tuple);
 
-                Rc_[l][l].push_back(std::make_tuple(coef/(2*l), a, b+1, c));
+                Rc_[l][l].push_back(std::tuple<double, int, int, int>(coef/(2*l), a, b+1, c));
             }
 
             // Rc[l-1][l-1] contribution to Rs[l][l]
@@ -283,7 +287,7 @@ void HarmonicCoefficients::compute_terms_regular() {
                 int b = std::get<2>(term_tuple);
                 int c = std::get<3>(term_tuple);
 
-                Rs_[l][l].push_back(std::make_tuple(-coef/(2*l), a, b+1, c));
+                Rs_[l][l].push_back(std::tuple<double, int, int, int>(-coef/(2*l), a, b+1, c));
             }
 
             // Rs[l-1][l-1] contribution to Rs[l][l]
@@ -294,7 +298,7 @@ void HarmonicCoefficients::compute_terms_regular() {
                 int b = std::get<2>(term_tuple);
                 int c = std::get<3>(term_tuple);
 
-                Rs_[l][l].push_back(std::make_tuple(-coef/(2*l), a+1, b, c));
+                Rs_[l][l].push_back(std::tuple<double, int, int, int>(-coef/(2*l), a+1, b, c));
             }
         }
 
@@ -305,9 +309,9 @@ void HarmonicCoefficients::compute_terms_regular() {
             double prefactor = 1.0;
             if ((mu == 0) || (mu % 2 == 1)) {
                 if (mu == 0) {
-                    prefactor = std::tgamma(l+1);
+                    prefactor = factorial(l);
                 } else {
-                    prefactor = std::pow(-1.0, (double) m) * std::sqrt(2.0 * std::tgamma(l-m+1) * std::tgamma(l+m+1));
+                    prefactor = std::pow(-1.0, (double) m) * std::sqrt(2.0 * factorial(l-m) * factorial(l+m));
                 }
                 for (int ind = 0; ind < Rc_[l][m].size(); ind++) {
                     auto term_tuple = Rc_[l][m][ind];
@@ -316,10 +320,10 @@ void HarmonicCoefficients::compute_terms_regular() {
                     int b = std::get<2>(term_tuple);
                     int c = std::get<3>(term_tuple);
 
-                    mpole_terms_[l][mu].push_back(std::make_tuple(prefactor * coef, a, b, c));
+                    mpole_terms_[l][mu].push_back(std::tuple<double, int, int, int>(prefactor * coef, a, b, c));
                 }
             } else {
-                prefactor = std::pow(-1.0, (double) m) * std::sqrt(2.0 * std::tgamma(l-m+1) * std::tgamma(l+m+1));
+                prefactor = std::pow(-1.0, (double) m) * std::sqrt(2.0 * factorial(l-m) * factorial(l+m));
 
                 for (int ind = 0; ind < Rs_[l][-m].size(); ind++) {
                     auto term_tuple = Rs_[l][-m][ind];
@@ -328,7 +332,7 @@ void HarmonicCoefficients::compute_terms_regular() {
                     int b = std::get<2>(term_tuple);
                     int c = std::get<3>(term_tuple);
 
-                    mpole_terms_[l][mu].push_back(std::make_tuple(prefactor * coef, a, b, c));
+                    mpole_terms_[l][mu].push_back(std::tuple<double, int, int, int>(prefactor * coef, a, b, c));
                 }
             }
         }

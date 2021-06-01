@@ -87,6 +87,24 @@ void CFMMBox::common_init(CFMMBox* parent, std::shared_ptr<Molecule> molecule, s
     // Make the multipole coefficients
     if (!parent_) {
         mpole_coefs_ = std::make_shared<HarmonicCoefficients>(lmax_, Regular);
+
+        /*
+        std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>>& terms = mpole_coefs_->get_terms();
+        for (int l = 0; l <= lmax_; l++) {
+            for (int m = -l; m <= l; m++) {
+                int mu = m_addr(m);
+                for (int ind = 0; ind < terms[l][mu].size(); ind++) {
+                    std::tuple<double, int, int, int>& term_tuple = terms[l][mu][ind];
+                    double coef = std::get<0>(term_tuple);
+                    int a = std::get<1>(term_tuple);
+                    int b = std::get<2>(term_tuple);
+                    int c = std::get<3>(term_tuple);
+                    outfile->Printf("  L: %d, M: %d, COEF: %8.5f, A: %d, B: %d, C: %d\n", l, m, coef, a, b, c);
+                }
+            }
+        }
+        */
+
     } else {
         mpole_coefs_ = parent_->mpole_coefs_;
     }
@@ -242,7 +260,7 @@ void CFMMBox::compute_mpoles() {
 
     timer_on("CFMMBox::compute_mpoles()");
 
-    const auto &mpole_terms = mpole_coefs_->get_terms();
+    std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>>& mpole_terms = mpole_coefs_->get_terms();
 
     std::shared_ptr<IntegralFactory> int_factory = std::make_shared<IntegralFactory>(basisset_);
 
@@ -311,13 +329,14 @@ void CFMMBox::compute_mpoles() {
 
                                     // std::raise(SIGINT);
                                     for (int ind = 0; ind < mpole_terms[l][mu].size(); ind++) {
-                                        const std::tuple<double, int, int, int>& term_tuple = mpole_terms[l][mu][ind];
+                                        std::tuple<double, int, int, int> term_tuple = mpole_terms[l][mu][ind];
                                         double coef = std::get<0>(term_tuple);
                                         int a = std::get<1>(term_tuple);
                                         int b = std::get<2>(term_tuple);
                                         int c = std::get<3>(term_tuple);
 
                                         int abcindex = running_index + icart(a, b, c);
+                                        // coef
                                         pq_mpoles->add(l, mu, coef * mpole_buffer[abcindex * num_p * num_q + dp * num_q + dq]);
                                     }
 
@@ -737,13 +756,40 @@ void CFMMTree::calculate_multipoles(CFMMBox* box) {
 
 }
 
-void CFMMTree::calculate_J(CFMMBox* box) {
+void CFMMTree::set_nf_lff(CFMMBox* box) {
     if (!box) return;
     if (box->natom() == 0) return;
 
     box->set_nf_lff();
+
+    std::vector<CFMMBox*> children = box->get_children();
+
+    for (CFMMBox* child : children) {
+        set_nf_lff(child);
+    }
+}
+
+void CFMMTree::compute_far_field(CFMMBox* box) {
+    if (!box) return;
+    if (box->natom() == 0) return;
+
     box->compute_far_field_vector();
-    if (box->get_level() == nlevels_ - 1) box->compute_J();
+
+    std::vector<CFMMBox*> children = box->get_children();
+
+    for (CFMMBox* child : children) {
+        compute_far_field(child);
+    }
+}
+
+void CFMMTree::calculate_J(CFMMBox* box) {
+    if (!box) return;
+    if (box->natom() == 0) return;
+
+    if (box->get_level() == nlevels_ - 1) {
+        box->compute_J();
+        return;
+    }
 
     std::vector<CFMMBox*> children = box->get_children();
 
@@ -762,6 +808,8 @@ void CFMMTree::build_J() {
 
     make_children(root_);
     calculate_multipoles(root_);
+    set_nf_lff(root_);
+    compute_far_field(root_);
     calculate_J(root_);
 
     // Hermitivitize J matrix afterwards
@@ -770,6 +818,7 @@ void CFMMTree::build_J() {
         J_[ind]->hermitivitize();
     }
 
+    /*
     for (int l = 0; l <= lmax_; l++) {
         for (int m = -l; m <= l; m++) {
             int mu = m_addr(m);
@@ -777,6 +826,7 @@ void CFMMTree::build_J() {
             outfile->Printf("  L: %d, M: %d, Ylm: %8.8f\n", l, m, pole);
         }
     }
+    */
 
 }
 

@@ -47,6 +47,8 @@ static int m_addr(int m) {
     }
 }
 
+extern double factorial(int n);
+
 class MultipoleRotationFactory {
 
     protected:
@@ -125,7 +127,7 @@ class HarmonicCoefficients {
       // Constructor
       HarmonicCoefficients(int lmax, SolidHarmonicsType type);
       // Returns a reference to the terms
-      const std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>>& get_terms() { return mpole_terms_; }
+      std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>>& get_terms() { return mpole_terms_; }
     
 };
     

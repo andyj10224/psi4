@@ -133,6 +133,10 @@ class CFMMTree {
       void make_children(CFMMBox* box);
       // Calculate multipoles
       void calculate_multipoles(CFMMBox* box);
+      // Helper method to set the near field and lff vectors
+      void set_nf_lff(CFMMBox* box);
+      // Helper method to compute far field
+      void compute_far_field(CFMMBox* box);
       // Helper method to build the J Matrix recursively
       void calculate_J(CFMMBox* box);
     
