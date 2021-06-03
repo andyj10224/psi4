@@ -11,6 +11,7 @@
 #include <memory>
 #include <tuple>
 #include <vector>
+#include <unordered_map>
 
 namespace psi {
 
@@ -20,6 +21,9 @@ enum SolidHarmonicsType {Regular, Irregular};
 static inline int npure(int l) { return 2 * l + 1; }
 static inline int icart(int a, int b, int c) { return (((((a + b + c + 1) << 1) - a) * (a + 1)) >> 1) - b - 1; }
 static inline int ipure(int, int m) { return m < 0 ? 2 * -m : (m == 0 ? 0 : 2 * m - 1); }
+
+// Some more helper functions
+static inline int ncart(int l) { return (l+1)*(l+2)/2; }
 
 // Some more useful Helper Functions
 static int choose(int n, int r) {
@@ -71,9 +75,9 @@ class MultipoleRotationFactory {
       
     inline double u(int l, int m, int M) {
         if (std::abs(M) < l) {
-            return std::sqrt((l+m)*(l-m) /((l+M)*(l-M)));
+            return std::sqrt((double)(l+m)*(l-m) /((l+M)*(l-M)));
         } else {
-            return std::sqrt((l+m)*(l-m)/(2*l*(2*l-1)));
+            return std::sqrt((double)(l+m)*(l-m)/(2*l*(2*l-1)));
         }
     }
 
@@ -83,7 +87,7 @@ class MultipoleRotationFactory {
         if (std::abs(M) < l) {
             return 0.5 * (1.0 - 2.0*dm0) * std::sqrt((1.0+dm0)*(l+std::abs(m)-1)*(l+std::abs(m)) / ((l+M)*(l-M)));
         } else {
-        return 0.5 * (1.0 - 2.0*dm0) * std::sqrt((1.0+dm0)*(l+std::abs(m)-1)*(l+std::abs(m)) / ((2*l)*(2*l-1)));
+            return 0.5 * (1.0 - 2.0*dm0) * std::sqrt((1.0+dm0)*(l+std::abs(m)-1)*(l+std::abs(m)) / ((2*l)*(2*l-1)));
         }
     }
 
@@ -91,9 +95,9 @@ class MultipoleRotationFactory {
         double dm0 = 0.0;
         if (m == 0) dm0 = 1.0;
         if (std::abs(M) < l) {
-            return 0.5 * (dm0 - 1) * std::sqrt((l-std::abs(m)-1)*(l-std::abs(m)) / ((l+M)*(l-M)));
+            return 0.5 * (dm0 - 1) * std::sqrt((double)(l-std::abs(m)-1)*(l-std::abs(m)) / ((l+M)*(l-M)));
         } else {
-            return 0.5 * (dm0 - 1) * std::sqrt((l-std::abs(m)-1)*(l-std::abs(m)) / ((2*l)*(2*l-1)));
+            return 0.5 * (dm0 - 1) * std::sqrt((double)(l-std::abs(m)-1)*(l-std::abs(m)) / ((2*l)*(2*l-1)));
         }
     }
 
@@ -108,11 +112,11 @@ class MultipoleRotationFactory {
 class HarmonicCoefficients {
     protected:
       // Ylm[l][m] = sum (coeff * x^a * y^b * z^c), stores a tuple of (coeff, a, b, c), normalized according to Stone's convention
-      std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>> mpole_terms_;
+      std::vector<std::vector<std::unordered_map<int, double>>> mpole_terms_;
       // Helgaker Rs terms (used in generating mpole_terms_)
-      std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>> Rc_;
+      std::vector<std::vector<std::unordered_map<int, double>>> Rc_;
       // Helgaker Rc terms (used in generating mpole_terms_)
-      std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>> Rs_;
+      std::vector<std::vector<std::unordered_map<int, double>>> Rs_;
       // Maximum angular momentum
       int lmax_;
       // Regular or Irregular?
@@ -127,7 +131,7 @@ class HarmonicCoefficients {
       // Constructor
       HarmonicCoefficients(int lmax, SolidHarmonicsType type);
       // Returns a reference to the terms
-      std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>>& get_terms() { return mpole_terms_; }
+      std::unordered_map<int, double>& get_terms(int l, int mu) { return mpole_terms_[l][mu]; }
     
 };
     

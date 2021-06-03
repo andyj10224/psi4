@@ -5,12 +5,14 @@
 #include "psi4/libmints/vector.h"
 #include "psi4/libmints/vector3.h"
 #include "psi4/libmints/matrix.h"
+#include "psi4/libpsi4util/PsiOutStream.h"
 
 #include <functional>
 #include <memory>
 #include <tuple>
 #include <vector>
 #include <cmath>
+#include <unordered_map>
 
 namespace psi {
 
@@ -22,7 +24,7 @@ MultipoleRotationFactory::MultipoleRotationFactory(Vector3 R_a, Vector3 R_b, int
     Vector3 z_axis = R_ab / R;
     Vector3 ca(z_axis);
 
-    if (R_a[1] == R_b[1] && R_a[2] == R_a[2]) {
+    if (R_a[1] == R_b[1] && R_a[2] == R_b[2]) {
         ca[1] += 1.0;
     } else {
         ca[0] += 1.0;
@@ -134,9 +136,14 @@ SharedMatrix MultipoleRotationFactory::get_D(int l) {
                 double Wterm = w(l, m1, m2);
                 if (Wterm != 0.0) Wterm *= W(l, m1, m2);
                 Drot->set(k1, k2, Uterm + Vterm + Wterm);
+                // if (l == 2) outfile->Printf("k1: %d, k2: %d, Uterm: %8.5f, Vterm: %8.5f, Wterm: %8.5f\n", k1, k2, Uterm, Vterm, Wterm);
             }
         }
     }
+
+    // if (l == 2) {
+    //    Drot->print_out();
+    // }
 
     D_cache_[l] = Drot;
     return D_cache_[l];
@@ -151,9 +158,10 @@ HarmonicCoefficients::HarmonicCoefficients(int lmax, SolidHarmonicsType type) {
     mpole_terms_.resize(lmax_+1);
 
     for (int l = 0; l <= lmax_; l++) {
-        Rc_[l].resize(l+1, std::vector<std::tuple<double, int, int, int>>(0));
-        Rs_[l].resize(l+1, std::vector<std::tuple<double, int, int, int>>(0));
-        mpole_terms_[l].resize(2*l+1, std::vector<std::tuple<double, int, int, int>>(0));
+        int nc = ncart(l);
+        Rc_[l].resize(l+1);
+        Rs_[l].resize(l+1);
+        mpole_terms_[l].resize(2*l+1);
     }
 
     if (type_ == Regular) compute_terms_regular();
@@ -168,9 +176,11 @@ void HarmonicCoefficients::compute_terms_regular() {
 
     for (int l = 0; l <= lmax_; l++) {
 
+        int ncl = ncart(l);
+
         if (l == 0) {
-            Rc_[0][0].push_back(std::tuple<double, int, int, int>(1.0, 0, 0, 0));
-            Rs_[0][0].push_back(std::tuple<double, int, int, int>(0.0, 0, 0, 0));
+            Rc_[0][0][0] = 1.0;
+            Rs_[0][0][0] = 0.0;
         }
 
         else {
@@ -179,126 +189,182 @@ void HarmonicCoefficients::compute_terms_regular() {
                 double denom = (l+m)*(l-m);
 
                 // Rc_[l-1][m] contributions to Rc_[l][m]
-                for (int ind = 0; ind < Rc_[l-1][m].size(); ind++) {
-                    auto term_tuple = Rc_[l-1][m][ind];
-                    double coef = std::get<0>(term_tuple);
-                    int a = std::get<1>(term_tuple);
-                    int b = std::get<2>(term_tuple);
-                    int c = std::get<3>(term_tuple);
+                for (const std::pair<int, double>& rpair : Rc_[l-1][m]) {
+                    int ncl1 = ncart(l-1);
+                    int ind = rpair.first;
+                    double coef = rpair.second;
+                    if (std::abs(coef) < 1.0e-16) continue;
+                    int a = ind / (ncl1*ncl1);
+                    int bc = ind % (ncl1*ncl1);
+                    int b = bc / ncl1;
+                    int c = bc % ncl1;
 
-                    coef = coef * (2*l-1) / denom;
-                    Rc_[l][m].push_back(std::tuple<double, int, int, int>(coef, a, b, c+1));
+                    int newind = a * ncl * ncl + b * ncl + (c+1);
+
+                    Rc_[l][m][newind] += coef * (2*l-1) / denom;
+
                 }
 
                 // Rc_[l-2][m] contributions to Rc_[l][m]
-                for (int ind = 0; ind < Rc_[l-2][m].size(); ind++) {
-                    auto term_tuple = Rc_[l-2][m][ind];
-                    double coef = std::get<0>(term_tuple);
-                    int a = std::get<1>(term_tuple);
-                    int b = std::get<2>(term_tuple);
-                    int c = std::get<3>(term_tuple);
+                for (const std::pair<int, double>& rpair : Rc_[l-2][m]) {
+                    int ncl2 = ncart(l-2);
+                    int ind = rpair.first;
+                    double coef = rpair.second;
+                    if (std::abs(coef) < 1.0e-16) continue;
+                    int a = ind / (ncl2*ncl2);
+                    int bc = ind % (ncl2*ncl2);
+                    int b = bc / ncl2;
+                    int c = bc % ncl2;
 
-                    coef = -coef / denom;
-                    Rc_[l][m].push_back(std::tuple<double, int, int, int>(coef, a+2, b, c));
-                    Rc_[l][m].push_back(std::tuple<double, int, int, int>(coef, a, b+2, c));
-                    Rc_[l][m].push_back(std::tuple<double, int, int, int>(coef, a, b, c+2));
+                    int newind1 = (a+2) * ncl * ncl + b * ncl + c;
+                    Rc_[l][m][newind1] += -coef / denom;
+                    int newind2 = a * ncl * ncl + (b+2) * ncl + c;
+                    Rc_[l][m][newind2] += -coef / denom;
+                    int newind3 = a * ncl * ncl + b * ncl + (c+2);
+                    Rc_[l][m][newind3] += -coef / denom;
+
                 }
 
                 // Rs_[l-1][m] contributions to Rs_[l][m]
-                for (int ind = 0; ind < Rs_[l-1][m].size(); ind++) {
-                    auto term_tuple = Rs_[l-1][m][ind];
-                    double coef = std::get<0>(term_tuple);
-                    int a = std::get<1>(term_tuple);
-                    int b = std::get<2>(term_tuple);
-                    int c = std::get<3>(term_tuple);
+                for (const std::pair<int, double>& rpair : Rs_[l-1][m]) {
+                    int ncl1 = ncart(l-1);
+                    int ind = rpair.first;
+                    double coef = rpair.second;
+                    if (std::abs(coef) < 1.0e-16) continue;
+                    int a = ind / (ncl1*ncl1);
+                    int bc = ind % (ncl1*ncl1);
+                    int b = bc / ncl1;
+                    int c = bc % ncl1;
 
-                    coef = coef * (2*l-1) / denom;
-                    Rs_[l][m].push_back(std::tuple<double, int, int, int>(coef, a, b, c+1));
+                    int newind = a * ncl * ncl + b * ncl + (c+1);
+
+                    Rs_[l][m][newind] += coef * (2*l-1) / denom;
+
                 }
 
                 // Rs_[l-2][m] contributions to Rs_[l][m]
-                for (int ind = 0; ind < Rs_[l-2][m].size(); ind++) {
-                    auto term_tuple = Rs_[l-2][m][ind];
-                    double coef = std::get<0>(term_tuple);
-                    int a = std::get<1>(term_tuple);
-                    int b = std::get<2>(term_tuple);
-                    int c = std::get<3>(term_tuple);
+                for (const std::pair<int, double>& rpair : Rs_[l-2][m]) {
+                    int ncl2 = ncart(l-2);
+                    int ind = rpair.first;
+                    double coef = rpair.second;
+                    if (std::abs(coef) < 1.0e-16) continue;
+                    int a = ind / (ncl2*ncl2);
+                    int bc = ind % (ncl2*ncl2);
+                    int b = bc / ncl2;
+                    int c = bc % ncl2;
 
-                    coef = -coef / denom;
-                    Rs_[l][m].push_back(std::tuple<double, int, int, int>(coef, a+2, b, c));
-                    Rs_[l][m].push_back(std::tuple<double, int, int, int>(coef, a, b+2, c));
-                    Rs_[l][m].push_back(std::tuple<double, int, int, int>(coef, a, b, c+2));
+                    int newind1 = (a+2) * ncl * ncl + b * ncl + c;
+                    Rs_[l][m][newind1] += -coef / denom;
+                    int newind2 = a * ncl * ncl + (b+2) * ncl + c;
+                    Rs_[l][m][newind2] += -coef / denom;
+                    int newind3 = a * ncl * ncl + b * ncl + (c+2);
+                    Rs_[l][m][newind3] += -coef / denom;
+
                 }
             }
 
             // => m = l-1 <= //
 
             // Rc[l][l-1]
-            for (int ind = 0; ind < Rc_[l-1][l-1].size(); ind++) {
-                auto term_tuple = Rc_[l-1][l-1][ind];
-                double coef = std::get<0>(term_tuple);
-                int a = std::get<1>(term_tuple);
-                int b = std::get<2>(term_tuple);
-                int c = std::get<3>(term_tuple);
+            for (const std::pair<int, double>& rpair : Rc_[l-1][l-1]) {
+                int ncl1 = ncart(l-1);
+                int ind = rpair.first;
+                double coef = rpair.second;
+                if (std::abs(coef) < 1.0e-16) continue;
+                int a = ind / (ncl1*ncl1);
+                int bc = ind % (ncl1*ncl1);
+                int b = bc / ncl1;
+                int c = bc % ncl1;
 
-                Rc_[l][l-1].push_back(std::tuple<double, int, int, int>(coef, a, b, c+1));
+                int newind = a * ncl * ncl + b * ncl + (c+1);
+
+                Rc_[l][l-1][newind] += coef;
             }
 
             // Rs[l][l-1]
-            for (int ind = 0; ind < Rs_[l-1][l-1].size(); ind++) {
-                auto term_tuple = Rs_[l-1][l-1][ind];
-                double coef = std::get<0>(term_tuple);
-                int a = std::get<1>(term_tuple);
-                int b = std::get<2>(term_tuple);
-                int c = std::get<3>(term_tuple);
+            for (const std::pair<int, double>& rpair : Rs_[l-1][l-1]) {
+                int ncl1 = ncart(l-1);
+                int ind = rpair.first;
+                double coef = rpair.second;
+                if (std::abs(coef) < 1.0e-16) continue;
+                int a = ind / (ncl1*ncl1);
+                int bc = ind % (ncl1*ncl1);
+                int b = bc / ncl1;
+                int c = bc % ncl1;
 
-                Rs_[l][l-1].push_back(std::tuple<double, int, int, int>(coef, a, b, c+1));
+                int newind = a * ncl * ncl + b * ncl + (c+1);
+
+                Rs_[l][l-1][newind] += coef;
             }
 
             // => m = l <= //
 
             // Rc[l-1][l-1] contribution to Rc[l][l]
-            for (int ind = 0; ind < Rc_[l-1][l-1].size(); ind++) {
-                auto term_tuple = Rc_[l-1][l-1][ind];
-                double coef = std::get<0>(term_tuple);
-                int a = std::get<1>(term_tuple);
-                int b = std::get<2>(term_tuple);
-                int c = std::get<3>(term_tuple);
+            for (const std::pair<int, double>& rpair : Rc_[l-1][l-1]) {
+                int ncl1 = ncart(l-1);
+                int ind = rpair.first;
+                double coef = rpair.second;
+                if (std::abs(coef) < 1.0e-16) continue;
+                int a = ind / (ncl1*ncl1);
+                int bc = ind % (ncl1*ncl1);
+                int b = bc / ncl1;
+                int c = bc % ncl1;
 
-                Rc_[l][l].push_back(std::tuple<double, int, int, int>(-coef/(2*l), a+1, b, c));
+                int newind = (a+1) * ncl * ncl + b * ncl + c;
+
+                Rc_[l][l][newind] += -coef/(2*l);
+
             }
 
             // Rs[l-1][l-1] contribution to Rc[l][l]
-            for (int ind = 0; ind < Rs_[l-1][l-1].size(); ind++) {
-                auto term_tuple = Rs_[l-1][l-1][ind];
-                double coef = std::get<0>(term_tuple);
-                int a = std::get<1>(term_tuple);
-                int b = std::get<2>(term_tuple);
-                int c = std::get<3>(term_tuple);
+            for (const std::pair<int, double>& rpair : Rs_[l-1][l-1]) {
+                int ncl1 = ncart(l-1);
+                int ind = rpair.first;
+                double coef = rpair.second;
+                if (std::abs(coef) < 1.0e-16) continue;
+                int a = ind / (ncl1*ncl1);
+                int bc = ind % (ncl1*ncl1);
+                int b = bc / ncl1;
+                int c = bc % ncl1;
 
-                Rc_[l][l].push_back(std::tuple<double, int, int, int>(coef/(2*l), a, b+1, c));
+                int newind = a * ncl * ncl + (b+1) * ncl + c;
+
+                Rc_[l][l][newind] += coef/(2*l);
+
             }
 
             // Rc[l-1][l-1] contribution to Rs[l][l]
-            for (int ind = 0; ind < Rc_[l-1][l-1].size(); ind++) {
-                auto term_tuple = Rc_[l-1][l-1][ind];
-                double coef = std::get<0>(term_tuple);
-                int a = std::get<1>(term_tuple);
-                int b = std::get<2>(term_tuple);
-                int c = std::get<3>(term_tuple);
+            for (const std::pair<int, double>& rpair : Rc_[l-1][l-1]) {
+                int ncl1 = ncart(l-1);
+                int ind = rpair.first;
+                double coef = rpair.second;
+                if (std::abs(coef) < 1.0e-16) continue;
+                int a = ind / (ncl1*ncl1);
+                int bc = ind % (ncl1*ncl1);
+                int b = bc / ncl1;
+                int c = bc % ncl1;
 
-                Rs_[l][l].push_back(std::tuple<double, int, int, int>(-coef/(2*l), a, b+1, c));
+                int newind = a * ncl * ncl + (b+1) * ncl + c;
+
+                Rs_[l][l][newind] += -coef/(2*l);
+
             }
 
             // Rs[l-1][l-1] contribution to Rs[l][l]
-            for (int ind = 0; ind < Rs_[l-1][l-1].size(); ind++) {
-                auto term_tuple = Rs_[l-1][l-1][ind];
-                double coef = std::get<0>(term_tuple);
-                int a = std::get<1>(term_tuple);
-                int b = std::get<2>(term_tuple);
-                int c = std::get<3>(term_tuple);
+            for (const std::pair<int, double>& rpair : Rs_[l-1][l-1]) {
+                int ncl1 = ncart(l-1);
+                int ind = rpair.first;
+                double coef = rpair.second;
+                if (std::abs(coef) < 1.0e-16) continue;
+                int a = ind / (ncl1*ncl1);
+                int bc = ind % (ncl1*ncl1);
+                int b = bc / ncl1;
+                int c = bc % ncl1;
 
-                Rs_[l][l].push_back(std::tuple<double, int, int, int>(-coef/(2*l), a+1, b, c));
+                int newind = (a+1) * ncl * ncl + b * ncl + c;
+
+                Rs_[l][l][newind] += -coef/(2*l);
+
             }
         }
 
@@ -307,33 +373,30 @@ void HarmonicCoefficients::compute_terms_regular() {
             // mu is unsigned address
             int mu = m_addr(m);
             double prefactor = 1.0;
+
             if ((mu == 0) || (mu % 2 == 1)) {
                 if (mu == 0) {
                     prefactor = factorial(l);
                 } else {
                     prefactor = std::pow(-1.0, (double) m) * std::sqrt(2.0 * factorial(l-m) * factorial(l+m));
                 }
-                for (int ind = 0; ind < Rc_[l][m].size(); ind++) {
-                    auto term_tuple = Rc_[l][m][ind];
-                    double coef = std::get<0>(term_tuple);
-                    int a = std::get<1>(term_tuple);
-                    int b = std::get<2>(term_tuple);
-                    int c = std::get<3>(term_tuple);
-
-                    mpole_terms_[l][mu].push_back(std::tuple<double, int, int, int>(prefactor * coef, a, b, c));
+                for (const std::pair<int, double>& rpair : Rc_[l][m]) {
+                    int ind = rpair.first;
+                    double coef = rpair.second;
+                    if (std::abs(coef) < 1.0e-16) continue;
+                    mpole_terms_[l][mu][ind] = prefactor * coef;
                 }
+
             } else {
                 prefactor = std::pow(-1.0, (double) m) * std::sqrt(2.0 * factorial(l-m) * factorial(l+m));
 
-                for (int ind = 0; ind < Rs_[l][-m].size(); ind++) {
-                    auto term_tuple = Rs_[l][-m][ind];
-                    double coef = std::get<0>(term_tuple);
-                    int a = std::get<1>(term_tuple);
-                    int b = std::get<2>(term_tuple);
-                    int c = std::get<3>(term_tuple);
-
-                    mpole_terms_[l][mu].push_back(std::tuple<double, int, int, int>(prefactor * coef, a, b, c));
+                for (const std::pair<int, double>& rpair : Rs_[l][-m]) {
+                    int ind = rpair.first;
+                    double coef = rpair.second;
+                    if (std::abs(coef) < 1.0e-16) continue;
+                    mpole_terms_[l][mu][ind] = prefactor * coef;
                 }
+
             }
         }
     }
@@ -412,7 +475,7 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_irregular(Vect
                 int mu = m_addr(m);
                 double coef = std::sqrt((double) choose(j+m,l+m)*choose(j-m,l-m));
 
-                trans_rot_mpoles[l][mu] += coef * std::pow(-R, j-l) * rot_mpoles[j][mu];
+                trans_rot_mpoles[l][mu] += coef * std::pow(R, j-l) * rot_mpoles[j][mu];
             }
         }
     }
@@ -441,9 +504,13 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_regular(Vector
     std::vector<std::vector<double>> rot_mpoles(lmax_+1);
     std::vector<std::vector<double>> trans_rot_mpoles(lmax_+1);
 
-    // Rotate Multipoles to direction of translation
     for (int l = 0; l <= lmax_; l++) {
         rot_mpoles[l].resize(2*l+1, 0.0);
+        trans_rot_mpoles[l].resize(2*l+1, 0.0);
+    }
+
+    // Rotate Multipoles to direction of translation
+    for (int l = 0; l <= lmax_; l++) {
         int dim = 2*l+1;
         SharedMatrix Dmat = rotation_factory->get_D(l);
         for (int i = 0; i < dim; i++) {
@@ -455,12 +522,10 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_regular(Vector
 
     // Translate Rotated Multipoles
     for (int l = 0; l <= lmax_; l++) {
-        trans_rot_mpoles[l].resize(2*l+1, 0.0);
         for (int j = 0; j <= l; j++) {
             for (int m = -j; m <= j; m++) {
                 int mu = m_addr(m);
                 double coef = std::sqrt((double) choose(l+m,j+m)*choose(l-m,j-m));
-
                 trans_rot_mpoles[l][mu] += coef * std::pow(-R, l-j) * rot_mpoles[j][mu];
             }
         }

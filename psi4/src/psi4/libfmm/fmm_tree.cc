@@ -89,16 +89,20 @@ void CFMMBox::common_init(CFMMBox* parent, std::shared_ptr<Molecule> molecule, s
         mpole_coefs_ = std::make_shared<HarmonicCoefficients>(lmax_, Regular);
 
         /*
-        std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>>& terms = mpole_coefs_->get_terms();
         for (int l = 0; l <= lmax_; l++) {
+            int nc = ncart(l);
             for (int m = -l; m <= l; m++) {
                 int mu = m_addr(m);
-                for (int ind = 0; ind < terms[l][mu].size(); ind++) {
-                    std::tuple<double, int, int, int>& term_tuple = terms[l][mu][ind];
-                    double coef = std::get<0>(term_tuple);
-                    int a = std::get<1>(term_tuple);
-                    int b = std::get<2>(term_tuple);
-                    int c = std::get<3>(term_tuple);
+                std::unordered_map<int, double>& terms = mpole_coefs_->get_terms(l, mu);
+
+                for (const std::pair<int, double>& term : terms) {
+                    int abc = term.first;
+                    double coef = term.second;
+
+                    int a = abc / (nc * nc);
+                    int bc = abc % (nc * nc);
+                    int b = bc / nc;
+                    int c = bc % nc;
                     outfile->Printf("  L: %d, M: %d, COEF: %8.5f, A: %d, B: %d, C: %d\n", l, m, coef, a, b, c);
                 }
             }
@@ -153,6 +157,7 @@ void CFMMBox::common_init(CFMMBox* parent, std::shared_ptr<Molecule> molecule, s
 
     int nbf = basisset_->nbf();
 
+    /*
     for (int Ptask = 0; Ptask < atoms_.size(); Ptask++) {
         int Patom = atoms_[Ptask];
         int Pstart = basisset_->shell_on_center(Patom, 0);
@@ -182,8 +187,11 @@ void CFMMBox::common_init(CFMMBox* parent, std::shared_ptr<Molecule> molecule, s
             } // P
         } // Qtask
     } // Ptask
+    */
 
+    mpoles_ = std::make_shared<RealSolidHarmonics>(lmax_, center_, Regular);
     Vff_ = std::make_shared<RealSolidHarmonics>(lmax_, center_, Irregular);
+    ff_energy_ = 0.0;
 
 }
 
@@ -260,8 +268,6 @@ void CFMMBox::compute_mpoles() {
 
     timer_on("CFMMBox::compute_mpoles()");
 
-    std::vector<std::vector<std::vector<std::tuple<double, int, int, int>>>>& mpole_terms = mpole_coefs_->get_terms();
-
     std::shared_ptr<IntegralFactory> int_factory = std::make_shared<IntegralFactory>(basisset_);
 
     std::vector<std::shared_ptr<OneBodyAOInt>> mpints(nthread_);
@@ -270,15 +276,11 @@ void CFMMBox::compute_mpoles() {
     for (int thread = 0; thread < nthread_; thread++) {
         mpints[thread] = std::shared_ptr<OneBodyAOInt>(int_factory->ao_multipoles(lmax_));
         oints[thread] = std::shared_ptr<OneBodyAOInt>(int_factory->ao_overlap());
-        mpints[thread]->set_origin(center_);
+        mpints[thread]->set_origin(center_); // + Vector3(10.0, 0.0, 0.0));
     }
 
     int n_mult = (lmax_ + 1) * (lmax_ + 2) * (lmax_ + 3) / 6 - 1;
     int nbf = basisset_->nbf();
-
-    int max_am = basisset_->max_am();
-    int max_nao = (max_am + 1) * (max_am + 2) / 2;
-
 
     // Compute multipole integrals for all atoms in the shell pair
 #pragma omp parallel for
@@ -319,31 +321,65 @@ void CFMMBox::compute_mpoles() {
 
                         for (int q = q_start; q < q_start + num_q; q++) {
                             int dq = q - q_start;
-                            std::shared_ptr<RealSolidHarmonics> pq_mpoles = mpoles_[p * nbf + q];
-                            pq_mpoles->add(0, 0, overlap_buffer[dp * num_q + dq]);
 
-                            int running_index = 0;
-                            for (int l = 1; l <= lmax_; l++) {
-                                for (int m = -l; m <= l; m++) {
-                                    int mu = m_addr(m);
+                            std::shared_ptr<RealSolidHarmonics> pq_mpole_buff = std::make_shared<RealSolidHarmonics>(lmax_, mpints[thread]->origin(), Regular);
 
-                                    // std::raise(SIGINT);
-                                    for (int ind = 0; ind < mpole_terms[l][mu].size(); ind++) {
-                                        std::tuple<double, int, int, int> term_tuple = mpole_terms[l][mu][ind];
-                                        double coef = std::get<0>(term_tuple);
-                                        int a = std::get<1>(term_tuple);
-                                        int b = std::get<2>(term_tuple);
-                                        int c = std::get<3>(term_tuple);
+                            for (int N = 0; N < D_.size(); N++) {
 
-                                        int abcindex = running_index + icart(a, b, c);
-                                        // coef
-                                        pq_mpoles->add(l, mu, coef * mpole_buffer[abcindex * num_p * num_q + dp * num_q + dq]);
+                                pq_mpole_buff->add(0, 0, -2.0 * D_[N]->get(p, q) * overlap_buffer[dp * num_q + dq]);
+
+                                int running_index = 0;
+                                for (int l = 1; l <= lmax_; l++) {
+                                    int ncl = ncart(l);
+
+                                    /*
+                                    int powind = 0;
+                                    for (int ii = 0; ii <= l; ii++) {
+                                        int a = l - ii;
+                                        for (int jj = 0; jj <= ii; jj++) {
+                                            int b = ii - jj;
+                                            int c = jj;
+                                            int ind = a * ncl * ncl + b * ncl + c;
+
+                                            outfile->Printf("   POWDEX: %d, A: %d, B: %d, C: %d\n", powind, a, b, c);
+                                            outfile->Printf("   ICART:  %d, A: %d, B: %d, C: %d\n", icart(a, b, c), a, b, c);
+                                                
+                                            powind += 1;
+                                        }
                                     }
+                                    */
+                                    
 
-                                } // end m loop
+                                    for (int m = -l; m <= l; m++) {
+                                        int mu = m_addr(m);
+                                        std::unordered_map<int, double>& mpole_terms = mpole_coefs_->get_terms(l, mu);
 
-                                running_index += (l+1)*(l+2)/2;
-                            } // end l loop
+                                        int powdex = 0;
+                                        for (int ii = 0; ii <= l; ii++) {
+                                            int a = l - ii;
+                                            for (int jj = 0; jj <= ii; jj++) {
+                                                int b = ii - jj;
+                                                int c = jj;
+                                                int ind = a * ncl * ncl + b * ncl + c;
+
+                                                if (mpole_terms.count(ind)) {
+                                                    double coef = mpole_terms[ind];
+                                                    int abcindex = powdex + running_index;
+                                                    // outfile->Printf("   L: %d, M: %d, A: %d, B: %d, C: %d, COEF: %8.5f\n", l, m, a, b, c, coef);
+                                                    // coef *= factorial(a) * factorial(b) * factorial(c);
+                                                    pq_mpole_buff->add(l, mu, pow(-1.0, (double) l) * 2.0 * D_[N]->get(p, q) * coef * mpole_buffer[abcindex * num_p * num_q + dp * num_q + dq]);
+                                                }
+                                                powdex += 1;
+                                            }
+                                        }
+
+                                    } // end m loop
+
+                                    running_index += ncl;
+                                } // end l loop
+                            } // end N loop
+                            // ->translate(center_ + Vector3(10.0, 0.0, 0.0))
+                            mpoles_->add(pq_mpole_buff); // ->translate(center_ + Vector3(10.0, 0.0, 0.0)));
                         } // end q loop
                     } // end p loop
                 } // end Q
@@ -365,6 +401,12 @@ void CFMMBox::compute_mpoles_from_children() {
 
     for (CFMMBox* child : children_) {
         if (child->atoms_.size() == 0) continue;
+
+        std::shared_ptr<RealSolidHarmonics> child_mpoles = child->mpoles_->translate(center_);
+        mpoles_->add(child_mpoles);
+    }
+
+    /*
 
 #pragma omp parallel for
         for (int Ptask = 0; Ptask < child->atoms_.size(); Ptask++) {
@@ -398,6 +440,7 @@ void CFMMBox::compute_mpoles_from_children() {
             } // End Qtask
         } // End Ptask
     } // End children
+    */
 
     timer_off("CFMMBox::compute_mpoles_from_children()");
 
@@ -412,6 +455,13 @@ void CFMMBox::compute_far_field_vector() {
     int nbf = basisset_->nbf();
 
     for (CFMMBox* box : local_far_field_) {
+        std::shared_ptr<RealSolidHarmonics> box_mpoles = box->mpoles_;
+        // The far field effect the boxes have on this particular box
+        std::shared_ptr<RealSolidHarmonics> far_field = box_mpoles->far_field_vector(center_);
+        Vff_->add(far_field);
+    }
+
+        /*
 #pragma omp parallel for
         for (int Ptask = 0; Ptask < box->atoms_.size(); Ptask++) {
             int Patom = box->atoms_[Ptask];
@@ -450,6 +500,8 @@ void CFMMBox::compute_far_field_vector() {
             } // Qtask
         } // Ptask
     } // box
+
+    */
 
     // Parent is not null
     if (parent_) {
@@ -674,27 +726,41 @@ void CFMMBox::compute_ff_J() {
 
     timer_on("CFMMBox::compute_ff_J()");
 
+    for (int l = 0; l <= lmax_; l++) {
+        for (int m = -l; m <= l; m++) {
+            int mu = m_addr(m);
+            ff_energy_ += mpoles_->get_multipoles()[l][mu] * Vff_->get_multipoles()[l][mu];          
+        }
+    }
+
+    /*
     int nbf = basisset_->nbf();
 
     // Far field interactions
     for (int ind = 0; ind < D_.size(); ind++) {
         double **Jp = J_[ind]->pointer();
         double **Dp = D_[ind]->pointer();
-        for (auto &self_pair : mpoles_) {
+        for (const auto &self_pair : mpoles_) {
             int pq_index = self_pair.first;
             std::vector<std::vector<double>>& pq_mpole = self_pair.second->get_multipoles();
             int p = pq_index / nbf;
             int q = pq_index % nbf;
 
+            double cont = 0.0;
+
             for (int l = 0; l <= lmax_; l++) {
                 for (int m = -l; m <= l; m++) {
                     int mu = m_addr(m);
                     Jp[p][q] += pq_mpole[l][mu] * Vff_->get_multipoles()[l][mu];
+                    cont += pq_mpole[l][mu] * Vff_->get_multipoles()[l][mu];
                 }
             }
+
+            outfile->Printf("  BASIS PAIR FAR-FIELD CONTRIBUTION: p=%d, q=%d %.16f\n", p, q, cont);
             
         }
     }
+    */
 
     timer_off("CFMMBox::compute_ff_J()");
 }
@@ -723,6 +789,7 @@ CFMMTree::CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet>
     lmax_ = lmax;
     D_ = D;
     J_ = J;
+    ff_energy_ = 0.0;
     root_ = new CFMMBox(molecule_, basisset_, D_, J_, lmax_);
 }
 
@@ -788,6 +855,7 @@ void CFMMTree::calculate_J(CFMMBox* box) {
 
     if (box->get_level() == nlevels_ - 1) {
         box->compute_J();
+        ff_energy_ += box->ff_energy();
         return;
     }
 
@@ -818,15 +886,15 @@ void CFMMTree::build_J() {
         J_[ind]->hermitivitize();
     }
 
-    /*
+    outfile->Printf("  FAR FIELD ENERGY: %.16f\n", ff_energy_);
+
     for (int l = 0; l <= lmax_; l++) {
         for (int m = -l; m <= l; m++) {
             int mu = m_addr(m);
-            double pole = root_->get_mpole_val(0, 0, l, mu);
+            double pole = root_->get_mpole_val(l, mu);
             outfile->Printf("  L: %d, M: %d, Ylm: %8.8f\n", l, m, pole);
         }
     }
-    */
 
 }
 

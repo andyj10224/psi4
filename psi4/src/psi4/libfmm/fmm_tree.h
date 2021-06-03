@@ -55,8 +55,8 @@ class CFMMBox {
       // Solid Harmonics Coefficients of Box
       std::shared_ptr<HarmonicCoefficients> mpole_coefs_;
 
-      // Multipoles of the box, per basis pair (pq)
-      std::unordered_map<int, std::shared_ptr<RealSolidHarmonics>> mpoles_;
+      // Multipoles of the box, Density Contracted
+      std::shared_ptr<RealSolidHarmonics> mpoles_;
       // Far field vector of the box, Density Contracted
       std::shared_ptr<RealSolidHarmonics> Vff_;
 
@@ -64,6 +64,8 @@ class CFMMBox {
       std::vector<CFMMBox *> near_field_;
       // A list of all of the local-far-field boxes to this box
       std::vector<CFMMBox *> local_far_field_;
+      // Far field energy
+      double ff_energy_;
 
       // Common function used by constructor
       void common_init(CFMMBox* parent, std::shared_ptr<Molecule> molecule, 
@@ -101,9 +103,13 @@ class CFMMBox {
       // Get the number of atoms in the box
       int natom() { return atoms_.size(); }
       // Get the value of a particular multipole
-      double get_mpole_val(int p, int q, int l, int mu) { return mpoles_[p * basisset_->nbf() + q]->get_multipoles()[l][mu]; }
+      double get_mpole_val(int l, int mu) { return mpoles_->get_multipoles()[l][mu]; }
+      // Get the far field value of a multipole
+      double get_Vff_val(int l, int mu) { return Vff_->get_multipoles()[l][mu]; }
       // Get the children of the box
       std::vector<CFMMBox*>& get_children() { return children_; }
+      // Return the far field energy
+      double ff_energy() { return ff_energy_; }
 
       // Destructor
       virtual ~CFMMBox();
@@ -128,6 +134,8 @@ class CFMMTree {
       std::vector<SharedMatrix> D_;
       // Coulomb Matrix of Molecule
       std::vector<SharedMatrix> J_;
+      // Far field energy
+      double ff_energy_;
 
       // Create children
       void make_children(CFMMBox* box);
