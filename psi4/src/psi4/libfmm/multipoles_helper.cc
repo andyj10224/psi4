@@ -549,7 +549,7 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_regular(Vector
 SharedVector RealSolidHarmonics::build_T_spherical(int la, int lb, double R) {
     int lmin = std::min(la, lb);
     SharedVector Tvec = std::make_shared<Vector>(2*lmin+1);
-    double denom = std::pow(R, la+lb+1);
+    double denom = std::pow(R, (double) la+lb+1);
 
     for (int m = -lmin; m <= lmin; lmin++) {
         int mu = m_addr(m);
