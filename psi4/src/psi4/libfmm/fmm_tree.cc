@@ -785,93 +785,258 @@ void CFMMBox::compute_nf_J() {
         ints.push_back(std::shared_ptr<TwoBodyAOInt>(eri->clone()));
     }
 
-    int nbf = basisset_->nbf();
-
-    // Near field interactions
-
-    // outfile->Printf("Near field Num Boxes: %d\n", near_field_.size());
-
-#pragma omp parallel for
-    for (int Ptask = 0; Ptask < atoms_.size(); Ptask++) {
+    size_t atom_max_nshell = 0L;
+    for (size_t Ptask = 0; Ptask < atoms_.size(); Ptask++) {
+        size_t size = 0L;
         int Patom = atoms_[Ptask];
         int Pstart = basisset_->shell_on_center(Patom, 0);
         int nPshell = basisset_->nshell_on_center(Patom);
+
+        for (int P = Pstart; P < Pstart + nPshell; P++) {
+            size += basisset_->shell(P).nfunction();
+        }
+
+        atom_max_nshell = std::max(atom_max_nshell, size);
+    }
+
+    // Get significant atom pairs (PQ|-style
+    std::vector<std::pair<int, int>> atom_pairs;
+    for (size_t Ptask = 0; Ptask < atoms_.size(); Ptask++) {
+        int Patom = atoms_[Ptask];
+        int Pstart = basisset_->shell_on_center(Patom, 0);
+        int nPshell = basisset_->nshell_on_center(Patom);
+
+        for (int Qtask = 0; Qtask < atoms_.size(); Qtask++) {
+            if (Qtask > Ptask) continue;
+            bool found = false;
+
+            int Qatom = atoms_[Qtask];
+            int Qstart = basisset_->shell_on_center(Qatom, 0);
+            int nQshell = basisset_->nshell_on_center(Qatom);
+
+            for (int P = Pstart; P < Pstart + nPshell; P++) {
+                for (int Q = Qstart; Q < Qstart + nQshell; Q++) {
+                    if (ints[0]->shell_pair_significant(P, Q)) {
+                        found = true;
+                        atom_pairs.push_back(std::pair<int, int>(Patom, Qatom));
+                        break;
+                    }
+                }
+                if (found) break;
+            }
+        }
+    }
+
+    size_t natom_pair = atom_pairs.size();
+
+    int nbf = basisset_->nbf();
+    int nshell = basisset_->nshell();
+
+    // => Intermediate Buffers <= //
+    std::vector<std::vector<std::shared_ptr<Matrix>>> JT;
+    for (int thread = 0; thread < nthread_; thread++) {
+        std::vector<std::shared_ptr<Matrix>> J2;
+        for (size_t ind = 0; ind < D_.size(); ind++) {
+            J2.push_back(std::make_shared<Matrix>("JT", atom_max_nshell, atom_max_nshell));
+        }
+        JT.push_back(J2);
+    }
+
+    // Near field interactions
+#pragma omp parallel for
+    for (size_t task1 = 0L; task1 < natom_pair; task1++) {
+
+        int Patom = atom_pairs[task1].first;
+        int Qatom = atom_pairs[task1].second;
+
+        int Pstart = basisset_->shell_on_center(Patom, 0);
+        int Qstart = basisset_->shell_on_center(Qatom, 0);
+
+        int nPshell = basisset_->nshell_on_center(Patom);
+        int nQshell = basisset_->nshell_on_center(Qatom);
+
+        int dPsize = (Pstart + nPshell >= nshell ? nbf : basisset_->shell(Pstart + nPshell).start())
+                    - basisset_->shell(Pstart).start();
+        int dQsize = (Qstart + nQshell >= nshell ? nbf : basisset_->shell(Qstart + nQshell).start())
+                    - basisset_->shell(Qstart).start();
 
         int thread = 0;
 #ifdef _OPENMP
         thread = omp_get_thread_num();
 #endif
 
-        for (int Qtask = 0; Qtask < atoms_.size(); Qtask++) {
-            int Qatom = atoms_[Qtask];
-            int Qstart = basisset_->shell_on_center(Qatom, 0);
-            int nQshell = basisset_->nshell_on_center(Qatom);
+        bool touched = false;
+        for (int P = Pstart; P < Pstart + nPshell; P++) {
+            for (int Q = Qstart; Q < Qstart + nQshell; Q++) {
+                if (Q > P) continue;
+                if (!ints[0]->shell_pair_significant(P, Q)) continue;
 
-            for (int P = Pstart; P < Pstart + nPshell; P++) {
-                int p_start = basisset_->shell(P).start();
-                int num_p = basisset_->shell(P).nfunction();
+                for (int b = 0; b < near_field_.size(); b++) {
+                    CFMMBox* box = near_field_[b];
 
-                for (int Q = Qstart; Q < Qstart + nQshell; Q++) {
-                    int q_start = basisset_->shell(Q).start();
-                    int num_q = basisset_->shell(Q).nfunction();
+                    size_t nf_atom_max_nshell = 0L;
+                    for (size_t Rtask = 0; Rtask < box->atoms_.size(); Rtask++) {
+                        size_t size = 0L;
+                        int Ratom = box->atoms_[Rtask];
+                        int Rstart = basisset_->shell_on_center(Ratom, 0);
+                        int nRshell = basisset_->nshell_on_center(Ratom);
 
-                    for (int p = p_start; p < p_start + num_p; p++) {
-                        int dp = p - p_start;
+                        for (int R = Rstart; R < Rstart + nRshell; R++) {
+                            size += basisset_->shell(R).nfunction();
+                        }
 
-                        for (int q = q_start; q < q_start + num_q; q++) {
-                            int dq = q - q_start;
+                        nf_atom_max_nshell = std::max(atom_max_nshell, size);
+                    }
 
-                            for (int b = 0; b < near_field_.size(); b++) {
-                                CFMMBox* box = near_field_[b];
+                    // Get significant atom pairs (RS|-style
+                    std::vector<std::pair<int, int>> nf_atom_pairs;
+                    for (size_t Rtask = 0; Rtask < box->atoms_.size(); Rtask++) {
+                        int Ratom = box->atoms_[Rtask];
+                        int Rstart = basisset_->shell_on_center(Ratom, 0);
+                        int nRshell = basisset_->nshell_on_center(Ratom);
 
-                                for (int Rtask = 0; Rtask < box->atoms_.size(); Rtask++) {
-                                    int Ratom = box->atoms_[Rtask];
-                                    int Rstart = basisset_->shell_on_center(Ratom, 0);
-                                    int nRshell = basisset_->nshell_on_center(Ratom);
+                        for (int Stask = 0; Stask < box->atoms_.size(); Stask++) {
+                            if (Stask > Rtask) continue;
+                            bool found = false;
 
-                                    for (int Stask = 0; Stask < box->atoms_.size(); Stask++) {
-                                        int Satom = box->atoms_[Stask];
-                                        int Sstart = basisset_->shell_on_center(Satom, 0);
-                                        int nSshell = basisset_->nshell_on_center(Satom);
-                        
-                                        for (int R = Rstart; R < Rstart + nRshell; R++) {
-                                            int r_start = basisset_->shell(R).start();
-                                            int num_r = basisset_->shell(R).nfunction();
+                            int Satom = atoms_[Stask];
+                            int Sstart = basisset_->shell_on_center(Satom, 0);
+                            int nSshell = basisset_->nshell_on_center(Satom);
 
-                                            for (int S = Sstart; S < Sstart + nSshell; S++) {
-                                                int s_start = basisset_->shell(S).start();
-                                                int num_s = basisset_->shell(S).nfunction();
+                            for (int R = Rstart; R < Rstart + nRshell; R++) {
+                                for (int S = Sstart; S < Sstart + nSshell; S++) {
+                                    if (ints[0]->shell_pair_significant(R, S)) {
+                                        found = true;
+                                        nf_atom_pairs.push_back(std::pair<int, int>(Ratom, Satom));
+                                        break;
+                                    }
+                                }
+                                if (found) break;
+                            }
+                        }
+                    }
 
-                                                ints[thread]->compute_shell(P, Q, R, S);
-                                                const double *buffer = ints[thread]->buffer();
+                    size_t nf_natom_pair = atom_pairs.size();
 
-                                                for (int ind = 0; ind < D_.size(); ind++) {
-                                                    double **Jp = J_[ind]->pointer();
-                                                    double **Dp = D_[ind]->pointer();
+                    for (size_t task2 = 0L; task2 < nf_natom_pair; task2++) {
 
-                                                    for (int r = r_start; r < r_start + num_r; r++) {
-                                                        int dr = r - r_start;
+                        int Ratom = nf_atom_pairs[task2].first;
+                        int Satom = nf_atom_pairs[task2].second;
 
-                                                        for (int s = s_start; s < s_start + num_s; s++) {
-                                                            int ds = s - s_start;
+                        int Rstart = basisset_->shell_on_center(Ratom, 0);
+                        int Sstart = basisset_->shell_on_center(Satom, 0);
 
-                                                            double int_val = buffer[dp * num_q * num_r * num_s + dq * num_r * num_s + dr * num_s + ds];
-                                                            Jp[p][q] += int_val * Dp[r][s];
+                        int nRshell = basisset_->nshell_on_center(Ratom);
+                        int nSshell = basisset_->nshell_on_center(Satom);
 
-                                                        } // s
-                                                    } // r
-                                                } // ind
-                                            } // S
-                                        } // R
-                                    } // Stask
-                                } // Rtask
-                            } // box
-                        } // q
-                    } // p
-                } // Q
-            } // P
-        } // Qtask
-    } // Ptask
+                        int dRsize = (Rstart + nRshell >= nshell ? nbf : basisset_->shell(Rstart + nRshell).start())
+                                    - basisset_->shell(Rstart).start();
+                        int dSsize = (Sstart + nSshell >= nshell ? nbf : basisset_->shell(Sstart + nSshell).start())
+                                    - basisset_->shell(Sstart).start();
+
+                        for (int R = Rstart; R < Rstart + nRshell; R++) {
+
+                            for (int S = Sstart; S < Sstart + nSshell; S++) {
+                                if (S > R) continue;
+                                if (!ints[0]->shell_pair_significant(R, S)) continue;
+                                if (!ints[0]->shell_significant(P, Q, R, S)) continue;
+
+                                if (ints[thread]->compute_shell(P, Q, R, S) == 0) continue;
+
+                                const double *buffer = ints[thread]->buffer();
+
+                                int Psize = basisset_->shell(P).nfunction();
+                                int Qsize = basisset_->shell(Q).nfunction();
+                                int Rsize = basisset_->shell(R).nfunction();
+                                int Ssize = basisset_->shell(S).nfunction();
+
+                                int Poff = basisset_->shell(P).start();
+                                int Qoff = basisset_->shell(Q).start();
+                                int Roff = basisset_->shell(R).start();
+                                int Soff = basisset_->shell(S).start();
+
+                                int Poff2 = basisset_->shell(P).start() - basisset_->shell(Pstart).start();
+                                int Qoff2 = basisset_->shell(Q).start() - basisset_->shell(Qstart).start();
+                                int Roff2 = basisset_->shell(R).start() - basisset_->shell(Rstart).start();
+                                int Soff2 = basisset_->shell(S).start() - basisset_->shell(Sstart).start();
+
+                                for (int ind = 0; ind < D_.size(); ind++) {
+                                    double **Dp = D_[ind]->pointer();
+                                    double **JTp = JT[thread][ind]->pointer();
+                                    const double* buffer2 = buffer;
+
+                                    if (!touched) {
+                                        ::memset((void*)JTp[0L * atom_max_nshell], '\0', dPsize * dQsize * sizeof(double));
+                                    }
+
+                                    double* J1p = JTp[0L * atom_max_nshell];
+
+                                    double prefactor = 1.0;
+                                    if (P == Q) prefactor *= 0.5;
+                                    if (R == S) prefactor *= 0.5;
+                                    // if (P == R && Q == S) prefactor *= 0.5;
+
+                                    for (int p = 0; p < Psize; p++) {
+                                        for (int q = 0; q < Qsize; q++) {
+                                            for (int r = 0; r < Rsize; r++) {
+                                                for (int s = 0; s < Ssize; s++) {
+                                                    J1p[(p + Poff2) * dQsize + q + Qoff2] +=
+                                                        prefactor * (Dp[r + Roff][s + Soff] + Dp[s + Soff][r + Roff]) *
+                                                        (*buffer2);
+                                                    buffer2++;
+                                                } // s
+                                            } // r
+                                        } // q
+                                    } // p
+
+                                } // ind
+                                touched = true;
+                            } // S
+                        } // R
+                    } // task2
+                } // box
+            } // Q
+        } // P
+
+        if (!touched) continue;
+
+        // => Stripe out <= //
+        for (size_t ind = 0; ind < D_.size(); ind++) {
+            double** JTp = JT[thread][ind]->pointer();
+
+            double** Jp = J_[ind]->pointer();
+            double* J1p = JTp[0L * atom_max_nshell];
+            
+
+            // > J_PQ < //
+            for (int P2 = 0; P2 < nPshell; P2++) {
+                for (int Q2 = 0; Q2 < nQshell; Q2++) {
+                    int P = Pstart + P2;
+                    int Q = Qstart + Q2;
+                    int Psize = basisset_->shell(P).nfunction();
+                    int Qsize = basisset_->shell(Q).nfunction();
+                    int Poff = basisset_->shell(P).function_index();
+                    int Qoff = basisset_->shell(Q).function_index();
+
+                    int Poff2 = basisset_->shell(P).start() - basisset_->shell(Pstart).start();
+                    int Qoff2 = basisset_->shell(Q).start() - basisset_->shell(Qstart).start();
+
+                    for (int p = 0; p < Psize; p++) {
+                        for (int q = 0; q < Qsize; q++) {
+#pragma omp atomic
+                            Jp[p + Poff][q + Qoff] += 2.0 * J1p[(p + Poff2) * dQsize + q + Qoff2];
+                        }
+                    }
+                }
+            }
+
+        } // end stripe out
+
+    } // task1
+
+    for (size_t ind = 0; ind < D_.size(); ind++) {
+        J_[ind]->hermitivitize();
+    }
 
     timer_off("CFMMBox::compute_nf_J()");
 }
@@ -1048,7 +1213,7 @@ void CFMMTree::build_J() {
         for (int m = -l; m <= l; m++) {
             int mu = m_addr(m);
             double pole = root_->get_mpole_val(l, mu);
-            outfile->Printf("MPOLE  L: %d, M: %d, Ylm: %8.8f\n", l, m, pole);
+            // outfile->Printf("MPOLE  L: %d, M: %d, Ylm: %8.8f\n", l, m, pole);
         }
     }
 
