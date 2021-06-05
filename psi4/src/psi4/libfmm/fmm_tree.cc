@@ -1050,7 +1050,7 @@ void CFMMBox::compute_ff_J() {
     for (int l = 0; l <= lmax_; l++) {
         for (int m = -l; m <= l; m++) {
             int mu = m_addr(m);
-            ff_energy_ += mpoles_->get_multipoles()[l][mu] * Vff_->get_multipoles()[l][mu];          
+            ff_energy_ += 0.5 * mpoles_->get_multipoles()[l][mu] * Vff_->get_multipoles()[l][mu];          
         }
     }
 
