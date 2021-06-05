@@ -136,6 +136,7 @@ void CFMMBox::common_init(CFMMBox* parent, std::shared_ptr<Molecule> molecule, s
 
     // Calculate the well separated criterion for the box
     ws_ = 2;
+
     if (length_ > 0.0) {
         for (int Ptask = 0; Ptask < atoms_.size(); Ptask++) {
             int Patom = atoms_[Ptask];
@@ -899,7 +900,7 @@ void CFMMBox::compute_nf_J() {
                             if (Stask > Rtask) continue;
                             bool found = false;
 
-                            int Satom = atoms_[Stask];
+                            int Satom = box->atoms_[Stask];
                             int Sstart = basisset_->shell_on_center(Satom, 0);
                             int nSshell = basisset_->nshell_on_center(Satom);
 
@@ -916,7 +917,7 @@ void CFMMBox::compute_nf_J() {
                         }
                     }
 
-                    size_t nf_natom_pair = atom_pairs.size();
+                    size_t nf_natom_pair = nf_atom_pairs.size();
 
                     for (size_t task2 = 0L; task2 < nf_natom_pair; task2++) {
 
