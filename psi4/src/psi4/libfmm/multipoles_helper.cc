@@ -475,7 +475,7 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_irregular(Vect
                 int mu = m_addr(m);
                 double coef = std::sqrt((double) choose(j+m,l+m)*choose(j-m,l-m));
 
-                trans_rot_mpoles[l][mu] += coef * std::pow(R, j-l) * rot_mpoles[j][mu];
+                trans_rot_mpoles[l][mu] += coef * std::pow(-R, j-l) * rot_mpoles[j][mu];
             }
         }
     }
@@ -551,7 +551,7 @@ SharedVector RealSolidHarmonics::build_T_spherical(int la, int lb, double R) {
     SharedVector Tvec = std::make_shared<Vector>(2*lmin+1);
     double denom = std::pow(R, (double) la+lb+1);
 
-    for (int m = -lmin; m <= lmin; lmin++) {
+    for (int m = -lmin; m <= lmin; m++) {
         int mu = m_addr(m);
         double Tval = std::pow(-1.0, (double) (lb-m)) * std::sqrt((double) choose(la+lb, la+m) * choose(la+lb, la-m)) / denom;
         Tvec->set(mu, Tval);
