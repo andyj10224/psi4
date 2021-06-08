@@ -14,10 +14,77 @@
 #include <tuple>
 #include <vector>
 #include <unordered_map>
+#include <utility>
 
 #define ERFCI10 (4.572824967389485)
 
 namespace psi {
+
+class Distribution {
+
+    protected:
+      // A reference to the basis set that the distribution belongs to
+      std::shared_ptr<BasisSet> basisset_;
+      // A reference to the branch that this distribution belongs to
+      CFMMBranch* branch_;
+      // What basis set pair the distribution belongs to
+      std::pair<int, int> basispair_;
+      // The center of the distribution
+      Vector3 center_;
+      // The coefficient in front of the particular contraction
+      double coef_;
+      // The exponent in front of th particular contraction
+      double exp_;
+      // The x exponent of the basis function
+      int lx_;
+      // The y exponent of the basis function
+      int ly_;
+      // The z exponent of the basis function
+      int lz_;
+      // The radial extent of this distribution
+      double rext_;
+      // The multipoles of this distribution
+      std::shared_ptr<RealSolidHarmonics> mpoles_;
+      // The total far field potential felt by this distribution
+      std::shared_ptr<RealSolidHarmonics> Vff_;
+
+    public:
+      // Constructor for a distribution
+      Distribution();
+      // Returns the center of the distribution
+      Vector3 get_center() { return center_; }
+      // Returns the coef of the distribution
+      double get_coef() { return coef_; }
+      // Returns the exponent of the distribution
+      double get_exp() { return exp_; }
+      // Gets x exponent of basis function
+      int lx() { return lx_; }
+      // Gets y exponent of basis function
+      int ly() { return ly_; }
+      // Gets z exponent of basis function
+      int lz() { return lz_; }
+      // Computes the multipoles centered at this distribution
+      void compute_mpoles();
+      // Computes the far field felt by this distribution
+      void compute_far_field();
+
+}
+
+class CFMMBranch {
+
+    protected:
+      // The box that the distribution belongs to
+      CFMMBox* box_;
+      // A list of all distributions that belong to this branch
+      std::vector<Distribution *> distributions_;
+      // The common well-separatedness criterion belonging to this branch
+      int ws_;
+
+    public:
+      // Constructor
+      CFMMBranch(CFMMBox* box, int ws);
+
+}
 
 class CFMMBox {
 
@@ -26,6 +93,8 @@ class CFMMBox {
       CFMMBox* parent_;
       // Children of the CFMMBox
       std::vector<CFMMBox *> children_;
+      // Branches that belong to this box
+      std::vector<CFMMBranch *> branches_;
       // Level the box is at (0 = root)
       int level_;
       // Maximum Multipole Angular Momentum
