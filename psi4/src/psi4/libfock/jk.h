@@ -38,6 +38,7 @@ PRAGMA_WARNING_IGNORE_DEPRECATED_DECLARATIONS
 PRAGMA_WARNING_POP
 #include "psi4/libmints/typedefs.h"
 #include "psi4/libmints/dimension.h"
+#include "psi4/libfock/linearhelper.h"
 
 namespace psi {
 class MinimalInterface;
@@ -257,6 +258,9 @@ class PSI_API JK {
     /// Perform an incremental fock build?
     bool incr_fock_;
 
+    /// Perform a linear exchange matrix build
+    bool linK_;
+
     /// Perform Density Screening for ERIs?
     bool density_screening_;
     /// Perform Incremental Fock Build for J and K Matrices?
@@ -276,6 +280,9 @@ class PSI_API JK {
 
     /// Left-right symmetric? Determined in each call of compute()
     bool lr_symmetric_;
+
+    /// The current SCF iteration
+    int iteration_ = 0;
 
     // => Architecture-Level State Variables (Spatial Symmetry) <= //
 
@@ -735,9 +742,6 @@ class PSI_API DirectJK : public JK {
     std::vector<SharedMatrix> del_K_;
     std::vector<SharedMatrix> del_wK_;
 
-    // Current Direct SCF Iteration
-    int iteration_ = 0;
-
     // => Required Algorithm-Specific Methods <= //
 
     /// Do we need to backtransform to C1 under the hood?
@@ -754,12 +758,8 @@ class PSI_API DirectJK : public JK {
                   std::vector<std::shared_ptr<Matrix> >& J, std::vector<std::shared_ptr<Matrix> >& K);
     
     /// Build J and K matrices separately for linear scaling methods
-    
     void build_J(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints, std::vector<std::shared_ptr<Matrix> >& D,
                   std::vector<std::shared_ptr<Matrix> >& J);
-    
-    void build_linK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints, std::vector<std::shared_ptr<Matrix> >& D,
-                  std::vector<std::shared_ptr<Matrix> >& K);
 
     /// Common initialization
     void common_init();
