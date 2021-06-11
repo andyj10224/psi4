@@ -278,6 +278,11 @@ void DirectJK::compute_JK() {
 #endif
 
     auto factory = std::make_shared<IntegralFactory>(primary_, primary_, primary_, primary_);
+    
+    std::vector<SharedMatrix>& D_ref = (do_ifb_iter_ ? del_D_ao_ : D_ao_);
+    std::vector<SharedMatrix>& J_ref = (do_ifb_iter_ ? del_J_ao_ : J_ao_);
+    std::vector<SharedMatrix>& K_ref = (do_ifb_iter_ ? del_K_ao_ : K_ao_);
+    std::vector<SharedMatrix>& wK_ref = (do_ifb_iter_ ? del_wK_ao_ : wK_ao_);
 
     double Dnorm = Process::environment.globals["SCF RMS D"];
 
@@ -388,38 +393,6 @@ void DirectJK::compute_JK() {
                 temp.push_back(std::make_shared<Matrix>("temp", primary_->nbf(), primary_->nbf()));
             }
             build_JK(ints, D_ref, temp, K_ref);
-        }
-    }
-
-    // Incremental Fock Build Code
-    if (ifb_) {
-        if (do_ifb_iteration) { // RMS D greater than 1.0e-5
-            for (size_t N = 0; N < D_ao_.size(); N++) {
-
-                if (do_wK_) {
-                    wK_prev_[N]->add(del_wK_[N]);
-                    wK_ao_[N]->copy(wK_prev_[N]);
-                }
-
-                if (do_J_) {
-                    J_prev_[N]->add(del_J_[N]);
-                    J_ao_[N]->copy(J_prev_[N]);
-                }
-
-                if (do_K_) {
-                    K_prev_[N]->add(del_K_[N]);
-                    K_ao_[N]->copy(K_prev_[N]);
-                }
-
-                D_prev_[N]->copy(D_ao_[N]);
-            }
-        } else { // RMS D less than 1.0e-5
-            for (size_t N = 0; N < D_ao_.size(); N++) {
-                if (do_wK_) wK_prev_[N]->copy(wK_ao_[N]);
-                if (do_J_) J_prev_[N]->copy(J_ao_[N]);
-                if (do_K_) K_prev_[N]->copy(K_ao_[N]);
-                D_prev_[N]->copy(D_ao_[N]);
-            }
         }
     }
     iteration_ += 1;
@@ -597,8 +570,9 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::v
                         int S = task_shells[S2];
                         
                         if (!ints[0]->shell_pair_significant(R, S)) continue;
-                        if (!ints[0]->shell_significant(P, Q, R, S)) continue;
+                        
                         if (density_screening_ && !ints[0]->shell_significant_density(P, Q, R, S)) continue;
+                        else if (!ints[0]->shell_significant(P, Q, R, S)) continue;
 
                         // printf("Quartet: %2d %2d %2d %2d\n", P, Q, R, S);
                         // timer_on("compute_shell(P, Q, R, S)");
