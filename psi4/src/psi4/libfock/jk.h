@@ -255,16 +255,9 @@ class PSI_API JK {
     bool do_K_;
     /// Do wK matrices? Defaults to false
     bool do_wK_;
-    /// Perform an incremental fock build?
-    bool incr_fock_;
 
     /// Perform a linear exchange matrix build
     bool linK_;
-
-    /// Perform Density Screening for ERIs?
-    bool density_screening_;
-    /// Perform Incremental Fock Build for J and K Matrices?
-    bool ifb_;
 
     /// Perform Density Screening for ERIs?
     bool density_screening_;
@@ -291,9 +284,6 @@ class PSI_API JK {
 
     /// Left-right symmetric? Determined in each call of compute()
     bool lr_symmetric_;
-
-    /// The current SCF iteration
-    int iteration_ = 0;
 
     // => Architecture-Level State Variables (Spatial Symmetry) <= //
 
@@ -330,8 +320,6 @@ class PSI_API JK {
     std::vector<SharedMatrix> K_ao_;
     /// wK matrices: wK_mn = (ml|w|ns) C_li^left C_si^right
     std::vector<SharedMatrix> wK_ao_;
-    /// Previous D Matrix (AO) used in Incremental Fock build
-    std::vector<SharedMatrix> D_ao_prev_;
 
     /// D, J, K, wK Matrices from previous iteration, used in Incremental Fock Builds
     std::vector<SharedMatrix> D_ao_prev_;
