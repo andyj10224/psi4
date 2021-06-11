@@ -45,8 +45,10 @@
 #include "psi4/libpsi4util/PsiOutStream.h"
 #include "psi4/libpsi4util/process.h"
 
+#include <algorithm>
 #include <sstream>
 #include <vector>
+#include <unordered_set>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -217,7 +219,6 @@ void JK::common_init() {
     ifb_ = options.get_bool("IFB");
     d_conv_ = options.get_double("D_CONVERGENCE");
     ifb_d_conv_ = options.get_double("IFB_D_CONVERGENCE");
-
 }
 size_t JK::memory_overhead() const {
     size_t mem = 0L;
@@ -729,8 +730,6 @@ void JK::compute() {
     if (lr_symmetric_) {
         C_right_.clear();
     }
-
-    iteration_ += 1;
 }
 void JK::set_wcombine(bool wcombine) {
     wcombine_ = wcombine;
@@ -738,5 +737,7 @@ void JK::set_wcombine(bool wcombine) {
         throw PSIEXCEPTION("To combine exchange terms, use MemDFJK\n");
     }
 }
+
 void JK::finalize() { postiterations(); }
+
 }  // namespace psi

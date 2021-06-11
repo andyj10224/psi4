@@ -18,6 +18,7 @@ list(APPEND sources
   soscf.cc
   v.cc
   wrapper.cc
+  linearhelper.cc
   )
 
 psi4_add_module(lib fock sources)

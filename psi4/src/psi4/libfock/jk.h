@@ -34,9 +34,11 @@
 PRAGMA_WARNING_PUSH
 PRAGMA_WARNING_IGNORE_DEPRECATED_DECLARATIONS
 #include <memory>
+#include <utility>
 PRAGMA_WARNING_POP
 #include "psi4/libmints/typedefs.h"
 #include "psi4/libmints/dimension.h"
+#include "psi4/libfock/linearhelper.h"
 
 namespace psi {
 class MinimalInterface;
@@ -253,6 +255,16 @@ class PSI_API JK {
     bool do_K_;
     /// Do wK matrices? Defaults to false
     bool do_wK_;
+    /// Perform an incremental fock build?
+    bool incr_fock_;
+
+    /// Perform a linear exchange matrix build
+    bool linK_;
+
+    /// Perform Density Screening for ERIs?
+    bool density_screening_;
+    /// Perform Incremental Fock Build for J and K Matrices?
+    bool ifb_;
 
     /// Perform Density Screening for ERIs?
     bool density_screening_;
@@ -280,6 +292,9 @@ class PSI_API JK {
     /// Left-right symmetric? Determined in each call of compute()
     bool lr_symmetric_;
 
+    /// The current SCF iteration
+    int iteration_ = 0;
+
     // => Architecture-Level State Variables (Spatial Symmetry) <= //
 
     /// Pseudo-occupied C matrices, left side
@@ -294,6 +309,8 @@ class PSI_API JK {
     std::vector<SharedMatrix> K_;
     /// wK matrices: \f$K_{mn}(\omega)=(ml|\omega|ns)C_{li}^{left}C_{si}^{right}\f$
     std::vector<SharedMatrix> wK_;
+    /// Previous D Matrix, used in Incremental Fock build
+    std::vector<SharedMatrix> D_prev_;
 
     // => Microarchitecture-Level State Variables (No Spatial Symmetry) <= //
 
@@ -313,6 +330,8 @@ class PSI_API JK {
     std::vector<SharedMatrix> K_ao_;
     /// wK matrices: wK_mn = (ml|w|ns) C_li^left C_si^right
     std::vector<SharedMatrix> wK_ao_;
+    /// Previous D Matrix (AO) used in Incremental Fock build
+    std::vector<SharedMatrix> D_ao_prev_;
 
     /// D, J, K, wK Matrices from previous iteration, used in Incremental Fock Builds
     std::vector<SharedMatrix> D_ao_prev_;
@@ -740,7 +759,7 @@ class PSI_API DirectJK : public JK {
     size_t memory_estimate() override;
 
     // => Required Algorithm-Specific Variables <= //
-
+    
     // => Required Algorithm-Specific Methods <= //
 
     /// Do we need to backtransform to C1 under the hood?
@@ -755,6 +774,10 @@ class PSI_API DirectJK : public JK {
     /// Build the J and K matrices for this integral class
     void build_JK(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints, std::vector<std::shared_ptr<Matrix> >& D,
                   std::vector<std::shared_ptr<Matrix> >& J, std::vector<std::shared_ptr<Matrix> >& K);
+    
+    /// Build J and K matrices separately for linear scaling methods
+    void build_J(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints, std::vector<std::shared_ptr<Matrix> >& D,
+                  std::vector<std::shared_ptr<Matrix> >& J);
 
     /// Common initialization
     void common_init();

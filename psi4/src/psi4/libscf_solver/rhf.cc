@@ -115,6 +115,7 @@ void RHF::common_init() {
 
     same_a_b_dens_ = true;
     same_a_b_orbs_ = true;
+    
 }
 
 void RHF::finalize() {

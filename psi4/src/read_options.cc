@@ -179,6 +179,7 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
     Convergence & Algorithm <table:conv_scf>` for default algorithm for
     different calculation types. -*/
     options.add_str("SCF_TYPE", "PK", "DIRECT DF MEM_DF DISK_DF PK OUT_OF_CORE CD GTFOCK");
+    
     /*- Algorithm to use for MP2 computation.
     See :ref:`Cross-module Redundancies <table:managedmethods>` for details. -*/
     options.add_str("MP2_TYPE", "DF", "DF CONV CD");
@@ -1441,6 +1442,11 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_double("DENSITY_SCREENING_TOLERANCE", 1.0e-13);
         /*- Density Threshold to stop Incremental Fock Build -*/
         options.add_double("IFB_D_CONVERGENCE", 1.0e-5);
+
+        /*- Perform linK SCF optimization? -*/
+        options.add_bool("SCF_DO_LINK", false);
+        /*- Threshold for linK screening -*/
+        options.add_double("LINK_THRESHOLD", 1.0e-13);
 
         /*- SUBSECTION Fractional Occupation UHF/UKS -*/
 

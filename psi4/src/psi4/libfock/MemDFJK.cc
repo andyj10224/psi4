@@ -94,8 +94,28 @@ void MemDFJK::preiterations() {
     dfh_->initialize();
 }
 void MemDFJK::compute_JK() {
-    dfh_->build_JK(C_left_ao_, C_right_ao_, D_ao_, J_ao_, K_ao_, wK_ao_, max_nocc(), do_J_, do_K_, do_wK_,
+    if (!linK_ || iteration_ == 0) {
+        dfh_->build_JK(C_left_ao_, C_right_ao_, D_ao_, J_ao_, K_ao_, wK_ao_, max_nocc(), do_J_, do_K_, do_wK_,
                    lr_symmetric_);
+    } else {
+        // Build DF J like you normally would
+        dfh_->build_JK(C_left_ao_, C_right_ao_, D_ao_, J_ao_, K_ao_, wK_ao_, max_nocc(), do_J_, false, do_wK_,
+                   lr_symmetric_);
+
+        // Set up LinK calculation
+        auto factory = std::make_shared<IntegralFactory>(primary_);
+        auto linh = std::make_shared<LinearHelper>(primary_, lr_symmetric_);
+
+        std::vector<std::shared_ptr<TwoBodyAOInt>> ints;
+        ints.push_back(std::shared_ptr<TwoBodyAOInt>(factory->eri()));
+        if (density_screening_) ints[0]->update_density(D_ao_);
+        for (int thread = 1; thread < omp_nthread_; thread++) {
+            ints.push_back(std::shared_ptr<TwoBodyAOInt>(ints[0]->clone()));
+            if (density_screening_) ints[thread]->update_density(D_ao_);
+        }
+
+        linh->build_linK(ints, D_ao_, K_ao_);
+    }
     if (lr_symmetric_) {
         if (do_wK_) {
             for (size_t N = 0; N < wK_ao_.size(); N++) {
@@ -103,7 +123,9 @@ void MemDFJK::compute_JK() {
             }
         }
     }
+    iteration_ += 1;
 }
+
 void MemDFJK::postiterations() {}
 void MemDFJK::print_header() const {
     // dfh_->print_header();

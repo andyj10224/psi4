@@ -48,6 +48,8 @@
 #include <limits>
 #include <sstream>
 #include <set>
+#include <map>
+#include <unordered_set>
 #include "psi4/libpsi4util/PsiOutStream.h"
 #ifdef _OPENMP
 #include <omp.h>
@@ -101,7 +103,6 @@ void DirectJK::print_header() const {
     }
 }
 void DirectJK::preiterations() {
-
 #ifdef USING_BrianQC
     if (brianEnable) {
         double threshold = cutoff_ * (brianCPHFFlag ? 1e-3 : 1e-0); // CPHF needs higher precision
@@ -110,6 +111,11 @@ void DirectJK::preiterations() {
     }
 #endif
 }
+
+bool shell_pair_sort_helper(const std::tuple<int, int, double>& t1, const std::tuple<int, int, double>& t2) {
+    return std::get<2>(t1) > std::get<2>(t2);
+}
+
 void DirectJK::compute_JK() {
 #ifdef USING_BrianQC
     if (brianEnable) {
@@ -278,6 +284,69 @@ void DirectJK::compute_JK() {
     std::vector<SharedMatrix>& K_ref = (do_ifb_iter_ ? del_K_ao_ : K_ao_);
     std::vector<SharedMatrix>& wK_ref = (do_ifb_iter_ ? del_wK_ao_ : wK_ao_);
 
+    double Dnorm = Process::environment.globals["SCF RMS D"];
+
+    Options& options = Process::environment.options;
+    double Dconv = options.get_double("D_CONVERGENCE");
+    double ifb_d_conv = options.get_double("IFB_D_CONVERGENCE");
+  
+    if (ifb_ && (iteration_ == 0 || D_prev_.size() != D_ao_.size())) {
+
+        iteration_ = 0;
+
+        D_prev_.clear();
+        del_D_.clear();
+
+        if (do_wK_) {
+            wK_prev_.clear();
+            del_wK_.clear();
+        }
+
+        if (do_J_) {
+            J_prev_.clear();
+            del_J_.clear();
+        }
+
+        if (do_K_) {
+            K_prev_.clear();
+            del_K_.clear();
+        }
+    
+        for (size_t N = 0; N < D_ao_.size(); N++) {
+            D_prev_.push_back(std::make_shared<Matrix>("D Prev", D_ao_[N]->nrow(), D_ao_[N]->ncol()));
+            del_D_.push_back(std::make_shared<Matrix>("Delta D", D_ao_[N]->nrow(), D_ao_[N]->ncol()));
+
+            if (do_wK_) {
+                wK_prev_.push_back(std::make_shared<Matrix>("wK Prev", wK_ao_[N]->nrow(), wK_ao_[N]->ncol()));
+                del_wK_.push_back(std::make_shared<Matrix>("Delta wK", wK_ao_[N]->nrow(), wK_ao_[N]->ncol()));
+            }
+                
+            if (do_J_) {
+                J_prev_.push_back(std::make_shared<Matrix>("J Prev", J_ao_[N]->nrow(), J_ao_[N]->ncol()));
+                del_J_.push_back(std::make_shared<Matrix>("Delta J", J_ao_[N]->nrow(), J_ao_[N]->ncol()));
+            }
+            if (do_K_) {
+                K_prev_.push_back(std::make_shared<Matrix>("K Prev", K_ao_[N]->nrow(), K_ao_[N]->ncol()));
+                del_K_.push_back(std::make_shared<Matrix>("Delta K", K_ao_[N]->nrow(), K_ao_[N]->ncol()));
+            }
+        }
+    }
+    
+    if (ifb_ && iteration_ >= 1) {
+        for (size_t N = 0; N < D_ao_.size(); N++) {
+            del_D_[N]->copy(D_ao_[N]);
+            del_D_[N]->subtract(D_prev_[N]);
+        }
+    }
+
+    // Do IFB on this iteration?
+    bool do_ifb_iteration = ifb_ && (iteration_ >= 1) && (Dnorm > ifb_d_conv);
+    
+    std::vector<SharedMatrix>& D_ref = (do_ifb_iteration ? del_D_ : D_ao_);
+    std::vector<SharedMatrix>& J_ref = (do_ifb_iteration ? del_J_ : J_ao_);
+    std::vector<SharedMatrix>& K_ref = (do_ifb_iteration ? del_K_ : K_ao_);
+    std::vector<SharedMatrix>& wK_ref = (do_ifb_iteration ? del_wK_ : wK_ao_);
+
     if (do_wK_) {
         std::vector<std::shared_ptr<TwoBodyAOInt>> ints;
         for (int thread = 0; thread < df_ints_num_threads_; thread++) {
@@ -304,8 +373,14 @@ void DirectJK::compute_JK() {
             ints.push_back(std::shared_ptr<TwoBodyAOInt>(ints[0]->clone()));
             if (density_screening_) ints[thread]->update_density(D_ref);
         }
-        if (do_J_ && do_K_) {
-            build_JK(ints, D_ref, J_ref, K_ref);
+        if (linK_) {
+            if (iteration_ == 0) {
+                build_JK(ints, D_ref, J_ref, K_ref);
+            } else {
+                std::shared_ptr<LinearHelper> linh = std::make_shared<LinearHelper>(primary_, lr_symmetric_);
+                build_J(ints, D_ref, J_ref);
+                linh->build_linK(ints, D_ref, K_ref);
+            }
         } else if (do_J_) {
             std::vector<std::shared_ptr<Matrix>> temp;
             for (size_t i = 0; i < D_ao_.size(); i++) {
@@ -320,6 +395,7 @@ void DirectJK::compute_JK() {
             build_JK(ints, D_ref, temp, K_ref);
         }
     }
+    iteration_ += 1;
 }
 void DirectJK::postiterations() {}
 
@@ -335,6 +411,7 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::v
     for (size_t ind = 0; ind < K.size(); ind++) {
         K[ind]->zero();
     }
+
     // => Sizing <= //
 
     int nshell = primary_->nshell();
@@ -414,6 +491,7 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::v
             }
         }
     }
+
     size_t ntask_pair = task_pairs.size();
     size_t ntask_pair2 = ntask_pair * ntask_pair;
 
@@ -482,12 +560,15 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::v
                 int P = task_shells[P2];
                 int Q = task_shells[Q2];
                 if (!ints[0]->shell_pair_significant(P, Q)) continue;
+
                 for (int R2 = R2start; R2 < R2start + nRtask; R2++) {
                     for (int S2 = S2start; S2 < S2start + nStask; S2++) {
                         if (S2 > R2) continue;
+                        if (R2 * nshell + S2 > P2 * nshell + Q2) continue;
+                        
                         int R = task_shells[R2];
                         int S = task_shells[S2];
-                        if (R2 * nshell + S2 > P2 * nshell + Q2) continue;
+                        
                         if (!ints[0]->shell_pair_significant(R, S)) continue;
                         
                         if (density_screening_ && !ints[0]->shell_significant_density(P, Q, R, S)) continue;
@@ -572,6 +653,7 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::v
                                             J2p[(r + Roff2) * dSsize + s + Soff2] +=
                                                 prefactor * (Dp[p + Poff][q + Qoff] + Dp[q + Qoff][p + Poff]) *
                                                 (*buffer2);
+                                            
                                             K1p[(p + Poff2) * dRsize + r + Roff2] +=
                                                 prefactor * (Dp[q + Qoff][s + Soff]) * (*buffer2);
                                             K2p[(p + Poff2) * dSsize + s + Soff2] +=
@@ -629,9 +711,9 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::v
                 K7p = JKTp[8L * max_task];
                 K8p = JKTp[9L * max_task];
             }
-
+                
             // > J_PQ < //
-
+                
             for (int P2 = 0; P2 < nPtask; P2++) {
                 for (int Q2 = 0; Q2 < nQtask; Q2++) {
                     int P = task_shells[P2start + P2];
@@ -795,6 +877,327 @@ void DirectJK::build_JK(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::v
                         possible_shells, computed_shells / (double)possible_shells);
     }
     timer_off("build_JK()");
+}
+    
+void DirectJK::build_J(std::vector<std::shared_ptr<TwoBodyAOInt> >& ints, std::vector<std::shared_ptr<Matrix> >& D,
+                  std::vector<std::shared_ptr<Matrix> >& J) {
+    
+    timer_on("build_J()");
+    
+    // => Zeroing <= //
+    for (size_t ind = 0; ind < J.size(); ind++) {
+        J[ind]->zero();
+    }
+    
+    // => Sizing <= //
+
+    int nshell = primary_->nshell();
+    int nthread = df_ints_num_threads_;
+
+    // => Task Blocking <= //
+
+    std::vector<int> task_shells;
+    std::vector<int> task_starts;
+
+    // => Atomic Blocking <= //
+
+    int atomic_ind = -1;
+    for (int P = 0; P < nshell; P++) {
+        if (primary_->shell(P).ncenter() > atomic_ind) {
+            task_starts.push_back(P);
+            atomic_ind++;
+        }
+        task_shells.push_back(P);
+    }
+    task_starts.push_back(nshell);
+
+    // => End Atomic Blocking <= //
+
+    size_t ntask = task_starts.size() - 1;
+
+    std::vector<int> task_offsets;
+    task_offsets.push_back(0);
+    for (int P2 = 0; P2 < primary_->nshell(); P2++) {
+        task_offsets.push_back(task_offsets[P2] + primary_->shell(task_shells[P2]).nfunction());
+    }
+
+    size_t max_task = 0L;
+    for (size_t task = 0; task < ntask; task++) {
+        size_t size = 0L;
+        for (int P2 = 0; P2 < task_starts[task + 1]; P2++) {
+            size += primary_->shell(task_shells[P2]).nfunction();
+        }
+        max_task = (max_task >= size ? max_task : size);
+    }
+
+    if (debug_) {
+        outfile->Printf("  ==> DirectJK: Task Blocking <==\n\n");
+        for (size_t task = 0; task < ntask; task++) {
+            outfile->Printf("  Task: %3d, Task Start: %4d, Task End: %4d\n", task, task_starts[task],
+                            task_starts[task + 1]);
+            for (int P2 = task_starts[task]; P2 < task_starts[task + 1]; P2++) {
+                int P = task_shells[P2];
+                int size = primary_->shell(P).nfunction();
+                int off = primary_->shell(P).function_index();
+                int off2 = task_offsets[P2];
+                outfile->Printf("    Index %4d, Shell: %4d, Size: %4d, Offset: %4d, Offset2: %4d\n", P2, P, size, off,
+                                off2);
+            }
+        }
+        outfile->Printf("\n");
+    }
+
+    // => Significant Task Pairs (PQ|-style <= //
+
+    std::vector<std::pair<int, int>> task_pairs;
+    for (size_t Ptask = 0; Ptask < ntask; Ptask++) {
+        for (size_t Qtask = 0; Qtask < ntask; Qtask++) {
+            if (Qtask > Ptask) continue;
+            bool found = false;
+            for (int P2 = task_starts[Ptask]; P2 < task_starts[Ptask + 1]; P2++) {
+                for (int Q2 = task_starts[Qtask]; Q2 < task_starts[Qtask + 1]; Q2++) {
+                    int P = task_shells[P2];
+                    int Q = task_shells[Q2];
+                    if (ints[0]->shell_pair_significant(P, Q)) {
+                        found = true;
+                        task_pairs.push_back(std::pair<int, int>(Ptask, Qtask));
+                        break;
+                    }
+                }
+                if (found) break;
+            }
+        }
+    }
+
+    size_t ntask_pair = task_pairs.size();
+    size_t ntask_pair2 = ntask_pair * ntask_pair;
+
+    // => Intermediate Buffers <= //
+
+    std::vector<std::vector<std::shared_ptr<Matrix> > > JKT;
+    for (int thread = 0; thread < nthread; thread++) {
+        std::vector<std::shared_ptr<Matrix> > JK2;
+        for (size_t ind = 0; ind < D.size(); ind++) {
+            JK2.push_back(std::make_shared<Matrix>("JKT (J only)", 2 * max_task, max_task));
+        }
+        JKT.push_back(JK2);
+    }
+
+    // => Benchmarks <= //
+
+    size_t computed_shells = 0L;
+
+// ==> Master Task Loop <== //
+
+#pragma omp parallel for num_threads(nthread) schedule(dynamic) reduction(+ : computed_shells)
+    for (size_t task = 0L; task < ntask_pair2; task++) {
+        size_t task1 = task / ntask_pair;
+        size_t task2 = task % ntask_pair;
+
+        int Ptask = task_pairs[task1].first;
+        int Qtask = task_pairs[task1].second;
+        int Rtask = task_pairs[task2].first;
+        int Stask = task_pairs[task2].second;
+
+        // GOTCHA! Thought this should be RStask > PQtask, but
+        // H2/3-21G: Task (10|11) gives valid quartets (30|22) and (31|22)
+        // This is an artifact that multiple shells on each task allow
+        // for for the Ptask's index to possibly trump any RStask pair,
+        // regardless of Qtask's index
+        if (Rtask > Ptask) continue;
+
+        // printf("Task: %2d %2d %2d %2d\n", Ptask, Qtask, Rtask, Stask);
+
+        int nPtask = task_starts[Ptask + 1] - task_starts[Ptask];
+        int nQtask = task_starts[Qtask + 1] - task_starts[Qtask];
+        int nRtask = task_starts[Rtask + 1] - task_starts[Rtask];
+        int nStask = task_starts[Stask + 1] - task_starts[Stask];
+
+        int P2start = task_starts[Ptask];
+        int Q2start = task_starts[Qtask];
+        int R2start = task_starts[Rtask];
+        int S2start = task_starts[Stask];
+
+        int dPsize = task_offsets[P2start + nPtask] - task_offsets[P2start];
+        int dQsize = task_offsets[Q2start + nQtask] - task_offsets[Q2start];
+        int dRsize = task_offsets[R2start + nRtask] - task_offsets[R2start];
+        int dSsize = task_offsets[S2start + nStask] - task_offsets[S2start];
+
+        int thread = 0;
+#ifdef _OPENMP
+        thread = omp_get_thread_num();
+#endif
+
+        // => Master shell quartet loops <= //
+
+        bool touched = false;
+        for (int P2 = P2start; P2 < P2start + nPtask; P2++) {
+            for (int Q2 = Q2start; Q2 < Q2start + nQtask; Q2++) {
+                
+                if (Q2 > P2) continue;
+                
+                int P = task_shells[P2];
+                int Q = task_shells[Q2];
+                
+                if (!ints[0]->shell_pair_significant(P, Q)) continue;
+
+                for (int R2 = R2start; R2 < R2start + nRtask; R2++) {
+                    for (int S2 = S2start; S2 < S2start + nStask; S2++) {
+                        
+                        if (S2 > R2) continue;
+                        if (R2 * nshell + S2 > P2 * nshell + Q2) continue;
+                        
+                        int R = task_shells[R2];
+                        int S = task_shells[S2];
+                        
+                        if (!ints[0]->shell_pair_significant(R, S)) continue;
+                        if (!ints[0]->shell_significant(P, Q, R, S)) continue;
+
+                        if (density_screening_ && !ints[0]->shell_significant_density_J(P, Q, R, S)) continue;
+
+                        // printf("Quartet: %2d %2d %2d %2d\n", P, Q, R, S);
+                        // timer_on("compute_shell(P, Q, R, S)");
+                        // if (thread == 0) timer_on("JK: Ints");
+                        if (ints[thread]->compute_shell(P, Q, R, S) == 0)
+                            continue;  // No integrals in this shell quartet
+                        computed_shells++;
+                        // if (thread == 0) timer_off("JK: Ints");
+                        // timer_off("compute_shell(P, Q, R, S)");
+
+                        const double* buffer = ints[thread]->buffer();
+
+                        int Psize = primary_->shell(P).nfunction();
+                        int Qsize = primary_->shell(Q).nfunction();
+                        int Rsize = primary_->shell(R).nfunction();
+                        int Ssize = primary_->shell(S).nfunction();
+
+                        int Poff = primary_->shell(P).function_index();
+                        int Qoff = primary_->shell(Q).function_index();
+                        int Roff = primary_->shell(R).function_index();
+                        int Soff = primary_->shell(S).function_index();
+
+                        int Poff2 = task_offsets[P2] - task_offsets[P2start];
+                        int Qoff2 = task_offsets[Q2] - task_offsets[Q2start];
+                        int Roff2 = task_offsets[R2] - task_offsets[R2start];
+                        int Soff2 = task_offsets[S2] - task_offsets[S2start];
+
+                        // if (thread == 0) timer_on("JK: GEMV");
+                        for (size_t ind = 0; ind < D.size(); ind++) {
+                            double** Dp = D[ind]->pointer();
+                            double** JKTp = JKT[thread][ind]->pointer();
+                            const double* buffer2 = buffer;
+
+                            if (!touched) {
+                                ::memset((void*)JKTp[0L * max_task], '\0', dPsize * dQsize * sizeof(double));
+                                ::memset((void*)JKTp[1L * max_task], '\0', dRsize * dSsize * sizeof(double));
+                            }
+
+                            double* J1p = JKTp[0L * max_task];
+                            double* J2p = JKTp[1L * max_task];
+
+                            double prefactor = 1.0;
+                            if (P == Q) prefactor *= 0.5;
+                            if (R == S) prefactor *= 0.5;
+                            if (P == R && Q == S) prefactor *= 0.5;
+
+                            for (int p = 0; p < Psize; p++) {
+                                for (int q = 0; q < Qsize; q++) {
+                                    for (int r = 0; r < Rsize; r++) {
+                                        for (int s = 0; s < Ssize; s++) {
+                                            
+                                            J1p[(p + Poff2) * dQsize + q + Qoff2] +=
+                                                prefactor * (Dp[r + Roff][s + Soff] + Dp[s + Soff][r + Roff]) *
+                                                (*buffer2);
+                                            J2p[(r + Roff2) * dSsize + s + Soff2] +=
+                                                prefactor * (Dp[p + Poff][q + Qoff] + Dp[q + Qoff][p + Poff]) *
+                                                (*buffer2);
+                                            
+                                            buffer2++;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        touched = true;
+                        // if (thread == 0) timer_off("JK: GEMV");
+                    }
+                }
+            }
+        }  // End Shell Quartets
+
+        if (!touched) continue;
+
+        // => Stripe out <= //
+
+        // if (thread == 0) timer_on("JK: Atomic");
+        for (size_t ind = 0; ind < D.size(); ind++) {
+            double** JKTp = JKT[thread][ind]->pointer();
+            double** Jp = J[ind]->pointer();
+
+            double* J1p = JKTp[0L * max_task];
+            double* J2p = JKTp[1L * max_task];
+                
+            // > J_PQ < //
+                
+            for (int P2 = 0; P2 < nPtask; P2++) {
+                for (int Q2 = 0; Q2 < nQtask; Q2++) {
+                    int P = task_shells[P2start + P2];
+                    int Q = task_shells[Q2start + Q2];
+                    int Psize = primary_->shell(P).nfunction();
+                    int Qsize = primary_->shell(Q).nfunction();
+                    int Poff = primary_->shell(P).function_index();
+                    int Qoff = primary_->shell(Q).function_index();
+                    int Poff2 = task_offsets[P2 + P2start] - task_offsets[P2start];
+                    int Qoff2 = task_offsets[Q2 + Q2start] - task_offsets[Q2start];
+                    for (int p = 0; p < Psize; p++) {
+                        for (int q = 0; q < Qsize; q++) {
+#pragma omp atomic
+                            Jp[p + Poff][q + Qoff] += J1p[(p + Poff2) * dQsize + q + Qoff2];
+                        }
+                    }
+                }
+            }
+
+            // > J_RS < //
+
+            for (int R2 = 0; R2 < nRtask; R2++) {
+                for (int S2 = 0; S2 < nStask; S2++) {
+                    int R = task_shells[R2start + R2];
+                    int S = task_shells[S2start + S2];
+                    int Rsize = primary_->shell(R).nfunction();
+                    int Ssize = primary_->shell(S).nfunction();
+                    int Roff = primary_->shell(R).function_index();
+                    int Soff = primary_->shell(S).function_index();
+                    int Roff2 = task_offsets[R2 + R2start] - task_offsets[R2start];
+                    int Soff2 = task_offsets[S2 + S2start] - task_offsets[S2start];
+                    for (int r = 0; r < Rsize; r++) {
+                        for (int s = 0; s < Ssize; s++) {
+#pragma omp atomic
+                            Jp[r + Roff][s + Soff] += J2p[(r + Roff2) * dSsize + s + Soff2];
+                        }
+                    }
+                }
+            }
+
+        }  // End stripe out
+        // if (thread == 0) timer_off("JK: Atomic");
+
+    }  // End master task list
+
+    for (size_t ind = 0; ind < D.size(); ind++) {
+        J[ind]->scale(2.0);
+        J[ind]->hermitivitize();
+    }
+
+    if (bench_) {
+        auto mode = std::ostream::app;
+        auto printer = std::make_shared<PsiOutStream>("bench.dat", mode);
+        size_t ntri = nshell * (nshell + 1L) / 2L;
+        size_t possible_shells = ntri * (ntri + 1L) / 2L;
+        printer->Printf("Computed %20zu Shell Quartets out of %20zu, (%11.3E ratio)\n", computed_shells,
+                        possible_shells, computed_shells / (double)possible_shells);
+    }
+    timer_off("build_J()");
 }
 
 }  // namespace psi
