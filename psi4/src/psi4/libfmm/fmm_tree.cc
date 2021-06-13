@@ -40,127 +40,19 @@ int ndigits(long n) {
     return count;
 }
 
-void radix_sort_distributions(std::vector<Distribution *>& dist) {
-    // Number of digits of each phase of the sort
-    // Resolution for floats is 0.001 bohr
-    int zdig = 1, ydig = 1, xdig = 1, rdig = 1, wsdig = 1;
+Distribution::Distribution(int p, int q, double rext, double coef, double exp, Vector3 center, int lx, int ly, int lz, int lmax) {
+    basispair_ = std::make_pair<int, int>(p, q);
+    center_ = center;
+    coef_ = coef;
+    exp_ = exp;
+    lx_ = lx;
+    ly_ = ly;
+    lz_ = lz;
+    rext_ = rext;
+    lmax_ = lmax;
 
-    for (Distribution* d : dist) {
-        Vector3 center = d->get_center();
-        double x = center[0];
-        double y = center[1];
-        double z = center[2];
-        double r = d->get_rext();
-        int ws = d->get_rext();
-
-        zdig = std::max(zdig, ndigits(z * 1000));
-        ydig = std::max(ydig, ndigits(y * 1000));
-        xdig = std::max(xdig, ndigits(x * 1000));
-        rdig = std::max(rdig, ndigits(r * 1000));
-        wsdig = std::max(rdig, ndigits(ws));
-    }
-
-    std::vector<std::vector<Distribution *>> buckets(19);
-
-    // Sort by z coordinates
-    long curr10 = 10;
-
-    for (int iter = 0; iter < zdig; iter++) {
-        for (int ind = 0; ind < dist.size(); ind++) {
-            int dig = (long)(dist[ind]->get_center()[2] * 1000) / curr10;
-            buckets[dig + 9].push_back(dist[ind]);
-        }
-        curr10 *= 10;
-    }
-
-    int idx = 0;
-    for (int b = 0; b < 19; b++) {
-        while (buckets[b].size() > 0) {
-            dist[idx] = buckets[b].back();
-            buckets[b].pop_back();
-            idx += 1;
-        }
-    }
-
-    // Sort by y coordinates
-    curr10 = 10;
-
-    for (int iter = 0; iter < ydig; iter++) {
-        for (int ind = 0; ind < dist.size(); ind++) {
-            int dig = (long)(dist[ind]->get_center()[1] * 1000) / curr10;
-            buckets[dig + 9].push_back(dist[ind]);
-        }
-        curr10 *= 10;
-    }
-
-    idx = 0;
-    for (int b = 0; b < 19; b++) {
-        while (buckets[b].size() > 0) {
-            dist[idx] = buckets[b].back();
-            buckets[b].pop_back();
-            idx += 1;
-        }
-    }
-
-    // Sort by x coordinates
-    curr10 = 10;
-
-    for (int iter = 0; iter < xdig; iter++) {
-        for (int ind = 0; ind < dist.size(); ind++) {
-            int dig = (long)(dist[ind]->get_center()[0] * 1000) / curr10;
-            buckets[dig + 9].push_back(dist[ind]);
-        }
-        curr10 *= 10;
-    }
-
-    idx = 0;
-    for (int b = 0; b < 19; b++) {
-        while (buckets[b].size() > 0) {
-            dist[idx] = buckets[b].back();
-            buckets[b].pop_back();
-            idx += 1;
-        }
-    }
-
-    // Sort by radial extents
-    curr10 = 10;
-
-    for (int iter = 0; iter < rdig; iter++) {
-        for (int ind = 0; ind < dist.size(); ind++) {
-            int dig = (long)(dist[ind]->get_rext() * 1000) / curr10;
-            buckets[dig + 9].push_back(dist[ind]);
-        }
-        curr10 *= 10;
-    }
-
-    idx = 0;
-    for (int b = 0; b < 19; b++) {
-        while (buckets[b].size() > 0) {
-            dist[idx] = buckets[b].back();
-            buckets[b].pop_back();
-            idx += 1;
-        }
-    }
-
-    // Sort by well separatedness
-    curr10 = 10;
-
-    for (int iter = 0; iter < wsdig; iter++) {
-        for (int ind = 0; ind < dist.size(); ind++) {
-            int dig = dist[ind]->get_ws() / curr10;
-            buckets[dig + 9].push_back(dist[ind]);
-        }
-        curr10 *= 10;
-    }
-
-    idx = 0;
-    for (int b = 0; b < 19; b++) {
-        while (buckets[b].size() > 0) {
-            dist[idx] = buckets[b].back();
-            buckets[b].pop_back();
-            idx += 1;
-        }
-    }
+    mpoles_ = std::make_shared<RealSolidHarmonics>(lmax_, center_, Regular);
+    Vff_ = std::make_shared<RealSolidHarmonics>(lmax_, center, Irregular);
 }
 
 CFMMBox::CFMMBox(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
@@ -246,12 +138,134 @@ void CFMMBox::common_init(CFMMBox* parent, std::shared_ptr<Molecule> molecule, s
         }
     }
 
-    /*
     ws_max_ = 0;
-    branches_.resize(1);
-    branches_[0] = new CFMMBranch(this, 0);
-    */
+    distributions_.resize(1);
 
+    mpoles_ = std::make_shared<RealSolidHarmonics>(lmax_, center_, Regular);
+    Vff_ = std::make_shared<RealSolidHarmonics>(lmax_, center_, Irregular);
+    ff_energy_ = 0.0;
+
+}
+
+void CFMMBox::add_distribution(int ws, int p, int q, double rext, double coef, double exp, Vector3 center, int lx, int ly, int lz, int lmax) {
+    if (ws > ws_max_) {
+        ws_max_ = ws;
+        distributions_.resize(ws_max_ + 1);
+    }
+    distributions_[ws].push_back(new Distribution(p, q, rext, coef, exp, center, lx, ly, lz, lmax));
+}
+
+void CFMMBox::add_distribution(int ws, Distribution* dist) {
+    if (ws > ws_max_) {
+        ws_max_ = ws;
+        distributions_.resize(ws_max_ + 1);
+    }
+    distributions_[ws].push_back(dist);
+}
+
+void CFMMBox::radix_sort_distributions(int ws) {
+    // Number of digits of each phase of the sort
+    // Resolution for floats is 0.001 bohr
+    int zdig = 1, ydig = 1, xdig = 1, rdig = 1;
+
+    for (Distribution* dist : distributions_[ws]) {
+        Vector3 center = dist->get_center();
+        double x = center[0];
+        double y = center[1];
+        double z = center[2];
+        double r = dist->get_rext();
+
+        zdig = std::max(zdig, ndigits(z * 1000));
+        ydig = std::max(ydig, ndigits(y * 1000));
+        xdig = std::max(xdig, ndigits(x * 1000));
+        rdig = std::max(rdig, ndigits(r * 1000));
+    }
+
+    std::vector<std::vector<Distribution *>> buckets(19);
+
+    // Sort by z coordinates
+    long curr10 = 10;
+
+    for (int iter = 0; iter < zdig; iter++) {
+        for (int ind = 0; ind < distributions_[ws].size(); ind++) {
+            int dig = (long)(distributions_[ws][ind]->get_center()[2] * 1000) / curr10;
+            buckets[dig + 9].push_back(distributions_[ws][ind]);
+        }
+        curr10 *= 10;
+    }
+
+    int idx = 0;
+    for (int b = 0; b < 19; b++) {
+        while (buckets[b].size() > 0) {
+            dist[idx] = buckets[b].back();
+            buckets[b].pop_back();
+            idx += 1;
+        }
+    }
+
+    // Sort by y coordinates
+    curr10 = 10;
+
+    for (int iter = 0; iter < ydig; iter++) {
+        for (int ind = 0; ind < distributions_[ws].size(); ind++) {
+            int dig = (long)(distributions_[ws][ind]->get_center()[1] * 1000) / curr10;
+            buckets[dig + 9].push_back(distributions_[ws][ind]);
+        }
+        curr10 *= 10;
+    }
+
+    idx = 0;
+    for (int b = 0; b < 19; b++) {
+        while (buckets[b].size() > 0) {
+            dist[idx] = buckets[b].back();
+            buckets[b].pop_back();
+            idx += 1;
+        }
+    }
+
+    // Sort by x coordinates
+    curr10 = 10;
+
+    for (int iter = 0; iter < xdig; iter++) {
+        for (int ind = 0; ind < distributions_[ws].size(); ind++) {
+            int dig = (long)(distributions_[ws][ind]->get_center()[0] * 1000) / curr10;
+            buckets[dig + 9].push_back(distributions_[ws][ind]);
+        }
+        curr10 *= 10;
+    }
+
+    idx = 0;
+    for (int b = 0; b < 19; b++) {
+        while (buckets[b].size() > 0) {
+            dist[idx] = buckets[b].back();
+            buckets[b].pop_back();
+            idx += 1;
+        }
+    }
+
+    // Sort by radial extents
+    curr10 = 10;
+
+    for (int iter = 0; iter < rdig; iter++) {
+        for (int ind = 0; ind < distributions_[ws].size(); ind++) {
+            int dig = (long)(distributions_[ws][ind]->get_rext() * 1000) / curr10;
+            buckets[dig + 9].push_back(distributions_[ws][ind]);
+        }
+        curr10 *= 10;
+    }
+
+    idx = 0;
+    for (int b = 0; b < 19; b++) {
+        while (buckets[b].size() > 0) {
+            dist[idx] = buckets[b].back();
+            buckets[b].pop_back();
+            idx += 1;
+        }
+    }
+}
+
+void CFMMBox::form_distributions() {
+    
     // Create distributions and add them to the list
     for (int Ptask = 0; Ptask < atoms_.size(); Ptask++) {
         int Patom = atoms_[Ptask];
@@ -296,17 +310,6 @@ void CFMMBox::common_init(CFMMBox* parent, std::shared_ptr<Molecule> molecule, s
                             int ext = 2 * std::ceil(r_ext / length_);
                             int ws_d = std::max(2, ext);
 
-                            /*
-                            if (ws_d > ws_max_) {
-                                int old_max = ws_max_;
-                                ws_max_ = ws_d;
-                                branches_.resize(ws_max_ / 2 + 1, nullptr);
-                                for (int ws = old_max + 2; ws <= ws_max_; ws += 2) {
-                                    branches_[ws / 2] = new CFMMBox(this, ws);
-                                }
-                            }
-                            */
-
                             int poff = 0;
                             for (int pi = 0; pi <= pl; pi++) {
                                 int pa = pl - pi;
@@ -321,8 +324,8 @@ void CFMMBox::common_init(CFMMBox* parent, std::shared_ptr<Molecule> molecule, s
                                             int qb = qi - qj;
                                             int qc = qj;
 
-                                            add_distribution(p_start + poff, q_start + qoff, r_ext, d_coef, d_exp, 
-                                                            Dcenter, pa + qa, pb + qb, pc + qc);
+                                            add_distribution(ws_d, p_start + poff, q_start + qoff, r_ext, d_coef, d_exp, 
+                                                            Dcenter, pa + qa, pb + qb, pc + qc, lmax_);
 
                                             qoff += 1;
                                         }
@@ -338,14 +341,22 @@ void CFMMBox::common_init(CFMMBox* parent, std::shared_ptr<Molecule> molecule, s
             }
         }
     }
-    // Radix Sort Distributions
-    radix_sort_distributions(distributions_);
+    // Radix Sort Distributions after they are added
+    for (int ws = 2; ws <= ws_max_; ws += 2) {
+        radix_sort_distributions(ws);
+    }
+}
 
-    int nbf = basisset_->nbf();
+void CFMMBox::form_distributions_from_children() {
 
-    mpoles_ = std::make_shared<RealSolidHarmonics>(lmax_, center_, Regular);
-    Vff_ = std::make_shared<RealSolidHarmonics>(lmax_, center_, Irregular);
-    ff_energy_ = 0.0;
+    for (CFMMBox* child : children_) {
+        for (int ws = 0; ws <= child->ws_max_; ws++) {
+            for (Distribution* dist : child->distributions_[ws]) {
+                add_distribution(std::ceil((double)ws/2), dist);
+            }
+            radix_sort_distributions(ws);
+        }
+    }
 
 }
 

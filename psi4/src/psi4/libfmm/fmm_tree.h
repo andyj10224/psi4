@@ -43,8 +43,8 @@ class Distribution {
       int lz_;
       // The radial extent of this distribution
       double rext_;
-      // The well-separatedness of this distribution
-      int ws_;
+      // Maximum angular momentum
+      int lmax_;
       // The multipoles of this distribution
       std::shared_ptr<RealSolidHarmonics> mpoles_;
       // The total far field potential felt by this distribution
@@ -52,7 +52,7 @@ class Distribution {
 
     public:
       // Constructor for a distribution
-      Distribution(int p, int q, int ws, double coef, double exp, Vector3 center, int lx, int ly, int lz);
+      Distribution(int p, int q, double rext, double coef, double exp, Vector3 center, int lx, int ly, int lz, int lmax);
       // Returns the center of the distribution
       Vector3 get_center() { return center_; }
       // Returns the coef of the distribution
@@ -108,7 +108,7 @@ class CFMMBox {
       // Children of the CFMMBox
       std::vector<CFMMBox *> children_;
       // Branches that belong to this box
-      std::vector<Distribution *> distributions_;
+      std::vector<std::vector<Distribution *>> distributions_;
       // Level the box is at (0 = root)
       int level_;
       // Maximum Multipole Angular Momentum
@@ -154,8 +154,12 @@ class CFMMBox {
       void common_init(CFMMBox* parent, std::shared_ptr<Molecule> molecule, 
                         std::shared_ptr<BasisSet> basisset, Vector3 origin, double length, int level, int lmax);
       
-      // Add a distribution
-      void add_distribution(int p, int q, int ws, double coef, double exp, Vector3 center, int lx, int ly, int lz);
+      // Add a single distribution
+      void add_distribution(int ws, int p, int q, double rext, double coef, double exp, Vector3 center, int lx, int ly, int lz, int lmax);
+      // Add a distribution by reference (for higher-level boxes)
+      void add_distribution(int ws, Distribution *dist);
+      // Sort the distributions at a particular ws level
+      void radix_sort_distributions(int ws);
 
       // Compute the J matrix contributions at each level
       void compute_self_J();
@@ -175,6 +179,10 @@ class CFMMBox {
       void compute_mpoles();
       // Compute multipoles from children
       void compute_mpoles_from_children();
+      // Form distributions
+      void form_distributions();
+      // Form distributions from children (for higher levels)
+      void form_distributions_from_children();
       // Sets the near field and local far field vectors
       void set_nf_lff();
       // Calculate far field vector from local and parent far fields
