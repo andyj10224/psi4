@@ -24,9 +24,9 @@ class Distribution {
 
     protected:
       // A reference to the basis set that the distribution belongs to
-      std::shared_ptr<BasisSet> basisset_;
+      // std::shared_ptr<BasisSet> basisset_;
       // A reference to the branch that this distribution belongs to
-      CFMMBranch* branch_;
+      // CFMMBranch* branch_;
       // What basis set pair the distribution belongs to
       std::pair<int, int> basispair_;
       // The center of the distribution
@@ -43,6 +43,8 @@ class Distribution {
       int lz_;
       // The radial extent of this distribution
       double rext_;
+      // The well-separatedness of this distribution
+      int ws_;
       // The multipoles of this distribution
       std::shared_ptr<RealSolidHarmonics> mpoles_;
       // The total far field potential felt by this distribution
@@ -50,13 +52,17 @@ class Distribution {
 
     public:
       // Constructor for a distribution
-      Distribution();
+      Distribution(int p, int q, int ws, double coef, double exp, Vector3 center, int lx, int ly, int lz);
       // Returns the center of the distribution
       Vector3 get_center() { return center_; }
       // Returns the coef of the distribution
       double get_coef() { return coef_; }
       // Returns the exponent of the distribution
       double get_exp() { return exp_; }
+      // Returns the radial extent of the distribution
+      double get_rext() { return rext_; }
+      // Returns the well-separatedness criteria of the distribution
+      double get_ws() { return ws_; }
       // Gets x exponent of basis function
       int lx() { return lx_; }
       // Gets y exponent of basis function
@@ -70,6 +76,7 @@ class Distribution {
 
 }
 
+/*
 class CFMMBranch {
 
     protected:
@@ -83,8 +90,15 @@ class CFMMBranch {
     public:
       // Constructor
       CFMMBranch(CFMMBox* box, int ws);
+      // Add a distribution
+      void add_distribution(int p, int q, double coef, double exp, Vector3 center, int lx, int ly, int lz);
+      /// Sort all distributions by extent
+      void sort_distributions_by_extent();
+      /// Sort all distributions by center
+      void sort_distributions_by_center();
 
 }
+*/
 
 class CFMMBox {
 
@@ -94,13 +108,13 @@ class CFMMBox {
       // Children of the CFMMBox
       std::vector<CFMMBox *> children_;
       // Branches that belong to this box
-      std::vector<CFMMBranch *> branches_;
+      std::vector<Distribution *> distributions_;
       // Level the box is at (0 = root)
       int level_;
       // Maximum Multipole Angular Momentum
       int lmax_;
-      // Well-separatedness criteria for the particular Box
-      int ws_;
+      // Maximum Well-separatedness criteria for the particular Box
+      int ws_max_;
       // The molecule that is referenced by this box
       std::shared_ptr<Molecule> molecule_;
       // The basis set that the molecule uses
@@ -139,6 +153,9 @@ class CFMMBox {
       // Common function used by constructor
       void common_init(CFMMBox* parent, std::shared_ptr<Molecule> molecule, 
                         std::shared_ptr<BasisSet> basisset, Vector3 origin, double length, int level, int lmax);
+      
+      // Add a distribution
+      void add_distribution(int p, int q, int ws, double coef, double exp, Vector3 center, int lx, int ly, int lz);
 
       // Compute the J matrix contributions at each level
       void compute_self_J();

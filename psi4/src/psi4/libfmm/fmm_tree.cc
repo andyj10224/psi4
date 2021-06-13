@@ -30,6 +30,139 @@
 
 namespace psi {
 
+int ndigits(long n) {
+    long absn = std::abs(n);
+    int count = 1;
+    while (absn >= 9) {
+        absn /= 10;
+        count += 1;
+    }
+    return count;
+}
+
+void radix_sort_distributions(std::vector<Distribution *>& dist) {
+    // Number of digits of each phase of the sort
+    // Resolution for floats is 0.001 bohr
+    int zdig = 1, ydig = 1, xdig = 1, rdig = 1, wsdig = 1;
+
+    for (Distribution* d : dist) {
+        Vector3 center = d->get_center();
+        double x = center[0];
+        double y = center[1];
+        double z = center[2];
+        double r = d->get_rext();
+        int ws = d->get_rext();
+
+        zdig = std::max(zdig, ndigits(z * 1000));
+        ydig = std::max(ydig, ndigits(y * 1000));
+        xdig = std::max(xdig, ndigits(x * 1000));
+        rdig = std::max(rdig, ndigits(r * 1000));
+        wsdig = std::max(rdig, ndigits(ws));
+    }
+
+    std::vector<std::vector<Distribution *>> buckets(19);
+
+    // Sort by z coordinates
+    long curr10 = 10;
+
+    for (int iter = 0; iter < zdig; iter++) {
+        for (int ind = 0; ind < dist.size(); ind++) {
+            int dig = (long)(dist[ind]->get_center()[2] * 1000) / curr10;
+            buckets[dig + 9].push_back(dist[ind]);
+        }
+        curr10 *= 10;
+    }
+
+    int idx = 0;
+    for (int b = 0; b < 19; b++) {
+        while (buckets[b].size() > 0) {
+            dist[idx] = buckets[b].back();
+            buckets[b].pop_back();
+            idx += 1;
+        }
+    }
+
+    // Sort by y coordinates
+    curr10 = 10;
+
+    for (int iter = 0; iter < ydig; iter++) {
+        for (int ind = 0; ind < dist.size(); ind++) {
+            int dig = (long)(dist[ind]->get_center()[1] * 1000) / curr10;
+            buckets[dig + 9].push_back(dist[ind]);
+        }
+        curr10 *= 10;
+    }
+
+    idx = 0;
+    for (int b = 0; b < 19; b++) {
+        while (buckets[b].size() > 0) {
+            dist[idx] = buckets[b].back();
+            buckets[b].pop_back();
+            idx += 1;
+        }
+    }
+
+    // Sort by x coordinates
+    curr10 = 10;
+
+    for (int iter = 0; iter < xdig; iter++) {
+        for (int ind = 0; ind < dist.size(); ind++) {
+            int dig = (long)(dist[ind]->get_center()[0] * 1000) / curr10;
+            buckets[dig + 9].push_back(dist[ind]);
+        }
+        curr10 *= 10;
+    }
+
+    idx = 0;
+    for (int b = 0; b < 19; b++) {
+        while (buckets[b].size() > 0) {
+            dist[idx] = buckets[b].back();
+            buckets[b].pop_back();
+            idx += 1;
+        }
+    }
+
+    // Sort by radial extents
+    curr10 = 10;
+
+    for (int iter = 0; iter < rdig; iter++) {
+        for (int ind = 0; ind < dist.size(); ind++) {
+            int dig = (long)(dist[ind]->get_rext() * 1000) / curr10;
+            buckets[dig + 9].push_back(dist[ind]);
+        }
+        curr10 *= 10;
+    }
+
+    idx = 0;
+    for (int b = 0; b < 19; b++) {
+        while (buckets[b].size() > 0) {
+            dist[idx] = buckets[b].back();
+            buckets[b].pop_back();
+            idx += 1;
+        }
+    }
+
+    // Sort by well separatedness
+    curr10 = 10;
+
+    for (int iter = 0; iter < wsdig; iter++) {
+        for (int ind = 0; ind < dist.size(); ind++) {
+            int dig = dist[ind]->get_ws() / curr10;
+            buckets[dig + 9].push_back(dist[ind]);
+        }
+        curr10 *= 10;
+    }
+
+    idx = 0;
+    for (int b = 0; b < 19; b++) {
+        while (buckets[b].size() > 0) {
+            dist[idx] = buckets[b].back();
+            buckets[b].pop_back();
+            idx += 1;
+        }
+    }
+}
+
 CFMMBox::CFMMBox(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
         std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J, int lmax) {
     D_ = D;
@@ -88,27 +221,6 @@ void CFMMBox::common_init(CFMMBox* parent, std::shared_ptr<Molecule> molecule, s
     if (!parent_) {
         mpole_coefs_ = std::make_shared<HarmonicCoefficients>(lmax_, Regular);
 
-        /*
-        for (int l = 0; l <= lmax_; l++) {
-            int nc = ncart(l);
-            for (int m = -l; m <= l; m++) {
-                int mu = m_addr(m);
-                std::unordered_map<int, double>& terms = mpole_coefs_->get_terms(l, mu);
-
-                for (const std::pair<int, double>& term : terms) {
-                    int abc = term.first;
-                    double coef = term.second;
-
-                    int a = abc / (nc * nc);
-                    int bc = abc % (nc * nc);
-                    int b = bc / nc;
-                    int c = bc % nc;
-                    outfile->Printf("  L: %d, M: %d, COEF: %8.5f, A: %d, B: %d, C: %d\n", l, m, coef, a, b, c);
-                }
-            }
-        }
-        */
-
     } else {
         mpole_coefs_ = parent_->mpole_coefs_;
     }
@@ -134,61 +246,102 @@ void CFMMBox::common_init(CFMMBox* parent, std::shared_ptr<Molecule> molecule, s
         }
     }
 
-    // Calculate the well separated criterion for the box
-    ws_ = 2;
-
-    if (length_ > 0.0) {
-        for (int Ptask = 0; Ptask < atoms_.size(); Ptask++) {
-            int Patom = atoms_[Ptask];
-            int Pstart = basisset_->shell_on_center(Patom, 0);
-            int nPshell = basisset_->nshell_on_center(Patom);
-
-            for (int P = Pstart; P < Pstart + nPshell; P++) {
-                const GaussianShell& Pshell = basisset_->shell(P);
-                int nprim = Pshell.nprimitive();
-                for (int prim = 0; prim < nprim; prim++) {
-                    double exp = Pshell.exp(prim);
-                    double rp = ERFCI10 / std::sqrt(exp);
-                    int ext = 2 * std::ceil(rp / length_);
-                    ws_ = std::max(ws_, ext);
-                }
-            }
-        }
-    }
-
-    int nbf = basisset_->nbf();
-
     /*
+    ws_max_ = 0;
+    branches_.resize(1);
+    branches_[0] = new CFMMBranch(this, 0);
+    */
+
+    // Create distributions and add them to the list
     for (int Ptask = 0; Ptask < atoms_.size(); Ptask++) {
         int Patom = atoms_[Ptask];
         int Pstart = basisset_->shell_on_center(Patom, 0);
-        int nPshells = basisset_->nshell_on_center(Patom);
+        int nPshell = basisset_->nshell_on_center(Patom);
+        Vector3 Pcenter = molecule_->xyz(Patom);
 
         for (int Qtask = 0; Qtask < atoms_.size(); Qtask++) {
             int Qatom = atoms_[Qtask];
             int Qstart = basisset_->shell_on_center(Qatom, 0);
-            int nQshells = basisset_->nshell_on_center(Qatom);
+            int nQshell = basisset_->nshell_on_center(Qatom);
+            Vector3 Qcenter = molecule_->xyz(Qatom);
+            Vector3 R_PQ = Pcenter - Qcenter;
+            double r_PQ_sq = R_PQ.dot(R_PQ);
 
-            for (int P = Pstart; P < Pstart + nPshells; P++) {
+            for (int P = Pstart; P < Pstart + nPshell; P++) {
                 const GaussianShell& Pshell = basisset_->shell(P);
+                int nprim_p = Pshell.nprimitive();
                 int p_start = Pshell.start();
-                int num_p = Pshell.nfunction();
+                int pl = Pshell.am();
 
-                for (int Q = Qstart; Q < Qstart + nQshells; Q++) {
+                for (int Q = Qstart; Q < Qstart + nQshell; Q++) {
                     const GaussianShell& Qshell = basisset_->shell(Q);
+                    int nprim_q = Qshell.nprimitive();
                     int q_start = Qshell.start();
-                    int num_q = Qshell.nfunction();
+                    int ql = Qshell.am();
 
-                    for (int p = p_start; p < p_start + num_p; p++) {
-                        for (int q = q_start; q < q_start + num_q; q++) {
-                            mpoles_[p * nbf + q] = std::make_shared<RealSolidHarmonics>(lmax_, center_, Regular);
-                        } // q
-                    } // p
-                } // Q
-            } // P
-        } // Qtask
-    } // Ptask
-    */
+                    for (int pp = 0; pp < nprim_p < pp++) {
+                        double p_coef = Pshell.coef(pp);
+                        double p_exp = Pshell.exp(pp);
+
+                        for (int qp = 0; qp < nprim_q; qp++) {
+                            double q_coef = Qshell.coef(qp);
+                            double q_exp = Qshell.exp(qp);
+
+                            // Distribution information from product of primative p and primative q
+                            double d_coef = p_coef * q_coef * std::exp(-p_exp * q_exp / (p_exp + q_exp) * r_PQ_sq);
+                            double d_exp = p_exp + q_exp;
+                            Vector3 Dcenter = (p_coef * Pcenter + q_coef * Qcenter) / (p_coef + q_coef);
+
+                            double r_ext = ERFCI10 / std::sqrt(d_exp);
+                            int ext = 2 * std::ceil(r_ext / length_);
+                            int ws_d = std::max(2, ext);
+
+                            /*
+                            if (ws_d > ws_max_) {
+                                int old_max = ws_max_;
+                                ws_max_ = ws_d;
+                                branches_.resize(ws_max_ / 2 + 1, nullptr);
+                                for (int ws = old_max + 2; ws <= ws_max_; ws += 2) {
+                                    branches_[ws / 2] = new CFMMBox(this, ws);
+                                }
+                            }
+                            */
+
+                            int poff = 0;
+                            for (int pi = 0; pi <= pl; pi++) {
+                                int pa = pl - pi;
+                                for (int pj = 0; pj <= pi; pj++) {
+                                    int pb = pi - pj;
+                                    int pc = pj;
+
+                                    int qoff = 0;
+                                    for (int qi = 0; qi <= ql; qi++) {
+                                        int qa = ql - qi;
+                                        for (int qj = qj <= qi; qj++) {
+                                            int qb = qi - qj;
+                                            int qc = qj;
+
+                                            add_distribution(p_start + poff, q_start + qoff, r_ext, d_coef, d_exp, 
+                                                            Dcenter, pa + qa, pb + qb, pc + qc);
+
+                                            qoff += 1;
+                                        }
+                                    }
+
+                                    poff += 1;
+                                }
+                            }
+
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Radix Sort Distributions
+    radix_sort_distributions(distributions_);
+
+    int nbf = basisset_->nbf();
 
     mpoles_ = std::make_shared<RealSolidHarmonics>(lmax_, center_, Regular);
     Vff_ = std::make_shared<RealSolidHarmonics>(lmax_, center_, Irregular);
