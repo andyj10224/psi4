@@ -354,8 +354,11 @@ void CFMMBox::form_distributions_from_children() {
             for (Distribution* dist : child->distributions_[ws]) {
                 add_distribution(std::ceil((double)ws/2), dist);
             }
-            radix_sort_distributions(ws);
         }
+    }
+
+    for (int ws = 0; ws <= ws_max_; ws++) {
+        radix_sort_distributions(ws);
     }
 
 }
