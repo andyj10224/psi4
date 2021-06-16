@@ -311,7 +311,7 @@ void DirectJK::compute_JK() {
             if (density_screening_) ints[thread]->update_density(D_ref);
         }
         if (linK_) {
-            if (iteration_ == 0) {
+            if (sad_ || iteration_ == 0) {
                 build_JK(ints, D_ref, J_ref, K_ref);
             } else {
                 std::shared_ptr<LinearHelper> linh = std::make_shared<LinearHelper>(primary_, lr_symmetric_);

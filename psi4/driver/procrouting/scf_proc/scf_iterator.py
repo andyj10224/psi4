@@ -451,7 +451,8 @@ def scf_iterate(self, e_conv=None, d_conv=None):
             self.Da().print_out()
             self.Db().print_out()
 
-        # Set the current energy and density convergence values
+        # Set the current energy and density convergence values (as well as SAD)
+        core.set_variable("SCF SAD ITER", self.sad_)
         core.set_variable("SCF DELTA E", Ediff)
         core.set_variable("SCF RMS D", Dnorm)
 

@@ -247,6 +247,9 @@ class PSI_API JK {
     /// Whether to all desymmetrization, for cases when it's already been performed elsewhere
     std::vector<bool> input_symmetry_cast_map_;
 
+    // Is the iteration SAD?
+    bool sad_;
+
     // => Tasks <= //
 
     /// Do J matrices? Defaults to true

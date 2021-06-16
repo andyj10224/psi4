@@ -214,11 +214,14 @@ void JK::common_init() {
     auto pet = std::make_shared<PetiteList>(primary_, integral);
     AO2USO_ = SharedMatrix(pet->aotoso());
 
+    sad_ = Process::environment.globals["SCF SAD ITER"];
+
     Options& options = Process::environment.options;
     density_screening_ = options.get_bool("SCF_DENSITY_SCREENING");
     ifb_ = options.get_bool("IFB");
     d_conv_ = options.get_double("D_CONVERGENCE");
     ifb_d_conv_ = options.get_double("IFB_D_CONVERGENCE");
+    do_ifb_iter_ = false;
 }
 size_t JK::memory_overhead() const {
     size_t mem = 0L;
@@ -550,7 +553,7 @@ void JK::AO2USO() {
 void JK::initialize() { preiterations(); }
 void JK::ifb_setup() {
 
-    if (iteration_ == 0 || D_ao_prev_.size() != D_ao_.size()) {
+    if (iteration_ == 0 || (D_ao_prev_.size() != D_ao_.size())) {
 
         iteration_ = 0;
 
@@ -730,6 +733,8 @@ void JK::compute() {
     if (lr_symmetric_) {
         C_right_.clear();
     }
+
+    iteration_ += 1;
 }
 void JK::set_wcombine(bool wcombine) {
     wcombine_ = wcombine;

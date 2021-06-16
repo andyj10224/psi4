@@ -95,7 +95,7 @@ void MemDFJK::preiterations() {
 }
 void MemDFJK::compute_JK() {
 
-    if (!linK_ || iteration_ == 0) {
+    if (!linK_ || iteration_ == 0 || sad_) {
         dfh_->build_JK(C_left_ao_, C_right_ao_, D_ao_, J_ao_, K_ao_, wK_ao_, max_nocc(), do_J_, do_K_, do_wK_,
                    lr_symmetric_);
     } else {
