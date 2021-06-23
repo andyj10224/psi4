@@ -22,11 +22,14 @@
 #include <unordered_map>
 #include <utility>
 #include <csignal>
+#include <map>
 
 #ifdef _OPENMP
 #include <omp.h>
 #include "psi4/libpsi4util/process.h"
 #endif
+
+#define MAX_AM 10
 
 namespace psi {
 
@@ -40,19 +43,234 @@ int ndigits(long n) {
     return count;
 }
 
-Distribution::Distribution(int p, int q, double rext, double coef, double exp, Vector3 center, int lx, int ly, int lz, int lmax) {
-    basispair_ = std::make_pair<int, int>(p, q);
+static HarmonicCoefficients harm_coef(MAX_AM, Regular);
+
+/*
+Distribution::Distribution(int P, int Q, int am1, int am2, Vector3 center1, Vector3 center2, double coef1, double coef2, double exp1, double exp2, 
+                    double a1, double a2, double b1, double b2, double c1, double c2, int lmax) {
+    basispair_ = std::make_pair<int, int>(P, Q);
+    center_ = (coef1 * center1 + coef2 * center2) / (coef1 + coef2);
+    exp_ = exp1 + exp2;
+
+    Vector3 R_12 = center1 - center2;
+    double r_12_sq = R_12.dot(R_12);
+
+    coef_ = coef1 * coef2 * std::exp(-exp1 * exp2 / (exp1 + exp2) * r_12_sq);
+
+    lx_ = a1 + a2;
+    ly_ = b1 + b2;
+    lz_ = c1 + c2;
+
+    rext_ = ERFCI10 / std::sqrt(exp_);
+
+    std::string basistype = "PRIMARY";
+    std::shared_ptr<Molecule> dummy_mol = std::make_shared<Molecule>();
+
+    std::map<std::string, std::map<std::string, std::vector<ShellInfo>>> ecp_shell_map;
+    std::map<std::string, std::map<std::string, std::vector<ShellInfo>>> shell_map1;
+    std::map<std::string, std::map<std::string, std::vector<ShellInfo>>> shell_map2;
+
+    std::vector<double> coefvec1 {coef1};
+    std::vector<double> expvec1 {exp1};
+
+    std::shared_ptr<ShellInfo> shellinfo1 = std::make_shared<ShellInfo>(am1, coefvec1, expvec1, Cartesian, Normalized);
+
+    std::vector<double> coefvec2 {coef2};
+    std::vector<double> expvec2 {exp2};
+
+    std::shared_ptr<ShellInfo> shellinfo2 = std::make_shared<ShellInfo>(am2, coefvec2, expvec2, Cartesian, Normalized);
+
+}
+*/
+
+Distribution::Distribution(std::shared_ptr<BasisSet> basisset, int P, int Q, double rext, double coef, double exp, Vector3 center, int lmax) {
+    basisset_ = basisset;
+    shellpair_ = std::make_pair<int, int>(P, Q);
     center_ = center;
     coef_ = coef;
     exp_ = exp;
-    lx_ = lx;
-    ly_ = ly;
-    lz_ = lz;
     rext_ = rext;
     lmax_ = lmax;
 
+    lP_ = basisset_->shell(P).am();
+    lQ_ = basisset_->shell(Q).am();
+
+    mi_recur_ = new ObaraSaikaTwoCenterMIRecursion(lP_ + 2, lQ_ + 2, lmax_);
+
     mpoles_ = std::make_shared<RealSolidHarmonics>(lmax_, center_, Regular);
-    Vff_ = std::make_shared<RealSolidHarmonics>(lmax_, center, Irregular);
+    Vff_ = std::make_shared<RealSolidHarmonics>(lmax_, center_, Irregular);
+}
+
+void Distribution::compute_mpoles() {
+
+    int am1 = s1.am();
+    int am2 = s2.am();
+
+    // The number of bf components in each shell pair
+    int stride = INT_NCART(am1) * INT_NCART(am2);
+
+    // Number of multipole components to compute
+    int nmpole = (lmax_ + 1) * (lmax_ + 2) * (lmax_ + 3) / 6 - 1;
+
+    // memset(buffer_, 0, nmpole * INT_NCART(am1) * INT_NCART(am2) * sizeof(double));
+    std::vector<std::vector<double>>& mpole_buffer = mpoles_.get_multipoles();
+
+    // Buffers to hold the {x,y,z} moments
+    double *Xpowers = new double[lmax_ + 1];
+    double *Ypowers = new double[lmax_ + 1];
+    double *Zpowers = new double[lmax_ + 1];
+
+    const GaussianShell& s1 = basisset_->shell(shellpair_.first);
+    const GaussianShell& s2 = basisset_->shell(shellpair_.second);
+
+    int p_start = s1.start();
+    int q_start = s2.start();
+
+    double A[3], B[3];
+    A[0] = s1.center()[0];
+    A[1] = s1.center()[1];
+    A[2] = s1.center()[2];
+    B[0] = s2.center()[0];
+    B[1] = s2.center()[1];
+    B[2] = s2.center()[2];
+
+    // compute intermediates
+    double AB2 = 0.0;
+    AB2 += (A[0] - B[0]) * (A[0] - B[0]);
+    AB2 += (A[1] - B[1]) * (A[1] - B[1]);
+    AB2 += (A[2] - B[2]) * (A[2] - B[2]);
+
+    double ***x = mi_recur_.x();
+    double ***y = mi_recur_.y();
+    double ***z = mi_recur_.z();
+
+    double PA[3], PB[3];
+    double P[3];
+
+    // P[0] = (a1 * A[0] + a2 * B[0]) * oog;
+    // P[1] = (a1 * A[1] + a2 * B[1]) * oog;
+    // P[2] = (a1 * A[2] + a2 * B[2]) * oog;
+
+    P[0] = center_[0];
+    P[1] = center_[1];
+    P[2] = center_[2];
+
+    PA[0] = P[0] - A[0];
+    PA[1] = P[1] - A[1];
+    PA[2] = P[2] - A[2];
+    PB[0] = P[0] - B[0];
+    PB[1] = P[1] - B[1];
+    PB[2] = P[2] - B[2];
+
+    double PCx = (P[0] - center_[0]);
+    double PCy = (P[1] - center_[1]);
+    double PCz = (P[2] - center_[2]);
+
+    // double d_coef = p_coef * q_coef * std::exp(-p_exp * q_exp / (p_exp + q_exp) * r_PQ_sq);
+
+    double over_pf = coef_ * sqrt(M_PI / (exp_)) * (M_PI / exp_);
+
+    // Do recursion
+    mi_recur_.compute(PA, PB, exp_, am1 + 2, am2 + 2);
+    int bf = 0;
+
+    int p = p_start;
+    // Basis function A.M. components on center 1
+    for (int ii = 0; ii <= am1; ii++) {
+        int lx1 = am1 - ii;
+        for (int lz1 = 0; lz1 <= ii; lz1++) {
+            int ly1 = ii - lz1;
+
+            int q = q_start;
+            // Basis function A.M. components on center 2
+            for (int kk = 0; kk <= am2; kk++) {
+                int lx2 = am2 - kk;
+                for (int lz2 = 0; lz2 <= kk; lz2++) {
+                    int ly2 = kk - lz2;
+
+                    // int chunk = 0;
+
+                    /*
+                     * Define X_C = X_P + X_PC, then expand X_C in powers,
+                     * up to the requested order; these will be combined to
+                     * form the total moment operators below
+                     */
+                    // Xpowers[0] = (l) * X_C^0 * X_PC^0
+                    //              (0)
+                    Xpowers[0] = x[lx1][lx2][0];
+                    Ypowers[0] = y[ly1][ly2][0];
+                    Zpowers[0] = z[lz1][lz2][0];
+
+                    int running_index = 0;
+                    for (int l = 1; l <= order_; ++l) {
+                        int ncl = ncart(l);
+
+                        double px = PCx;
+                        double py = PCy;
+                        double pz = PCz;
+                        // Xpowers[l] = (l) * X_C^0 * X_PC^0  +  (l) * X_C^0 * X_PC^l
+                        //              (0)                      (l)
+                        Xpowers[l] = x[lx1][lx2][l] + pow(px, l) * x[lx1][lx2][0];
+                        Ypowers[l] = y[ly1][ly2][l] + pow(py, l) * y[ly1][ly2][0];
+                        Zpowers[l] = z[lz1][lz2][l] + pow(pz, l) * z[lz1][lz2][0];
+                        for (int i = 1; i < l; ++i) {
+                            double coef = (double)binomial(l, i);
+                            // Xpowers[l] = (l) * X_C^(l-i) * X_PC^i
+                            //              (i)
+                            Xpowers[l] += coef * px * x[lx1][lx2][l - i];
+                            Ypowers[l] += coef * py * y[ly1][ly2][l - i];
+                            Zpowers[l] += coef * pz * z[lz1][lz2][l - i];
+                            px *= PCx;
+                            py *= PCy;
+                            pz *= PCz;
+                        }
+
+                        /*
+                         * Loop over the multipole components, and combine the moments computed above
+                         */
+
+                        for (int m = -l; m <= l; m++) {
+                            int mu = m_addr(m);
+                            std::unordered_map<int, double>& mpole_terms = harm_coef.get_terms(l, mu);
+
+                            int powdex = 0;
+                            for (int ii = 0; ii <= l; ii++) {
+                                int lx = l - ii;
+                                for (int lz = 0; lz <= ii; lz++) {
+                                    int ly = ii - lz;
+                                    int ind = lx * ncl * ncl + ly * ncl + lz;
+
+                                    double val = Xpowers[lx] * Ypowers[ly] * Zpowers[lz] * over_pf;
+
+                                    if (mpole_terms.count(ind)) {
+                                        double hcoef = mpole_terms[ind];
+                                        int abcindex = powdex + running_index;
+
+                                        for (int N = 0; N < D_.size(); N++) {
+                                            mpole_buffer[l][mu] += pow(-1.0, (double) l + 1) * hcoef * 2.0 * D_[N]->get(p, q) * val;
+                                        }
+
+                                    }
+                                    // mpole_buffer_[chunk * stride + bf] -= val;
+                                    // ++chunk;
+                                    powdex += 1;
+                                }
+                            }
+                        }
+
+                        running_index += ncl;
+                    }  // End loop over l
+                    // bf++;
+                    q += 1;
+                }
+            }  // End loop over shell 2 A.M. components
+        p += 1;
+        }
+    }  // End loop over shell 1 A.M. components
+
+    delete[] Xpowers;
+    delete[] Ypowers;
+    delete[] Zpowers;
 }
 
 CFMMBox::CFMMBox(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, 
@@ -147,12 +365,12 @@ void CFMMBox::common_init(CFMMBox* parent, std::shared_ptr<Molecule> molecule, s
 
 }
 
-void CFMMBox::add_distribution(int ws, int p, int q, double rext, double coef, double exp, Vector3 center, int lx, int ly, int lz, int lmax) {
+void CFMMBox::add_distribution(int ws, int P, int Q, double rext, double coef, double exp, Vector3 center, int lmax) {
     if (ws > ws_max_) {
         ws_max_ = ws;
         distributions_.resize(ws_max_ + 1);
     }
-    distributions_[ws].push_back(new Distribution(p, q, rext, coef, exp, center, lx, ly, lz, lmax));
+    distributions_[ws].push_back(new Distribution(basisset_, P, Q, rext, coef, exp, center, lmax));
 }
 
 void CFMMBox::add_distribution(int ws, Distribution* dist) {
@@ -310,6 +528,9 @@ void CFMMBox::form_distributions() {
                             int ext = 2 * std::ceil(r_ext / length_);
                             int ws_d = std::max(2, ext);
 
+                            add_distribution(ws_d, P, Q, r_ext, d_coef, d_exp, Dcenter, lmax_);
+
+                            /*
                             int poff = 0;
                             for (int pi = 0; pi <= pl; pi++) {
                                 int pa = pl - pi;
@@ -334,6 +555,7 @@ void CFMMBox::form_distributions() {
                                     poff += 1;
                                 }
                             }
+                            */
 
                         }
                     }
@@ -341,6 +563,7 @@ void CFMMBox::form_distributions() {
             }
         }
     }
+
     // Radix Sort Distributions after they are added
     for (int ws = 2; ws <= ws_max_; ws += 2) {
         radix_sort_distributions(ws);

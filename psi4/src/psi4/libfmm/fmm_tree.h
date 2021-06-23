@@ -7,6 +7,7 @@
 #include "psi4/libmints/matrix.h"
 #include "psi4/libmints/molecule.h"
 #include "psi4/libmints/basisset.h"
+#include "psi4/libmints/osrecur.h"
 #include "psi4/libfmm/multipoles_helper.h"
 
 #include <functional>
@@ -24,27 +25,43 @@ class Distribution {
 
     protected:
       // A reference to the basis set that the distribution belongs to
-      // std::shared_ptr<BasisSet> basisset_;
+      std::shared_ptr<BasisSet> basisset_;
+
       // A reference to the branch that this distribution belongs to
       // CFMMBranch* branch_;
-      // What basis set pair the distribution belongs to
-      std::pair<int, int> basispair_;
+
+      // Recursions necessary to generate multipoles
+      ObaraSaikaTwoCenterMIRecursion* mi_recur_;
+
+      // What basis shell pair the distribution belongs to
+      std::pair<int, int> shellpair_;
       // The center of the distribution
       Vector3 center_;
       // The coefficient in front of the particular contraction
       double coef_;
-      // The exponent in front of th particular contraction
+      // The exponent in front of the particular contraction
       double exp_;
+
+      // Single primative distribution for one center of distribution
+      // std::shared_ptr<BasisSet> prim1_;
+      // Single primative distribution for the other center of distribution
+      // std::shared_ptr<BasisSet> prim2_;
       // The x exponent of the basis function
-      int lx_;
+      // int lx_;
       // The y exponent of the basis function
-      int ly_;
+      // int ly_;
       // The z exponent of the basis function
-      int lz_;
+      // int lz_;
+
       // The radial extent of this distribution
       double rext_;
-      // Maximum angular momentum
+      // Maximum angular momentum of the multipoles
       int lmax_;
+      // Angular momentum of shell P
+      int lP_;
+      // Angular momentum of shell Q
+      int lQ_;
+
       // The multipoles of this distribution
       std::shared_ptr<RealSolidHarmonics> mpoles_;
       // The total far field potential felt by this distribution
@@ -52,7 +69,15 @@ class Distribution {
 
     public:
       // Constructor for a distribution
-      Distribution(int p, int q, double rext, double coef, double exp, Vector3 center, int lx, int ly, int lz, int lmax);
+      // Distribution(int P, int Q, double coef1, double coef2, double exp1, double exp2,
+      //              double a1, double a2, double b1, double b2, double c1, double c2, int lmax);
+
+      // Constructor for a distribution
+      Distribution(std::shared_ptr<BasisSet> basisset, int P, int Q, double rext, double coef, double exp, Vector3 center, int lmax);
+
+      // Destructor
+      virtual ~Distribution();
+
       // Returns the center of the distribution
       Vector3 get_center() { return center_; }
       // Returns the coef of the distribution
@@ -62,19 +87,19 @@ class Distribution {
       // Returns the radial extent of the distribution
       double get_rext() { return rext_; }
       // Returns the well-separatedness criteria of the distribution
-      double get_ws() { return ws_; }
+      // double get_ws() { return ws_; }
       // Gets x exponent of basis function
-      int lx() { return lx_; }
+      // int lx() { return lx_; }
       // Gets y exponent of basis function
-      int ly() { return ly_; }
+      // int ly() { return ly_; }
       // Gets z exponent of basis function
-      int lz() { return lz_; }
+      // int lz() { return lz_; }
       // Computes the multipoles centered at this distribution
       void compute_mpoles();
       // Computes the far field felt by this distribution
       void compute_far_field();
 
-}
+}; // End Class Distribution
 
 /*
 class CFMMBranch {
@@ -155,7 +180,9 @@ class CFMMBox {
                         std::shared_ptr<BasisSet> basisset, Vector3 origin, double length, int level, int lmax);
       
       // Add a single distribution
-      void add_distribution(int ws, int p, int q, double rext, double coef, double exp, Vector3 center, int lx, int ly, int lz, int lmax);
+      void add_distribution(int ws, std::shared_ptr<BasisSet> basisset, int P, int Q, 
+                            double rext, double coef, double exp, Vector3 center, int lmax);
+
       // Add a distribution by reference (for higher-level boxes)
       void add_distribution(int ws, Distribution *dist);
       // Sort the distributions at a particular ws level
