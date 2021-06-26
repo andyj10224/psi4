@@ -201,6 +201,20 @@ void Distribution::compute_mpoles() {
                     Ypowers[0] = y[ly1][ly2][0];
                     Zpowers[0] = z[lz1][lz2][0];
 
+                    int a = lx1 + lx2;
+                    int b = ly1 + ly2;
+                    int c = lz1 + lz2;
+
+                    if (a % 2 == 0 && b % 2 == 0 && c % 2 == 0) {
+                        double x_int = pow(2.0, -a) * factorial(2*a) / factorial(a);
+                        double y_int = pow(2.0, -b) * factorial(2*b) / factorial(b);
+                        double z_int = pow(2.0, -c) * factorial(2*c) / factorial(c);
+                        double x_denom = std::sqrt(M_PI / pow(exp_, a+1));
+                        double y_denom = std::sqrt(M_PI / pow(exp_, b+1));
+                        double z_denom = std::sqrt(M_PI / pow(exp_, c+1));
+                        mpole_buffer[0][0] += coef_ * x_int * y_int * z_int / (x_denom * y_denom * z_denom);
+                    }
+
                     int running_index = 0;
                     for (int l = 1; l <= order_; ++l) {
                         int ncl = ncart(l);
