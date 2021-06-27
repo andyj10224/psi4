@@ -2471,8 +2471,6 @@ double gaussian_integral_helper(int n, double coeff, double exp) {
 
 SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output) {
 
-    // std::raise(SIGINT);
-
     if (print_output) outfile->Printf("  ==> Computing BSISA Charges <==\n\n");
     timer_on("BSISA");
 
@@ -2499,15 +2497,10 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 
     if (print_output && debug >= 1) grid->print();
   
-    // DF, ISA, and Primary Basis Functions
-    auto aux = wfn_->get_basisset("DF_BASIS_BSISA");
+    // ISA and Primary Basis Functions
+    auto aux = wfn_->get_basisset("ISA_BASIS_BSISA");
     int a_nbf = aux->nbf();
     int a_nshell = aux->nshell();
-    
-    // ISA BASIS SET
-    auto isa = wfn_->get_basisset("ISA_BASIS_BSISA");
-    int i_nbf = isa->nbf();
-    int i_nshell = isa->nshell();
 
     int p_nbf = basisset_->nbf();
     int p_nshell = basisset_->nshell();
@@ -2548,10 +2541,6 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
     std::vector<double> rho(total_points, 0.0);
     
     std::vector<std::vector<double>> aux_values(total_points, std::vector<double>(a_nbf, 0.0));
-    std::vector<std::vector<double>> isa_values(total_points, std::vector<double>(i_nbf, 0.0));
-
-    // Normalization Values for Each Basis Function
-    // std::vector<double> norm(a_nbf, 0.0);
 
     for (int b = 0; b < blocks.size(); b++) {
         std::shared_ptr<BlockOPoints> block = blocks[b];
@@ -2579,48 +2568,11 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
             weights[running_points + p] = w[p];
             rho[running_points + p] = rho_block->get(p);
             aux->compute_phi(&(aux_values[running_points + p].data()[0]), x[p], y[p], z[p]);
-            isa->compute_phi(&(isa_values[running_points + p].data()[0]), x[p], y[p], z[p]);
+            // isa->compute_phi(&(isa_values[running_points + p].data()[0]), x[p], y[p], z[p]);
         }
 
         running_points += num_points;
     }
-    
-    /*
-
-    for (int A = 0; A < a_nshell; A++) {
-        const GaussianShell& shell_A = aux->shell(A);
-        int a_start = shell_A.function_index();
-        int num_a = shell_A.nfunction();
-        int nprim_a = shell_A.nprimitive();
-        const double* exps = shell_A.exps();
-        const double* coeffs = shell_A.coefs();
-        int L = shell_A.am();
-
-        for (int i = 0, index = 0; i <= L; i++) {
-            int l = L - i;
-            for (int j = 0; j <= i; j++, index++) {
-                int m = i - j;
-                int n = j;
-                for (int pi = 0; pi < nprim_a; pi++) {
-                    for (int qi = 0; qi < nprim_a; qi++) {
-                        double coeff = coeffs[pi] * coeffs[qi];
-                        double exp = exps[pi] + exps[qi];
-
-                        double alpha = gaussian_integral_helper(2 * l, coeff, exp);
-                        double beta = gaussian_integral_helper(2 * m, 1.0, exp);
-                        double gamma = gaussian_integral_helper(2 * n, 1.0, exp);
-                        norm[a_start + index] += alpha * beta * gamma;
-                    }
-                }
-            }
-	    }
-    }
-
-    for (int a = 0; a < a_nbf; a++) {
-        norm[a] = 1.0 / sqrt(norm[a]);
-    }
-    
-    */
 
     // Electron count via numerical interagration
     double grid_electrons = 0.0;
@@ -2758,7 +2710,7 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
     std::vector<int> naux_atom(num_atoms, 0);
     
     // If each aux basis function is spherical
-    std::vector<bool> aux_S(i_nbf, false);
+    std::vector<bool> aux_S(a_nbf, false);
 
     for (int A = 0; A < a_nshell; A++) {
 	
@@ -2781,48 +2733,19 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 	        naux_atom[atom] += gshell.nfunction();
 	    }
     }
-    
-    // Starting basis set number of an atom in isa basis set
-    std::vector<int> sisa_atom(num_atoms, 0);
-    std::vector<int> nisa_atom(num_atoms, 0);
-    
-    // If each isa basis function is spherical
-    std::vector<bool> isa_S(i_nbf, false);
-
-    for (int I = 0; I < i_nshell; I++) {
-	
-	    int i_start = isa->shell(I).function_index();
-        int num_i = isa->shell(I).nfunction();
-	    int L = isa->shell(I).am();
-
-	    if (L == 0) {
-	        for (int i = i_start; i < i_start + num_i; i++) {
-	            isa_S[i] = true;
-	        }
-	    }
-    }
-
-    for (int atom = 0; atom < num_atoms; atom++) {
-	    int atom_nshell = isa->nshell_on_center(atom);
-	    for (int s = 0; s < atom_nshell; s++) {
-	        const GaussianShell& gshell = isa->shell(isa->shell_on_center(atom, s));
-	        if (s == 0) sisa_atom[atom] = gshell.start();
-	        nisa_atom[atom] += gshell.nfunction();
-	    }
-    }
 
     // T_tilde and S_tilde for the ISA part of algorithm (Equations 20-21)
-    std::vector<double> S_tilde(i_nbf * i_nbf, 0.0);
-    std::vector<double> T_tilde(i_nbf, 0.0);
-    std::vector<double> d_isa(i_nbf, 0.0);
+    std::vector<double> S_tilde(a_nbf * a_nbf, 0.0);
+    std::vector<double> T_tilde(a_nbf, 0.0);
+    std::vector<double> d_isa(a_nbf, 0.0);
 
-    auto isa_mints = std::make_shared<MintsHelper>(isa);
-    SharedMatrix S_isa = isa_mints->ao_overlap(isa, isa);
+    auto isa_mints = std::make_shared<MintsHelper>(aux);
+    SharedMatrix S_isa = isa_mints->ao_overlap(aux, aux);
 
-    for (int I = 0; I < i_nshell; I++) {
-	    for (int J = 0; J < i_nshell; J++) {
-            const GaussianShell& i_shell = isa->shell(I);
-	        const GaussianShell& j_shell = isa->shell(J);
+    for (int I = 0; I < a_nshell; I++) {
+	    for (int J = 0; J < a_nshell; J++) {
+            const GaussianShell& i_shell = aux->shell(I);
+	        const GaussianShell& j_shell = aux->shell(J);
 	        if (i_shell.ncenter() != j_shell.ncenter()) continue;
 	        int i_start = i_shell.function_index();
             int num_i = i_shell.nfunction();
@@ -2830,7 +2753,7 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 	        int num_j = j_shell.nfunction();
 	        for (int i = i_start; i < i_start + num_i; i++) {
 		        for (int j = j_start; j < j_start + num_j; j++) {
-		            S_tilde[i * i_nbf + j] = S_isa->get(i, j);
+		            S_tilde[i * a_nbf + j] = S_isa->get(i, j);
 		        }
 	        }
 	    }
@@ -2849,15 +2772,7 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 		         aux_sum_weights[point] += d_df[a] * aux_values[point][a];
 		    }
 	    }
-	}
-
-    std::vector<double> isa_a_weights(num_atoms * total_points, 0.0);
-    std::vector<double> isa_sum_weights(total_points, 0.0);
-    
-    // for (int atom = 0; atom < num_atoms; atom++) {
-    //    int index = sisa_atom[atom];
-    //    d_isa[index] = 1.0;
-    // }
+    }
     
     for (int a = 0; a < a_nbf; a++) {
         d_isa[a] = d_df[a];
@@ -2868,39 +2783,26 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
     while (iter < maxiter + 1) {
 
         for (int atom = 0; atom < num_atoms; atom++) {
-            int start = sisa_atom[atom];
-            int num = nisa_atom[atom];
-            for (int i = start; i < start + num; i++) {
-	            if (!isa_S[i]) continue;
-	            for (size_t point = 0; point < total_points; point++) {
-	                isa_a_weights[atom * total_points + point] += d_isa[i] * isa_values[point][i];
-		            isa_sum_weights[point] += d_isa[i] * isa_values[point][i];
-		        }
-	        }
-	    }
-
-        for (int atom = 0; atom < num_atoms; atom++) {
-            int start = sisa_atom[atom];
-            int num = nisa_atom[atom];
+            int start = saux_atom[atom];
+            int num = naux_atom[atom];
             for (int i = start; i < start + num; i++) {
 	            for (size_t point = 0; point < total_points; point++) {
-                    double total_sum_weights = isa_sum_weights[point];
+                    double total_sum_weights = aux_sum_weights[point];
                     if (total_sum_weights == 0.0) continue;
-                    double total_a_weights = isa_a_weights[atom * total_points + point];
-		            T_tilde[i] += weights[point] * isa_values[point][i] * rho[point] * total_a_weights / total_sum_weights;
+                    double total_a_weights = aux_a_weights[atom * total_points + point];
+		            T_tilde[i] += weights[point] * aux_values[point][i] * rho[point] * total_a_weights / total_sum_weights;
 	            }
 	        }
         }
 
-         // for (int atom = 0; atom < num_atoms; atom++) 
-         {
+         for (int atom = 0; atom < num_atoms; atom++) {
         
-            int start = 0; //sisa_atom[atom];
-            int num = i_nbf; //nisa_atom[atom];
+            int start = saux_atom[atom];
+            int num = naux_atom[atom];
 	
 	        std::vector<int> ipiv_a;
 
-            for (int i = 0; i < num; i++) {
+            for (int i = start; i < start + num; i++) {
                 ipiv_a.push_back(i);
             }
 
@@ -2909,10 +2811,10 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 
 	        for (int i = start; i < start + num; i++) {
                 int di = i - start;
-		        T_tilde_a[di] = zeta * T_tilde[i] + (1 - zeta) * T_df[i];
+		        T_tilde_a[di] = T_tilde[i];
 	            for (int j = start; j < start + num; j++) {
 		            int dj = j - start;
-		            S_tilde_a[di * num + dj] = zeta * S_tilde[i * i_nbf + j] + (1 - zeta) * S_df[i * i_nbf + j];
+		            S_tilde_a[di * num + dj] = S_tilde[i * a_nbf + j];
 	            }
 	        }
 
@@ -2926,8 +2828,20 @@ SharedMatrix PopulationAnalysisCalc::compute_bsisa_multipoles(bool print_output)
 	    if (iter >= maxiter) break;
 
 	    std::fill(T_tilde.begin(), T_tilde.end(), 0.0);
-	    std::fill(isa_a_weights.begin(), isa_a_weights.end(), 0.0);
-        std::fill(isa_sum_weights.begin(), isa_sum_weights.end(), 0.0);
+	    std::fill(aux_a_weights.begin(), aux_a_weights.end(), 0.0);
+        std::fill(aux_sum_weights.begin(), aux_sum_weights.end(), 0.0);
+
+        for (int atom = 0; atom < num_atoms; atom++) {
+            int start = saux_atom[atom];
+            int num = naux_atom[atom];
+            for (int a = start; a < start + num; a++) {
+	            if (!aux_S[a]) continue;
+	            for (size_t point = 0; point < total_points; point++) {
+	                aux_a_weights[atom * total_points + point] += d_isa[a] * aux_values[point][a];
+		            aux_sum_weights[point] += d_isa[a] * aux_values[point][a];
+		        }
+	        }
+	    }
 
         iter += 1;
     }
