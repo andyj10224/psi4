@@ -45,44 +45,6 @@ int ndigits(long n) {
 
 static HarmonicCoefficients harm_coef(MAX_AM, Regular);
 
-/*
-Distribution::Distribution(int P, int Q, int am1, int am2, Vector3 center1, Vector3 center2, double coef1, double coef2, double exp1, double exp2, 
-                    double a1, double a2, double b1, double b2, double c1, double c2, int lmax) {
-    basispair_ = std::make_pair<int, int>(P, Q);
-    center_ = (coef1 * center1 + coef2 * center2) / (coef1 + coef2);
-    exp_ = exp1 + exp2;
-
-    Vector3 R_12 = center1 - center2;
-    double r_12_sq = R_12.dot(R_12);
-
-    coef_ = coef1 * coef2 * std::exp(-exp1 * exp2 / (exp1 + exp2) * r_12_sq);
-
-    lx_ = a1 + a2;
-    ly_ = b1 + b2;
-    lz_ = c1 + c2;
-
-    rext_ = ERFCI10 / std::sqrt(exp_);
-
-    std::string basistype = "PRIMARY";
-    std::shared_ptr<Molecule> dummy_mol = std::make_shared<Molecule>();
-
-    std::map<std::string, std::map<std::string, std::vector<ShellInfo>>> ecp_shell_map;
-    std::map<std::string, std::map<std::string, std::vector<ShellInfo>>> shell_map1;
-    std::map<std::string, std::map<std::string, std::vector<ShellInfo>>> shell_map2;
-
-    std::vector<double> coefvec1 {coef1};
-    std::vector<double> expvec1 {exp1};
-
-    std::shared_ptr<ShellInfo> shellinfo1 = std::make_shared<ShellInfo>(am1, coefvec1, expvec1, Cartesian, Normalized);
-
-    std::vector<double> coefvec2 {coef2};
-    std::vector<double> expvec2 {exp2};
-
-    std::shared_ptr<ShellInfo> shellinfo2 = std::make_shared<ShellInfo>(am2, coefvec2, expvec2, Cartesian, Normalized);
-
-}
-*/
-
 Distribution::Distribution(std::shared_ptr<BasisSet> basisset, int P, int Q, double rext, double coef, double exp, Vector3 center, int lmax) {
     basisset_ = basisset;
     shellpair_ = std::make_pair<int, int>(P, Q);
@@ -99,6 +61,7 @@ Distribution::Distribution(std::shared_ptr<BasisSet> basisset, int P, int Q, dou
 
     mpoles_ = std::make_shared<RealSolidHarmonics>(lmax_, center_, Regular);
     Vff_ = std::make_shared<RealSolidHarmonics>(lmax_, center_, Irregular);
+    compute_mpoles();
 }
 
 void Distribution::compute_mpoles() {
@@ -342,12 +305,14 @@ void CFMMBox::common_init(CFMMBox* parent, std::shared_ptr<Molecule> molecule, s
     children_.resize(8, nullptr);
 
     // Make the multipole coefficients
+    /*
     if (!parent_) {
         mpole_coefs_ = std::make_shared<HarmonicCoefficients>(lmax_, Regular);
 
     } else {
         mpole_coefs_ = parent_->mpole_coefs_;
     }
+    */
 
     if (!parent_) {
         for (int atom = 0; atom < molecule_->natom(); atom++) {
@@ -544,33 +509,6 @@ void CFMMBox::form_distributions() {
 
                             add_distribution(ws_d, P, Q, r_ext, d_coef, d_exp, Dcenter, lmax_);
 
-                            /*
-                            int poff = 0;
-                            for (int pi = 0; pi <= pl; pi++) {
-                                int pa = pl - pi;
-                                for (int pj = 0; pj <= pi; pj++) {
-                                    int pb = pi - pj;
-                                    int pc = pj;
-
-                                    int qoff = 0;
-                                    for (int qi = 0; qi <= ql; qi++) {
-                                        int qa = ql - qi;
-                                        for (int qj = qj <= qi; qj++) {
-                                            int qb = qi - qj;
-                                            int qc = qj;
-
-                                            add_distribution(ws_d, p_start + poff, q_start + qoff, r_ext, d_coef, d_exp, 
-                                                            Dcenter, pa + qa, pb + qb, pc + qc, lmax_);
-
-                                            qoff += 1;
-                                        }
-                                    }
-
-                                    poff += 1;
-                                }
-                            }
-                            */
-
                         }
                     }
                 }
@@ -616,7 +554,7 @@ void CFMMBox::set_nf_lff() {
             Vector3 Rab = center_ - sibling->center_;
             double dist = Rab.norm();
 
-            if (dist <= ws_ * length_ * std::sqrt(3.0)) {
+            if (dist <= ws_max_ * length_ * std::sqrt(3.0)) {
                 near_field_.push_back(sibling);
             } else {
                 local_far_field_.push_back(sibling);
@@ -633,7 +571,7 @@ void CFMMBox::set_nf_lff() {
                 Vector3 Rab = center_ - cousin->center_;
                 double dist = Rab.norm();
 
-                if (dist <= ws_ * length_ * std::sqrt(3.0)) {
+                if (dist <= ws_max_ * length_ * std::sqrt(3.0)) {
                     near_field_.push_back(cousin);
                 } else {
                     local_far_field_.push_back(cousin);
@@ -737,24 +675,6 @@ void CFMMBox::compute_mpoles() {
                                 for (int l = 1; l <= lmax_; l++) {
                                     int ncl = ncart(l);
 
-                                    /*
-                                    int powind = 0;
-                                    for (int ii = 0; ii <= l; ii++) {
-                                        int a = l - ii;
-                                        for (int jj = 0; jj <= ii; jj++) {
-                                            int b = ii - jj;
-                                            int c = jj;
-                                            int ind = a * ncl * ncl + b * ncl + c;
-
-                                            outfile->Printf("   POWDEX: %d, A: %d, B: %d, C: %d\n", powind, a, b, c);
-                                            outfile->Printf("   ICART:  %d, A: %d, B: %d, C: %d\n", icart(a, b, c), a, b, c);
-                                                
-                                            powind += 1;
-                                        }
-                                    }
-                                    */
-                                    
-
                                     for (int m = -l; m <= l; m++) {
                                         int mu = m_addr(m);
                                         std::unordered_map<int, double>& mpole_terms = mpole_coefs_->get_terms(l, mu);
@@ -770,8 +690,6 @@ void CFMMBox::compute_mpoles() {
                                                 if (mpole_terms.count(ind)) {
                                                     double coef = mpole_terms[ind];
                                                     int abcindex = powdex + running_index;
-                                                    // outfile->Printf("   L: %d, M: %d, A: %d, B: %d, C: %d, COEF: %8.5f\n", l, m, a, b, c, coef);
-                                                    // coef *= factorial(a) * factorial(b) * factorial(c);
                                                     pq_mpole_buff->add(l, mu, pow(-1.0, (double) l) * 2.0 * D_[N]->get(p, q) * coef * mpole_buffer[abcindex * num_p * num_q + dp * num_q + dq]);
                                                 }
                                                 powdex += 1;
@@ -783,8 +701,7 @@ void CFMMBox::compute_mpoles() {
                                     running_index += ncl;
                                 } // end l loop
                             } // end N loop
-                            // ->translate(center_ + Vector3(10.0, 0.0, 0.0))
-                            mpoles_->add(pq_mpole_buff); // ->translate(center_ + Vector3(10.0, 0.0, 0.0)));
+                            mpoles_->add(pq_mpole_buff);
                         } // end q loop
                     } // end p loop
                 } // end Q

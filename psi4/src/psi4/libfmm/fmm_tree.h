@@ -42,17 +42,6 @@ class Distribution {
       // The exponent in front of the particular contraction
       double exp_;
 
-      // Single primative distribution for one center of distribution
-      // std::shared_ptr<BasisSet> prim1_;
-      // Single primative distribution for the other center of distribution
-      // std::shared_ptr<BasisSet> prim2_;
-      // The x exponent of the basis function
-      // int lx_;
-      // The y exponent of the basis function
-      // int ly_;
-      // The z exponent of the basis function
-      // int lz_;
-
       // The radial extent of this distribution
       double rext_;
       // Maximum angular momentum of the multipoles
@@ -86,44 +75,12 @@ class Distribution {
       double get_exp() { return exp_; }
       // Returns the radial extent of the distribution
       double get_rext() { return rext_; }
-      // Returns the well-separatedness criteria of the distribution
-      // double get_ws() { return ws_; }
-      // Gets x exponent of basis function
-      // int lx() { return lx_; }
-      // Gets y exponent of basis function
-      // int ly() { return ly_; }
-      // Gets z exponent of basis function
-      // int lz() { return lz_; }
       // Computes the multipoles centered at this distribution
       void compute_mpoles();
       // Computes the far field felt by this distribution
       void compute_far_field();
 
 }; // End Class Distribution
-
-/*
-class CFMMBranch {
-
-    protected:
-      // The box that the distribution belongs to
-      CFMMBox* box_;
-      // A list of all distributions that belong to this branch
-      std::vector<Distribution *> distributions_;
-      // The common well-separatedness criterion belonging to this branch
-      int ws_;
-
-    public:
-      // Constructor
-      CFMMBranch(CFMMBox* box, int ws);
-      // Add a distribution
-      void add_distribution(int p, int q, double coef, double exp, Vector3 center, int lx, int ly, int lz);
-      /// Sort all distributions by extent
-      void sort_distributions_by_extent();
-      /// Sort all distributions by center
-      void sort_distributions_by_center();
-
-}
-*/
 
 class CFMMBox {
 
