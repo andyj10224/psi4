@@ -53,7 +53,7 @@ static int m_addr(int m) {
 
 extern double factorial(int n);
 
-class MultipoleRotationFactory {
+class PSI_API MultipoleRotationFactory {
 
     protected:
       Vector3 R_a_;
@@ -109,7 +109,7 @@ class MultipoleRotationFactory {
 
 }; // End MultipoleRotationFactory
 
-class HarmonicCoefficients {
+class PSI_API HarmonicCoefficients {
     protected:
       // Ylm[l][m] = sum (coeff * x^a * y^b * z^c), stores a tuple of (coeff, a, b, c), normalized according to Stone's convention
       std::vector<std::vector<std::unordered_map<int, double>>> mpole_terms_;
@@ -135,7 +135,7 @@ class HarmonicCoefficients {
     
 };
     
-class RealSolidHarmonics {
+class PSI_API RealSolidHarmonics {
 
     protected:
       // Values of the Real Solid Harmonics, normalized according to Stone's convention

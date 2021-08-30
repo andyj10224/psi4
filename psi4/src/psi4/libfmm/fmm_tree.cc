@@ -30,9 +30,6 @@
 
 namespace psi {
 
-static Options& options = Process::environment.options;
-static std::shared_ptr<HarmonicCoefficients> mpole_coefs = std::make_shared<HarmonicCoefficients>(options.get_int("CFMM_MAX_MPOLE_ORDER"), Regular);
-
 int num_digits(long n) {
     long absn = std::abs(n);
     int count = 1;
@@ -72,6 +69,9 @@ ShellPair::ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pa
     }
     center_ /= (nprim_p * nprim_q);
     extent_ = ERFCI10 * std::sqrt(2.0 / exp_);
+
+    Options& options = Process::environment.options;
+    mpole_coefs_ = std::make_shared<HarmonicCoefficients>(options.get_int("CFMM_MAX_MPOLE_ORDER"), Regular);
 }
 
 void ShellPair::calculate_mpoles(Vector3 box_center, std::shared_ptr<OneBodyAOInt> s_ints,
@@ -115,7 +115,7 @@ void ShellPair::calculate_mpoles(Vector3 box_center, std::shared_ptr<OneBodyAOIn
                 int l_ncart = ncart(l);
                 for (int m = -l; m <= l; m++) {
                     int mu = m_addr(m);
-                    std::unordered_map<int, double>& mpole_terms= mpole_coefs->get_terms(l, mu);
+                    std::unordered_map<int, double>& mpole_terms= mpole_coefs_->get_terms(l, mu);
 
                     int powdex = 0;
                     for (int ii = 0; ii <= l; ii++) {
@@ -546,18 +546,16 @@ void CFMMTree::sort_shell_pairs() {
 
     for (int iter = 0; iter < zdig; iter++) {
         for (int ind = 0; ind < shell_pairs_.size(); ind++) {
-            int dig = (long)(shell_pairs_[ind]->get_center()[2] * 1000) / curr10;
+            int dig = ((long)(shell_pairs_[ind]->get_center()[0] * 1000) / curr10) % 10;
             buckets[dig + 9].push_back(shell_pairs_[ind]);
         }
         curr10 *= 10;
     }
 
-    int idx = 0;
     for (int b = 0; b < 19; b++) {
-        while (buckets[b].size() > 0) {
+        for (int idx = 0; idx < buckets[b].size(); idx++) {
             shell_pairs_[idx] = buckets[b].back();
             buckets[b].pop_back();
-            idx += 1;
         }
     }
 
@@ -566,18 +564,16 @@ void CFMMTree::sort_shell_pairs() {
 
     for (int iter = 0; iter < ydig; iter++) {
         for (int ind = 0; ind < shell_pairs_.size(); ind++) {
-            int dig = (long)(shell_pairs_[ind]->get_center()[1] * 1000) / curr10;
+            int dig = ((long)(shell_pairs_[ind]->get_center()[1] * 1000) / curr10) % 10;
             buckets[dig + 9].push_back(shell_pairs_[ind]);
         }
         curr10 *= 10;
     }
 
-    idx = 0;
     for (int b = 0; b < 19; b++) {
-        while (buckets[b].size() > 0) {
+        for (int idx = 0; idx < buckets[b].size(); idx++) {
             shell_pairs_[idx] = buckets[b].back();
             buckets[b].pop_back();
-            idx += 1;
         }
     }
 
@@ -586,18 +582,16 @@ void CFMMTree::sort_shell_pairs() {
 
     for (int iter = 0; iter < xdig; iter++) {
         for (int ind = 0; ind < shell_pairs_.size(); ind++) {
-            int dig = (long)(shell_pairs_[ind]->get_center()[0] * 1000) / curr10;
+            int dig = ((long)(shell_pairs_[ind]->get_center()[2] * 1000) / curr10) % 10;
             buckets[dig + 9].push_back(shell_pairs_[ind]);
         }
         curr10 *= 10;
     }
 
-    idx = 0;
     for (int b = 0; b < 19; b++) {
-        while (buckets[b].size() > 0) {
+        for (int idx = 0; idx < buckets[b].size(); idx++) {
             shell_pairs_[idx] = buckets[b].back();
             buckets[b].pop_back();
-            idx += 1;
         }
     }
 
@@ -606,18 +600,16 @@ void CFMMTree::sort_shell_pairs() {
 
     for (int iter = 0; iter < rdig; iter++) {
         for (int ind = 0; ind < shell_pairs_.size(); ind++) {
-            int dig = (long)(shell_pairs_[ind]->get_extent() * 1000) / curr10;
+            int dig = ((long)(shell_pairs_[ind]->get_extent() * 1000) / curr10) % 10;
             buckets[dig + 9].push_back(shell_pairs_[ind]);
         }
         curr10 *= 10;
     }
 
-    idx = 0;
     for (int b = 0; b < 19; b++) {
-        while (buckets[b].size() > 0) {
+        for (int idx = 0; idx < buckets[b].size(); idx++) {
             shell_pairs_[idx] = buckets[b].back();
             buckets[b].pop_back();
-            idx += 1;
         }
     }
 }

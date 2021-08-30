@@ -20,7 +20,7 @@
 
 namespace psi {
 
-class ShellPair {
+class PSI_API ShellPair {
     protected:
       // The basisset associated with the shell-pair
       std::shared_ptr<BasisSet> basisset_;
@@ -34,6 +34,8 @@ class ShellPair {
       double extent_;
       // The multipole moments (per basis pair (pq) the shell pair (PQ)), centered at the lowest level box the shell belongs to
       std::vector<std::shared_ptr<RealSolidHarmonics>> mpoles_;
+      // Multipole coefficients of shellpair
+      std::shared_ptr<HarmonicCoefficients> mpole_coefs_;
 
     public:
       ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pair_index);
@@ -52,7 +54,7 @@ class ShellPair {
       std::vector<std::shared_ptr<RealSolidHarmonics>>& get_mpoles() { return mpoles_; }
 };
 
-class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
+class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
 
     protected:
       // Parent of the CFMMBox
@@ -127,7 +129,7 @@ class CFMMBox : public std::enable_shared_from_this<CFMMBox> {
 
 }; // End class CFMMBox
 
-class CFMMTree {
+class PSI_API CFMMTree {
 
     protected:
       // The molecule that this tree structure references
@@ -171,9 +173,6 @@ class CFMMTree {
 
       // Build the J matrix of CFMMTree
       void build_J();
-
-      // Destructor
-      virtual ~CFMMTree();
 
 }; // End class CFMMTree
 
