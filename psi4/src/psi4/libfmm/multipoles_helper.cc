@@ -416,6 +416,16 @@ RealSolidHarmonics::RealSolidHarmonics(int lmax, Vector3 center, SolidHarmonicsT
     
 }
 
+std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::copy() {
+    std::shared_ptr<RealSolidHarmonics> new_harm = std::make_shared<RealSolidHarmonics>(lmax_, center_, type_);
+    for (int l = 0; l <= lmax_; l++) {
+        for (int mu = 0; mu < 2*l+1; mu++) {
+            new_harm->Ylm_[l][mu] = Ylm_[l][mu];
+        }
+    }
+    return new_harm;
+}
+
 void RealSolidHarmonics::add(const RealSolidHarmonics& rsh) {
     for (int l = 0; l <= lmax_; l++) {
         for (int mu = 0; mu < 2*l+1; mu++) {

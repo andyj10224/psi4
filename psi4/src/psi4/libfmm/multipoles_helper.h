@@ -156,6 +156,8 @@ class RealSolidHarmonics {
       // Constructor
       RealSolidHarmonics(int lmax, Vector3 center, SolidHarmonicsType type);
 
+      // Returns a copy of a RealSolidHarmonics object
+      std::shared_ptr<RealSolidHarmonics> copy();
       // Adds two harmonics together
       void add(const RealSolidHarmonics& rsh);
       void add(const std::shared_ptr<RealSolidHarmonics>& rsh);
@@ -163,6 +165,8 @@ class RealSolidHarmonics {
       void scale(double val);
       // Adds to a specific harmonic term
       void add(int l, int mu, double val) { Ylm_[l][mu] += val; }
+      // Get a specific multipole term
+      double get(int l, int mu) { return Ylm_[l][mu]; }
       
       // Returns a reference of Ylm, to be computed by something else
       std::vector<std::vector<double>>& get_multipoles() { return Ylm_; }
