@@ -31,13 +31,8 @@
 namespace psi {
 
 int num_digits(long n) {
-    long absn = std::abs(n);
-    int count = 1;
-    while (absn >= 9) {
-        absn /= 10;
-        count += 1;
-    }
-    return count;
+    if (n == 0) return 1;
+    return (int) std::log10(std::abs(n)) + 1;
 }
 
 ShellPair::ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pair_index) {
@@ -146,9 +141,6 @@ CFMMBox::CFMMBox(std::shared_ptr<CFMMBox> parent, std::vector<std::shared_ptr<Sh
               Vector3 origin, double length, int level, int lmax, int ws) {
     parent_ = parent;
 
-    if (level == 0) children_.resize(8, nullptr);
-    else children_.resize(16, nullptr);
-
     shell_pairs_ = shell_pairs;
     origin_ = origin;
     center_ = origin_ + 0.5 * Vector3(length, length, length);
@@ -156,6 +148,9 @@ CFMMBox::CFMMBox(std::shared_ptr<CFMMBox> parent, std::vector<std::shared_ptr<Sh
     level_ = level;
     lmax_ = lmax;
     ws_ = ws;
+
+    mpoles_ = std::make_shared<RealSolidHarmonics>(lmax, center_, Regular);
+    Vff_ = std::make_shared<RealSolidHarmonics>(lmax, center_, Irregular);
 
     nthread_ = 1;
 #ifdef _OPENMP
@@ -196,8 +191,8 @@ void CFMMBox::make_children() {
             int zbit = (boxind / 4) % 2;
             Vector3 new_origin = origin_ + Vector3(xbit * 0.5 * length_, ybit * 0.5 * length_, zbit * 0.5 * length_);
             int child_ws = 2;
-            children_[boxind] = std::make_shared<CFMMBox>(this->get(), child_shell_pair_buffer[boxind], new_origin, 
-                                                          0.5 * length_, level_ + 1, lmax_, child_ws);
+            children_.push_back(std::make_shared<CFMMBox>(this->get(), child_shell_pair_buffer[boxind], new_origin, 
+                                                          0.5 * length_, level_ + 1, lmax_, child_ws));
         }
     } else {
         std::vector<std::vector<std::shared_ptr<ShellPair>>> child_shell_pair_buffer(16);
@@ -229,8 +224,8 @@ void CFMMBox::make_children() {
             int rbit = (boxind / 8) % 2;
             Vector3 new_origin = origin_ + Vector3(xbit * 0.5 * length_, ybit * 0.5 * length_, zbit * 0.5 * length_);
             int child_ws = 2 * ws_ - 2 + 2 * rbit;
-            children_[boxind] = std::make_shared<CFMMBox>(this->get(), child_shell_pair_buffer[boxind], new_origin, 
-                                                          0.5 * length_, level_ + 1, lmax_, child_ws);
+            children_.push_back(std::make_shared<CFMMBox>(this->get(), child_shell_pair_buffer[boxind], new_origin, 
+                                                          0.5 * length_, level_ + 1, lmax_, child_ws));
         }
     }
 }
@@ -509,14 +504,15 @@ CFMMTree::CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet>
     J_ = J;
     nlevels_ = nlevels;
     lmax_ = lmax;
-    // int num_boxes = (std::pow(16, nlevels_) - 1) / 15;
     int num_boxes = (0.5 * std::pow(16, nlevels_) + 7) / 15;
-    tree_.resize(num_boxes, nullptr);
+    // tree_.resize(num_boxes, nullptr);
 
     for (const auto& pair : shell_pairs) {
         shell_pairs_.push_back(std::make_shared<ShellPair>(basisset_, pair));
     }
     sort_shell_pairs();
+    make_root_node();
+    make_children();
 }
 
 void CFMMTree::sort_shell_pairs() {
@@ -541,7 +537,7 @@ void CFMMTree::sort_shell_pairs() {
 
     std::vector<std::vector<std::shared_ptr<ShellPair>>> buckets(19);
 
-    // Sort by z coordinates
+    // Sort by x coordinates
     long curr10 = 10;
 
     for (int iter = 0; iter < zdig; iter++) {
@@ -552,9 +548,12 @@ void CFMMTree::sort_shell_pairs() {
         curr10 *= 10;
     }
 
+    shell_pairs_.clear();
+
     for (int b = 0; b < 19; b++) {
-        for (int idx = 0; idx < buckets[b].size(); idx++) {
-            shell_pairs_[idx] = buckets[b].back();
+        int nelem = buckets[b].size();
+        for (int idx = 0; idx < nelem; idx++) {
+            shell_pairs_.push_back(buckets[b].back());
             buckets[b].pop_back();
         }
     }
@@ -570,14 +569,17 @@ void CFMMTree::sort_shell_pairs() {
         curr10 *= 10;
     }
 
+    shell_pairs_.clear();
+
     for (int b = 0; b < 19; b++) {
-        for (int idx = 0; idx < buckets[b].size(); idx++) {
-            shell_pairs_[idx] = buckets[b].back();
+        int nelem = buckets[b].size();
+        for (int idx = 0; idx < nelem; idx++) {
+            shell_pairs_.push_back(buckets[b].back());
             buckets[b].pop_back();
         }
     }
 
-    // Sort by x coordinates
+    // Sort by z coordinates
     curr10 = 10;
 
     for (int iter = 0; iter < xdig; iter++) {
@@ -588,9 +590,12 @@ void CFMMTree::sort_shell_pairs() {
         curr10 *= 10;
     }
 
+    shell_pairs_.clear();
+
     for (int b = 0; b < 19; b++) {
-        for (int idx = 0; idx < buckets[b].size(); idx++) {
-            shell_pairs_[idx] = buckets[b].back();
+        int nelem = buckets[b].size();
+        for (int idx = 0; idx < nelem; idx++) {
+            shell_pairs_.push_back(buckets[b].back());
             buckets[b].pop_back();
         }
     }
@@ -606,9 +611,12 @@ void CFMMTree::sort_shell_pairs() {
         curr10 *= 10;
     }
 
+    shell_pairs_.clear();
+
     for (int b = 0; b < 19; b++) {
-        for (int idx = 0; idx < buckets[b].size(); idx++) {
-            shell_pairs_[idx] = buckets[b].back();
+        int nelem = buckets[b].size();
+        for (int idx = 0; idx < nelem; idx++) {
+            shell_pairs_.push_back(buckets[b].back());
             buckets[b].pop_back();
         }
     }
@@ -635,50 +643,30 @@ void CFMMTree::make_root_node() {
     Vector3 origin = Vector3(min_dim, min_dim, min_dim);
     double length = (max_dim - min_dim);
 
-    tree_[0] = std::make_shared<CFMMBox>(nullptr, shell_pairs_, origin, length, 0, lmax_, 2);
-    make_children();
+    tree_.push_back(std::make_shared<CFMMBox>(nullptr, shell_pairs_, origin, length, 0, lmax_, 2));
 }
 
 void CFMMTree::make_children() {
-    int level = 0;
-    for (int lvl = 0; lvl < nlevels_ - 1; lvl++) {
-        int lvl_start = 0;
-        int next_lvl_start = 1;
-        if (lvl > 0) {
-            lvl_start = (0.5 * std::pow(16, lvl) + 7) / 15;
-            next_lvl_start = (0.5 * std::pow(16, lvl+1) + 7) / 15;
+
+    int bi = 0;
+    int end = (0.5 * std::pow(16, nlevels_ - 1) + 7) / 15;
+
+    while (bi < end) {
+        tree_[bi]->make_children();
+        for (std::shared_ptr<CFMMBox> child : tree_[bi]->get_children()) {
+            tree_.push_back(child);
         }
-        
-        int tree_ind = next_lvl_start;
-        for (int bi = lvl_start; bi < next_lvl_start; bi++) {
-            tree_[bi]->make_children();
-            std::vector<std::shared_ptr<CFMMBox>>& children = tree_[bi]->get_children();
-            for (int ind = 0; ind < children.size(); ind++) {
-                tree_[tree_ind] = children[ind];
-                tree_ind += 1;
-            }
-        }
+        bi += 1;
     }
 }
 
 void CFMMTree::calculate_multipoles() {
-
-    int lvl_start, lvl_end;
-    for (int lvl = nlevels_ - 1; lvl >= 0; lvl--) {
-        if (lvl > 0) {
-            lvl_start = (0.5 * std::pow(16, lvl) + 7) / 15;
-            lvl_end = (0.5 * std::pow(16, lvl+1) + 7) / 15 - 1;
-        } else {
-            lvl_start = 0;
-            lvl_end = 0;
-        }
-        
-        for (int bi = lvl_start; bi <= lvl_end; bi++) {
-            if (lvl == nlevels_ - 1) tree_[bi]->compute_mpoles(basisset_, D_);
-            else tree_[bi]->compute_mpoles_from_children();
-        }
+    for (int bi = tree_.size() - 1; bi >= 0; bi -= 1) {
+        std::shared_ptr<CFMMBox> box = tree_[bi];
+        int level = box->get_level();
+        if (level == nlevels_ - 1) box->compute_mpoles(basisset_, D_);
+        else box->compute_mpoles_from_children();
     }
-
 }
 
 void CFMMTree::set_nf_lff() {
