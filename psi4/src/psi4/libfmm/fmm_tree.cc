@@ -238,9 +238,8 @@ void CFMMBox::set_nf_lff() {
 
     // Parent is not a nullpointer
     if (parent) {
-        // Siblings of this box
+        // Siblings of this box (Technically near fields include self in this implementation)
         for (std::shared_ptr<CFMMBox> sibling : parent->children_) {
-            if (sibling.get() == this) continue;
             Vector3 Rab = center_ - sibling->center_;
             double dist = Rab.norm();
 
@@ -254,6 +253,7 @@ void CFMMBox::set_nf_lff() {
 
         // Parent's near field (Cousins)
         for (std::shared_ptr<CFMMBox> uncle : parent->near_field_) {
+            if (uncle.get() == parent.get()) continue;
             for (std::shared_ptr<CFMMBox> cousin : uncle->children_) {
                 Vector3 Rab = center_ - cousin->center_;
                 double dist = Rab.norm();
@@ -266,6 +266,10 @@ void CFMMBox::set_nf_lff() {
                 }
             }
         }
+    }
+
+    else {
+        near_field_.push_back(this->get());
     }
 
     timer_off("CFMMBox::set_nf_lff()");
@@ -493,7 +497,7 @@ void CFMMBox::compute_ff_J(std::shared_ptr<BasisSet> basisset, std::vector<Share
 
 void CFMMBox::compute_J(std::shared_ptr<BasisSet> basisset, std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J) {
     compute_nf_J(basisset, D, J);
-    compute_ff_J(basisset, D, J);
+    // compute_ff_J(basisset, D, J);
 }
 
 CFMMTree::CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, std::vector<SharedMatrix>& D, 
@@ -510,7 +514,7 @@ CFMMTree::CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet>
     for (const auto& pair : shell_pairs) {
         shell_pairs_.push_back(std::make_shared<ShellPair>(basisset_, pair));
     }
-    sort_shell_pairs();
+    // sort_shell_pairs();
     make_root_node();
     make_children();
 }
@@ -691,17 +695,11 @@ void CFMMTree::build_J() {
     set_nf_lff();
     compute_far_field();
 
-    int ind_start, ind_end;
-    
-    if (nlevels_ > 1) {
-        ind_start = (0.5 * std::pow(16, nlevels_ - 1) + 7) / 15;
-        ind_end = (0.5 * std::pow(16, nlevels_) + 7) / 15 - 1;
-    } else {
-        ind_start = 0;
-        ind_end = 0;
-    }
-    for (int bi = ind_start; bi <= ind_end; bi++) {
-        tree_[bi]->compute_J(basisset_, D_, J_);
+    for (int bi = tree_.size() - 1; bi >= 0; bi -= 1) {
+        std::shared_ptr<CFMMBox> box = tree_[bi];
+        int level = box->get_level();
+        if (level == nlevels_ - 1) box->compute_J(basisset_, D_, J_);
+        else break;
     }
 
     // Hermitivitize J matrix afterwards
