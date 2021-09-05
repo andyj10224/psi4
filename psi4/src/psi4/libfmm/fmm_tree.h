@@ -126,6 +126,8 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       double get_Vff_val(int l, int mu) { return Vff_->get_multipoles()[l][mu]; }
       // Get the children of the box
       std::vector<std::shared_ptr<CFMMBox>>& get_children() { return children_; }
+      // Get the shell pairs of the box
+      std::vector<std::shared_ptr<ShellPair>>& get_shell_pairs() { return shell_pairs_; };
 
 }; // End class CFMMBox
 
@@ -173,6 +175,8 @@ class PSI_API CFMMTree {
 
       // Build the J matrix of CFMMTree
       void build_J();
+      // Print the CFMM Tree out
+      void print_out();
 
 }; // End class CFMMTree
 

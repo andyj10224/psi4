@@ -41,6 +41,9 @@ ShellPair::ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pa
     const GaussianShell& Pshell = basisset_->shell(pair_index.first);
     const GaussianShell& Qshell = basisset_->shell(pair_index.second);
 
+    Vector3 pcenter = Pshell.center();
+    Vector3 qcenter = Qshell.center();
+
     center_ = Vector3(0.0, 0.0, 0.0);
     exp_ = INFINITY;
 
@@ -49,14 +52,12 @@ ShellPair::ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pa
     for (int pp = 0; pp < nprim_p; pp++) {
         double pcoef = Pshell.coef(pp);
         double pexp = Pshell.exp(pp);
-        Vector3 pcenter = Pshell.center();
         for (int qp = 0; qp < nprim_q; qp++) {
             double qcoef = Qshell.coef(qp);
             double qexp = Qshell.exp(qp);
-            Vector3 qcenter = Qshell.center();
 
             const double pq_exp = pexp + qexp;
-            Vector3 pq_center = (pcoef * pcenter + qcoef * qcenter) / pq_exp;
+            Vector3 pq_center = (pexp * pcenter + qexp * qcenter) / pq_exp;
 
             center_ += pq_center;
             exp_ = std::min(exp_, pq_exp);
@@ -165,68 +166,38 @@ std::shared_ptr<CFMMBox> CFMMBox::get() {
 
 void CFMMBox::make_children() {
 
-    if (level_ == 0) {
-        std::vector<std::vector<std::shared_ptr<ShellPair>>> child_shell_pair_buffer(8);
+    int nchild = (level_ > 0) ? 16 : 8;
+    std::vector<std::vector<std::shared_ptr<ShellPair>>> child_shell_pair_buffer(nchild);
 
-        // Fill order (ws,z,y,x) 000 001 010 011 100 101 110 111
-        int child_index = 0;
-        for (std::shared_ptr<ShellPair> shell_pair : shell_pairs_) {
-            Vector3 sp_center = shell_pair->get_center();
-            double x = sp_center[0];
-            double y = sp_center[1];
-            double z = sp_center[2];
+    // Fill order (ws,z,y,x) (0)000 (0)001 (0)010 (0)011 (0)100 (0)101 (0)110 (0)111
+    // (1)000 (1)001 (1)010 (1)011 (1)100 (1)101 (1)110 (1)111
+    for (std::shared_ptr<ShellPair> shell_pair : shell_pairs_) {
+        Vector3 sp_center = shell_pair->get_center();
+        double x = sp_center[0];
+        double y = sp_center[1];
+        double z = sp_center[2];
+        double extent = shell_pair->get_extent();
+        int ws = std::max(2, 2 * (int)std::ceil(extent / length_));
 
-            int xbit = (x < center_[0]) ? 0 : 1;
-            int ybit = (y < center_[1]) ? 0 : 1;
-            int zbit = (z < center_[2]) ? 0 : 1;
+        int xbit = (x < center_[0]) ? 0 : 1;
+        int ybit = (y < center_[1]) ? 0 : 1;
+        int zbit = (z < center_[2]) ? 0 : 1;
+        int rbit = (level_ == 0 || ws < 2 * ws_) ? 0 : 1;
 
-            int boxind = 4 * zbit + 2 * ybit + 1 * xbit;
-            child_shell_pair_buffer[boxind].push_back(shell_pair);
-        }
+        int boxind = 8 * rbit + 4 * zbit + 2 * ybit + 1 * xbit;
+        child_shell_pair_buffer[boxind].push_back(shell_pair);
+    }
 
-        // Make the children
-        for (int boxind = 0; boxind < 8; boxind++) {
-            int xbit = boxind % 2;
-            int ybit = (boxind / 2) % 2;
-            int zbit = (boxind / 4) % 2;
-            Vector3 new_origin = origin_ + Vector3(xbit * 0.5 * length_, ybit * 0.5 * length_, zbit * 0.5 * length_);
-            int child_ws = 2;
-            children_.push_back(std::make_shared<CFMMBox>(this->get(), child_shell_pair_buffer[boxind], new_origin, 
+    // Make the children
+    for (int boxind = 0; boxind < nchild; boxind++) {
+        int xbit = boxind % 2;
+        int ybit = (boxind / 2) % 2;
+        int zbit = (boxind / 4) % 2;
+        int rbit = (boxind / 8) % 2;
+        Vector3 new_origin = origin_ + Vector3(xbit * 0.5 * length_, ybit * 0.5 * length_, zbit * 0.5 * length_);
+        int child_ws = 2 * ws_ - 2 + 2 * rbit;
+        children_.push_back(std::make_shared<CFMMBox>(this->get(), child_shell_pair_buffer[boxind], new_origin, 
                                                           0.5 * length_, level_ + 1, lmax_, child_ws));
-        }
-    } else {
-        std::vector<std::vector<std::shared_ptr<ShellPair>>> child_shell_pair_buffer(16);
-
-        // Fill order (ws,z,y,x) 0000 0001 0010 0011 0100 0101 0110 0111 1000 1001 1010 1011 1100 1101 1110 1111
-        int child_index = 0;
-        for (std::shared_ptr<ShellPair> shell_pair : shell_pairs_) {
-            Vector3 sp_center = shell_pair->get_center();
-            double x = sp_center[0];
-            double y = sp_center[1];
-            double z = sp_center[2];
-            double extent = shell_pair->get_extent();
-            int ws = std::max(2, 2 * (int)std::ceil(extent / length_));
-
-            int xbit = (x < center_[0]) ? 0 : 1;
-            int ybit = (y < center_[1]) ? 0 : 1;
-            int zbit = (z < center_[2]) ? 0 : 1;
-            int rbit = (ws < 2 * ws_) ? 0 : 1;
-
-            int boxind = 8 * rbit + 4 * zbit + 2 * ybit + 1 * xbit;
-            child_shell_pair_buffer[boxind].push_back(shell_pair);
-        }
-
-        // Make the children
-        for (int boxind = 0; boxind < 16; boxind++) {
-            int xbit = boxind % 2;
-            int ybit = (boxind / 2) % 2;
-            int zbit = (boxind / 4) % 2;
-            int rbit = (boxind / 8) % 2;
-            Vector3 new_origin = origin_ + Vector3(xbit * 0.5 * length_, ybit * 0.5 * length_, zbit * 0.5 * length_);
-            int child_ws = 2 * ws_ - 2 + 2 * rbit;
-            children_.push_back(std::make_shared<CFMMBox>(this->get(), child_shell_pair_buffer[boxind], new_origin, 
-                                                          0.5 * length_, level_ + 1, lmax_, child_ws));
-        }
     }
 }
 
@@ -406,8 +377,8 @@ void CFMMBox::compute_nf_J(std::shared_ptr<BasisSet> basisset, std::vector<Share
 
             for (int nf = 0; nf < near_field_.size(); nf++) {
                 std::shared_ptr<CFMMBox> nfbox = near_field_[nf];
-                for (int indB = 0; indB < shell_pairs_.size(); indB++) {
-                    std::shared_ptr<ShellPair> spB = shell_pairs_[indB];
+                for (int indB = 0; indB < nfbox->shell_pairs_.size(); indB++) {
+                    std::shared_ptr<ShellPair> spB = nfbox->shell_pairs_[indB];
                     std::pair<int, int> RS = spB->get_shell_pair_index();
                     int R = RS.first;
                     int S = RS.second;
@@ -486,7 +457,7 @@ void CFMMBox::compute_ff_J(std::shared_ptr<BasisSet> basisset, std::vector<Share
                             val += Vff_->get(l, mu) * sp_mpoles[dp * num_q + dq]->get(l, mu);
                         }
                     }
-                    Jp[p][q] += val;
+                    Jp[p][q] += 0.5 * val;
                 }
             }
         }
@@ -497,7 +468,7 @@ void CFMMBox::compute_ff_J(std::shared_ptr<BasisSet> basisset, std::vector<Share
 
 void CFMMBox::compute_J(std::shared_ptr<BasisSet> basisset, std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J) {
     compute_nf_J(basisset, D, J);
-    // compute_ff_J(basisset, D, J);
+    compute_ff_J(basisset, D, J);
 }
 
 CFMMTree::CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, std::vector<SharedMatrix>& D, 
@@ -514,9 +485,10 @@ CFMMTree::CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet>
     for (const auto& pair : shell_pairs) {
         shell_pairs_.push_back(std::make_shared<ShellPair>(basisset_, pair));
     }
-    // sort_shell_pairs();
+    sort_shell_pairs();
     make_root_node();
     make_children();
+    // print_out();
 }
 
 void CFMMTree::sort_shell_pairs() {
@@ -544,22 +516,20 @@ void CFMMTree::sort_shell_pairs() {
     // Sort by x coordinates
     long curr10 = 10;
 
-    for (int iter = 0; iter < zdig; iter++) {
+    for (int iter = 0; iter < xdig; iter++) {
         for (int ind = 0; ind < shell_pairs_.size(); ind++) {
             int dig = ((long)(shell_pairs_[ind]->get_center()[0] * 1000) / curr10) % 10;
             buckets[dig + 9].push_back(shell_pairs_[ind]);
         }
-        curr10 *= 10;
-    }
-
-    shell_pairs_.clear();
-
-    for (int b = 0; b < 19; b++) {
-        int nelem = buckets[b].size();
-        for (int idx = 0; idx < nelem; idx++) {
-            shell_pairs_.push_back(buckets[b].back());
-            buckets[b].pop_back();
+        shell_pairs_.clear();
+        for (int b = 0; b < 19; b++) {
+            int nelem = buckets[b].size();
+            for (int idx = 0; idx < nelem; idx++) {
+                shell_pairs_.push_back(buckets[b].back());
+                buckets[b].pop_back();
+            }
         }
+        curr10 *= 10;
     }
 
     // Sort by y coordinates
@@ -570,59 +540,52 @@ void CFMMTree::sort_shell_pairs() {
             int dig = ((long)(shell_pairs_[ind]->get_center()[1] * 1000) / curr10) % 10;
             buckets[dig + 9].push_back(shell_pairs_[ind]);
         }
-        curr10 *= 10;
-    }
-
-    shell_pairs_.clear();
-
-    for (int b = 0; b < 19; b++) {
-        int nelem = buckets[b].size();
-        for (int idx = 0; idx < nelem; idx++) {
-            shell_pairs_.push_back(buckets[b].back());
-            buckets[b].pop_back();
+        shell_pairs_.clear();
+        for (int b = 0; b < 19; b++) {
+            int nelem = buckets[b].size();
+            for (int idx = 0; idx < nelem; idx++) {
+                shell_pairs_.push_back(buckets[b].back());
+                buckets[b].pop_back();
+            }
         }
+        curr10 *= 10;
     }
 
     // Sort by z coordinates
     curr10 = 10;
 
-    for (int iter = 0; iter < xdig; iter++) {
+    for (int iter = 0; iter < zdig; iter++) {
         for (int ind = 0; ind < shell_pairs_.size(); ind++) {
             int dig = ((long)(shell_pairs_[ind]->get_center()[2] * 1000) / curr10) % 10;
             buckets[dig + 9].push_back(shell_pairs_[ind]);
         }
-        curr10 *= 10;
-    }
-
-    shell_pairs_.clear();
-
-    for (int b = 0; b < 19; b++) {
-        int nelem = buckets[b].size();
-        for (int idx = 0; idx < nelem; idx++) {
-            shell_pairs_.push_back(buckets[b].back());
-            buckets[b].pop_back();
+        shell_pairs_.clear();
+        for (int b = 0; b < 19; b++) {
+            int nelem = buckets[b].size();
+            for (int idx = 0; idx < nelem; idx++) {
+                shell_pairs_.push_back(buckets[b].back());
+                buckets[b].pop_back();
+            }
         }
+        curr10 *= 10;
     }
 
     // Sort by radial extents
     curr10 = 10;
-
     for (int iter = 0; iter < rdig; iter++) {
         for (int ind = 0; ind < shell_pairs_.size(); ind++) {
             int dig = ((long)(shell_pairs_[ind]->get_extent() * 1000) / curr10) % 10;
             buckets[dig + 9].push_back(shell_pairs_[ind]);
         }
-        curr10 *= 10;
-    }
-
-    shell_pairs_.clear();
-
-    for (int b = 0; b < 19; b++) {
-        int nelem = buckets[b].size();
-        for (int idx = 0; idx < nelem; idx++) {
-            shell_pairs_.push_back(buckets[b].back());
-            buckets[b].pop_back();
+        shell_pairs_.clear();
+        for (int b = 0; b < 19; b++) {
+            int nelem = buckets[b].size();
+            for (int idx = 0; idx < nelem; idx++) {
+                shell_pairs_.push_back(buckets[b].back());
+                buckets[b].pop_back();
+            }
         }
+        curr10 *= 10;
     }
 }
 
@@ -707,6 +670,20 @@ void CFMMTree::build_J() {
         J_[ind]->hermitivitize();
     }
 
+}
+
+void CFMMTree::print_out() {
+    for (int bi = 0; bi < tree_.size(); bi++) {
+        std::shared_ptr<CFMMBox> box = tree_[bi];
+        auto sp = box->get_shell_pairs();
+        int nshells = sp.size();
+        int level = box->get_level();
+        outfile->Printf("  BOX INDEX: %d, LEVEL: %d, NSHELLS: %d\n", bi, level, nshells);
+        for (int si = 0; si < sp.size(); si++) {
+            Vector3 center = sp[si]->get_center();
+            outfile->Printf("  SHELL: %d, x: %8.5f, y: %8.5f, z: %8.5f\n\n", si, center[0], center[1], center[2]);
+        }
+    }
 }
 
 } // end namespace psi
