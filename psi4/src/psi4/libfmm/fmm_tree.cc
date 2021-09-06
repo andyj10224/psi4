@@ -35,7 +35,7 @@ int num_digits(long n) {
     return (int) std::log10(std::abs(n)) + 1;
 }
 
-ShellPair::ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pair_index) {
+ShellPair::ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pair_index, std::shared_ptr<HarmonicCoefficients>& mpole_coefs) {
     basisset_ = basisset;
     pair_index_ = pair_index;
     const GaussianShell& Pshell = basisset_->shell(pair_index.first);
@@ -66,8 +66,7 @@ ShellPair::ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pa
     center_ /= (nprim_p * nprim_q);
     extent_ = ERFCI10 * std::sqrt(2.0 / exp_);
 
-    Options& options = Process::environment.options;
-    mpole_coefs_ = std::make_shared<HarmonicCoefficients>(options.get_int("CFMM_MAX_MPOLE_ORDER"), Regular);
+    mpole_coefs_ = mpole_coefs;
 }
 
 void ShellPair::calculate_mpoles(Vector3 box_center, std::shared_ptr<OneBodyAOInt> s_ints,
@@ -479,20 +478,23 @@ CFMMTree::CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet>
     J_ = J;
     nlevels_ = nlevels;
     lmax_ = lmax;
-    int num_boxes = (0.5 * std::pow(16, nlevels_) + 7) / 15;
-    // tree_.resize(num_boxes, nullptr);
+    // int num_boxes = (0.5 * std::pow(16, nlevels_) + 7) / 15;
+    Options& options = Process::environment.options;
+    mpole_coefs_ = std::make_shared<HarmonicCoefficients>(options.get_int("CFMM_MAX_MPOLE_ORDER"), Regular);
 
     for (const auto& pair : shell_pairs) {
-        shell_pairs_.push_back(std::make_shared<ShellPair>(basisset_, pair));
+        shell_pairs_.push_back(std::make_shared<ShellPair>(basisset_, pair, mpole_coefs_));
         if (pair.first != pair.second) {
             std::pair<int, int> reverse_pair = std::make_pair(pair.second, pair.first);
-            shell_pairs_.push_back(std::make_shared<ShellPair>(basisset_, reverse_pair));
+            shell_pairs_.push_back(std::make_shared<ShellPair>(basisset_, reverse_pair, mpole_coefs_));
         }
     }
     sort_shell_pairs();
     make_root_node();
     make_children();
-    print_out();
+
+    int print = options.get_int("PRINT");
+    if (print >= 2) print_out();
 }
 
 void CFMMTree::sort_shell_pairs() {

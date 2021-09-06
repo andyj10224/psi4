@@ -327,9 +327,9 @@ void DirectJK::compute_JK() {
         }
     }
 
-    for (int ind = 0; ind < D_ao_.size(); ind += 1) {
-        J_ao_[ind]->print_out();
-    }
+    // for (int ind = 0; ind < D_ao_.size(); ind += 1) {
+    //     J_ao_[ind]->print_out();
+    // }
 
     iteration_ += 1;
 }

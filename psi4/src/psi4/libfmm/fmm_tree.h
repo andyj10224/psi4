@@ -38,7 +38,7 @@ class PSI_API ShellPair {
       std::shared_ptr<HarmonicCoefficients> mpole_coefs_;
 
     public:
-      ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pair_index);
+      ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pair_index, std::shared_ptr<HarmonicCoefficients>& mpole_coefs);
 
       // Calculate the multipole moments of the Shell-Pair about a center
       void calculate_mpoles(Vector3 box_center, std::shared_ptr<OneBodyAOInt> s_ints,
@@ -152,8 +152,8 @@ class PSI_API CFMMTree {
       int lmax_;
       // The tree structure (implemented as list for simplification)
       std::vector<std::shared_ptr<CFMMBox>> tree_;
-      // Far field energy
-      double ff_energy_;
+      // Harmonic Coefficients used to calculate multipoles
+      std::shared_ptr<HarmonicCoefficients> mpole_coefs_;
 
       // Sort the shell-pairs (radix sort)
       void sort_shell_pairs();
