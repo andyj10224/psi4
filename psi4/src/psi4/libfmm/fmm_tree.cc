@@ -56,7 +56,7 @@ ShellPair::ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pa
             double qcoef = Qshell.coef(qp);
             double qexp = Qshell.exp(qp);
 
-            const double pq_exp = pexp + qexp;
+            const double pq_exp = std::abs(pexp + qexp);
             Vector3 pq_center = (pexp * pcenter + qexp * qcenter) / pq_exp;
 
             center_ += pq_center;
@@ -484,11 +484,15 @@ CFMMTree::CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet>
 
     for (const auto& pair : shell_pairs) {
         shell_pairs_.push_back(std::make_shared<ShellPair>(basisset_, pair));
+        if (pair.first != pair.second) {
+            std::pair<int, int> reverse_pair = std::make_pair(pair.second, pair.first);
+            shell_pairs_.push_back(std::make_shared<ShellPair>(basisset_, reverse_pair));
+        }
     }
     sort_shell_pairs();
     make_root_node();
     make_children();
-    // print_out();
+    print_out();
 }
 
 void CFMMTree::sort_shell_pairs() {
@@ -678,10 +682,13 @@ void CFMMTree::print_out() {
         auto sp = box->get_shell_pairs();
         int nshells = sp.size();
         int level = box->get_level();
-        outfile->Printf("  BOX INDEX: %d, LEVEL: %d, NSHELLS: %d\n", bi, level, nshells);
-        for (int si = 0; si < sp.size(); si++) {
-            Vector3 center = sp[si]->get_center();
-            outfile->Printf("  SHELL: %d, x: %8.5f, y: %8.5f, z: %8.5f\n\n", si, center[0], center[1], center[2]);
+        int ws = box->get_ws();
+        if (nshells > 0) {
+            outfile->Printf("  BOX INDEX: %d, LEVEL: %d, WS: %d, NSHELLS: %d\n", bi, level, ws, nshells);
+            for (int si = 0; si < sp.size(); si++) {
+                Vector3 center = sp[si]->get_center();
+                outfile->Printf("  SHELL: %d, x: %8.5f, y: %8.5f, z: %8.5f\n\n", si, center[0], center[1], center[2]);
+            }
         }
     }
 }
