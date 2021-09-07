@@ -35,9 +35,11 @@ int num_digits(long n) {
     return (int) std::log10(std::abs(n)) + 1;
 }
 
-ShellPair::ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pair_index, std::shared_ptr<HarmonicCoefficients>& mpole_coefs) {
+ShellPair::ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pair_index, 
+                     std::shared_ptr<HarmonicCoefficients>& mpole_coefs) {     
     basisset_ = basisset;
     pair_index_ = pair_index;
+
     const GaussianShell& Pshell = basisset_->shell(pair_index.first);
     const GaussianShell& Qshell = basisset_->shell(pair_index.second);
 
@@ -306,7 +308,7 @@ void CFMMBox::compute_mpoles_from_children() {
 
     timer_on("CFMMBox::compute_mpoles_from_children()");
 
-    for (const auto& child : children_) {
+    for (std::shared_ptr<CFMMBox> child : children_) {
         std::shared_ptr<RealSolidHarmonics> child_mpoles = child->mpoles_->translate(center_);
         mpoles_->add(child_mpoles);
     }
@@ -325,10 +327,10 @@ void CFMMBox::compute_far_field_vector() {
     }
 
     // If parent is not null, add the parent's far field
-
     // Creates a temporary parent shared pointer
     std::shared_ptr<CFMMBox> parent = parent_.lock();
 
+    // If parent is not null, add the parent's far field
     if (parent) {
         Vff_->add(parent->Vff_->translate(center_));
     }
@@ -489,7 +491,7 @@ CFMMTree::CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet>
             shell_pairs_.push_back(std::make_shared<ShellPair>(basisset_, reverse_pair, mpole_coefs_));
         }
     }
-    sort_shell_pairs();
+    // sort_shell_pairs();
     make_root_node();
     make_children();
 
@@ -498,10 +500,10 @@ CFMMTree::CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet>
 }
 
 void CFMMTree::sort_shell_pairs() {
+    
     // Number of digits of each phase of the sort
     // Resolution for floats is 0.001 bohr
     // Sort by z, y, x, and then radial extents
-
     int zdig = 1, ydig = 1, xdig = 1, rdig = 1;
 
     for (const auto& shell_pair : shell_pairs_) {

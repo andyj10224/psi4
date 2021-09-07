@@ -275,7 +275,33 @@ void DirectJK::compute_JK() {
     auto factory = std::make_shared<IntegralFactory>(primary_, primary_, primary_, primary_);
 
     Options& options = Process::environment.options;
-    bool do_cfmm = options.get_bool("DO_CFMM_J") && (iteration_ > 0);
+    do_cfmm_ = options.get_bool("DO_CFMM_J") && (iteration_ > 0);
+
+    if (do_cfmm_) {
+        // Make the integral objects
+        std::vector<std::shared_ptr<TwoBodyAOInt>> ints;
+        ints.push_back(std::shared_ptr<TwoBodyAOInt>(factory->eri()));
+        for (int thread = 1; thread < df_ints_num_threads_; thread++) {
+            ints.push_back(std::shared_ptr<TwoBodyAOInt>(ints[0]->clone()));
+        }
+        // Build J (CFMM)
+        int nlevels = options.get_int("CFMM_MAX_TREE_DEPTH");
+        int lmax = options.get_int("CFMM_MAX_MPOLE_ORDER");
+
+        std::shared_ptr<Molecule> mol = primary_->molecule();
+        const auto& shell_pairs = ints[0]->shell_pairs();
+        std::shared_ptr<CFMMTree> tree = std::make_shared<CFMMTree>(mol, primary_, D_ao_, J_ao_, shell_pairs, nlevels, lmax);
+        tree->build_J();
+
+        // Build K
+        if (do_K_) {
+            std::vector<std::shared_ptr<Matrix>> temp;
+            for (size_t i = 0; i < D_ao_.size(); i++) {
+                temp.push_back(std::make_shared<Matrix>("temp", primary_->nbf(), primary_->nbf()));
+            }
+            build_JK(ints, D_ao_, temp, K_ao_);
+        }
+    }
 
     if (do_wK_) {
         std::vector<std::shared_ptr<TwoBodyAOInt>> ints;
@@ -294,7 +320,7 @@ void DirectJK::compute_JK() {
         }
     }
 
-    if (do_J_ || do_K_) {
+    if ((do_J_ || do_K_) && !do_cfmm_) {
         std::vector<std::shared_ptr<TwoBodyAOInt>> ints;
         ints.push_back(std::shared_ptr<TwoBodyAOInt>(factory->eri()));
         for (int thread = 1; thread < df_ints_num_threads_; thread++) {
@@ -316,20 +342,7 @@ void DirectJK::compute_JK() {
             }
             build_JK(ints, D_ao_, temp, K_ao_);
         }
-
-        if (do_cfmm) {
-            int nlevels = options.get_int("CFMM_MAX_TREE_DEPTH");
-            int lmax = options.get_int("CFMM_MAX_MPOLE_ORDER");
-            auto mol = primary_->molecule();
-            const auto& shell_pairs = ints[0]->shell_pairs();
-            auto tree = std::make_shared<CFMMTree>(mol, primary_, D_ao_, J_ao_, shell_pairs, nlevels, lmax);
-            tree->build_J();
-        }
     }
-
-    // for (int ind = 0; ind < D_ao_.size(); ind += 1) {
-    //     J_ao_[ind]->print_out();
-    // }
 
     iteration_ += 1;
 }
