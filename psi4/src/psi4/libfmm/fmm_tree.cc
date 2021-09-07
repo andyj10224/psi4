@@ -204,7 +204,6 @@ void CFMMBox::make_children() {
 
 void CFMMBox::set_nf_lff() {
 
-    timer_on("CFMMBox::set_nf_lff()");
     // Creates a temporary parent shared pointer
     std::shared_ptr<CFMMBox> parent = parent_.lock();
 
@@ -244,12 +243,9 @@ void CFMMBox::set_nf_lff() {
         near_field_.push_back(this->get());
     }
 
-    timer_off("CFMMBox::set_nf_lff()");
 }
 
 void CFMMBox::compute_mpoles(std::shared_ptr<BasisSet>& basisset, std::vector<SharedMatrix>& D) {
-
-    timer_on("CFMMBox::compute_mpoles()");
 
     std::shared_ptr<IntegralFactory> int_factory = std::make_shared<IntegralFactory>(basisset);
 
@@ -300,25 +296,18 @@ void CFMMBox::compute_mpoles(std::shared_ptr<BasisSet>& basisset, std::vector<Sh
         } // end N
     }
 
-    timer_off("CFMMBox::compute_mpoles()");
-
 }
 
 void CFMMBox::compute_mpoles_from_children() {
-
-    timer_on("CFMMBox::compute_mpoles_from_children()");
 
     for (std::shared_ptr<CFMMBox> child : children_) {
         std::shared_ptr<RealSolidHarmonics> child_mpoles = child->mpoles_->translate(center_);
         mpoles_->add(child_mpoles);
     }
 
-    timer_off("CFMMBox::compute_mpoles_from_children()");
-
 }
 
 void CFMMBox::compute_far_field_vector() {
-    timer_on("CFMMBox::compute_far_field_vector()");
 
     for (std::shared_ptr<CFMMBox> box : local_far_field_) {
         // The far field effect the boxes have on this particular box
@@ -335,12 +324,9 @@ void CFMMBox::compute_far_field_vector() {
         Vff_->add(parent->Vff_->translate(center_));
     }
 
-    timer_off("CFMMBox::compute_far_field_vector()");
 }
 
 void CFMMBox::compute_nf_J(std::shared_ptr<BasisSet> basisset, std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J) {
-
-    timer_on("CFMMBox::compute_nf_J()");
 
     std::vector<std::shared_ptr<TwoBodyAOInt>> ints;
     std::shared_ptr<IntegralFactory> factory = std::make_shared<IntegralFactory>(basisset);
@@ -414,12 +400,9 @@ void CFMMBox::compute_nf_J(std::shared_ptr<BasisSet> basisset, std::vector<Share
         }
     }
 
-    timer_off("CFMMBox::compute_nf_J()");
 }
 
 void CFMMBox::compute_ff_J(std::shared_ptr<BasisSet> basisset, std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J) {
-
-    timer_on("CFMMBox::compute_ff_J()");
 
 #pragma omp parallel for
     for (int ind = 0; ind < shell_pairs_.size(); ind++) {
@@ -463,8 +446,6 @@ void CFMMBox::compute_ff_J(std::shared_ptr<BasisSet> basisset, std::vector<Share
             }
         }
     }
-
-    timer_off("CFMMBox::compute_ff_J()");
 }
 
 void CFMMBox::compute_J(std::shared_ptr<BasisSet> basisset, std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J) {
@@ -500,7 +481,7 @@ CFMMTree::CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet>
 }
 
 void CFMMTree::sort_shell_pairs() {
-    
+
     // Number of digits of each phase of the sort
     // Resolution for floats is 0.001 bohr
     // Sort by z, y, x, and then radial extents
@@ -636,12 +617,16 @@ void CFMMTree::make_children() {
 }
 
 void CFMMTree::calculate_multipoles() {
+    timer_on("CFMMTree::calculate_multipoles");
+
     for (int bi = tree_.size() - 1; bi >= 0; bi -= 1) {
         std::shared_ptr<CFMMBox> box = tree_[bi];
         int level = box->get_level();
         if (level == nlevels_ - 1) box->compute_mpoles(basisset_, D_);
         else box->compute_mpoles_from_children();
     }
+
+    timer_off("CFMMTree::calculate_multipoles");
 }
 
 void CFMMTree::set_nf_lff() {
@@ -651,13 +636,19 @@ void CFMMTree::set_nf_lff() {
 }
 
 void CFMMTree::compute_far_field() {
+
+    timer_on("CFMMTree::compute_far_field");
     for (int bi = 0; bi < tree_.size(); bi++) {
         tree_[bi]->compute_far_field_vector();
     }
+    timer_off("CFMMTree::compute_far_field");
 }
 
 void CFMMTree::build_J() {
     // Zero the J matrix
+
+    timer_on("CFMMTree::build_J");
+
     for (int ind = 0; ind < D_.size(); ind++) {
         J_[ind]->zero();
     }
@@ -678,6 +669,7 @@ void CFMMTree::build_J() {
         J_[ind]->hermitivitize();
     }
 
+    timer_off("CFMMTree::build_J");
 }
 
 void CFMMTree::print_out() {
