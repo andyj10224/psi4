@@ -93,10 +93,6 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
 
       // Returns a shared pointer to the CFMMBox object
       std::shared_ptr<CFMMBox> get();
-
-      // Compute the near field and far field J matrix contributions
-      void compute_nf_J(std::shared_ptr<BasisSet> basisset, std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J);
-      void compute_ff_J(std::shared_ptr<BasisSet> basisset, std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J);
       
     public:
       // Generic Constructor
@@ -109,10 +105,8 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       void compute_mpoles(std::shared_ptr<BasisSet>& basisset, std::vector<SharedMatrix>& D);
       // Compute multipoles from children
       void compute_mpoles_from_children();
-      // Sets the near field and local far field vectors
-      void set_nf_lff();
-      // Calculate far field vector from local and parent far fields
-      void compute_far_field_vector();
+      // Sets the near field and local far field and calculates far field vector from local and parent far fields
+      void compute_far_field();
       // Compute the box's contribution to the J matrix
       void compute_J(std::shared_ptr<BasisSet> basisset, std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J);
 
@@ -163,8 +157,6 @@ class PSI_API CFMMTree {
       void make_children();
       // Calculate multipoles
       void calculate_multipoles();
-      // Helper method to set the near field and lff vectors
-      void set_nf_lff();
       // Helper method to compute far field
       void compute_far_field();
       // Helper method to build the J Matrix recursively
