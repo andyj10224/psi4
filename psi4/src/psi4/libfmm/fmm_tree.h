@@ -124,6 +124,8 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       std::vector<std::shared_ptr<CFMMBox>>& get_children() { return children_; }
       // Get the shell pairs of the box
       std::vector<std::shared_ptr<ShellPair>>& get_shell_pairs() { return shell_pairs_; };
+      // Gets the number of shell pairs in the box
+      int get_nsp() { return shell_pairs_.size(); }
 
 }; // End class CFMMBox
 

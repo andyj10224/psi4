@@ -592,6 +592,7 @@ void CFMMTree::calculate_multipoles() {
     }
 
     for (int bi = start; bi < end; bi += 1) {
+        if (tree_[bi]->get_nsp() == 0) continue;
         tree_[bi]->compute_mpoles(basisset_, D_);
     }
 
@@ -608,6 +609,7 @@ void CFMMTree::calculate_multipoles() {
 
 #pragma omp parallel for
         for (int bi = start; bi < end; bi++) {
+            if (tree_[bi]->get_nsp() == 0) continue;
             tree_[bi]->compute_mpoles_from_children();
         }
     }
@@ -629,6 +631,7 @@ void CFMMTree::compute_far_field() {
 
 #pragma omp parallel for
         for (int bi = start; bi < end; bi++) {
+            if (tree_[bi]->get_nsp() == 0) continue;
             tree_[bi]->compute_far_field();
         }
     }
@@ -657,6 +660,7 @@ void CFMMTree::build_J() {
     }
 
     for (int bi = start; bi < end; bi += 1) {
+        if (tree_[bi]->get_nsp() == 0) continue;
         tree_[bi]->compute_J(basisset_, D_, J_);
     }
 
