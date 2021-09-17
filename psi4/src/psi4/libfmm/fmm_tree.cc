@@ -284,6 +284,8 @@ void CFMMBox::compute_mpoles(std::shared_ptr<BasisSet>& basisset, std::vector<Sh
         int P = PQ.first;
         int Q = PQ.second;
 
+        double prefactor = (P == Q) ? 2.0 : 4.0;
+
         const GaussianShell& Pshell = basisset->shell(P);
         const GaussianShell& Qshell = basisset->shell(Q);
 
@@ -299,7 +301,8 @@ void CFMMBox::compute_mpoles(std::shared_ptr<BasisSet>& basisset, std::vector<Sh
                 for (int q = q_start; q < q_start + num_q; q++) {
                     int dq = q - q_start;
                     std::shared_ptr<RealSolidHarmonics> basis_mpole = sp_mpoles[dp * num_q + dq]->copy();
-                    basis_mpole->scale(2.0 * D[N]->get(p, q));
+                    
+                    basis_mpole->scale(prefactor * D[N]->get(p, q));
                     mpoles_->add(basis_mpole);
                 } // end q
             } // end p
@@ -327,6 +330,9 @@ void CFMMBox::compute_J(std::shared_ptr<BasisSet> basisset, std::vector<SharedMa
     for (int thread = 1; thread < nthread_; thread++) {
         ints.push_back(std::shared_ptr<TwoBodyAOInt>(eri->clone()));
     }
+    
+    int nshell = basisset->nshell();
+    int nbf = basisset->nbf();
 
 #pragma omp parallel for
     for (int indA = 0; indA < shell_pairs_.size(); indA++) {
@@ -358,12 +364,13 @@ void CFMMBox::compute_J(std::shared_ptr<BasisSet> basisset, std::vector<SharedMa
                 for (int N = 0; N < D.size(); N++) {
                     double** Jp = J[N]->pointer();
                     double** Dp = D[N]->pointer();
-
+                    
                     // Far field multipole contributions
                     for (int l = 0; l <= lmax_; l++) {
-                        for (int mu = 0; mu < 2*l+1; mu++) {
-                            Jp[p][q] += 0.5 * Vff_->get(l, mu) * spA_mpoles[dp * num_q + dq]->get(l, mu);
-                        }
+                       for (int mu = 0; mu < 2*l+1; mu++) {
+                          double prefactor = (P == Q) ? 0.5 : 1.0;
+                          Jp[p][q] += prefactor * Vff_->get(l, mu) * spA_mpoles[dp * num_q + dq]->get(l, mu);
+                       }
                     }
 
                     // Near field contributions
@@ -374,6 +381,10 @@ void CFMMBox::compute_J(std::shared_ptr<BasisSet> basisset, std::vector<SharedMa
                             std::pair<int, int> RS = spB->get_shell_pair_index();
                             int R = RS.first;
                             int S = RS.second;
+
+                            double prefactor = 1.0;
+                            if (P != Q) prefactor *= 2;
+                            if (R != S) prefactor *= 2;
 
                             const GaussianShell& Rshell = basisset->shell(R);
                             const GaussianShell& Sshell = basisset->shell(S);
@@ -386,12 +397,14 @@ void CFMMBox::compute_J(std::shared_ptr<BasisSet> basisset, std::vector<SharedMa
 
                             ints[thread]->compute_shell(P, Q, R, S);
                             const double* pqrs = ints[thread]->buffer();
-
+                            
                             for (int r = r_start; r < r_start + num_r; r++) {
                                 int dr = r - r_start;
                                 for (int s = s_start; s < s_start + num_s; s++) {
                                     int ds = s - s_start;
-                                    Jp[p][q] += pqrs[dp * num_q * num_r * num_s + dq * num_r * num_s + dr * num_s + ds] * Dp[r][s];
+                                    
+                                    double val = pqrs[dp * num_q * num_r * num_s + dq * num_r * num_s + dr * num_s + ds];
+                                    Jp[p][q] += prefactor * val * Dp[r][s];
                                 } // end s
                             } // end r
                         } // end nf
@@ -418,10 +431,10 @@ CFMMTree::CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet>
 
     for (const auto& pair : shell_pairs) {
         shell_pairs_.push_back(std::make_shared<ShellPair>(basisset_, pair, mpole_coefs_));
-        if (pair.first != pair.second) {
-            std::pair<int, int> reverse_pair = std::make_pair(pair.second, pair.first);
-            shell_pairs_.push_back(std::make_shared<ShellPair>(basisset_, reverse_pair, mpole_coefs_));
-        }
+        // if (pair.first != pair.second) {
+        //   std::pair<int, int> reverse_pair = std::make_pair(pair.second, pair.first);
+        //   shell_pairs_.push_back(std::make_shared<ShellPair>(basisset_, reverse_pair, mpole_coefs_));
+        // }
     }
     // sort_shell_pairs();
     make_root_node();
