@@ -272,16 +272,20 @@ void CFMMBox::compute_mpoles(std::shared_ptr<BasisSet>& basisset, std::vector<Sh
         mpints[thread]->set_origin(center_);
     }
 
-    // Compute multipoles for all basis sets in the basis pair
+    // Compute multipoles for all function pairs in the shell pair
 #pragma omp parallel for
     for (int ind = 0; ind < shell_pairs_.size(); ind++) {
         std::shared_ptr<ShellPair> sp = shell_pairs_[ind];
+        
         int thread = 0;
-
 #ifdef _OPENMP
         thread = omp_get_thread_num();
 #endif
         sp->calculate_mpoles(center_, sints[thread], mpints[thread], lmax_);
+    }
+
+    // Contract the multipoles with the density matrix to get box multipoles
+    for (const auto& sp : shell_pairs_) {
         std::vector<std::shared_ptr<RealSolidHarmonics>>& sp_mpoles = sp->get_mpoles();
 
         std::pair<int, int> PQ = sp->get_shell_pair_index();
