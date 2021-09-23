@@ -328,19 +328,124 @@ void CFMMBox::compute_mpoles_from_children() {
 
 }
 
-void CFMMBox::compute_J(std::shared_ptr<BasisSet> basisset, std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J) {
+/*
+void CFMMBox::set_nf_shell_pairs(std::shared_ptr<BasisSet> basisset, std::vector<std::pair<int, int>>& nf_bra_shell_pairs) {
 
-    std::vector<std::shared_ptr<TwoBodyAOInt>> ints;
     std::shared_ptr<IntegralFactory> factory = std::make_shared<IntegralFactory>(basisset);
     std::shared_ptr<TwoBodyAOInt> eri = std::shared_ptr<TwoBodyAOInt>(factory->eri());
-    ints.push_back(eri);
+    int nshell = basisset->nbf();
 
-    for (int thread = 1; thread < nthread_; thread++) {
-        ints.push_back(std::shared_ptr<TwoBodyAOInt>(eri->clone()));
-    }
+    for (int indA = 0; indA < shell_pairs_.size(); indA++) {
+        std::shared_ptr<ShellPair> spA = shell_pairs_[indA];
+        std::pair<int, int> PQ = spA->get_shell_pair_index();
+        int P = PQ.first;
+        int Q = PQ.second;
+        for (int nf = 0; nf < near_field_.size(); nf++) {
+            std::shared_ptr<CFMMBox> nfbox = near_field_[nf];
+            for (int indB = 0; indB < nfbox->shell_pairs_.size(); indB++) {
+                std::shared_ptr<ShellPair> spB = nfbox->shell_pairs_[indB];
+                std::pair<int, int> RS = spB->get_shell_pair_index();
+                int R = RS.first;
+                int S = RS.second;
+                if (R * nshell + S > P * nshell + Q) continue;
+                if (eri->shell_significant(P, Q, R, S)) {
+                    nf_bra_shell_pairs.push_back(std::make_pair(P, Q));
+                    nf_bra_shell_pairs.push_back(std::make_pair(R, S));
+                }
+            } // end indB
+        } // end nf
+    } // end indA
+
+}
+*/
+
+void CFMMBox::compute_nf_J(std::shared_ptr<BasisSet>& basisset, std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J) {
+
+    timer_on("CFMM : Near Field J");
     
     int nshell = basisset->nshell();
     int nbf = basisset->nbf();
+
+#pragma omp parallel for
+    for (int indA = 0; indA < shell_pairs_.size(); indA++) {
+        std::shared_ptr<ShellPair> spA = shell_pairs_[indA];
+        std::pair<int, int> PQ = spA->get_shell_pair_index();
+
+        int P = PQ.first;
+        int Q = PQ.second;
+
+        const GaussianShell& Pshell = basisset->shell(P);
+        const GaussianShell& Qshell = basisset->shell(Q);
+
+        int thread = 0;
+#ifdef _OPENMP
+        thread = omp_get_thread_num();
+#endif
+        int p_start = Pshell.start();
+        int num_p = Pshell.nfunction();
+
+        int q_start = Qshell.start();
+        int num_q = Qshell.nfunction();
+
+        // Near field contributions
+        for (int nf = 0; nf < near_field_.size(); nf++) {
+            std::shared_ptr<CFMMBox> nfbox = near_field_[nf];
+            for (int indB = 0; indB < nfbox->shell_pairs_.size(); indB++) {
+                std::shared_ptr<ShellPair> spB = nfbox->shell_pairs_[indB];
+                std::pair<int, int> RS = spB->get_shell_pair_index();
+                int R = RS.first;
+                int S = RS.second;
+                if (!ints[thread]->shell_significant(P, Q, R, S)) continue;
+
+                double prefactor = 1.0;
+                if (P != Q) prefactor *= 2;
+                if (R != S) prefactor *= 2;
+
+                const GaussianShell& Rshell = basisset->shell(R);
+                const GaussianShell& Sshell = basisset->shell(S);
+
+                int r_start = Rshell.start();
+                int num_r = Rshell.nfunction();
+
+                int s_start = Sshell.start();
+                int num_s = Sshell.nfunction();
+
+                if (ints[thread]->compute_shell(P, Q, R, S) == 0) continue;
+                const double* pqrs = ints[thread]->buffer();
+
+                for (int p = p_start; p < p_start + num_p; p++) {
+                    int dp = p - p_start;
+                    for (int q = q_start; q < q_start + num_q; q++) {
+                        int dq = q - q_start;
+                        for (int N = 0; N < D.size(); N++) {
+                            double** Jp = J[N]->pointer();
+                            double** Dp = D[N]->pointer();
+
+                            for (int r = r_start; r < r_start + num_r; r++) {
+                                int dr = r - r_start;
+                                for (int s = s_start; s < s_start + num_s; s++) {
+                                    int ds = s - s_start;
+                                    double val = pqrs[dp * num_q * num_r * num_s + dq * num_r * num_s + dr * num_s + ds];
+                                    Jp[p][q] += prefactor * val * Dp[r][s];
+
+                                } // end s
+                            } // end r
+                                
+                        } // end N
+                    } // end q
+                } // end p
+
+            } // end indB
+        } // end nf
+    } // end indA
+
+    timer_off("CFMM : Near Field J");
+
+}
+
+void CFMMBox::compute_ff_J(std::shared_ptr<BasisSet>& basisset, std::vector<SharedMatrix>& J) {
+
+    timer_on("CFMM : Far Field J");
 
 #pragma omp parallel for
     for (int indA = 0; indA < shell_pairs_.size(); indA++) {
@@ -354,11 +459,6 @@ void CFMMBox::compute_J(std::shared_ptr<BasisSet> basisset, std::vector<SharedMa
         const GaussianShell& Pshell = basisset->shell(P);
         const GaussianShell& Qshell = basisset->shell(Q);
 
-        int thread = 0;
-#ifdef _OPENMP
-        thread = omp_get_thread_num();
-#endif
-
         int p_start = Pshell.start();
         int num_p = Pshell.nfunction();
 
@@ -369,59 +469,28 @@ void CFMMBox::compute_J(std::shared_ptr<BasisSet> basisset, std::vector<SharedMa
             int dp = p - p_start;
             for (int q = q_start; q < q_start + num_q; q++) {
                 int dq = q - q_start;
-                for (int N = 0; N < D.size(); N++) {
+
+                for (int N = 0; N < J.size(); N++) {
                     double** Jp = J[N]->pointer();
-                    double** Dp = D[N]->pointer();
-                    
                     // Far field multipole contributions
                     for (int l = 0; l <= lmax_; l++) {
-                       for (int mu = 0; mu < 2*l+1; mu++) {
-                          double prefactor = (P == Q) ? 0.5 : 1.0;
-                          Jp[p][q] += prefactor * Vff_->get(l, mu) * spA_mpoles[dp * num_q + dq]->get(l, mu);
-                       }
+                        for (int mu = 0; mu < 2*l+1; mu++) {
+                            double prefactor = (P == Q) ? 0.5 : 1.0;
+                            Jp[p][q] += prefactor * Vff_->get(l, mu) * spA_mpoles[dp * num_q + dq]->get(l, mu);
+                        }
                     }
+                }
 
-                    // Near field contributions
-                    for (int nf = 0; nf < near_field_.size(); nf++) {
-                        std::shared_ptr<CFMMBox> nfbox = near_field_[nf];
-                        for (int indB = 0; indB < nfbox->shell_pairs_.size(); indB++) {
-                            std::shared_ptr<ShellPair> spB = nfbox->shell_pairs_[indB];
-                            std::pair<int, int> RS = spB->get_shell_pair_index();
-                            int R = RS.first;
-                            int S = RS.second;
-
-                            double prefactor = 1.0;
-                            if (P != Q) prefactor *= 2;
-                            if (R != S) prefactor *= 2;
-
-                            const GaussianShell& Rshell = basisset->shell(R);
-                            const GaussianShell& Sshell = basisset->shell(S);
-
-                            int r_start = Rshell.start();
-                            int num_r = Rshell.nfunction();
-
-                            int s_start = Sshell.start();
-                            int num_s = Sshell.nfunction();
-
-                            ints[thread]->compute_shell(P, Q, R, S);
-                            const double* pqrs = ints[thread]->buffer();
-                            
-                            for (int r = r_start; r < r_start + num_r; r++) {
-                                int dr = r - r_start;
-                                for (int s = s_start; s < s_start + num_s; s++) {
-                                    int ds = s - s_start;
-                                    
-                                    double val = pqrs[dp * num_q * num_r * num_s + dq * num_r * num_s + dr * num_s + ds];
-                                    Jp[p][q] += prefactor * val * Dp[r][s];
-                                } // end s
-                            } // end r
-                        } // end nf
-                    } // end nf
-                } // end N
             } // end q
         } // end p
     } // end indA
 
+    timer_off("CFMM : Far Field J");
+}
+
+void CFMMBox::compute_J(std::shared_ptr<BasisSet>& basisset, std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J) {
+    compute_nf_J(basisset, ints, D, J);
+    compute_ff_J(basisset, J);
 }
 
 CFMMTree::CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet> basisset, std::vector<SharedMatrix>& D, 
@@ -437,13 +506,23 @@ CFMMTree::CFMMTree(std::shared_ptr<Molecule> molecule, std::shared_ptr<BasisSet>
     Options& options = Process::environment.options;
     mpole_coefs_ = std::make_shared<HarmonicCoefficients>(options.get_int("CFMM_MAX_MPOLE_ORDER"), Regular);
 
+    std::shared_ptr<IntegralFactory> factory = std::make_shared<IntegralFactory>(basisset_);
+    std::shared_ptr<TwoBodyAOInt> eri = std::shared_ptr<TwoBodyAOInt>(factory->eri());
+    ints_.push_back(eri);
+
+    nthread_ = 1;
+#ifdef _OPENMP
+    nthread_ = Process::environment.get_n_threads();
+#endif
+
+    for (int thread = 1; thread < nthread_; thread++) {
+        ints_.push_back(std::shared_ptr<TwoBodyAOInt>(eri->clone()));
+    }
+
     for (const auto& pair : shell_pairs) {
         shell_pairs_.push_back(std::make_shared<ShellPair>(basisset_, pair, mpole_coefs_));
-        // if (pair.first != pair.second) {
-        //   std::pair<int, int> reverse_pair = std::make_pair(pair.second, pair.first);
-        //   shell_pairs_.push_back(std::make_shared<ShellPair>(basisset_, reverse_pair, mpole_coefs_));
-        // }
     }
+
     // sort_shell_pairs();
     make_root_node();
     make_children();
@@ -576,6 +655,8 @@ void CFMMTree::make_root_node() {
 
 void CFMMTree::make_children() {
 
+    timer_on("CFMMTree::make_children");
+
     for (int level = 0; level <= nlevels_ - 2; level += 1) {
         int start, end;
         if (level == 0) {
@@ -597,6 +678,8 @@ void CFMMTree::make_children() {
             }
         }
     }
+
+    timer_off("CFMMTree::make_children");
 }
 
 void CFMMTree::calculate_multipoles() {
@@ -640,6 +723,8 @@ void CFMMTree::calculate_multipoles() {
 
 void CFMMTree::compute_far_field() {
 
+    timer_on("CFMMTree::compute_far_field");
+
     for (int level = 0; level <= nlevels_ - 1; level += 1) {
         int start, end;
         if (level == 0) {
@@ -657,7 +742,88 @@ void CFMMTree::compute_far_field() {
         }
     }
 
+    timer_off("CFMMTree::compute_far_field");
+
 }
+/*
+void CFMMTree::compute_nf_J() {
+
+    std::vector<std::shared_ptr<TwoBodyAOInt>> ints;
+    std::shared_ptr<IntegralFactory> factory = std::make_shared<IntegralFactory>(basisset_);
+    std::shared_ptr<TwoBodyAOInt> eri = std::shared_ptr<TwoBodyAOInt>(factory->eri());
+    ints.push_back(eri);
+
+    int nthread = 1;
+#ifdef _OPENMP
+    nthread = Process::environment.get_n_threads();
+#endif
+
+    for (int thread = 1; thread < nthread; thread++) {
+        ints.push_back(std::shared_ptr<TwoBodyAOInt>(eri->clone()));
+    }
+
+#pragma omp parallel for
+    for (int PQ = 0; PQ < nf_bra_shell_pairs_.size(); PQ++) {
+        int P = nf_bra_shell_pairs_[PQ].first;
+        int Q = nf_bra_shell_pairs_[PQ].second;
+
+        const GaussianShell& Pshell = basisset_->shell(P);
+        const GaussianShell& Qshell = basisset_->shell(Q);
+
+        int p_start = Pshell.start();
+        int num_p = Pshell.nfunction();
+
+        int q_start = Qshell.start();
+        int num_q = Qshell.nfunction();
+
+        int thread = 0;
+#ifdef _OPENMP
+        thread = omp_get_thread_num();
+#endif
+
+        for (int RS = 0; RS < nf_bra_shell_pairs_.size(); RS++) {
+            int R = nf_bra_shell_pairs_[RS].first;
+            int S = nf_bra_shell_pairs_[RS].second;
+            const GaussianShell& Rshell = basisset_->shell(R);
+            const GaussianShell& Sshell = basisset_->shell(S);
+
+            int r_start = Rshell.start();
+            int num_r = Rshell.nfunction();
+
+            int s_start = Sshell.start();
+            int num_s = Sshell.nfunction();
+
+            if (ints[thread]->compute_shell(P, Q, R, S) == 0) continue;
+            const double* buff = ints[thread]->buffer();
+
+            double prefactor = 1.0;
+            if (P != Q) prefactor *= 2.0;
+            if (R != S) prefactor *= 2.0;
+
+            for (int N = 0; N < D_.size(); N++) {
+                double** Jp = J_[N]->pointer();
+                double** Dp = D_[N]->pointer();
+                const double* pqrs = buff;
+
+                for (int p = p_start; p < p_start + num_p; p++) {
+                    for (int q = q_start; q < q_start + num_q; q++) {
+                        for (int r = r_start; r < r_start + num_r; r++) {
+                            for (int s = s_start; s < s_start + num_s; s++) {
+                                Jp[p][q] += prefactor * (*pqrs) * Dp[r][s];
+                                Jp[r][s] += prefactor * (*pqrs) * Dp[p][q];
+                                pqrs++;
+                            } // end s
+                        } // end r
+                    } // end q
+                } // end p
+
+            } // end N
+        
+        
+        } // end RS
+    } // end PQ
+}
+*/
 
 void CFMMTree::build_J() {
     // Zero the J matrix
@@ -682,7 +848,7 @@ void CFMMTree::build_J() {
 
     for (int bi = start; bi < end; bi += 1) {
         if (tree_[bi]->get_nsp() == 0) continue;
-        tree_[bi]->compute_J(basisset_, D_, J_);
+        tree_[bi]->compute_J(basisset_, ints_, D_, J_);
     }
 
     // Hermitivitize J matrix afterwards

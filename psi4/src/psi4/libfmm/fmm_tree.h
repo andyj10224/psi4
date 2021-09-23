@@ -8,6 +8,7 @@
 #include "psi4/libmints/molecule.h"
 #include "psi4/libmints/basisset.h"
 #include "psi4/libmints/onebody.h"
+#include "psi4/libmints/twobody.h"
 #include "psi4/libfmm/multipoles_helper.h"
 
 #include <functional>
@@ -93,6 +94,10 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
 
       // Returns a shared pointer to the CFMMBox object
       std::shared_ptr<CFMMBox> get();
+      // Compute the box's near field contribution to the J matrix
+      void compute_nf_J(std::shared_ptr<BasisSet>& basisset, std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J);
+      // Compute the box's far field contribution to the J matrix
+      void compute_ff_J(std::shared_ptr<BasisSet>& basisset, std::vector<SharedMatrix>& J);
       
     public:
       // Generic Constructor
@@ -107,8 +112,8 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       void compute_mpoles_from_children();
       // Sets the near field and local far field and calculates far field vector from local and parent far fields
       void compute_far_field();
-      // Compute the box's contribution to the J matrix
-      void compute_J(std::shared_ptr<BasisSet> basisset, std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J);
+      // Compute the J matrix
+      void compute_J(std::shared_ptr<BasisSet>& basisset, std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J);
 
       // => USEFUL GETTER METHODS <= //
 
@@ -146,10 +151,16 @@ class PSI_API CFMMTree {
       int nlevels_;
       // Maximum Multipole Angular Momentum
       int lmax_;
-      // The tree structure (implemented as list for simplification)
+      // The tree structure (implemented as list for random access)
       std::vector<std::shared_ptr<CFMMBox>> tree_;
       // Harmonic Coefficients used to calculate multipoles
       std::shared_ptr<HarmonicCoefficients> mpole_coefs_;
+      // A list of significant bra shell pairs
+      std::vector<std::pair<int, int>> nf_bra_shell_pairs_;
+
+      // Number of threads
+      int nthread_;
+      std::vector<std::shared_ptr<TwoBodyAOInt>> ints_;
 
       // Sort the shell-pairs (radix sort)
       void sort_shell_pairs();
@@ -161,8 +172,6 @@ class PSI_API CFMMTree {
       void calculate_multipoles();
       // Helper method to compute far field
       void compute_far_field();
-      // Helper method to build the J Matrix recursively
-      void calculate_J(CFMMBox* box);
     
     public:
       // Constructor
