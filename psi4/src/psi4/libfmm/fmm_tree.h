@@ -93,11 +93,7 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       std::vector<std::shared_ptr<CFMMBox>> local_far_field_;
 
       // Returns a shared pointer to the CFMMBox object
-      std::shared_ptr<CFMMBox> get();
-      // Compute the box's near field contribution to the J matrix
-      void compute_nf_J(std::shared_ptr<BasisSet>& basisset, std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J);
-      // Compute the box's far field contribution to the J matrix
-      void compute_ff_J(std::shared_ptr<BasisSet>& basisset, std::vector<SharedMatrix>& J);
+      std::shared_ptr<CFMMBox> get() { return shared_from_this(); }
       
     public:
       // Generic Constructor
@@ -112,11 +108,8 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       void compute_mpoles_from_children();
       // Sets the near field and local far field and calculates far field vector from local and parent far fields
       void compute_far_field();
-      // Compute the J matrix
-      void compute_J(std::shared_ptr<BasisSet>& basisset, std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J);
 
       // => USEFUL GETTER METHODS <= //
-
       // Get the multipole level the box is on
       int get_level() { return level_; }
       // Get the ws criterion of the box
@@ -128,9 +121,13 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       // Get the children of the box
       std::vector<std::shared_ptr<CFMMBox>>& get_children() { return children_; }
       // Get the shell pairs of the box
-      std::vector<std::shared_ptr<ShellPair>>& get_shell_pairs() { return shell_pairs_; };
+      std::vector<std::shared_ptr<ShellPair>>& get_shell_pairs() { return shell_pairs_; }
       // Gets the number of shell pairs in the box
       int get_nsp() { return shell_pairs_.size(); }
+      // Gets the near_field_boxes of the box
+      std::vector<std::shared_ptr<CFMMBox>>& near_field_boxes() { return near_field_; }
+      // Gets the far field vector
+      std::shared_ptr<RealSolidHarmonics>& far_field_vector() { return Vff_; }
 
 }; // End class CFMMBox
 
@@ -172,6 +169,10 @@ class PSI_API CFMMTree {
       void calculate_multipoles();
       // Helper method to compute far field
       void compute_far_field();
+      // Build near-field J (like Direct SCF)
+      void build_nf_J();
+      // Build far-field J (long-range multipole interactions)
+      void build_ff_J();
     
     public:
       // Constructor
