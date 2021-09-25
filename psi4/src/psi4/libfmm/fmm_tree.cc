@@ -583,8 +583,30 @@ void CFMMTree::build_nf_J() {
 
     int nshell = basisset_->nshell();
 
+    // Starting and ending box indices
     int start = (nlevels_ == 1) ? 0 : (0.5 * std::pow(16, nlevels_-1) + 7) / 15;
     int end = (nlevels_ == 1) ? 1 : (0.5 * std::pow(16, nlevels_) + 7) / 15;
+
+    // Maximum number of basis functions per shell-pair block
+    size_t max_function = 0;
+    for (int bi = start; bi < end; bi++) {
+        auto& PQshells = tree_[bi]->get_shell_pairs();
+        for (int PQind = 0; PQind < PQshells.size(); PQind++) {
+            std::pair<int, int> PQ = PQshells[PQind]->get_shell_pair_index();
+            max_function = std::max(max_function, (size_t)basisset_->shell(PQ.first).nfunction());
+            max_function = std::max(max_function, (size_t)basisset_->shell(PQ.second).nfunction());
+        }
+    }
+
+    // Make intermediate buffers (for threading purposes and take advantage of 8-fold perm sym)
+    std::vector<std::vector<SharedMatrix>> JT;
+    for (int thread = 0; thread < nthread_; thread++) {
+        std::vector<SharedMatrix> J2;
+        for (size_t N = 0; N < D_.size(); N++) {
+            J2.push_back(std::make_shared<Matrix>("JT", 2 * max_function, max_function));
+        }
+        JT.push_back(J2);
+    }
 
 #pragma omp parallel for
     for (int bi = start; bi < end; bi++) {
@@ -597,14 +619,15 @@ void CFMMTree::build_nf_J() {
         thread = omp_get_thread_num();
 #endif
 
-        for (int nfi = 0; nfi < nf_boxes.size(); nfi++) {
-            std::shared_ptr<CFMMBox> neighbor = nf_boxes[nfi];
-            auto& RSshells = neighbor->get_shell_pairs();
+        for (int PQind = 0; PQind < PQshells.size(); PQind++) {
+            std::pair<int, int> PQ = PQshells[PQind]->get_shell_pair_index();
+            int P = PQ.first;
+            int Q = PQ.second;
 
-            for (int PQind = 0; PQind < PQshells.size(); PQind++) {
-                std::pair<int, int> PQ = PQshells[PQind]->get_shell_pair_index();
-                int P = PQ.first;
-                int Q = PQ.second;
+            for (int nfi = 0; nfi < nf_boxes.size(); nfi++) {
+                std::shared_ptr<CFMMBox> neighbor = nf_boxes[nfi];
+                auto& RSshells = neighbor->get_shell_pairs();
+            
                 for (int RSind = 0; RSind < RSshells.size(); RSind++) {
                     std::pair<int, int> RS = RSshells[RSind]->get_shell_pair_index();
                     int R = RS.first;
@@ -640,20 +663,51 @@ void CFMMTree::build_nf_J() {
                     for (int N = 0; N < D_.size(); N++) {
                         double** Jp = J_[N]->pointer();
                         double** Dp = D_[N]->pointer();
+                        double** JTp = JT[thread][N]->pointer();
                         const double* pqrs2 = pqrs;
+
+                        ::memset((void*)JTp[0L * max_function], '\0', num_p * num_q * sizeof(double));
+                        ::memset((void*)JTp[1L * max_function], '\0', num_r * num_s * sizeof(double));
+
+                        double* J1p = JTp[0L * max_function];
+                        double* J2p = JTp[1L * max_function];
+
                         for (int p = p_start; p < p_start + num_p; p++) {
+                            int dp = p - p_start;
                             for (int q = q_start; q < q_start + num_q; q++) {
+                                int dq = q - q_start;
                                 for (int r = r_start; r < r_start + num_r; r++) {
+                                    int dr = r - r_start;
                                     for (int s = s_start; s < s_start + num_s; s++) {
-                                        Jp[p][q] += prefactor * (*pqrs2) * Dp[r][s];
-                                        Jp[r][s] += prefactor * (*pqrs2) * Dp[p][q];
+                                        int ds = s - s_start;
+                                        J1p[dp * num_q + dq] += prefactor * (*pqrs2) * Dp[r][s];
+                                        J2p[dr * num_s + ds] += prefactor * (*pqrs2) * Dp[p][q];
                                         pqrs2++;
                                     } // end s
                                 } // end r
                             } // end q
                         } // end p
-                    } // end N
 
+                        // Stripe out //
+                        for (int p = p_start; p < p_start + num_p; p++) {
+                            int dp = p - p_start;
+                            for (int q = q_start; q < q_start + num_q; q++) {
+                                int dq = q - q_start;
+#pragma omp atomic
+                                Jp[p][q] += J1p[dp * num_q + dq];
+                            }
+                        }
+
+                        for (int r = r_start; r < r_start + num_r; r++) {
+                            int dr = r - r_start;
+                            for (int s = s_start; s < s_start + num_s; s++) {
+                                int ds = s - s_start;
+#pragma omp atomic
+                                Jp[r][s] += J2p[dr * num_s + ds];
+                            }
+                        }
+
+                    } // end N
                 } // end RSind
             } // end PQind
         } // end nfi
