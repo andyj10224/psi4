@@ -208,12 +208,10 @@ void CFMMBox::compute_far_field() {
         // Siblings of this box (Technically near fields include self in this implementation)
         for (std::shared_ptr<CFMMBox> sibling : parent->children_) {
             Vector3 Rab = center_ - sibling->center_;
-            int xoff = (int) std::abs(Rab[0] / length_);
-            int yoff = (int) std::abs(Rab[1] / length_);
-            int zoff = (int) std::abs(Rab[2] / length_);
+            double rab = std::sqrt(Rab.dot(Rab));
 
             int ref_ws = (ws_ + sibling->ws_) / 2;
-            if (xoff <= ref_ws && yoff <= ref_ws && zoff <= ref_ws) {
+            if (rab <= ref_ws * length_) {
                 near_field_.push_back(sibling);
             } else {
                 local_far_field_.push_back(sibling);
@@ -225,12 +223,10 @@ void CFMMBox::compute_far_field() {
             if (uncle.get() == parent.get()) continue;
             for (std::shared_ptr<CFMMBox> cousin : uncle->children_) {
                 Vector3 Rab = center_ - cousin->center_;
-                int xoff = (int) std::abs(Rab[0] / length_);
-                int yoff = (int) std::abs(Rab[1] / length_);
-                int zoff = (int) std::abs(Rab[2] / length_);
+                double rab = std::sqrt(Rab.dot(Rab));
 
                 int ref_ws = (ws_ + cousin->ws_) / 2;
-                if (xoff <= ref_ws && yoff <= ref_ws && zoff <= ref_ws) {
+                if (rab <= ref_ws * length_) {
                     near_field_.push_back(cousin);
                 } else {
                     local_far_field_.push_back(cousin);
