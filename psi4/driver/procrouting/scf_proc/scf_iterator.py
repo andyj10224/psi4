@@ -287,10 +287,12 @@ def scf_iterate(self, e_conv=None, d_conv=None):
         SCFE = 0.0
         self.clear_external_potentials()
 
+        # Form G = Build J, K
         core.timer_on("HF: Form G")
         self.form_G()
         core.timer_off("HF: Form G")
 
+        # Check if special J/K construction algorithms were used
         incfock_performed = hasattr(self.jk(), "do_incfock_iter") and self.jk().do_incfock_iter()
 
         upcm = 0.0

@@ -219,6 +219,8 @@ class PSI_API TwoBodyAOInt {
      inline double function_ceiling2(int m, int n, int r, int s) {
         return function_pair_values_[m * nbf_ + n] * function_pair_values_[r * nbf_ + s];
     }
+    /// Return the maximum density per shell pair
+    double shell_pair_max_density(int M, int N) const;
 
     /// For a given PQ shellpair index, what's the first RS pair that should be processed such
     /// that loops may be processed generating only permutationally unique PQ<=RS.  For engines
@@ -229,6 +231,8 @@ class PSI_API TwoBodyAOInt {
     const std::vector<std::pair<int, int> >& function_pairs() const { return function_pairs_; }
     /// Significant unique shell pair pair list, with only M>=N elements listed
     const std::vector<std::pair<int, int> >& shell_pairs() const { return shell_pairs_; }
+    const std::vector<std::pair<int, int> >& shell_pairs_bra() const { return shell_pairs_bra_; }
+    const std::vector<std::pair<int, int> >& shell_pairs_ket() const { return shell_pairs_ket_; }
     /// Unique function pair indexing, element m*(m+1)/2 + n (where m>=n) gives the dense index or
     /// -1 if the function pair does not contribute
     const std::vector<long int> function_pairs_to_dense() const { return function_pairs_reverse_; }
