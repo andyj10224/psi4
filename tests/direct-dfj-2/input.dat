@@ -22,16 +22,15 @@ molecule mol {
 }
 
 set {
-    scf_type direct
-    df_scf_guess false
+    scf_type composite
+    j_type direct_df
+    k_type linK
     basis cc-pVTZ
     ints_tolerance 1.0e-12
     e_convergence 1.0e-6
     screening density
     incfock true
     incfock_full_fock_every 4
-    do_linK true
-    direct_df_j true
     linK_ints_tolerance 1.0e-12
 }
 

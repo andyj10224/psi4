@@ -1,9 +1,9 @@
 
     -----------------------------------------------------------------------
           Psi4: An Open-Source Ab Initio Electronic Structure Package
-                               Psi4 1.5a1.dev273 
+                               Psi4 1.6a1.dev25 
 
-                         Git: Rev {linK-new} 9efbe77 dirty
+                         Git: Rev {composite-jk} 5ff3cb2 dirty
 
 
     D. G. A. Smith, L. A. Burns, A. C. Simmonett, R. M. Parrish,
@@ -19,7 +19,7 @@
                             Additional Code Authors
     E. T. Seidl, C. L. Janssen, E. F. Valeev, M. L. Leininger,
     J. F. Gonthier, R. M. Richard, H. R. McAlexander, M. Saitow, X. Wang,
-    P. Verma, and M. H. Lechner
+    P. Verma, M. H. Lechner, and A. Jiang
 
              Previous Authors, Complete List of Code Contributors,
                        and Citations for Specific Modules
@@ -30,20 +30,20 @@
     -----------------------------------------------------------------------
 
 
-    Psi4 started on: Monday, 03 January 2022 11:47AM
+    Psi4 started on: Wednesday, 05 January 2022 12:30PM
 
-    Process ID: 1000995
-    Host:       jacket
-    PSIDATADIR: /theoryfs2/ds/jiang/p4dev/psi4/objdir-livie/stage/share/psi4
+    Process ID: 17499
+    Host:       ds10
+    PSIDATADIR: /theoryfs2/ds/jiang/p4dev/psi4/objdir-alexander/stage/share/psi4
     Memory:     500.0 MiB
     Threads:    1
     
   ==> Input File <==
 
 --------------------------------------------------------------------------
-#! RHF Linear Exchange Algorithm test for water
+#! RHF Direct-DF-J Algorithm test for water
 
-ref_energy = -76.04125669409474 # TEST (Compare to CSAM Screening, without LinK)
+ref_energy = -76.04125669409474 # TEST (Compare to Direct SCF)
 
 molecule mol {
     0 1
@@ -56,8 +56,9 @@ molecule mol {
 }
 
 set {
-    scf_type direct
-    df_scf_guess false
+    scf_type composite
+    j_type direct_df
+    k_type linK
     basis aug-cc-pVDZ
     ints_tolerance 1.0e-12
     e_convergence 1.0e-10
@@ -65,26 +66,25 @@ set {
     screening density
     incfock true
     incfock_full_fock_every 4
-    do_linK true
     linK_ints_tolerance 1.0e-14
 }
 
-linK_energy = energy('scf')
-psi4.compare_values(ref_energy, linK_energy, 9, "HF Energy (Using LinK algo)")
+dfj_energy = energy('scf')
+psi4.compare_values(ref_energy, dfj_energy, 4, "HF Energy (Direct-DF-J)")
 --------------------------------------------------------------------------
 
 Scratch directory: /scratch/jiang/
 
-*** tstart() called on jacket
-*** at Mon Jan  3 11:47:03 2022
+*** tstart() called on ds10
+*** at Wed Jan  5 12:30:48 2022
 
    => Loading Basis Set <=
 
     Name: AUG-CC-PVDZ
     Role: ORBITAL
     Keyword: BASIS
-    atoms 1   entry O          line   254 file /theoryfs2/ds/jiang/p4dev/psi4/objdir-livie/stage/share/psi4/basis/aug-cc-pvdz.gbs 
-    atoms 2-3 entry H          line    40 file /theoryfs2/ds/jiang/p4dev/psi4/objdir-livie/stage/share/psi4/basis/aug-cc-pvdz.gbs 
+    atoms 1   entry O          line   254 file /theoryfs2/ds/jiang/p4dev/psi4/objdir-alexander/stage/share/psi4/basis/aug-cc-pvdz.gbs 
+    atoms 2-3 entry H          line    40 file /theoryfs2/ds/jiang/p4dev/psi4/objdir-alexander/stage/share/psi4/basis/aug-cc-pvdz.gbs 
 
 
          ---------------------------------------------------------
@@ -122,7 +122,7 @@ Scratch directory: /scratch/jiang/
 
   ==> Algorithm <==
 
-  SCF Algorithm Type is DIRECT.
+  SCF Algorithm Type is COMPOSITE.
   DIIS enabled.
   MOM disabled.
   Fractional occupation disabled.
@@ -141,19 +141,25 @@ Scratch directory: /scratch/jiang/
     Spherical Harmonics?: true
     Max angular momentum: 2
 
+   => Loading Basis Set <=
+
+    Name: (AUG-CC-PVDZ AUX)
+    Role: JKFIT
+    Keyword: DF_BASIS_SCF
+    atoms 1   entry O          line   270 file /theoryfs2/ds/jiang/p4dev/psi4/objdir-alexander/stage/share/psi4/basis/aug-cc-pvdz-jkfit.gbs 
+    atoms 2-3 entry H          line    70 file /theoryfs2/ds/jiang/p4dev/psi4/objdir-alexander/stage/share/psi4/basis/aug-cc-pvdz-jkfit.gbs 
+
   ==> Integral Setup <==
 
-  ==> DirectJK: Integral-Direct J/K Matrices <==
+  ==> CompositeJK: Mix/Match JK Builds <==
 
     J tasked:                  Yes
+    J Algorithm:         DIRECT_DF
     K tasked:                  Yes
-    wK tasked:                  No
+    K Algorithm:              LINK
     Integrals threads:           1
     Screening Type:        DENSITY
     Screening Cutoff:        1E-12
-    Incremental Fock:          Yes
-    LinK:                      Yes
-
   Minimum eigenvalue in the overlap matrix is 2.6921161277E-03.
   Reciprocal condition number of the overlap matrix is 4.7404748701E-04.
     Using symmetric orthogonalization.
@@ -174,16 +180,16 @@ Scratch directory: /scratch/jiang/
 
                         Total Energy        Delta E     RMS |[F,P]|
 
-   @RHF iter SAD:   -75.46291161737793   -7.54629e+01   0.00000e+00 
-   @RHF iter   1:   -75.95704831424477   -4.94137e-01   1.10492e-02 DIIS/LINK
-   @RHF iter   2:   -76.01021534699365   -5.31670e-02   7.21652e-03 DIIS/INCFOCK/LINK
-   @RHF iter   3:   -76.04085526036518   -3.06399e-02   5.18207e-04 DIIS/INCFOCK/LINK
-   @RHF iter   4:   -76.04123352979865   -3.78269e-04   1.16384e-04 DIIS/INCFOCK/LINK
-   @RHF iter   5:   -76.04125492372350   -2.13939e-05   2.62852e-05 DIIS/LINK
-   @RHF iter   6:   -76.04125661917332   -1.69545e-06   5.29539e-06 DIIS/INCFOCK/LINK
-   @RHF iter   7:   -76.04125669217731   -7.30040e-08   8.83808e-07 DIIS/INCFOCK/LINK
-   @RHF iter   8:   -76.04125669405509   -1.87778e-09   1.36743e-07 DIIS/LINK
-   @RHF iter   9:   -76.04125669409453   -3.94351e-11   3.56798e-08 DIIS/LINK
+   @RHF iter SAD:   -75.46291161737808   -7.54629e+01   0.00000e+00 
+   @RHF iter   1:   -75.95707170328120   -4.94160e-01   1.10491e-02 DIIS
+   @RHF iter   2:   -76.01024103594978   -5.31693e-02   7.21623e-03 DIIS
+   @RHF iter   3:   -76.04087857918648   -3.06375e-02   5.18323e-04 DIIS
+   @RHF iter   4:   -76.04125698200647   -3.78403e-04   1.16397e-04 DIIS
+   @RHF iter   5:   -76.04127837968315   -2.13977e-05   2.62820e-05 DIIS
+   @RHF iter   6:   -76.04128007458030   -1.69490e-06   5.29494e-06 DIIS
+   @RHF iter   7:   -76.04128014756327   -7.29830e-08   8.83912e-07 DIIS
+   @RHF iter   8:   -76.04128014925300   -1.68973e-09   1.36733e-07 DIIS
+   @RHF iter   9:   -76.04128014920391    4.90843e-11   3.56805e-08 DIIS
   Energy and wave function converged.
 
 
@@ -194,36 +200,36 @@ Scratch directory: /scratch/jiang/
 
     Doubly Occupied:                                                      
 
-       1A    -20.577732     2A     -1.355219     3A     -0.717755  
-       4A     -0.585137     5A     -0.509216  
+       1A    -20.577718     2A     -1.355217     3A     -0.717760  
+       4A     -0.585142     5A     -0.509216  
 
     Virtual:                                                              
 
-       6A      0.035389     7A      0.057915     8A      0.174039  
-       9A      0.196812    10A      0.222451    11A      0.231524  
-      12A      0.290014    13A      0.331105    14A      0.385606  
-      15A      0.403674    16A      0.433391    17A      0.538813  
-      18A      0.647949    19A      0.658101    20A      0.810556  
-      21A      0.928975    22A      1.101245    23A      1.115396  
-      24A      1.148646    25A      1.306873    26A      1.466248  
-      27A      1.482349    28A      1.582936    29A      2.001553  
-      30A      2.009988    31A      2.107335    32A      2.367041  
-      33A      2.477342    34A      2.622364    35A      2.714255  
-      36A      2.965894    37A      3.672864    38A      3.689787  
-      39A      3.702442    40A      4.023743    41A      4.303268  
+       6A      0.035408     7A      0.057949     8A      0.174062  
+       9A      0.196818    10A      0.222473    11A      0.231575  
+      12A      0.290032    13A      0.331122    14A      0.385605  
+      15A      0.403691    16A      0.433388    17A      0.538845  
+      18A      0.647888    19A      0.658078    20A      0.810540  
+      21A      0.928978    22A      1.101246    23A      1.115496  
+      24A      1.148688    25A      1.306903    26A      1.466234  
+      27A      1.482398    28A      1.582991    29A      2.001503  
+      30A      2.009945    31A      2.107278    32A      2.366935  
+      33A      2.477386    34A      2.622447    35A      2.714199  
+      36A      2.965914    37A      3.672844    38A      3.689962  
+      39A      3.702470    40A      4.023721    41A      4.303026  
 
     Final Occupation by Irrep:
               A 
     DOCC [     5 ]
 
-  @RHF Final Energy:   -76.04125669409453
+  @RHF Final Energy:   -76.04128014920391
 
    => Energetics <=
 
     Nuclear Repulsion Energy =              9.1681932964243469
-    One-Electron Energy =                -122.9287781791893934
-    Two-Electron Energy =                  37.7193281886705023
-    Total Energy =                        -76.0412566940945425
+    One-Electron Energy =                -122.9288405161562139
+    Two-Electron Energy =                  37.7193670705279516
+    Total Energy =                        -76.0412801492039137
 
 Computation Completed
 
@@ -236,27 +242,27 @@ Properties computed using the SCF density matrix
      X:     0.0000      Y:     0.0000      Z:     0.9783
 
   Electronic Dipole Moment: [e a0]
-     X:     0.0000      Y:     0.0000      Z:    -0.1910
+     X:     0.0000      Y:     0.0000      Z:    -0.1911
 
   Dipole Moment: [e a0]
      X:     0.0000      Y:     0.0000      Z:     0.7873     Total:     0.7873
 
   Dipole Moment: [D]
-     X:     0.0000      Y:     0.0000      Z:     2.0011     Total:     2.0011
+     X:     0.0000      Y:     0.0000      Z:     2.0010     Total:     2.0010
 
 
-*** tstop() called on jacket at Mon Jan  3 11:47:04 2022
+*** tstop() called on ds10 at Wed Jan  5 12:30:49 2022
 Module time:
-	user time   =       1.12 seconds =       0.02 minutes
-	system time =       0.01 seconds =       0.00 minutes
+	user time   =       0.90 seconds =       0.01 minutes
+	system time =       0.02 seconds =       0.00 minutes
 	total time  =          1 seconds =       0.02 minutes
 Total time:
-	user time   =       1.12 seconds =       0.02 minutes
-	system time =       0.01 seconds =       0.00 minutes
+	user time   =       0.90 seconds =       0.01 minutes
+	system time =       0.02 seconds =       0.00 minutes
 	total time  =          1 seconds =       0.02 minutes
-    HF Energy (Using LinK algo)...........................................................PASSED
+    HF Energy (Direct-DF-J)...............................................................PASSED
 
-    Psi4 stopped on: Monday, 03 January 2022 11:47AM
-    Psi4 wall time for execution: 0:00:01.19
+    Psi4 stopped on: Wednesday, 05 January 2022 12:30PM
+    Psi4 wall time for execution: 0:00:00.97
 
 *** Psi4 exiting successfully. Buy a developer a beer!
