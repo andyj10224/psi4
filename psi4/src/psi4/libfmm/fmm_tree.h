@@ -140,7 +140,6 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       void compute_far_field();
 
       // => USEFUL GETTER METHODS <= //
-
       // Get the multipole level the box is on
       int get_level() { return level_; }
       // Get the ws criterion of the box

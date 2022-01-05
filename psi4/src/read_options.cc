@@ -1459,8 +1459,12 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         /*- The screening tolerance used for ERI/Density sparsity in the linK algorithm [Ochsenfeld:1998:1663]_ -*/
         options.add_double("LINK_INTS_TOLERANCE", 1.0e-12);
 
-        /*- SUBSECTION Fractional Occupation UHF/UKS -*/
+        /*- The maximum multipole order to use in the CFMM algorithm -*/
+        options.add_int("CFMM_ORDER", 10);
+        /*- The maximum tree depth to use in the CFMM algorithm -*/
+        options.add_int("CFMM_GRAIN", 3);
 
+        /*- SUBSECTION Fractional Occupation UHF/UKS -*/
         /*- The iteration to start fractionally occupying orbitals (or 0 for no fractional occupation) -*/
         options.add_int("FRAC_START", 0);
         /*- The absolute indices of occupied orbitals to fractionally occupy (+/- for alpha/beta) -*/
