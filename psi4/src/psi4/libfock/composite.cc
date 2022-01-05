@@ -87,7 +87,7 @@ void CompositeJK::print_header() const {
         if (do_K_) outfile->Printf("    K Algorithm:       %11s\n", ktype_.c_str());
         outfile->Printf("    Integrals threads: %11d\n", df_ints_num_threads_);
         outfile->Printf("    Screening Type:    %11s\n", screen_type.c_str());
-        outfile->Printf("    Screening Cutoff:  %11.0E\n", cutoff_);
+        outfile->Printf("    Screening Cutoff:  %11.0E\n\n", cutoff_);
     }
 }
 
