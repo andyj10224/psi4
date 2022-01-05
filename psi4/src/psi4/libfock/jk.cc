@@ -78,10 +78,6 @@ std::shared_ptr<JK> JK::build_JK(std::shared_ptr<BasisSet> primary, std::shared_
     }
     */
 
-    if (options.get_str("J_TYPE") != "" || options.get_str("K_TYPE") != "") {
-        jk_type = "COMPOSITE";
-    }
-
     // Throw small DF warning
     if (jk_type == "DF") {
         outfile->Printf("\n  Warning: JK type 'DF' found in simple constructor, defaulting to DiskDFJK.\n");
