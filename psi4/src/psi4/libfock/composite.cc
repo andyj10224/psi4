@@ -59,8 +59,7 @@ void CompositeJK::common_init() {
 
     if (jtype_ == "DIRECT_DF") {
         jalgo_ = std::make_shared<DirectDFJ>(primary_, auxiliary_, options_);
-    } else if (jtype_ == "") {
-        jtype_ = "DIRECT";
+    } else if (jtype_ == "DIRECT") {
         jalgo_ = nullptr;
     } else {
         throw PSIEXCEPTION("J_TYPE IS NOT SUPPORTED AS A COMPOSITE METHOD");
@@ -68,8 +67,7 @@ void CompositeJK::common_init() {
 
     if (ktype_ == "LINK") {
         kalgo_ = std::make_shared<LinK>(primary_, options_);
-    } else if (ktype_ == "") {
-        ktype_ = "DIRECT";
+    } else if (ktype_ == "DIRECT") {
         kalgo_ = nullptr;
     } else {
         throw PSIEXCEPTION("K_TYPE IS NOT SUPPORTED AS A COMPOSITE METHOD");

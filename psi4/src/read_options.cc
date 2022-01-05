@@ -1453,8 +1453,8 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_int("CFMM_GRAIN", 3);
         
         /*- SUBSECTION Composite JK Algorithms -*/
-        options.add_str("J_TYPE", "", "DIRECT_DF");
-        options.add_str("K_TYPE", "", "LINK");
+        options.add_str("J_TYPE", "DIRECT", "DIRECT_DF");
+        options.add_str("K_TYPE", "DIRECT", "LINK");
 
         /*- The screening tolerance used for ERI/Density sparsity in the linK algorithm [Ochsenfeld:1998:1663]_ -*/
         options.add_double("LINK_INTS_TOLERANCE", 1.0e-12);
