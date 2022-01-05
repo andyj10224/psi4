@@ -139,6 +139,15 @@ class DirectDFJ : public JBase {
 
 };
 
+class CFMM : public JBase {
+  protected:
+   void build_ints() override;
+
+   public:
+    CFMM(std::shared_ptr<BasisSet> primary, Options& options);
+    void build_J(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J) override;
+};
+
 class LinK : public KBase {
   protected:
    // Schwarz Screening Cutoff

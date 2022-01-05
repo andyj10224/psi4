@@ -3,6 +3,7 @@
 
 #include "psi4/libmints/integral.h"
 #include "psi4/lib3index/dftensor.h"
+#include "psi4/libfmm/fmm_tree.h"
 #include "psi4/libqt/qt.h"
 
 #include <vector>
@@ -59,6 +60,8 @@ void CompositeJK::common_init() {
 
     if (jtype_ == "DIRECT_DF") {
         jalgo_ = std::make_shared<DirectDFJ>(primary_, auxiliary_, options_);
+    } else if (jtype_ == "CFMM") {
+        jalgo_ = std::make_shared<CFMM>(primary_, options_);
     } else if (jtype_ == "DIRECT") {
         jalgo_ = nullptr;
     } else {
@@ -324,6 +327,33 @@ void DirectDFJ::build_J(const std::vector<SharedMatrix>& D, std::vector<SharedMa
     }
 
     timer_off("DirectDFJ::build_J()");
+}
+
+CFMM::CFMM(std::shared_ptr<BasisSet> primary, Options& options) : JBase(primary, options) {
+    build_ints();
+}
+
+void CFMM::build_ints() {
+    auto factory = std::make_shared<IntegralFactory>(primary_, primary_, primary_, primary_);
+    ints_.push_back(std::shared_ptr<TwoBodyAOInt>(factory->eri()));
+    for (int thread = 1; thread < nthread_; thread++) {
+        ints_.push_back(std::shared_ptr<TwoBodyAOInt>(ints_[0]->clone()));
+    }
+}
+
+void CFMM::build_J(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J) {
+
+    timer_on("CFMM::build_J()");
+
+    // => Update the Density (for density screening the near-field) <= //
+    for (int thread = 0; thread < nthread_; thread++) {
+        ints_[thread]->update_density(D);
+    }
+
+    auto tree = std::make_shared<CFMMTree>(ints_, D, J, options_);
+    tree->build_J();
+
+    timer_off("CFMM::build_J()");
 }
 
 LinK::LinK(std::shared_ptr<BasisSet> primary, Options& options)
