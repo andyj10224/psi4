@@ -1,3 +1,31 @@
+/*
+ * @BEGIN LICENSE
+ *
+ * Psi4: an open-source quantum chemistry software package
+ *
+ * Copyright (c) 2007-2022 The Psi4 Developers.
+ *
+ * The copyrights for code used from other parties are included in
+ * the corresponding files.
+ *
+ * This file is part of Psi4.
+ *
+ * Psi4 is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, version 3.
+ *
+ * Psi4 is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License along
+ * with Psi4; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ *
+ * @END LICENSE
+ */
+
 #ifndef libfmm_fmm_tree_H
 #define libfmm_fmm_tree_H
 
@@ -84,10 +112,10 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       // Number of threads the calculation is running on
       int nthread_;
 
-      // Multipoles of the box (Density-Matrix contracted)
-      std::shared_ptr<RealSolidHarmonics> mpoles_;
-      // Far field vector of the box
-      std::shared_ptr<RealSolidHarmonics> Vff_;
+      // Multipoles of the box (Density-Matrix contracted), one for each density matrix
+      std::vector<std::shared_ptr<RealSolidHarmonics>> mpoles_;
+      // Far field vector of the box, one for each density matrix
+      std::vector<std::shared_ptr<RealSolidHarmonics>> Vff_;
 
       // A list of all the near-field boxes to this box
       std::vector<std::shared_ptr<CFMMBox>> near_field_;
@@ -112,24 +140,25 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       void compute_far_field();
 
       // => USEFUL GETTER METHODS <= //
+
       // Get the multipole level the box is on
       int get_level() { return level_; }
       // Get the ws criterion of the box
       int get_ws() { return ws_; }
-      // Get the value of a particular multipole
-      double get_mpole_val(int l, int mu) { return mpoles_->get_multipoles()[l][mu]; }
-      // Get the far field value of a multipole
-      double get_Vff_val(int l, int mu) { return Vff_->get_multipoles()[l][mu]; }
+      // Get the value of a particular multipole (for the Nth density matrix)
+      double get_mpole_val(int N, int l, int mu) { return mpoles_[N]->get_multipoles()[l][mu]; }
+      // Get the far field value of a multipole (for the Nth density matrix)
+      double get_Vff_val(int N, int l, int mu) { return Vff_[N]->get_multipoles()[l][mu]; }
       // Get the children of the box
       std::vector<std::shared_ptr<CFMMBox>>& get_children() { return children_; }
       // Get the shell pairs of the box
       std::vector<std::shared_ptr<ShellPair>>& get_shell_pairs() { return shell_pairs_; }
       // Gets the number of shell pairs in the box
-      int get_nsp() { return shell_pairs_.size(); }
+      int nshell_pair() { return shell_pairs_.size(); }
       // Gets the near_field_boxes of the box
       std::vector<std::shared_ptr<CFMMBox>>& near_field_boxes() { return near_field_; }
       // Gets the far field vector
-      std::shared_ptr<RealSolidHarmonics>& far_field_vector() { return Vff_; }
+      std::vector<std::shared_ptr<RealSolidHarmonics>>& far_field_vector() { return Vff_; }
 
 }; // End class CFMMBox
 
@@ -154,8 +183,6 @@ class PSI_API CFMMTree {
       std::vector<std::shared_ptr<CFMMBox>> tree_;
       // Harmonic Coefficients used to calculate multipoles
       std::shared_ptr<HarmonicCoefficients> mpole_coefs_;
-      // A list of significant bra shell pairs
-      std::vector<std::pair<int, int>> nf_bra_shell_pairs_;
 
       // Options object
       Options& options_;
@@ -175,7 +202,7 @@ class PSI_API CFMMTree {
       void calculate_multipoles();
       // Helper method to compute far field
       void compute_far_field();
-      // Build near-field J (like Direct SCF)
+      // Build near-field J (Direct SCF)
       void build_nf_J();
       // Build far-field J (long-range multipole interactions)
       void build_ff_J();

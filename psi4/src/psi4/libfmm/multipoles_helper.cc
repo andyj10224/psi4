@@ -137,7 +137,6 @@ SharedMatrix MultipoleRotationFactory::get_D(int l) {
                 double Wterm = w(l, m1, m2);
                 if (Wterm != 0.0) Wterm *= W(l, m1, m2);
                 Drot->set(k1, k2, Uterm + Vterm + Wterm);
-                // if (l == 2) outfile->Printf("k1: %d, k2: %d, Uterm: %8.5f, Vterm: %8.5f, Wterm: %8.5f\n", k1, k2, Uterm, Vterm, Wterm);
             }
         }
     }

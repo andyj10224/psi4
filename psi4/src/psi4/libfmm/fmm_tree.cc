@@ -151,9 +151,6 @@ CFMMBox::CFMMBox(std::shared_ptr<CFMMBox> parent, std::vector<std::shared_ptr<Sh
     lmax_ = lmax;
     ws_ = ws;
 
-    mpoles_ = std::make_shared<RealSolidHarmonics>(lmax, center_, Regular);
-    Vff_ = std::make_shared<RealSolidHarmonics>(lmax, center_, Irregular);
-
     nthread_ = 1;
 #ifdef _OPENMP
     nthread_ = Process::environment.get_n_threads();
@@ -234,15 +231,26 @@ void CFMMBox::compute_far_field() {
             }
         }
 
+        // Make a far field vector object for every density matrix
+        if (local_far_field_.size() > 0) {
+            for (int N = 0; N < local_far_field_[0]->mpoles_.size(); N++) {
+                Vff_.push_back(std::make_shared<RealSolidHarmonics>(lmax_, center_, Irregular));
+            }
+        }
+
         // Calculate the far field vector
         for (std::shared_ptr<CFMMBox> box : local_far_field_) {
             // The far field effect the boxes have on this particular box
-            std::shared_ptr<RealSolidHarmonics> far_field = box->mpoles_->far_field_vector(center_);
-            Vff_->add(far_field);
+            for (int N = 0; N < Vff_.size(); N++) {
+                std::shared_ptr<RealSolidHarmonics> far_field = box->mpoles_[N]->far_field_vector(center_);
+                Vff_[N]->add(far_field);
+            }
         }
 
         // Add the parent's far field contribution
-        Vff_->add(parent->Vff_->translate(center_));
+        for (int N = 0; N < Vff_.size(); N++) {
+            Vff_[N]->add(parent->Vff_[N]->translate(center_));
+        }
     } else {
         near_field_.push_back(this->get());
     }
@@ -260,6 +268,11 @@ void CFMMBox::compute_mpoles(std::shared_ptr<BasisSet>& basisset, std::vector<Sh
         mpints[thread] = std::shared_ptr<OneBodyAOInt>(int_factory->ao_multipoles(lmax_));
         sints[thread] = std::shared_ptr<OneBodyAOInt>(int_factory->ao_overlap());
         mpints[thread]->set_origin(center_);
+    }
+
+    // Create multipoles for each density matrix
+    for (int N = 0; N < D.size(); N++) {
+        mpoles_.push_back(std::make_shared<RealSolidHarmonics>(lmax_, center_, Regular));
     }
 
     // Compute multipoles for all function pairs in the shell pair
@@ -283,6 +296,7 @@ void CFMMBox::compute_mpoles(std::shared_ptr<BasisSet>& basisset, std::vector<Sh
         int Q = PQ.second;
 
         double prefactor = (P == Q) ? 2.0 : 4.0;
+        if (D.size() > 1) prefactor *= 0.5;
 
         const GaussianShell& Pshell = basisset->shell(P);
         const GaussianShell& Qshell = basisset->shell(Q);
@@ -301,21 +315,28 @@ void CFMMBox::compute_mpoles(std::shared_ptr<BasisSet>& basisset, std::vector<Sh
                     std::shared_ptr<RealSolidHarmonics> basis_mpole = sp_mpoles[dp * num_q + dq]->copy();
                     
                     basis_mpole->scale(prefactor * D[N]->get(p, q));
-                    mpoles_->add(basis_mpole);
+                    mpoles_[N]->add(basis_mpole);
                 } // end q
             } // end p
         } // end N
     }
-
 }
 
 void CFMMBox::compute_mpoles_from_children() {
 
-    for (std::shared_ptr<CFMMBox> child : children_) {
-        std::shared_ptr<RealSolidHarmonics> child_mpoles = child->mpoles_->translate(center_);
-        mpoles_->add(child_mpoles);
+    // Create multipoles for each density matrix
+    if (children_.size() > 0) {
+        for (int N = 0; N < children_[0]->mpoles_.size(); N++) {
+            mpoles_.push_back(std::make_shared<RealSolidHarmonics>(lmax_, center_, Regular));
+        }
     }
 
+    for (std::shared_ptr<CFMMBox> child : children_) {
+        for (int N = 0; N < child->mpoles_.size(); N++) {
+            std::shared_ptr<RealSolidHarmonics> child_mpoles = child->mpoles_[N]->translate(center_);
+            mpoles_[N]->add(child_mpoles);
+        }
+    }
 }
 
 CFMMTree::CFMMTree(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::vector<SharedMatrix>& D, 
@@ -514,7 +535,7 @@ void CFMMTree::calculate_multipoles() {
     }
 
     for (int bi = start; bi < end; bi += 1) {
-        if (tree_[bi]->get_nsp() == 0) continue;
+        if (tree_[bi]->nshell_pair() == 0) continue;
         tree_[bi]->compute_mpoles(basisset_, D_);
     }
 
@@ -531,7 +552,7 @@ void CFMMTree::calculate_multipoles() {
 
 #pragma omp parallel for
         for (int bi = start; bi < end; bi++) {
-            if (tree_[bi]->get_nsp() == 0) continue;
+            if (tree_[bi]->nshell_pair() == 0) continue;
             tree_[bi]->compute_mpoles_from_children();
         }
     }
@@ -555,7 +576,7 @@ void CFMMTree::compute_far_field() {
 
 #pragma omp parallel for
         for (int bi = start; bi < end; bi++) {
-            if (tree_[bi]->get_nsp() == 0) continue;
+            if (tree_[bi]->nshell_pair() == 0) continue;
             tree_[bi]->compute_far_field();
         }
     }
@@ -609,7 +630,7 @@ void CFMMTree::build_nf_J() {
     std::vector<std::shared_ptr<CFMMBox>> dense_tree;
     for (int bi = start; bi < end; bi++) {
         std::shared_ptr<CFMMBox> box = tree_[bi];
-        if (box->get_nsp() > 0) {
+        if (box->nshell_pair() > 0) {
             dense_tree.push_back(box);
         }
     }
@@ -620,7 +641,7 @@ void CFMMTree::build_nf_J() {
         auto& PQshells = curr->get_shell_pairs();
         auto& nf_boxes = curr->near_field_boxes();
 
-        if (curr->get_nsp() == 0) continue;
+        if (curr->nshell_pair() == 0) continue;
 
         int thread = 0;
 #ifdef _OPENMP
@@ -631,7 +652,7 @@ void CFMMTree::build_nf_J() {
             std::shared_ptr<CFMMBox> neighbor = nf_boxes[nfi];
             auto& RSshells = neighbor->get_shell_pairs();
 
-            if (neighbor->get_nsp() == 0) continue;
+            if (neighbor->nshell_pair() == 0) continue;
             
             bool touched = false;
             for (int PQind = 0; PQind < PQshells.size(); PQind++) {
@@ -797,7 +818,7 @@ void CFMMTree::build_ff_J() {
 #pragma omp parallel for
     for (int bi = start; bi < end; bi += 1) {
         std::shared_ptr<CFMMBox> curr = tree_[bi];
-        std::shared_ptr<RealSolidHarmonics>& Vff = curr->far_field_vector();
+        std::vector<std::shared_ptr<RealSolidHarmonics>>& Vff = curr->far_field_vector();
         auto& PQshells = curr->get_shell_pairs();
 
         for (int PQind = 0; PQind < PQshells.size(); PQind++) {
@@ -828,7 +849,7 @@ void CFMMTree::build_ff_J() {
                         // Far field multipole contributions
                         for (int l = 0; l <= lmax_; l++) {
                             for (int mu = 0; mu < 2*l+1; mu++) {
-                                Jp[p][q] += prefactor * Vff->get(l, mu) * PQ_mpoles[dp * num_q + dq]->get(l, mu);
+                                Jp[p][q] += prefactor * Vff[N]->get(l, mu) * PQ_mpoles[dp * num_q + dq]->get(l, mu);
                             } // end mu
                         } // end l
                     } // end N
