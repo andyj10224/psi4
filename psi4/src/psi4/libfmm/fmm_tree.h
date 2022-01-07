@@ -108,6 +108,8 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       int lmax_;
       // Well-separatedness criterion for this box
       int ws_;
+      // Number of multipoles to form (for each density matrix)
+      int nmat_;
 
       // Number of threads the calculation is running on
       int nthread_;
@@ -128,7 +130,7 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
     public:
       // Generic Constructor
       CFMMBox(std::shared_ptr<CFMMBox> parent, std::vector<std::shared_ptr<ShellPair>> shell_pairs, 
-              Vector3 origin, double length, int level, int lmax, int ws);
+              Vector3 origin, double length, int level, int lmax, int ws, int nmat);
 
       // Make children for this multipole box
       void make_children();
