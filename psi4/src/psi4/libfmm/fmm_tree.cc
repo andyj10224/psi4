@@ -339,7 +339,7 @@ void CFMMBox::compute_mpoles_from_children() {
     }
 }
 
-CFMMTree::CFMMTree(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::vector<SharedMatrix>& D, 
+CFMMTree::CFMMTree(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, const std::vector<SharedMatrix>& D, 
                     std::vector<SharedMatrix>& J, Options& options) 
                     : options_(options), ints_(ints), D_(D), J_(J) {
 

@@ -209,7 +209,7 @@ class PSI_API CFMMTree {
     
     public:
       // Constructor
-      CFMMTree(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, std::vector<SharedMatrix>& D, 
+      CFMMTree(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, const std::vector<SharedMatrix>& D, 
                 std::vector<SharedMatrix>& J, Options& options);
 
       // Build the J matrix of CFMMTree
