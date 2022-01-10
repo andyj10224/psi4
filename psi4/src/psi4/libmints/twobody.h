@@ -118,6 +118,8 @@ class PSI_API TwoBodyAOInt {
     /// The threshold below which integrals are to be neglected
     double screening_threshold_;
     double screening_threshold_squared_;
+    /// The threshold for density matrix based ERI sieving
+    double density_screening_threshold_;
     int nshell_;
     int nbf_;
     /// The algorithm to use for screening

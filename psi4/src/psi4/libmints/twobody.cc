@@ -71,6 +71,7 @@ TwoBodyAOInt::TwoBodyAOInt(const IntegralFactory *intsfactory, int deriv)
 
     // Setup sieve data
     screening_threshold_ = Process::environment.options.get_double("INTS_TOLERANCE");
+    density_screening_threshold_ = Process::environment.options.get_double("LINK_INTS_TOLERANCE");
     auto screentype = Process::environment.options.get_str("SCREENING");
     if (screentype == "SCHWARZ")
         screening_type_ = ScreeningType::Schwarz;
@@ -94,6 +95,7 @@ TwoBodyAOInt::TwoBodyAOInt(const TwoBodyAOInt &rhs) : TwoBodyAOInt(rhs.integral_
     braket_same_ = rhs.braket_same_;
     screening_threshold_ = rhs.screening_threshold_;
     screening_threshold_squared_ = rhs.screening_threshold_squared_;
+    density_screening_threshold_ = rhs.density_screening_threshold_;
     nshell_ = rhs.nshell_;
     nbf_ = rhs.nbf_;
     screening_type_ = rhs.screening_type_;
@@ -196,7 +198,7 @@ bool TwoBodyAOInt::shell_significant_density(int M, int N, int R, int S) {
     double rs_rs = shell_pair_values_[S * nshell_ + R];
 
     // The density screened ERI bound (Eq. 6)
-    return (mn_mn * rs_rs * max_density * max_density >= screening_threshold_squared_);
+    return (mn_mn * rs_rs * max_density * max_density >= density_screening_threshold_ * density_screening_threshold_);
 }
 
 bool TwoBodyAOInt::shell_significant_csam(int M, int N, int R, int S) { 
