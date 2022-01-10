@@ -17,7 +17,7 @@ set {
     j_type cfmm
     k_type linK
     basis aug-cc-pVDZ
-    ints_tolerance 1.0e-12
+    ints_tolerance 1.0e-10
     e_convergence 1.0e-10
     d_convergence 1.0e-6
     screening density

@@ -47,6 +47,8 @@ CompositeJK::CompositeJK(std::shared_ptr<BasisSet> primary, std::shared_ptr<Basi
 }
 
 void CompositeJK::common_init() {
+
+    // Composite JK code
     jtype_ = options_.get_str("J_TYPE");
     ktype_ = options_.get_str("K_TYPE");
 
