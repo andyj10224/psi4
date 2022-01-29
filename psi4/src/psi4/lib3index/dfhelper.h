@@ -133,6 +133,8 @@ class PSI_API DFHelper {
     void hold_met(bool hold) { hold_met_ = hold; }
     bool get_hold_met() { return hold_met_; }
 
+    SharedMatrix get_metric(double pow) { return metrics_[pow]; }
+
     ///
     /// Sets the fitting metric condition
     /// @param condition: tolerrence for metric^pow

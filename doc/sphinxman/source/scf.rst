@@ -739,6 +739,21 @@ To avoid this, either set |scf__df_basis_scf| to an auxiliary
 basis set defined for all atoms in the system, or set |scf__df_scf_guess|
 to false, which disables this acceleration entirely.
 
+Linear-Scaling Exchange Build
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Methods that build exchange matrices in linear time with the size of the system (linear-time K builds) are often useful for large calculations.
+The Linear Exchange (LinK) Method, described in [Ochsenfeld:1998:1663]_, is available to use in the Direct SCF algorithm.
+LinK is a competitive alternative to density-fitted K builds with non-diffuse orbital basis sets that lead to considerable sparsity in large systems, and/or when there is not enough memory to perform the density-fitting procedure in-core.
+LinK is especially powerful when combined with density-matrix based ERI screening and incremental Fock builds, which decrease the number of significant two-electron integrals to calculate.
+
+To turn on and control the LinK algorithm, here are the list of options provided.
+
+  |scf__do_linK|: Defaults to false. If turned on, the K matrix will be built using the algorithm described in [Ochsenfeld:1998:1663]_.
+
+  |scf__linK_ints_tolerance|: Defaults to 1.0e-12. The integral screening tolerance used for sparsity-prep in the LinK algorithm. Note that
+    this option is separate from and independent of the |scf__ints_tolerance| option.
+
 .. index::
     single: SOSCF
 

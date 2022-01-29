@@ -71,6 +71,7 @@ TwoBodyAOInt::TwoBodyAOInt(const IntegralFactory *intsfactory, int deriv)
 
     // Setup sieve data
     screening_threshold_ = Process::environment.options.get_double("INTS_TOLERANCE");
+    density_screening_threshold_ = Process::environment.options.get_double("LINK_INTS_TOLERANCE");
     auto screentype = Process::environment.options.get_str("SCREENING");
     if (screentype == "SCHWARZ")
         screening_type_ = ScreeningType::Schwarz;
@@ -94,6 +95,7 @@ TwoBodyAOInt::TwoBodyAOInt(const TwoBodyAOInt &rhs) : TwoBodyAOInt(rhs.integral_
     braket_same_ = rhs.braket_same_;
     screening_threshold_ = rhs.screening_threshold_;
     screening_threshold_squared_ = rhs.screening_threshold_squared_;
+    density_screening_threshold_ = rhs.density_screening_threshold_;
     nshell_ = rhs.nshell_;
     nbf_ = rhs.nbf_;
     screening_type_ = rhs.screening_type_;
@@ -154,6 +156,18 @@ void TwoBodyAOInt::update_density(const std::vector<SharedMatrix>& D) {
 
 }
 
+
+double TwoBodyAOInt::shell_pair_max_density(int M, int N) const {
+    if (max_dens_shell_pair_.empty()) {
+        throw PSIEXCEPTION("The density matrix has not been set in the TwoBodyAOInt class!");
+    }
+    double D_max = 0.0;
+    for (const auto& matrix_max_per_pair: max_dens_shell_pair_) {
+        D_max = std::max(D_max, matrix_max_per_pair[M * nshell_ + N]);
+    }
+    return D_max;
+}
+
 // Haser 1989 Equations 6 to 14
 bool TwoBodyAOInt::shell_significant_density(int M, int N, int R, int S) {
 
@@ -184,7 +198,7 @@ bool TwoBodyAOInt::shell_significant_density(int M, int N, int R, int S) {
     double rs_rs = shell_pair_values_[S * nshell_ + R];
 
     // The density screened ERI bound (Eq. 6)
-    return (mn_mn * rs_rs * max_density * max_density >= screening_threshold_squared_);
+    return (mn_mn * rs_rs * max_density * max_density >= density_screening_threshold_ * density_screening_threshold_);
 }
 
 bool TwoBodyAOInt::shell_significant_csam(int M, int N, int R, int S) { 

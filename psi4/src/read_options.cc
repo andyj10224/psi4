@@ -178,7 +178,7 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
     /*- What algorithm to use for the SCF computation. See Table :ref:`SCF
     Convergence & Algorithm <table:conv_scf>` for default algorithm for
     different calculation types. -*/
-    options.add_str("SCF_TYPE", "PK", "DIRECT DF MEM_DF DISK_DF PK OUT_OF_CORE CD GTFOCK");
+    options.add_str("SCF_TYPE", "PK", "DIRECT DF MEM_DF DISK_DF PK OUT_OF_CORE CD GTFOCK COMPOSITE");
     /*- Algorithm to use for MP2 computation.
     See :ref:`Cross-module Redundancies <table:managedmethods>` for details. -*/
     options.add_str("MP2_TYPE", "DF", "DF CONV CD");
@@ -1445,8 +1445,26 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         N means rebuild every N SCF iterations to avoid accumulating error from the incremental procedure. -*/
         options.add_int("INCFOCK_FULL_FOCK_EVERY", 5);
 
-        /*- SUBSECTION Fractional Occupation UHF/UKS -*/
+        /*- Do perform Continuous Fast Multipole Method (J-Build), as described in [White:1994:8]_ -*/
+        options.add_bool("DO_CFMM", false);
+        /*- The maximum multipole order to use in the CFMM algorithm -*/
+        options.add_int("CFMM_ORDER", 10);
+        /*- The maximum tree depth to use in the CFMM algorithm -*/
+        options.add_int("CFMM_GRAIN", 3);
+        
+        /*- SUBSECTION Composite JK Algorithms -*/
+        options.add_str("J_TYPE", "DIRECT", "DIRECT DIRECT_DF CFMM");
+        options.add_str("K_TYPE", "DIRECT", "DIRECT LINK");
 
+        /*- The screening tolerance used for ERI/Density sparsity in the linK algorithm [Ochsenfeld:1998:1663]_ -*/
+        options.add_double("LINK_INTS_TOLERANCE", 1.0e-12);
+
+        /*- The maximum multipole order to use in the CFMM algorithm -*/
+        options.add_int("CFMM_ORDER", 10);
+        /*- The maximum tree depth to use in the CFMM algorithm -*/
+        options.add_int("CFMM_GRAIN", 3);
+
+        /*- SUBSECTION Fractional Occupation UHF/UKS -*/
         /*- The iteration to start fractionally occupying orbitals (or 0 for no fractional occupation) -*/
         options.add_int("FRAC_START", 0);
         /*- The absolute indices of occupied orbitals to fractionally occupy (+/- for alpha/beta) -*/
