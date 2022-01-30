@@ -72,6 +72,8 @@ void CompositeJK::common_init() {
 
     if (ktype_ == "LINK") {
         kalgo_ = std::make_shared<LinK>(primary_, options_);
+    } else if (ktype_ == "COSK") {
+        kalgo_ = std::make_shared<COSK>(primary_, options_);
     } else if (ktype_ == "DIRECT") {
         kalgo_ = nullptr;
     } else {
@@ -798,6 +800,259 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
     }
     */
     timer_off("LinK::build_K()");
+}
+
+COSK::COSK(std::shared_ptr<BasisSet> primary, Options& options)
+                        : KBase(primary, options) {
+    schwarz_cutoff_ = options.get_double("COSK_S_TOLERANCE");
+    density_cutoff_ = options.get_double("COSK_D_TOLERANCE");
+    build_ints();
+    grid_setup();
+}
+
+void COSK::build_ints() {
+    auto factory = std::make_shared<IntegralFactory>(primary_);
+    ints_.push_back(std::shared_ptr<TwoBodyAOInt>(factory->eri()));
+
+    grid_ints_.push_back((std::shared_ptr<PotentialInt>) (PotentialInt *)factory->ao_potential());
+
+    for (int thread = 1; thread < nthread_; thread++) {
+        grid_ints_.push_back((std::shared_ptr<PotentialInt>) (PotentialInt *)grid_ints_[0]->clone());
+    }
+}
+
+void COSK::grid_setup() {
+
+    timer_on("COSK::grid_setup()");
+
+    // COSK Grid Options
+    std::map<std::string, int> cosk_grid_options_int;
+    std::map<std::string, std::string> cosk_grid_options_str;
+
+    cosk_grid_options_int["DFT_RADIAL_POINTS"] = options_.get_int("COS_RADIAL_POINTS");
+    cosk_grid_options_int["DFT_SPHERICAL_POINTS"] = options_.get_int("COS_SPHERICAL_POINTS");
+    cosk_grid_options_str["DFT_PRUNING_SCHEME"] = options_.get_str("COS_PRUNING_SCHEME");
+
+    auto mol = primary_->molecule();
+    grid_ = std::make_shared<DFTGrid>(mol, primary_, cosk_grid_options_int, cosk_grid_options_str, options_);
+
+    int nbf = primary_->nbf();
+    size_t npoints = grid_->npoints();
+
+    phi_values_.resize(npoints * nbf);
+    X_.resize(npoints * nbf);
+
+    // Form PHI and X
+    auto blocks = grid_->blocks();
+    size_t nblock = blocks.size();
+
+    size_t point = 0;
+    for (size_t b = 0; b < nblock; b++) {
+        auto block = blocks[b];
+        int local_nbf = block->local_nbf();
+        size_t local_npoints = block->npoints();
+
+        double *x = block->x();
+        double *y = block->y();
+        double *z = block->z();
+        double *w = block->w();
+
+        for (size_t p = 0; p < local_npoints; p++) {
+            primary_->compute_phi(&phi_values_[point * nbf], x[p], y[p], z[p]);
+            for (int u = 0; u < nbf; u++) {
+                X_[point * nbf + u] = w[p] * phi_values_[point * nbf + u];
+            }
+            point += 1;
+        }
+    }
+
+    timer_off("COSK::grid_setup()");
+}
+
+void COSK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& K) {
+    timer_on("COSK::build_K()");
+
+    for (auto& Kmat : K) {
+        Kmat->zero();
+    }
+
+    ints_[0]->update_density(D);
+
+    int nbf = primary_->nbf();
+    int nshell = primary_->nshell();
+
+    // Shells linked to each other through Schwarz Screening (Significant Overlap)
+    std::vector<std::vector<int>> S_junction(nshell);
+    double max_integral = ints_[0]->max_integral();
+
+    for (size_t P = 0; P < nshell; P++) {
+        for (size_t Q = 0; Q < nshell; Q++) {
+            double pq_pq = std::sqrt(ints_[0]->shell_ceiling2(P, Q, P, Q));
+            double schwarz_value = std::sqrt(pq_pq * max_integral);
+            if (schwarz_value >= schwarz_cutoff_) {
+                S_junction[P].push_back(Q);
+            }
+        }
+    }
+
+    // => Calculate Shell Ceilings (To find significant bra-ket pairs)
+    // sqrt(Umax|Umax) in Oschenfeld Eq. 3
+    std::vector<double> shell_ceilings(nshell, 0.0);
+    for (int P = 0; P < nshell; P++) {
+        for (int Q = 0; Q <= P; Q++) {
+            double val = std::sqrt(ints_[0]->shell_ceiling2(P, Q, P, Q));
+            shell_ceilings[P] = std::max(shell_ceilings[P], val);
+            shell_ceilings[Q] = std::max(shell_ceilings[Q], val);
+        }
+    }
+
+    // Shells linked to each other through the Density Matrix
+    std::vector<std::vector<int>> D_junction(nshell);
+
+    for (size_t P = 0; P < nshell; P++) {
+        for (size_t R = 0; R < nshell; R++) {
+            double density_val = shell_ceilings[P] * shell_ceilings[R] * ints_[0]->shell_pair_max_density(P, R);
+            if (density_val >= density_cutoff_) {
+                D_junction[P].push_back(R);
+            }
+        }
+    }
+
+    int nthreads = 1;
+#ifdef _OPENMP
+    nthreads = Process::environment.get_n_threads();
+#endif
+
+    int npoints = grid_->npoints();
+    double* xpoints = grid_->x();
+    double* ypoints = grid_->y();
+    double* zpoints = grid_->z();
+
+    // Compute A, X, F, and G
+    for (size_t i = 0; i < D.size(); i++) {
+        double** Dp = D[i]->pointer();
+        double** Kp = K[i]->pointer();
+
+        std::vector<double> Xkg(nbf * npoints, 0.0); // Izsak Eq. 4 
+        std::vector<double> Ftg(nbf * npoints, 0.0); // Izsak Eq. 6
+        std::vector<double> Gvg(nbf * npoints, 0.0); // Izsak Eq. 7
+
+        // Compute X (Equation 4)
+#pragma omp parallel for
+        for (size_t g = 0; g < npoints; g++) {
+            for (size_t k = 0; k < nbf; k++) {
+                Xkg[k * npoints + g] = X_[g * nbf + k];
+            }
+        }
+
+        // Compute F (Equation 6)
+#pragma omp parallel for
+        for (int M = 0; M < nshell; M++) {
+            const GaussianShell& m_shell = primary_->shell(M);
+            size_t m_start = m_shell.start();
+            size_t num_m = m_shell.nfunction();
+            for (int ind = 0; ind < D_junction[M].size(); ind++) {
+                int N = D_junction[M][ind];
+                const GaussianShell& n_shell = primary_->shell(N);
+                size_t n_start = n_shell.start();
+                size_t num_n = n_shell.nfunction();
+
+                // double *Dbuff = &(Dp[m_start * nbf_ + n_start]);
+                // double *Xbuff = &(Xkg[n_start * npoints]);
+                // double *Fbuff = &(Ftg[m_start * npoints]);
+
+                // C_DGEMM('N', 'N', num_m, npoints, num_n, 1.0, Dbuff, nbf_, Xbuff, npoints, 1.0, Fbuff, npoints);
+
+                
+                for (size_t g = 0; g < npoints; g++) {
+                   for (int m = m_start; m < m_start + num_m; m++) {
+                       for (int n = n_start; n < n_start + num_n; n++) {
+                           Ftg[m * npoints + g] += Dp[m][n] * Xkg[n * npoints + g];
+                       }
+                   }
+                }
+
+            }
+        }
+
+        // Compute G (Equation 7)
+        size_t computed_shells = 0L;
+
+#pragma omp parallel for
+        for (size_t M = 0L; M < nshell; M++) {
+            const GaussianShell& m_shell = primary_->shell(M);
+            size_t m_start = m_shell.start();
+            size_t num_m = m_shell.nfunction();
+
+            int thread = 0;
+
+#ifdef _OPENMP
+    thread = omp_get_thread_num();
+#endif
+
+            for (size_t ind = 0; ind < S_junction[M].size(); ind++) {
+                size_t N = S_junction[M][ind];
+                const GaussianShell& n_shell = primary_->shell(N);
+                size_t n_start = n_shell.start();
+                size_t num_n = n_shell.nfunction();
+
+                for (size_t g = 0; g < npoints; g++) {
+                    grid_ints_[thread]->set_charge_field({std::make_pair(-1.0, std::array<double, 3>{xpoints[g], ypoints[g], zpoints[g]})});
+                    grid_ints_[thread]->compute_shell(M, N);
+
+                    computed_shells++;
+                    double * A_buffer = (double *) grid_ints_[thread]->buffers()[0];
+                    // double* Fbuff = &(Ftg[n_start * npoints + g]);
+                    // double* Gbuff = &(Gvg[m_start * npoints + g]);
+
+                    // C_DGEMV('N', num_m, num_n, 1.0, A_buffer, num_n, Fbuff, npoints, 1.0, Gbuff, npoints);
+
+                    for (size_t m = m_start; m < m_start + num_m; m++) {
+                        int dm = m - m_start;
+                        for (size_t n = n_start; n < n_start + num_n; n++) {
+                            int dn = n - n_start;
+                            Gvg[m * npoints + g] += A_buffer[dm * num_n + dn] * Ftg[n * npoints + g];
+                        }
+                    }
+                    
+                }
+            }
+        }
+
+        // Compute K Matrix (Equation 8)
+#pragma omp parallel for
+        for (int M = 0; M < nshell; M++) {
+            const GaussianShell& m_shell = primary_->shell(M);
+            size_t m_start = m_shell.start();
+            size_t num_m = m_shell.nfunction();
+            for (int N = 0; N < nshell; N++) {
+                const GaussianShell& n_shell = primary_->shell(N);
+                size_t n_start = n_shell.start();
+                size_t num_n = n_shell.nfunction();
+
+                // double *Xbuff = &(cosx_phi_ao_[m_start]);
+                // double *Gbuff = &(Gvg[n_start * npoints]);
+                // double *Kbuff = &(Kp[m_start * nbf_ + n_start]);
+
+                // C_DGEMM('T', 'T', num_m, num_n, npoints, 1.0, Xbuff, nbf_, Gbuff, npoints, 1.0, Kbuff, nbf_);
+
+                for (int m = m_start; m < m_start + num_m; m++) {
+                    for (int n = n_start; n < n_start + num_n; n++) {
+                        double temp = 0.0;
+                        for (int g = 0; g < npoints; g++) {
+                            Kp[m][n] += phi_values_[g * nbf + m] * Gvg[n * npoints + g];
+                        }
+                    }
+                }
+
+            }
+        }
+
+        K[i]->hermitivitize();
+
+    }
+
+    timer_off("COSK::build_K()");
 }
 
 } // namespace Psi

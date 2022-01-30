@@ -1454,10 +1454,23 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         
         /*- SUBSECTION Composite JK Algorithms -*/
         options.add_str("J_TYPE", "DIRECT", "DIRECT DIRECT_DF CFMM");
-        options.add_str("K_TYPE", "DIRECT", "DIRECT LINK");
+        options.add_str("K_TYPE", "DIRECT", "DIRECT LINK COSK");
 
         /*- The screening tolerance used for ERI/Density sparsity in the linK algorithm [Ochsenfeld:1998:1663]_ -*/
         options.add_double("LINK_INTS_TOLERANCE", 1.0e-12);
+
+        /*- Overlap sparsity screening in chain-of-spheres exchange -*/
+        options.add_double("COSK_S_TOLERANCE", 1.0e-8);
+        /*- Density sparsity screening in chain-of-spheres exchange -*/
+        options.add_double("COSK_D_TOLERANCE", 1.0e-10);
+        /*- Number of spherical points in COSK grid -*/
+        options.add_int("COS_SPHERICAL_POINTS", 302);
+        /*- Number of radial points in COSK grid. -*/
+        options.add_int("COS_RADIAL_POINTS", 75);
+        /*- The pruning scheme of the COSK grid -*/
+        options.add_str("COS_PRUNING_SCHEME", "ROBUST",
+                        "ROBUST TREUTLER NONE FLAT P_GAUSSIAN D_GAUSSIAN P_SLATER D_SLATER LOG_GAUSSIAN LOG_SLATER NONE");
+
 
         /*- The maximum multipole order to use in the CFMM algorithm -*/
         options.add_int("CFMM_ORDER", 10);

@@ -32,7 +32,10 @@
 #include "jk.h"
 
 #include "psi4/libmints/matrix.h"
+#include "psi4/libmints/onebody.h"
+#include "psi4/libmints/potential.h"
 #include "psi4/libmints/twobody.h"
+#include "psi4/libfock/cubature.h"
 
 namespace psi {
 
@@ -161,6 +164,31 @@ class LinK : public KBase {
    LinK(std::shared_ptr<BasisSet> primary, Options& options);
    void build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& K) override;
 
+};
+
+// Chain-of-Spheres Exchange
+class COSK : public KBase {
+  protected:
+   // Schwarz Cutoff (S-junction)
+   double schwarz_cutoff_;
+   // Density Cutoff (D-junction)
+   double density_cutoff_;
+   // Pseudospectral int objects used in Chain-of-Spheres Exchange (one per thread)
+   std::vector<std::shared_ptr<PotentialInt>> grid_ints_;
+   // The grid used in the computations
+   std::shared_ptr<DFTGrid> grid_;
+
+   // Values of the basis functions at each grid point (only needs to be computed once, at start of SCF iteration)
+   std::vector<double> phi_values_;
+   // Values of the basis functions at each grid point multiplied by grid points
+   std::vector<double> X_;
+
+   void build_ints() override;
+   void grid_setup();
+
+  public:
+   COSK(std::shared_ptr<BasisSet> primary, Options& options);
+   void build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& K);
 };
 
 }

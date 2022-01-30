@@ -82,12 +82,12 @@ void ShellPair::calculate_mpoles(Vector3 box_center, std::shared_ptr<OneBodyAOIn
 
     // Calculate the overlap integrals (Order 0 multipole integrals)
     s_ints->compute_shell(P, Q);
-    const double* sbuffer = s_ints->buffer();
+    const double* sbuffer = s_ints->buffers()[0];
 
     // Calculate the multipole integrals
     mpole_ints->set_origin(box_center);
     mpole_ints->compute_shell(P, Q);
-    const double* mbuffer = mpole_ints->buffer();
+    const double* mbuffer = mpole_ints->buffers()[0];
 
     const GaussianShell& Pshell = basisset_->shell(P);
     const GaussianShell& Qshell = basisset_->shell(Q);
