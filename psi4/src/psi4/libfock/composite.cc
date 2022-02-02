@@ -956,28 +956,13 @@ void COSK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
                 size_t n_start = n_shell.start();
                 size_t num_n = n_shell.nfunction();
 
-                /*
-                for (size_t g = 0; g < npoints; g++) {
-                    for (int m = m_start; m < m_start + num_m; m++) {
-                        for (int n = n_start; n < n_start + num_n; n++) {
-                            Ftg[m * npoints + g] += Dp[m * nbf + n] * Xkg[n * npoints + g];
-                        }
-                    }
-                }
-                */
-
-                // double *Dbuff = &(Dp[m_start * nbf_ + n_start]);
-                // double *Xbuff = &(Xkg[n_start * npoints]);
-                // double *Fbuff = &(Ftg[m_start * npoints]);
-
-                // C_DGEMM('N', 'N', num_m, npoints, num_n, 1.0, Dbuff, nbf_, Xbuff, npoints, 1.0, Fbuff, npoints);
-
                 for (size_t b = 0; b < blocks.size(); b++) {
                     if (!(shell_to_grid_blocks_[M].count(b)) || !(shell_to_grid_blocks_[N].count(b))) continue;
                     auto block = blocks[b];
                     size_t block_start = block_to_grid_point_[b];
                     size_t block_npoints = block->npoints();
 
+                    /*
                     for (size_t g = block_start; g < block_start + block_npoints; g++) {
                         for (int m = m_start; m < m_start + num_m; m++) {
                             for (int n = n_start; n < n_start + num_n; n++) {
@@ -985,22 +970,20 @@ void COSK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
                             }
                         }
                     }
-
-                   /*
-                    double* Dbuff = &(Dp[m_start][n_start]);
-                    double* Xbuff = &(X_[block_start * nbf + n_start]);
-                    double* Fbuff = &(Ftg[m_start * npoints + block_start]);
+                    */
                     char transa = 'N';
                     char transb = 'T';
                     int m = num_m;
                     int n = block_npoints;
                     int k = num_n;
+                    double* Abuff = &(Dp[m_start][n_start]);
+                    double* Bbuff = &(X_[block_start * nbf + n_start]);
+                    double* Cbuff = &(Ftg[m_start * npoints + block_start]);
                     int lda = nbf;
-                    int ldb = npoints;
-                    int ldc = nbf;
+                    int ldb = nbf;
+                    int ldc = npoints;
 
-                    C_DGEMM(transa, transb, m, n, k, 1.0, Dbuff, lda, Xbuff, ldb, 1.0, Fbuff, ldc);
-                    */
+                    C_DGEMM(transa, transb, m, n, k, 1.0, Abuff, lda, Bbuff, ldb, 1.0, Cbuff, ldc);
                 }
             }
         }
@@ -1022,6 +1005,11 @@ void COSK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
 
             for (size_t ind = 0; ind < S_junction[M].size(); ind++) {
                 size_t N = S_junction[M][ind];
+
+                if (N > M) continue;
+                double prefactor = 1.0;
+                if (N == M) prefactor *= 0.5;
+
                 const GaussianShell& n_shell = primary_->shell(N);
                 size_t n_start = n_shell.start();
                 size_t num_n = n_shell.nfunction();
@@ -1035,21 +1023,29 @@ void COSK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
                     for (size_t g = block_start; g < block_start + block_npoints; g++) {
                         grid_ints_[thread]->set_charge_field({std::make_pair(-1.0, std::array<double, 3>{xpoints[g], ypoints[g], zpoints[g]})});
                         grid_ints_[thread]->compute_shell(M, N);
-
                         computed_shells++;
-                        double * A_buffer = (double *) grid_ints_[thread]->buffers()[0];
-                        // double* Fbuff = &(Ftg[n_start * npoints + g]);
-                        // double* Gbuff = &(Gvg[m_start * npoints + g]);
 
-                        // C_DGEMV('N', num_m, num_n, 1.0, A_buffer, num_n, Fbuff, npoints, 1.0, Gbuff, npoints);
+                        double* Abuff = (double *) grid_ints_[thread]->buffers()[0];
 
                         for (size_t m = m_start; m < m_start + num_m; m++) {
                             int dm = m - m_start;
                             for (size_t n = n_start; n < n_start + num_n; n++) {
                                 int dn = n - n_start;
-                                Gvg[m * npoints + g] += A_buffer[dm * num_n + dn] * Ftg[n * npoints + g];
+                                Gvg[m * npoints + g] += prefactor * Abuff[dm * num_n + dn] * Ftg[n * npoints + g];
+#pragma omp atomic
+                                Gvg[n * npoints + g] += prefactor * Abuff[dm * num_n + dn] * Ftg[m * npoints + g];
                             }
                         }
+
+                       /*
+                        double* Fbuff = &(Ftg[n_start * npoints + g]);
+                        double* Gbuff = &(Gvg[m_start * npoints + g]);
+                        C_DGEMV('N', num_m, num_n, prefactor, Abuff, num_n, Fbuff, npoints, 1.0, Gbuff, npoints);
+
+                        Fbuff = &(Ftg[m_start * npoints + g]);
+                        Gbuff = &(Gvg[n_start * npoints + g]);
+                        C_DGEMV('T', num_n, num_m, prefactor, Abuff, num_m, Fbuff, npoints, 1.0, Gbuff, npoints);
+                        */
 
                     }
                 }
@@ -1067,18 +1063,13 @@ void COSK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
                 size_t n_start = n_shell.start();
                 size_t num_n = n_shell.nfunction();
 
-                // double *Xbuff = &(cosx_phi_ao_[m_start]);
-                // double *Gbuff = &(Gvg[n_start * npoints]);
-                // double *Kbuff = &(Kp[m_start * nbf_ + n_start]);
-
-                // C_DGEMM('T', 'T', num_m, num_n, npoints, 1.0, Xbuff, nbf_, Gbuff, npoints, 1.0, Kbuff, nbf_);
-
                 for (size_t b = 0; b < blocks.size(); b++) {
                     if (!(shell_to_grid_blocks_[M].count(b)) || !(shell_to_grid_blocks_[N].count(b))) continue;
                     auto block = blocks[b];
                     size_t block_start = block_to_grid_point_[b];
                     size_t block_npoints = block->npoints();
 
+                    /*
                     for (size_t g = block_start; g < block_start + block_npoints; g++) {
                         for (int m = m_start; m < m_start + num_m; m++) {
                             for (int n = n_start; n < n_start + num_n; n++) {
@@ -1086,10 +1077,20 @@ void COSK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
                             }
                         }
                     }
+                    */
+                    char transa = 'T';
+                    char transb = 'T';
+                    int m = num_m;
+                    int n = num_n;
+                    int k = block_npoints;
+                    double* Abuff = &(phi_values_[block_start * nbf + m_start]);
+                    double* Bbuff = &(Gvg[n_start * npoints + block_start]);
+                    double* Cbuff = &(Kp[m_start][n_start]);
+                    int lda = nbf;
+                    int ldb = npoints;
+                    int ldc = nbf;
 
-                    // double *Xbuff = &(phi_values_[block_start * nbf + m_start]);
-                    // double *Gbuff = &(Gvg[n_start * npoints + block_start]);
-                    // double *Kbuff = &(Kp[m_start][n_start]);
+                    C_DGEMM(transa, transb, m, n, k, 1.0, Abuff, lda, Bbuff, ldb, 1.0, Cbuff, ldc);
                 }
             }
         }
