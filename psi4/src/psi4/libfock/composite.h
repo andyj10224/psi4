@@ -37,6 +37,8 @@
 #include "psi4/libmints/twobody.h"
 #include "psi4/libfock/cubature.h"
 
+#include <unordered_set>
+
 namespace psi {
 
 class JBase {
@@ -180,8 +182,12 @@ class COSK : public KBase {
 
    // Values of the basis functions at each grid point (only needs to be computed once, at start of SCF iteration)
    std::vector<double> phi_values_;
-   // Values of the basis functions at each grid point multiplied by grid points
+   // Values of the basis functions at each grid point multiplied by grid points (Izsak Eq. 4)
    std::vector<double> X_;
+   // The starting grid point for each grid block
+   std::vector<size_t> block_to_grid_point_;
+   // Which grid blocks correspond to a given shell
+   std::vector<std::unordered_set<size_t>> shell_to_grid_blocks_;
 
    void build_ints() override;
    void grid_setup();

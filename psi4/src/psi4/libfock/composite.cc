@@ -813,11 +813,8 @@ COSK::COSK(std::shared_ptr<BasisSet> primary, Options& options)
 void COSK::build_ints() {
     auto factory = std::make_shared<IntegralFactory>(primary_);
     ints_.push_back(std::shared_ptr<TwoBodyAOInt>(factory->eri()));
-
-    grid_ints_.push_back((std::shared_ptr<PotentialInt>) (PotentialInt *)factory->ao_potential());
-
-    for (int thread = 1; thread < nthread_; thread++) {
-        grid_ints_.push_back((std::shared_ptr<PotentialInt>) (PotentialInt *)grid_ints_[0]->clone());
+    for (int thread = 0; thread < nthread_; thread++) {
+        grid_ints_.push_back((std::shared_ptr<PotentialInt>) (PotentialInt *)factory->ao_potential());
     }
 }
 
@@ -837,10 +834,12 @@ void COSK::grid_setup() {
     grid_ = std::make_shared<DFTGrid>(mol, primary_, cosk_grid_options_int, cosk_grid_options_str, options_);
 
     int nbf = primary_->nbf();
+    int nshell = primary_->nshell();
     size_t npoints = grid_->npoints();
 
     phi_values_.resize(npoints * nbf);
     X_.resize(npoints * nbf);
+    shell_to_grid_blocks_.resize(nshell);
 
     // Form PHI and X
     auto blocks = grid_->blocks();
@@ -851,6 +850,14 @@ void COSK::grid_setup() {
         auto block = blocks[b];
         int local_nbf = block->local_nbf();
         size_t local_npoints = block->npoints();
+
+        // Add the current point to the grid point offset for the block
+        block_to_grid_point_.push_back(point);
+
+        // Set up grid blocks to shell information
+        for (const auto& shell : block->shells_local_to_global()) {
+            shell_to_grid_blocks_[shell].emplace(b);
+        }
 
         double *x = block->x();
         double *y = block->y();
@@ -924,6 +931,7 @@ void COSK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
 #endif
 
     int npoints = grid_->npoints();
+    auto blocks = grid_->blocks();
     double* xpoints = grid_->x();
     double* ypoints = grid_->y();
     double* zpoints = grid_->z();
@@ -933,17 +941,8 @@ void COSK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
         double** Dp = D[i]->pointer();
         double** Kp = K[i]->pointer();
 
-        std::vector<double> Xkg(nbf * npoints, 0.0); // Izsak Eq. 4 
         std::vector<double> Ftg(nbf * npoints, 0.0); // Izsak Eq. 6
         std::vector<double> Gvg(nbf * npoints, 0.0); // Izsak Eq. 7
-
-        // Compute X (Equation 4)
-#pragma omp parallel for
-        for (size_t g = 0; g < npoints; g++) {
-            for (size_t k = 0; k < nbf; k++) {
-                Xkg[k * npoints + g] = X_[g * nbf + k];
-            }
-        }
 
         // Compute F (Equation 6)
 #pragma omp parallel for
@@ -957,21 +956,52 @@ void COSK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
                 size_t n_start = n_shell.start();
                 size_t num_n = n_shell.nfunction();
 
+                /*
+                for (size_t g = 0; g < npoints; g++) {
+                    for (int m = m_start; m < m_start + num_m; m++) {
+                        for (int n = n_start; n < n_start + num_n; n++) {
+                            Ftg[m * npoints + g] += Dp[m * nbf + n] * Xkg[n * npoints + g];
+                        }
+                    }
+                }
+                */
+
                 // double *Dbuff = &(Dp[m_start * nbf_ + n_start]);
                 // double *Xbuff = &(Xkg[n_start * npoints]);
                 // double *Fbuff = &(Ftg[m_start * npoints]);
 
                 // C_DGEMM('N', 'N', num_m, npoints, num_n, 1.0, Dbuff, nbf_, Xbuff, npoints, 1.0, Fbuff, npoints);
 
-                
-                for (size_t g = 0; g < npoints; g++) {
-                   for (int m = m_start; m < m_start + num_m; m++) {
-                       for (int n = n_start; n < n_start + num_n; n++) {
-                           Ftg[m * npoints + g] += Dp[m][n] * Xkg[n * npoints + g];
-                       }
-                   }
-                }
+                for (size_t b = 0; b < blocks.size(); b++) {
+                    if (!(shell_to_grid_blocks_[M].count(b)) || !(shell_to_grid_blocks_[N].count(b))) continue;
+                    auto block = blocks[b];
+                    size_t block_start = block_to_grid_point_[b];
+                    size_t block_npoints = block->npoints();
 
+                    for (size_t g = block_start; g < block_start + block_npoints; g++) {
+                        for (int m = m_start; m < m_start + num_m; m++) {
+                            for (int n = n_start; n < n_start + num_n; n++) {
+                                Ftg[m * npoints + g] += Dp[m][n] * X_[g * nbf + n];
+                            }
+                        }
+                    }
+
+                   /*
+                    double* Dbuff = &(Dp[m_start][n_start]);
+                    double* Xbuff = &(X_[block_start * nbf + n_start]);
+                    double* Fbuff = &(Ftg[m_start * npoints + block_start]);
+                    char transa = 'N';
+                    char transb = 'T';
+                    int m = num_m;
+                    int n = block_npoints;
+                    int k = num_n;
+                    int lda = nbf;
+                    int ldb = npoints;
+                    int ldc = nbf;
+
+                    C_DGEMM(transa, transb, m, n, k, 1.0, Dbuff, lda, Xbuff, ldb, 1.0, Fbuff, ldc);
+                    */
+                }
             }
         }
 
@@ -996,25 +1026,32 @@ void COSK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
                 size_t n_start = n_shell.start();
                 size_t num_n = n_shell.nfunction();
 
-                for (size_t g = 0; g < npoints; g++) {
-                    grid_ints_[thread]->set_charge_field({std::make_pair(-1.0, std::array<double, 3>{xpoints[g], ypoints[g], zpoints[g]})});
-                    grid_ints_[thread]->compute_shell(M, N);
+                for (size_t b = 0; b < blocks.size(); b++) {
+                    if (!(shell_to_grid_blocks_[M].count(b)) || !(shell_to_grid_blocks_[N].count(b))) continue;
+                    auto block = blocks[b];
+                    size_t block_start = block_to_grid_point_[b];
+                    size_t block_npoints = block->npoints();
 
-                    computed_shells++;
-                    double * A_buffer = (double *) grid_ints_[thread]->buffers()[0];
-                    // double* Fbuff = &(Ftg[n_start * npoints + g]);
-                    // double* Gbuff = &(Gvg[m_start * npoints + g]);
+                    for (size_t g = block_start; g < block_start + block_npoints; g++) {
+                        grid_ints_[thread]->set_charge_field({std::make_pair(-1.0, std::array<double, 3>{xpoints[g], ypoints[g], zpoints[g]})});
+                        grid_ints_[thread]->compute_shell(M, N);
 
-                    // C_DGEMV('N', num_m, num_n, 1.0, A_buffer, num_n, Fbuff, npoints, 1.0, Gbuff, npoints);
+                        computed_shells++;
+                        double * A_buffer = (double *) grid_ints_[thread]->buffers()[0];
+                        // double* Fbuff = &(Ftg[n_start * npoints + g]);
+                        // double* Gbuff = &(Gvg[m_start * npoints + g]);
 
-                    for (size_t m = m_start; m < m_start + num_m; m++) {
-                        int dm = m - m_start;
-                        for (size_t n = n_start; n < n_start + num_n; n++) {
-                            int dn = n - n_start;
-                            Gvg[m * npoints + g] += A_buffer[dm * num_n + dn] * Ftg[n * npoints + g];
+                        // C_DGEMV('N', num_m, num_n, 1.0, A_buffer, num_n, Fbuff, npoints, 1.0, Gbuff, npoints);
+
+                        for (size_t m = m_start; m < m_start + num_m; m++) {
+                            int dm = m - m_start;
+                            for (size_t n = n_start; n < n_start + num_n; n++) {
+                                int dn = n - n_start;
+                                Gvg[m * npoints + g] += A_buffer[dm * num_n + dn] * Ftg[n * npoints + g];
+                            }
                         }
+
                     }
-                    
                 }
             }
         }
@@ -1036,15 +1073,24 @@ void COSK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
 
                 // C_DGEMM('T', 'T', num_m, num_n, npoints, 1.0, Xbuff, nbf_, Gbuff, npoints, 1.0, Kbuff, nbf_);
 
-                for (int m = m_start; m < m_start + num_m; m++) {
-                    for (int n = n_start; n < n_start + num_n; n++) {
-                        double temp = 0.0;
-                        for (int g = 0; g < npoints; g++) {
-                            Kp[m][n] += phi_values_[g * nbf + m] * Gvg[n * npoints + g];
+                for (size_t b = 0; b < blocks.size(); b++) {
+                    if (!(shell_to_grid_blocks_[M].count(b)) || !(shell_to_grid_blocks_[N].count(b))) continue;
+                    auto block = blocks[b];
+                    size_t block_start = block_to_grid_point_[b];
+                    size_t block_npoints = block->npoints();
+
+                    for (size_t g = block_start; g < block_start + block_npoints; g++) {
+                        for (int m = m_start; m < m_start + num_m; m++) {
+                            for (int n = n_start; n < n_start + num_n; n++) {
+                                Kp[m][n] += phi_values_[g * nbf + m] * Gvg[n * npoints + g];
+                            }
                         }
                     }
-                }
 
+                    // double *Xbuff = &(phi_values_[block_start * nbf + m_start]);
+                    // double *Gbuff = &(Gvg[n_start * npoints + block_start]);
+                    // double *Kbuff = &(Kp[m_start][n_start]);
+                }
             }
         }
 
