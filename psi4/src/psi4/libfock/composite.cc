@@ -159,21 +159,19 @@ void CompositeJK::compute_JK() {
 
 DirectDFJ::DirectDFJ(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> auxiliary, Options& options)
                         : JBase(primary, options), auxiliary_(auxiliary) {
-    // form_Jinv();
+    form_Jinv();
     build_ints();
 }
 
 void DirectDFJ::form_Jinv() {
     timer_on("DirectDFJ: Form Jinv");
 
-    // Process::environment.set_n_threads(1);
-
+    Process::environment.set_n_threads(1);
     auto metric = std::make_shared<FittingMetric>(auxiliary_, true);
     metric->form_fitting_metric();
     Jinv_ = metric->get_metric();
     Jinv_->power(-1.0, condition_);
-
-    // Process::environment.set_n_threads(nthread_);
+    Process::environment.set_n_threads(nthread_);
 
     /*
     int aux_nshell = auxiliary_->nshell();
@@ -221,8 +219,6 @@ void DirectDFJ::build_ints() {
 void DirectDFJ::build_J(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J) {
     
     timer_on("DirectDFJ::build_J()");
-
-    form_Jinv();
 
     // => Zeroing <= //
 
