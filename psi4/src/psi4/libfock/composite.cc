@@ -20,6 +20,31 @@ using namespace psi;
 
 namespace psi {
 
+void C_DGESV_wrapper(SharedMatrix A, SharedMatrix B) {
+    int N = B->rowspi(0);
+    int M = B->colspi(0);
+    if (N == 0 || M == 0) return;
+
+    // create a copy of B in fortran ordering
+    std::vector<double> B_fortran(N * M, 0.0);
+    for (int n = 0; n < N; n++) {
+        for (int m = 0; m < M; m++) {
+            B_fortran[m * N + n] = B->get(n, m);
+        }
+    }
+
+    // make the C_DGESV call, solving AX=B for X
+    std::vector<int> ipiv(N);
+    int errcode = C_DGESV(N, M, A->pointer()[0], N, ipiv.data(), B_fortran.data(), N);
+
+    // copy the fortran-ordered X into the original matrix, reverting to C-ordering
+    for (int n = 0; n < N; n++) {
+        for (int m = 0; m < M; m++) {
+            B->set(n, m, B_fortran[m * N + n]);
+        }
+    }
+}
+
 JBase::JBase(std::shared_ptr<BasisSet> primary, Options& options) 
             : primary_(primary), options_(options) {
     nthread_ = 1;
@@ -125,9 +150,9 @@ void CompositeJK::compute_JK() {
         ints_[thread]->update_density(D_ref);
     }
 
+    /*
     // Do NOT do any weird stuff for the SAD guess :)
     if (initial_iteration_) build_JK_matrices(ints_, D_ref, J_ref, K_ref);
-    /*
     {
         if (jtype_ != "DIRECT_DF") build_JK_matrices(ints_, D_ref, J_ref, K_ref);
         else {
@@ -137,15 +162,15 @@ void CompositeJK::compute_JK() {
     }
     */
 
-    else {
-        if (!jalgo_ && !kalgo_) build_JK_matrices(ints_, D_ref, J_ref, K_ref);
-        else {
-            if (!jalgo_) build_JK_matrices(ints_, D_ref, J_ref, temp);
-            else jalgo_->build_J(D_ref, J_ref);
 
-            if (!kalgo_) build_JK_matrices(ints_, D_ref, temp, K_ref);
-            else kalgo_->build_K(D_ref, K_ref);
-        }
+    
+    if (!jalgo_ && !kalgo_) build_JK_matrices(ints_, D_ref, J_ref, K_ref);
+    else {
+        if (!jalgo_) build_JK_matrices(ints_, D_ref, J_ref, temp);
+        else jalgo_->build_J(D_ref, J_ref);
+
+        if (!kalgo_) build_JK_matrices(ints_, D_ref, temp, K_ref);
+        else kalgo_->build_K(D_ref, K_ref);
     }
 
     if (incfock_) {
@@ -164,47 +189,13 @@ DirectDFJ::DirectDFJ(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet
 }
 
 void DirectDFJ::form_Jinv() {
-    timer_on("DirectDFJ: Form Jinv");
+    timer_on("DirectDFJ: Build Metric");
 
-    Process::environment.set_n_threads(1);
     auto metric = std::make_shared<FittingMetric>(auxiliary_, true);
     metric->form_fitting_metric();
-    Jinv_ = metric->get_metric();
-    Jinv_->power(-1.0, condition_);
-    Process::environment.set_n_threads(nthread_);
+    Jmet_ = metric->get_metric();
 
-    /*
-    int aux_nshell = auxiliary_->nshell();
-    int naux = auxiliary_->nbf();
-
-    Jinv_ = std::make_shared<Matrix>(naux, naux);
-    auto zero = BasisSet::zero_ao_basis_set();
-    auto metric_factory = std::make_shared<IntegralFactory>(auxiliary_, zero, auxiliary_, zero);
-    auto metric_eri = std::shared_ptr<TwoBodyAOInt>(metric_factory->eri());
-    double** Jinvp = Jinv_->pointer();
-
-    for (int P = 0; P < aux_nshell; P++) {
-        int p_start = auxiliary_->shell_to_basis_function(P);
-        int num_p = auxiliary_->shell(P).nfunction();
-
-        for (int Q = 0; Q < aux_nshell; Q++) {
-            int q_start = auxiliary_->shell_to_basis_function(Q);
-            int num_q = auxiliary_->shell(Q).nfunction();
-
-            metric_eri->compute_shell(P, 0, Q, 0);
-            const double* buffer = metric_eri->buffer();
-
-            for (int p = p_start; p < p_start + num_p; p++) {
-                for (int q = q_start; q < q_start + num_q; q++) {
-                    Jinvp[p][q] = buffer[(p-p_start) * num_q + (q-q_start)];
-                }
-            }
-        }
-    }
-    Jinv_->power(-1.0, condition_);
-    */
-
-    timer_off("DirectDFJ: Form Jinv");
+    timer_off("DirectDFJ: Build Metric");
 }
 
 void DirectDFJ::build_ints() {
@@ -245,47 +236,32 @@ void DirectDFJ::build_J(const std::vector<SharedMatrix>& D, std::vector<SharedMa
     }
 
     // Weigand 2002 doi: 10.1039/b204199p (Figure 1)
-
+    // The gamma intermediates defined in Figure 1
     // gammaP = (P|uv) * Duv
-    // std::vector<double> gammaP(nmat * naux, 0.0);
-    std::vector<SharedVector> gammaP(nmat);
-
-    // gammaQ = (Q|P)^-1 * gammaP
-    // std::vector<double> gammaQ(nmat * naux, 0.0);
-    std::vector<SharedVector> gammaQ(nmat);
-
-    for (int ind = 0; ind < nmat; ind++) {
-        gammaP[ind] = std::make_shared<Vector>(naux);
-        gammaQ[ind] = std::make_shared<Vector>(naux);
-        gammaP[ind]->zero();
-        gammaQ[ind]->zero();
-    }
+    // (P|Q) * gammaQ = gammaP
+    SharedMatrix gamma = std::make_shared<Matrix>(nmat, naux);
+    gamma->zero();
+    double* gamp = gamma->pointer()[0];
 
     int max_nbf_per_shell = 0;
     for (int P = 0; P < pri_nshell; P++) {
         max_nbf_per_shell = std::max(max_nbf_per_shell, primary_->shell(P).nfunction());
     }
 
-    // Temporary buffers to gammaP and J to minimize race tonditions
-    std::vector<std::vector<SharedVector>> gpT;
+    // Temporary buffers for J to minimize race tonditions
     std::vector<std::vector<SharedMatrix>> JT;
 
     for (int thread = 0; thread < nthread_; thread++) {
         std::vector<SharedVector> gp2;
         std::vector<SharedMatrix> J2;
         for (size_t ind = 0; ind < nmat; ind++) {
-            gp2.push_back(std::make_shared<Vector>(naux));
             J2.push_back(std::make_shared<Matrix>(max_nbf_per_shell, max_nbf_per_shell));
-            gp2[ind]->zero();
             J2[ind]->zero();
         }
-        gpT.push_back(gp2);
         JT.push_back(J2);
     }
 
-    // => Buffers and Pointers used in DirectDFJ <= //
-    double** Jinvp = Jinv_->pointer();
-
+    // Solve for gammaP = (P|rs)*Drs
 #pragma omp parallel for num_threads(nthread_) schedule(dynamic)
     for (int P = 0; P < aux_nshell; P++) {
 
@@ -317,7 +293,6 @@ void DirectDFJ::build_J(const std::vector<SharedMatrix>& D, std::vector<SharedMa
 
             for (int i = 0; i < D.size(); i++) {
                 double** Dp = D[i]->pointer();
-                double* gpTp = gpT[thread][i]->pointer();
                 const double *Puv = buffer;
 
                 for (int p = p_start; p < p_start + num_p; p++) {
@@ -326,8 +301,8 @@ void DirectDFJ::build_J(const std::vector<SharedMatrix>& D, std::vector<SharedMa
                         int du = u - u_start;
                         for (int v = v_start; v < v_start + num_v; v++) {
                             int dv = v - v_start;
-#pragma omp atomic
-                            gpTp[p] += prefactor * (*Puv) * Dp[u][v];
+
+                            gamp[i * naux + p] += prefactor * (*Puv) * Dp[u][v];
                             Puv++;
                         }
                     }
@@ -335,56 +310,12 @@ void DirectDFJ::build_J(const std::vector<SharedMatrix>& D, std::vector<SharedMa
             }
         }
     }
+    
+    // Solve for gammaQ, (P|Q) * gammaQ = gammaP
+    SharedMatrix Jmet_copy = Jmet_->clone();
 
-    for (int thread = 0; thread < nthread_; thread++) {
-        for (size_t ind = 0; ind < nmat; ind++) {
-            gammaP[ind]->add(gpT[thread][ind]);
-        }
-    }
-/*
-#pragma omp parallel for num_threads(nthread_) schedule(dynamic)
-    for (int Q = 0; Q < aux_nshell; Q++) {
-        int q_start = auxiliary_->shell_to_basis_function(Q);
-        int num_q = auxiliary_->shell(Q).nfunction();
-
-        for (int P = 0; P < aux_nshell; P++) {
-            int p_start = auxiliary_->shell_to_basis_function(P);
-            int num_p = auxiliary_->shell(P).nfunction();
-
-            for (int i = 0; i < D.size(); i++) {
-                double* gammaPp = gammaP[i]->pointer();
-                double* gammaQp = gammaQ[i]->pointer();
-
-                for (int q = q_start; q < q_start + num_q; q++) {
-                    int dq = q - q_start;
-                    for (int p = p_start; p < p_start + num_p; p++) {
-                        int dp = p - p_start;
-#pragma omp atomic
-                        gammaQp[q] += Jinvp[q][p] * gammaPp[p];
-                    }
-                }
-            }
-        }
-    }
-    */
-
-#pragma omp parallel for num_threads(nthread_)
-    for (int q = 0; q < naux; q++) {
-        for (int i = 0; i < D.size(); i++) {
-            double* gammaPp = gammaP[i]->pointer();
-            double* gammaQp = gammaQ[i]->pointer();
-            for (int p = 0; p < naux; p++) {
-#pragma omp atomic
-                gammaQp[q] += Jinvp[q][p] * gammaPp[p];
-            }
-        }
-    }
-
-   /*
-    for (int i = 0; i < D.size(); i++) {
-        gammaQ[i]->gemv(false, 1.0, Jinv_.get(), gammaP[i].get(), 1.0);
-    }
-    */
+    std::vector<int> ipiv(naux);
+    C_DGESV(naux, nmat, Jmet_copy->pointer()[0], naux, ipiv.data(), gamp, naux);
 
 #pragma omp parallel for num_threads(nthread_) schedule(dynamic)
     for (int U = 0; U < pri_nshell; U++) {
@@ -416,7 +347,6 @@ void DirectDFJ::build_J(const std::vector<SharedMatrix>& D, std::vector<SharedMa
 
                 for (int i = 0; i < D.size(); i++) {
                     double* JTp = JT[thread][i]->pointer()[0];
-                    double* gammaQp = gammaQ[i]->pointer();
                     const double* Quv = buffer;
 
                     for (int q = q_start; q < q_start + num_q; q++) {
@@ -425,8 +355,8 @@ void DirectDFJ::build_J(const std::vector<SharedMatrix>& D, std::vector<SharedMa
                             int du = u - u_start;
                             for (int v = v_start; v < v_start + num_v; v++) {
                                 int dv = v - v_start;
-#pragma omp atomic
-                                JTp[du * num_v + dv] += prefactor * (*Quv) * gammaQp[q];
+
+                                JTp[du * num_v + dv] += prefactor * (*Quv) * gamp[i * naux + q];
                                 Quv++;
                             }
                         }
@@ -443,7 +373,7 @@ void DirectDFJ::build_J(const std::vector<SharedMatrix>& D, std::vector<SharedMa
                     int du = u - u_start;
                     for (int v = v_start; v < v_start + num_v; v++) {
                         int dv = v - v_start;
-#pragma omp atomic
+
                         Jp[u][v] += JTp[du * num_v + dv];
                     }
                 }

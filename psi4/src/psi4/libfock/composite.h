@@ -36,6 +36,7 @@
 #include "psi4/libmints/potential.h"
 #include "psi4/libmints/twobody.h"
 #include "psi4/libfock/cubature.h"
+#include "psi4/lib3index/dfhelper.h"
 
 #include <unordered_set>
 
@@ -130,8 +131,10 @@ class DirectDFJ : public JBase {
   protected:
    // Perform a Direct Density Fitted J instead of Direct J
    std::shared_ptr<BasisSet> auxiliary_;
-   SharedMatrix Jinv_;
+   SharedMatrix Jmet_;
+
    double condition_ = 1.0e-12;
+   double cutoff_ = 1.0e-12;
 
    // Form J^-1
    void form_Jinv();
