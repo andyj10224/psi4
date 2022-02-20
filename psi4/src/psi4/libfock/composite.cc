@@ -293,8 +293,9 @@ void DirectDFJ::build_J(const std::vector<SharedMatrix>& D, std::vector<SharedMa
 
             for (int i = 0; i < D.size(); i++) {
                 double** Dp = D[i]->pointer();
-                const double *Puv = buffer;
+                double *Puv = const_cast<double *>(buffer);
 
+                /*
                 for (int p = p_start; p < p_start + num_p; p++) {
                     int dp = p - p_start;
                     for (int u = u_start; u < u_start + num_u; u++) {
@@ -307,6 +308,17 @@ void DirectDFJ::build_J(const std::vector<SharedMatrix>& D, std::vector<SharedMa
                         }
                     }
                 }
+                */
+
+                std::vector<double> Dbuff(num_u * num_v, 0.0);
+                for (int u = u_start; u < u_start + num_u; u++) {
+                    int du = u - u_start;
+                    for (int v = v_start; v < v_start + num_v; v++) {
+                        int dv = v - v_start;
+                        Dbuff[du * num_v + dv] = Dp[u][v];
+                    }
+                }
+                C_DGEMV('N', num_p, num_u * num_v, prefactor, (double *)Puv, num_u * num_v, Dbuff.data(), 1, 1.0, &(gamp[i * naux + p_start]), 1);
             }
         }
     }
@@ -347,8 +359,9 @@ void DirectDFJ::build_J(const std::vector<SharedMatrix>& D, std::vector<SharedMa
 
                 for (int i = 0; i < D.size(); i++) {
                     double* JTp = JT[thread][i]->pointer()[0];
-                    const double* Quv = buffer;
+                    double* Quv = const_cast<double *>(buffer);
 
+                    /*
                     for (int q = q_start; q < q_start + num_q; q++) {
                         int dq = q - q_start;
                         for (int u = u_start; u < u_start + num_u; u++) {
@@ -361,6 +374,8 @@ void DirectDFJ::build_J(const std::vector<SharedMatrix>& D, std::vector<SharedMa
                             }
                         }
                     }
+                    */
+                    C_DGEMV('T', num_q, num_u * num_v, prefactor, (double *) Quv, num_u * num_v, &(gamp[i * naux + q_start]), 1, 1.0, JTp, 1);
                 }
             }
 
