@@ -448,34 +448,25 @@ void LinK::build_ints() {
 
 void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& K) {
 
-    /*
-    if (!lr_symmetric_) {
-        throw PSIEXCEPTION("Non-symmetric K matrix builds are currently not supported in the LinK algorithm.");
-    }
-    */
-
     timer_on("LinK::build_K()");
 
-    // => Update Density <= //
-
-    for (int thread = 0; thread < nthread_; thread++) {
-        ints_[thread]->update_density(D);
+    for (auto& integral : ints_) {
+        integral->update_density(D);
     }
 
-    // => Zeroing <= //
+    // ==> Prep Auxiliary Quantities <== //
 
+    // => Zeroing <= //
     for (auto& Kmat : K) {
         Kmat->zero();
     }
 
     // => Sizing <= //
-
     int nshell = primary_->nshell();
     int nbf = primary_->nbf();
+    int nthread = nthread_;
 
     // => Atom Blocking <= //
-
-    // Define the shells of each atom as a task
     std::vector<int> shell_endpoints_for_atom;
     std::vector<int> basis_endpoints_for_shell;
 
@@ -490,8 +481,6 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
     shell_endpoints_for_atom.push_back(nshell);
     basis_endpoints_for_shell.push_back(nbf);
 
-    // => End Atomic Blocking <= //
-
     size_t natom = shell_endpoints_for_atom.size() - 1;
 
     size_t max_functions_per_atom = 0L;
@@ -503,25 +492,7 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
         max_functions_per_atom = std::max(max_functions_per_atom, size);
     }
 
-    /*
-    if (debug_) {
-        outfile->Printf("  ==> LinK: Atom Blocking <==\n\n");
-        for (size_t atom = 0; atom < natom; atom++) {
-            outfile->Printf("  Atom: %3d, Atom Start: %4d, Atom End: %4d\n", atom, shell_endpoints_for_atom[atom],
-                            shell_endpoints_for_atom[atom + 1]);
-            for (int P = shell_endpoints_for_atom[atom]; P < shell_endpoints_for_atom[atom + 1]; P++) {
-                int size = primary_->shell(P).nfunction();
-                int off = primary_->shell(P).function_index();
-                int off2 = basis_endpoints_for_shell[P];
-                outfile->Printf("    Shell: %4d, Size: %4d, Offset: %4d, Offset2: %4d\n", P, size, off,
-                                off2);
-            }
-        }
-        outfile->Printf("\n");
-    }
-    */
-
-    // => Significant Atom Pairs (PQ|-style <= //
+    // ==> Prep Atom Pairs (Better for parallel performance than shell pairs) <== //
 
     std::vector<std::pair<int, int>> atom_pairs;
     for (size_t Patom = 0; Patom < natom; Patom++) {
@@ -540,11 +511,12 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
         }
     }
 
+    // ==> Prep Bra-Bra Shell Pairs <== //
+
     // A comparator used for sorting integral screening values
     auto screen_compare = [](const std::pair<int, double> &a, 
                                     const std::pair<int, double> &b) { return a.second > b.second; };
 
-    // Shells linked to each other through Schwarz Screening (Significant Overlap)
     std::vector<std::vector<int>> significant_bras(nshell);
     double max_integral = ints_[0]->max_integral();
 
@@ -564,9 +536,12 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
         }
     }
 
-    // => Calculate Shell Ceilings (To find significant bra-ket pairs)
-    // sqrt(Umax|Umax) in Oschenfeld Eq. 3
+    // ==> Prep Bra-Ket Shell Pairs <== //
+
+    // => Calculate Shell Ceilings <= //
     std::vector<double> shell_ceilings(nshell, 0.0);
+
+    // sqrt(Umax|Umax) in Ochsenfeld Eq. 3
     for (int P = 0; P < nshell; P++) {
         for (int Q = 0; Q <= P; Q++) {
             double val = std::sqrt(ints_[0]->shell_ceiling2(P, Q, P, Q));
@@ -575,16 +550,34 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
         }
     }
 
+    std::vector<std::vector<int>> significant_kets(nshell);
+
+    // => Use shell ceilings to compute significant ket-shells for each bra-shell <= //
+    for (size_t P = 0; P < nshell; P++) {
+        std::vector<std::pair<int, double>> PR_shell_values;
+        for (size_t R = 0; R < nshell; R++) {
+            double screen_val = shell_ceilings[P] * shell_ceilings[R] * ints_[0]->shell_pair_max_density(P, R);
+            if (screen_val >= linK_ints_cutoff_) {
+                PR_shell_values.emplace_back(R, screen_val);
+            }
+        }
+        std::sort(PR_shell_values.begin(), PR_shell_values.end(), screen_compare);
+
+        for (const auto& value : PR_shell_values) {
+            significant_kets[P].push_back(value.first);
+        }
+    }
+
     size_t natom_pair = atom_pairs.size();
 
-    // => Intermediate Buffers <= //
+    // ==> Intermediate Buffers <== //
 
     // Temporary buffers used during the K contraction process to
     // Take full advantage of permutational symmetry of ERIs
     std::vector<std::vector<SharedMatrix>> KT;
 
-    // A buffer is created for every thread to minimize race conditions
-    for (int thread = 0; thread < nthread_; thread++) {
+    // To prevent race conditions, give every thread a buffer
+    for (int thread = 0; thread < nthread; thread++) {
         std::vector<SharedMatrix> K2;
         for (size_t ind = 0; ind < D.size(); ind++) {
             // (pq|rs) can be contracted into Kpr, Kps, Kqr, Kqs (hence the 4)
@@ -596,10 +589,9 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
     // Number of computed shell quartets is tracked for benchmarking purposes
     size_t computed_shells = 0L;
 
-// ==> Master Task Loop (Atom Quartet Indexing) <== //
+    // ==> Integral Formation Loop <== //
 
-// ==> "Loop over types (angular momenta, contraction, ...) of shell-pair blocks" <== //
-#pragma omp parallel for num_threads(nthread_) schedule(dynamic) reduction(+ : computed_shells)
+#pragma omp parallel for num_threads(nthread) schedule(dynamic) reduction(+ : computed_shells)
     for (size_t ipair = 0L; ipair < natom_pair; ipair++) { // O(N) shell-pairs in asymptotic limit
 
         int Patom = atom_pairs[ipair].first;
@@ -622,43 +614,6 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
         thread = omp_get_thread_num();
 #endif
 
-        // => "Pre-ordering and Pre-selection to find significant elements in Puv" <= //
-        std::vector<std::vector<int>> significant_kets_P(nPshell);
-        std::vector<std::vector<int>> significant_kets_Q(nQshell);
-
-        // => Defined in Oschenfeld Eq. 3 <= //
-        // For shells P and R, If |Dpr| * sqrt(Pmax|Pmax) * sqrt(Rmax|Rmax) [screening value] >= linK_ints_cutoff_,
-        // Then shell R is added to the ket list of shell P (and sorted by the screening value)
-        for (size_t P = Pstart; P < Pstart + nPshell; P++) {
-            std::vector<std::pair<int, double>> PR_shell_values;
-            for (size_t R = 0; R < nshell; R++) {
-                double screen_val = shell_ceilings[P] * shell_ceilings[R] * ints_[0]->shell_pair_max_density(P, R);
-                if (screen_val >= linK_ints_cutoff_) {
-                    PR_shell_values.emplace_back(R, screen_val);
-                }
-            }
-            std::sort(PR_shell_values.begin(), PR_shell_values.end(), screen_compare);
-
-            for (const auto& value : PR_shell_values) {
-                significant_kets_P[P - Pstart].push_back(value.first);
-            }
-        }
-
-        for (size_t Q = Qstart; Q < Qstart + nQshell; Q++) {
-            std::vector<std::pair<int, double>> QR_shell_values;
-            for (size_t R = 0; R < nshell; R++) {
-                double screen_val = shell_ceilings[Q] * shell_ceilings[R] * ints_[0]->shell_pair_max_density(Q, R);
-                if (screen_val >= linK_ints_cutoff_) {
-                    QR_shell_values.emplace_back(R, screen_val);
-                }
-            }
-            std::sort(QR_shell_values.begin(), QR_shell_values.end(), screen_compare);
-
-            for (const auto& value : QR_shell_values) {
-                significant_kets_Q[Q - Qstart].push_back(value.first);
-            }
-        }
-
         // Keep track of contraction indices for stripeout (Towards end of this function)
         std::vector<std::unordered_set<int>> P_stripeout_list(nPshell);
         std::vector<std::unordered_set<int>> Q_stripeout_list(nQshell);
@@ -667,10 +622,11 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
         for (int P = Pstart; P < Pstart + nPshell; P++) {
             for (int Q = Qstart; Q < Qstart + nQshell; Q++) {
 
+                if (Q > P) continue;
+                if (!ints_[0]->shell_pair_significant(P, Q)) continue;
+
                 int dP = P - Pstart;
                 int dQ = Q - Qstart;
-
-                if (Q > P) continue;
 
                 // => "Formation of Significant Shell Pair List ML" <= //
 
@@ -680,14 +636,14 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
                 std::unordered_set<int> ML_PQ;
 
                 // Form ML_P inside ML_PQ
-                for (const int R : significant_kets_P[P - Pstart]) {
+                for (const int R : significant_kets[P]) {
                     int count = 0;
                     for (const int S : significant_bras[R]) {
                         double screen_val = ints_[0]->shell_pair_max_density(P, R) * std::sqrt(ints_[0]->shell_ceiling2(P, Q, R, S));
 
                         if (screen_val >= linK_ints_cutoff_) {
                             count += 1;
-                            int RS = (R >= S) ? R * nshell + S : S * nshell + R;
+                            int RS = (R >= S) ? (R * nshell + S) : (S * nshell + R);
                             if (RS > P * nshell + Q) continue;
                             ML_PQ.emplace(RS);
                             Q_stripeout_list[dQ].emplace(S);
@@ -698,14 +654,14 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
                 }
 
                 // Form ML_Q inside ML_PQ
-                for (const int R : significant_kets_Q[Q - Qstart]) {
+                for (const int R : significant_kets[Q]) {
                     int count = 0;
                     for (const int S : significant_bras[R]) {
                         double screen_val = ints_[0]->shell_pair_max_density(Q, R) * std::sqrt(ints_[0]->shell_ceiling2(P, Q, R, S));
 
                         if (screen_val >= linK_ints_cutoff_) {
                             count += 1;
-                            int RS = (R >= S) ? R * nshell + S : S * nshell + R;
+                            int RS = (R >= S) ? (R * nshell + S) : (S * nshell + R);
                             if (RS > P * nshell + Q) continue;
                             ML_PQ.emplace(RS);
                             P_stripeout_list[dP].emplace(S);
@@ -770,6 +726,7 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
                         if (R == S) prefactor *= 0.5;
                         if (P == R && Q == S) prefactor *= 0.5;
 
+                        // => Computing integral contractions to K buffers <= //
                         for (int p = 0; p < shell_P_nfunc; p++) {
                             for (int q = 0; q < shell_Q_nfunc; q++) {
                                 for (int r = 0; r < shell_R_nfunc; r++) {
@@ -799,7 +756,7 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
 
         if (!touched) continue;
 
-        // => Stripe out <= //
+        // => Stripe out (Writing to K matrix) <= //
 
         for (size_t ind = 0; ind < D.size(); ind++) {
             double** KTp = KT[thread][ind]->pointer();
@@ -812,10 +769,11 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
 
             // K_PR and K_PS
             for (int P = Pstart; P < Pstart + nPshell; P++) {
+                int dP = P - Pstart;
                 int shell_P_start = primary_->shell(P).function_index();
                 int shell_P_nfunc = primary_->shell(P).nfunction();
                 int shell_P_offset = basis_endpoints_for_shell[P] - basis_endpoints_for_shell[Pstart];
-                for (const int S : P_stripeout_list[P - Pstart]) {
+                for (const int S : P_stripeout_list[dP]) {
                     int shell_S_start = primary_->shell(S).function_index();
                     int shell_S_nfunc = primary_->shell(S).nfunction();
 
@@ -833,10 +791,11 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
 
             // K_QR and K_QS
             for (int Q = Qstart; Q < Qstart + nQshell; Q++) {
+                int dQ = Q - Qstart;
                 int shell_Q_start = primary_->shell(Q).function_index();
                 int shell_Q_nfunc = primary_->shell(Q).nfunction();
                 int shell_Q_offset = basis_endpoints_for_shell[Q] - basis_endpoints_for_shell[Qstart];
-                for (const int S : Q_stripeout_list[Q - Qstart]) {
+                for (const int S : Q_stripeout_list[dQ]) {
                     int shell_S_start = primary_->shell(S).function_index();
                     int shell_S_nfunc = primary_->shell(S).nfunction();
 
@@ -860,17 +819,7 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
         Kmat->scale(2.0);
         Kmat->hermitivitize();
     }
-    /*
-    if (bench_) {
-        auto mode = std::ostream::app;
-        auto printer = PsiOutStream("bench.dat", mode);
-        size_t ntri = nshell * (nshell + 1L) / 2L;
-        size_t possible_shells = ntri * (ntri + 1L) / 2L;
-        printer.Printf("(LinK) Computed %20zu Shell Quartets out of %20zu, (%11.3E ratio)\n", computed_shells,
-                        possible_shells, computed_shells / (double)possible_shells);
-    }
-    */
-    
+
     timer_off("LinK::build_K()");
 }
 
