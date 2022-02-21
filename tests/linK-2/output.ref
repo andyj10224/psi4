@@ -1,9 +1,9 @@
 
     -----------------------------------------------------------------------
           Psi4: An Open-Source Ab Initio Electronic Structure Package
-                               Psi4 1.6a1.dev36 
+                               Psi4 1.6a1.dev57 
 
-                         Git: Rev {dscreen-ints-hack} 0a550f6 dirty
+                         Git: Rev {jk-algo-dev} 0bbef62 dirty
 
 
     D. G. A. Smith, L. A. Burns, A. C. Simmonett, R. M. Parrish,
@@ -30,11 +30,11 @@
     -----------------------------------------------------------------------
 
 
-    Psi4 started on: Tuesday, 11 January 2022 02:38PM
+    Psi4 started on: Sunday, 20 February 2022 07:46PM
 
-    Process ID: 5265
+    Process ID: 1416
     Host:       ds10
-    PSIDATADIR: /theoryfs2/ds/jiang/p4dev/psi4/objdir-caroline/stage/share/psi4
+    PSIDATADIR: /theoryfs2/ds/jiang/p4dev/psi4/objdir-brendon/stage/share/psi4
     Memory:     500.0 MiB
     Threads:    6
     
@@ -83,15 +83,15 @@ psi4.compare_values(ref_energy, linK_energy, 7, "B3LYP Energy (using LinK algo)"
 Scratch directory: /scratch/jiang/
 
 *** tstart() called on ds10
-*** at Tue Jan 11 14:38:35 2022
+*** at Sun Feb 20 19:46:39 2022
 
    => Loading Basis Set <=
 
     Name: CC-PVTZ
     Role: ORBITAL
     Keyword: BASIS
-    atoms 1-6  entry C          line   186 file /theoryfs2/ds/jiang/p4dev/psi4/objdir-caroline/stage/share/psi4/basis/cc-pvtz.gbs 
-    atoms 7-12 entry H          line    23 file /theoryfs2/ds/jiang/p4dev/psi4/objdir-caroline/stage/share/psi4/basis/cc-pvtz.gbs 
+    atoms 1-6  entry C          line   186 file /theoryfs2/ds/jiang/p4dev/psi4/objdir-brendon/stage/share/psi4/basis/cc-pvtz.gbs 
+    atoms 7-12 entry H          line    23 file /theoryfs2/ds/jiang/p4dev/psi4/objdir-brendon/stage/share/psi4/basis/cc-pvtz.gbs 
 
 
          ---------------------------------------------------------
@@ -225,8 +225,8 @@ Scratch directory: /scratch/jiang/
 
   Cached 20.0% of DFT collocation blocks in 0.306 [GiB].
 
-  Minimum eigenvalue in the overlap matrix is 3.7592595820E-05.
-  Reciprocal condition number of the overlap matrix is 4.6398212530E-06.
+  Minimum eigenvalue in the overlap matrix is 3.7592595821E-05.
+  Reciprocal condition number of the overlap matrix is 4.6398212532E-06.
     Using symmetric orthogonalization.
 
   ==> Pre-Iterations <==
@@ -245,17 +245,17 @@ Scratch directory: /scratch/jiang/
 
                         Total Energy        Delta E     RMS |[F,P]|
 
-   @RKS iter SAD:  -231.83025753211271   -2.31830e+02   0.00000e+00 
-   @RKS iter   1:  -231.83545138000008   -5.19385e-03   3.65134e-03 DIIS
-   @RKS iter   2:  -231.53451997879210    3.00931e-01   4.63456e-03 DIIS
-   @RKS iter   3:  -232.32894950290861   -7.94430e-01   3.73774e-04 DIIS
-   @RKS iter   4:  -232.33313545627314   -4.18595e-03   7.47838e-05 DIIS
-   @RKS iter   5:  -232.33331176058869   -1.76304e-04   7.58429e-06 DIIS
-   @RKS iter   6:  -232.33331210820097   -3.47612e-07   6.99285e-06 DIIS
-   @RKS iter   7:  -232.33331403923748   -1.93104e-06   6.80699e-07 DIIS
-   @RKS iter   8:  -232.33331405441675   -1.51793e-08   3.10689e-07 DIIS
-   @RKS iter   9:  -232.33331405755564   -3.13889e-09   1.70681e-08 DIIS
-   @RKS iter  10:  -232.33331405756437   -8.72546e-12   6.56236e-09 DIIS
+   @RKS iter SAD:  -231.83025753211336   -2.31830e+02   0.00000e+00 
+   @RKS iter   1:  -231.83545138001423   -5.19385e-03   3.65134e-03 DIIS
+   @RKS iter   2:  -231.53451997889891    3.00931e-01   4.63456e-03 DIIS
+   @RKS iter   3:  -232.32894950291916   -7.94430e-01   3.73774e-04 DIIS
+   @RKS iter   4:  -232.33313545628249   -4.18595e-03   7.47838e-05 DIIS
+   @RKS iter   5:  -232.33331176059741   -1.76304e-04   7.58429e-06 DIIS
+   @RKS iter   6:  -232.33331210820856   -3.47611e-07   6.99285e-06 DIIS
+   @RKS iter   7:  -232.33331403924558   -1.93104e-06   6.80699e-07 DIIS
+   @RKS iter   8:  -232.33331405442658   -1.51810e-08   3.10689e-07 DIIS
+   @RKS iter   9:  -232.33331405756448   -3.13790e-09   1.70681e-08 DIIS
+   @RKS iter  10:  -232.33331405757343   -8.95284e-12   6.56237e-09 DIIS
   Energy and wave function converged.
 
 
@@ -365,17 +365,17 @@ Scratch directory: /scratch/jiang/
               A 
     DOCC [    21 ]
 
-  @RKS Final Energy:  -232.33331405756437
+  @RKS Final Energy:  -232.33331405757343
 
    => Energetics <=
 
     Nuclear Repulsion Energy =            203.7109313602788916
-    One-Electron Energy =                -714.7993060137774819
-    Two-Electron Energy =                 306.9305832600254007
-    DFT Exchange-Correlation Energy =     -28.1755226640911651
+    One-Electron Energy =                -714.7993060138993542
+    Two-Electron Energy =                 306.9305832601518205
+    DFT Exchange-Correlation Energy =     -28.1755226641048004
     Empirical Dispersion Energy =           0.0000000000000000
     VV10 Nonlocal Energy =                  0.0000000000000000
-    Total Energy =                       -232.3333140575643654
+    Total Energy =                       -232.3333140575734319
 
 Computation Completed
 
@@ -397,18 +397,18 @@ Properties computed using the SCF density matrix
      X:     0.0125      Y:     0.0080      Z:     0.0000     Total:     0.0149
 
 
-*** tstop() called on ds10 at Tue Jan 11 14:40:40 2022
+*** tstop() called on ds10 at Sun Feb 20 19:48:43 2022
 Module time:
-	user time   =     742.04 seconds =      12.37 minutes
-	system time =       0.67 seconds =       0.01 minutes
-	total time  =        125 seconds =       2.08 minutes
+	user time   =     741.42 seconds =      12.36 minutes
+	system time =       0.62 seconds =       0.01 minutes
+	total time  =        124 seconds =       2.07 minutes
 Total time:
-	user time   =     742.04 seconds =      12.37 minutes
-	system time =       0.67 seconds =       0.01 minutes
-	total time  =        125 seconds =       2.08 minutes
+	user time   =     741.42 seconds =      12.36 minutes
+	system time =       0.62 seconds =       0.01 minutes
+	total time  =        124 seconds =       2.07 minutes
     B3LYP Energy (using LinK algo)........................................................PASSED
 
-    Psi4 stopped on: Tuesday, 11 January 2022 02:40PM
-    Psi4 wall time for execution: 0:02:04.72
+    Psi4 stopped on: Sunday, 20 February 2022 07:48PM
+    Psi4 wall time for execution: 0:02:04.56
 
 *** Psi4 exiting successfully. Buy a developer a beer!

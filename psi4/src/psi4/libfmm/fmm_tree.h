@@ -189,6 +189,8 @@ class PSI_API CFMMTree {
       Options& options_;
       // Number of threads
       int nthread_;
+      // Use density-based integral screening?
+      bool density_screening_;
 
       // The integral objects used to compute the integrals
       std::vector<std::shared_ptr<TwoBodyAOInt>> ints_;

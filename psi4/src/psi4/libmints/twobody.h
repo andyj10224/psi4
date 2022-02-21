@@ -207,6 +207,10 @@ class PSI_API TwoBodyAOInt {
      */
     /// Update max_dens_shell_pair_ given an updated density matrix (Haser 1989)
     void update_density(const std::vector<SharedMatrix>& D);
+    /// Whether the ERI contributes to the J matrix by the density test (Haser 1989)
+    bool shell_significant_density_J(int M, int N, int R, int S) const;
+    /// Whether the ERI contributes to the K matrix by the density test (Haser 1989)
+    bool shell_significant_density_K(int M, int N, int R, int S) const;
     /// Ask the built in sieve whether this quartet contributes
     bool shell_significant(int M, int N, int R, int S) const { return sieve_impl_(M, N, R, S); };
     /// Are any of the quartets within a given shellpair list significant

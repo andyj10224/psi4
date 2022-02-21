@@ -628,6 +628,11 @@ void DirectJK::build_JK_matrices(std::vector<std::shared_ptr<TwoBodyAOInt>>& int
                         if (!ints[0]->shell_pair_significant(R, S)) continue;
                         if (!ints[0]->shell_significant(P, Q, R, S)) continue;
 
+                        if (density_screening_) {
+                            if (build_J && !build_K && !ints[0]->shell_significant_density_J(P, Q, R, S)) continue;
+                            if (!build_J && build_K && !ints[0]->shell_significant_density_K(P, Q, R, S)) continue;
+                        }
+
                         // printf("Quartet: %2d %2d %2d %2d\n", P, Q, R, S);
                         // if (thread == 0) timer_on("JK: Ints");
                         if (ints[thread]->compute_shell(P, Q, R, S) == 0)

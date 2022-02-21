@@ -343,6 +343,7 @@ CFMMTree::CFMMTree(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, const std::
 #ifdef _OPENMP
     nthread_ = Process::environment.get_n_threads();
 #endif
+    density_screening_ = (options_.get_str("SCREENING") == "DENSITY");
 
     int num_boxes = (nlevels_ == 1) ? 1 : (0.5 * std::pow(16, nlevels_) + 7) / 15;
     tree_.resize(num_boxes);
@@ -658,6 +659,7 @@ void CFMMTree::build_nf_J() {
                     
                     if (R * nshell + S > P * nshell + Q) continue;
                     if (!ints_[thread]->shell_significant(P, Q, R, S)) continue;
+                    if (density_screening_ && !ints_[thread]->shell_significant_density_J(P, Q, R, S)) continue;
 
                     double prefactor = 1.0;
                     if (P != Q) prefactor *= 2;

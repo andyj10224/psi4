@@ -71,7 +71,7 @@ TwoBodyAOInt::TwoBodyAOInt(const IntegralFactory *intsfactory, int deriv)
 
     // Setup sieve data
     screening_threshold_ = Process::environment.options.get_double("INTS_TOLERANCE");
-    density_screening_threshold_ = Process::environment.options.get_double("LINK_INTS_TOLERANCE");
+    density_screening_threshold_ = Process::environment.options.get_double("INTS_TOLERANCE");
     auto screentype = Process::environment.options.get_str("SCREENING");
     if (screentype == "SCHWARZ")
         screening_type_ = ScreeningType::Schwarz;
@@ -201,7 +201,48 @@ bool TwoBodyAOInt::shell_significant_density(int M, int N, int R, int S) {
     return (mn_mn * rs_rs * max_density * max_density >= density_screening_threshold_ * density_screening_threshold_);
 }
 
-bool TwoBodyAOInt::shell_significant_csam(int M, int N, int R, int S) { 
+bool TwoBodyAOInt::shell_significant_density_J(int M, int N, int R, int S) const {
+
+    double D_MN = 0.0;
+    double D_RS = 0.0;
+    double prefactor = (max_dens_shell_pair_.size() == 1) ? 4.0 : 2.0;
+
+    for (int i = 0; i < max_dens_shell_pair_.size(); i++) {
+        D_MN += prefactor * max_dens_shell_pair_[i][M * nshell_ + N];
+        D_RS += prefactor * max_dens_shell_pair_[i][R * nshell_ + S];
+    }
+
+    double max_density = std::max(D_MN, D_RS);
+
+    double mn_mn = shell_pair_values_[N * nshell_ + M];
+    double rs_rs = shell_pair_values_[S * nshell_ + R];
+
+    return (mn_mn * rs_rs * max_density * max_density >= density_screening_threshold_ * density_screening_threshold_);
+}
+
+bool TwoBodyAOInt::shell_significant_density_K(int M, int N, int R, int S) const {
+
+    double D_MR = 0.0;
+    double D_MS = 0.0;
+    double D_NR = 0.0;
+    double D_NS = 0.0;
+
+    for (int i = 0; i < max_dens_shell_pair_.size(); i++) {
+        D_MR = std::max(D_MR, max_dens_shell_pair_[i][M * nshell_ + R]);
+        D_MS = std::max(D_MS, max_dens_shell_pair_[i][M * nshell_ + S]);
+        D_NR = std::max(D_NR, max_dens_shell_pair_[i][N * nshell_ + R]);
+        D_NS = std::max(D_NS, max_dens_shell_pair_[i][N * nshell_ + S]);
+    }
+
+    double max_density = std::max({D_MR, D_MS, D_NR, D_NS});
+
+    double mn_mn = shell_pair_values_[N * nshell_ + M];
+    double rs_rs = shell_pair_values_[S * nshell_ + R];
+
+    return (mn_mn * rs_rs * max_density * max_density >= density_screening_threshold_ * density_screening_threshold_);
+}
+
+bool TwoBodyAOInt::shell_significant_csam(int M, int N, int R, int S) {
     // Square of standard Cauchy-Schwarz Q_mu_nu terms (Eq. 1)
     double mn_mn = shell_pair_values_[N * nshell_ + M];
     double rs_rs = shell_pair_values_[S * nshell_ + R];

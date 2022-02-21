@@ -1,9 +1,9 @@
 
     -----------------------------------------------------------------------
           Psi4: An Open-Source Ab Initio Electronic Structure Package
-                               Psi4 1.5a1.dev283 
+                               Psi4 1.6a1.dev57 
 
-                         Git: Rev {direct-dfj2} 3876787 dirty
+                         Git: Rev {jk-algo-dev} 0bbef62 dirty
 
 
     D. G. A. Smith, L. A. Burns, A. C. Simmonett, R. M. Parrish,
@@ -19,7 +19,7 @@
                             Additional Code Authors
     E. T. Seidl, C. L. Janssen, E. F. Valeev, M. L. Leininger,
     J. F. Gonthier, R. M. Richard, H. R. McAlexander, M. Saitow, X. Wang,
-    P. Verma, and M. H. Lechner
+    P. Verma, M. H. Lechner, and A. Jiang
 
              Previous Authors, Complete List of Code Contributors,
                        and Citations for Specific Modules
@@ -30,13 +30,13 @@
     -----------------------------------------------------------------------
 
 
-    Psi4 started on: Tuesday, 04 January 2022 03:14PM
+    Psi4 started on: Sunday, 20 February 2022 07:49PM
 
-    Process ID: 1056243
-    Host:       jacket
-    PSIDATADIR: /theoryfs2/ds/jiang/p4dev/psi4/objdir-anna/stage/share/psi4
+    Process ID: 1579
+    Host:       ds10
+    PSIDATADIR: /theoryfs2/ds/jiang/p4dev/psi4/objdir-brendon/stage/share/psi4
     Memory:     500.0 MiB
-    Threads:    18
+    Threads:    6
     
   ==> Input File <==
 
@@ -88,16 +88,16 @@ psi4.compare_values(rohf_energy, rohf_ref, 6, "ROHF Energy (using LinK algo)")
 
 Scratch directory: /scratch/jiang/
 
-*** tstart() called on jacket
-*** at Tue Jan  4 15:14:33 2022
+*** tstart() called on ds10
+*** at Sun Feb 20 19:49:54 2022
 
    => Loading Basis Set <=
 
     Name: 6-31G*
     Role: ORBITAL
     Keyword: BASIS
-    atoms 1-6  entry C          line   111 file /theoryfs2/ds/jiang/p4dev/psi4/objdir-anna/stage/share/psi4/basis/6-31gs.gbs 
-    atoms 7-12 entry H          line    44 file /theoryfs2/ds/jiang/p4dev/psi4/objdir-anna/stage/share/psi4/basis/6-31gs.gbs 
+    atoms 1-6  entry C          line   111 file /theoryfs2/ds/jiang/p4dev/psi4/objdir-brendon/stage/share/psi4/basis/6-31gs.gbs 
+    atoms 7-12 entry H          line    44 file /theoryfs2/ds/jiang/p4dev/psi4/objdir-brendon/stage/share/psi4/basis/6-31gs.gbs 
 
 
          ---------------------------------------------------------
@@ -105,7 +105,7 @@ Scratch directory: /scratch/jiang/
                by Justin Turney, Rob Parrish, Andy Simmonett
                           and Daniel G. A. Smith
                               UHF Reference
-                       18 Threads,    500 MiB Core
+                        6 Threads,    500 MiB Core
          ---------------------------------------------------------
 
   ==> Geometry <==
@@ -171,10 +171,12 @@ Scratch directory: /scratch/jiang/
     J Algorithm:            DIRECT
     K tasked:                  Yes
     K Algorithm:              LINK
-    Integrals threads:          18
+    Integrals threads:           6
+    Screening Type:        DENSITY
+    Screening Cutoff:        1E-12
 
   Minimum eigenvalue in the overlap matrix is 5.0916634930E-04.
-  Reciprocal condition number of the overlap matrix is 6.6215194190E-05.
+  Reciprocal condition number of the overlap matrix is 6.6215194189E-05.
     Using symmetric orthogonalization.
 
   ==> Pre-Iterations <==
@@ -193,31 +195,31 @@ Scratch directory: /scratch/jiang/
 
                         Total Energy        Delta E     RMS |[F,P]|
 
-   @UHF iter SAD:  -229.97627956888965   -2.29976e+02   0.00000e+00 
-   @UHF iter   1:  -230.34044786613771   -3.64168e-01   2.84844e-03 DIIS
-   @UHF iter   2:  -230.40548603827614   -6.50382e-02   9.10344e-04 DIIS
-   @UHF iter   3:  -230.41337708600474   -7.89105e-03   4.49307e-04 DIIS
-   @UHF iter   4:  -230.41564969315675   -2.27261e-03   1.91616e-04 DIIS
-   @UHF iter   5:  -230.41680662873648   -1.15694e-03   1.04553e-04 DIIS
-   @UHF iter   6:  -230.41718704261837   -3.80414e-04   3.43939e-05 DIIS
-   @UHF iter   7:  -230.41721485543417   -2.78128e-05   8.95276e-06 DIIS
-   @UHF iter   8:  -230.41721623431266   -1.37888e-06   3.00192e-06 DIIS
-   @UHF iter   9:  -230.41721640643271   -1.72120e-07   7.61335e-07 DIIS
-   @UHF iter  10:  -230.41721641765758   -1.12249e-08   3.40178e-07 DIIS
-   @UHF iter  11:  -230.41721642109906   -3.44147e-09   2.27422e-07 DIIS
-   @UHF iter  12:  -230.41721642281800   -1.71894e-09   1.91674e-07 DIIS
-   @UHF iter  13:  -230.41721642508770   -2.26970e-09   1.56609e-07 DIIS
-   @UHF iter  14:  -230.41721642895538   -3.86768e-09   6.68934e-08 DIIS
-   @UHF iter  15:  -230.41721642958953   -6.34145e-10   1.79696e-08 DIIS
-   @UHF iter  16:  -230.41721642960363   -1.40972e-11   6.37338e-09 DIIS
+   @UHF iter SAD:  -229.97627956888959   -2.29976e+02   0.00000e+00 
+   @UHF iter   1:  -230.34044789161263   -3.64168e-01   2.84844e-03 DIIS
+   @UHF iter   2:  -230.40548604987004   -6.50382e-02   9.10344e-04 DIIS
+   @UHF iter   3:  -230.41337709671075   -7.89105e-03   4.49307e-04 DIIS
+   @UHF iter   4:  -230.41564970389092   -2.27261e-03   1.91616e-04 DIIS
+   @UHF iter   5:  -230.41680663949887   -1.15694e-03   1.04553e-04 DIIS
+   @UHF iter   6:  -230.41718705326596   -3.80414e-04   3.43939e-05 DIIS
+   @UHF iter   7:  -230.41721486606485   -2.78128e-05   8.95276e-06 DIIS
+   @UHF iter   8:  -230.41721624494002   -1.37888e-06   3.00191e-06 DIIS
+   @UHF iter   9:  -230.41721641706630   -1.72126e-07   7.61334e-07 DIIS
+   @UHF iter  10:  -230.41721642829120   -1.12249e-08   3.40177e-07 DIIS
+   @UHF iter  11:  -230.41721643173281   -3.44161e-09   2.27420e-07 DIIS
+   @UHF iter  12:  -230.41721643345178   -1.71897e-09   1.91673e-07 DIIS
+   @UHF iter  13:  -230.41721643572097   -2.26919e-09   1.56608e-07 DIIS
+   @UHF iter  14:  -230.41721643958920   -3.86822e-09   6.68934e-08 DIIS
+   @UHF iter  15:  -230.41721644022331   -6.34117e-10   1.79696e-08 DIIS
+   @UHF iter  16:  -230.41721644023730   -1.39835e-11   6.37313e-09 DIIS
   Energy and wave function converged.
 
 
   ==> Post-Iterations <==
 
-   @Spin Contamination Metric:   1.219273162E-01
+   @Spin Contamination Metric:   1.219273140E-01
    @S^2 Expected:                7.500000000E-01
-   @S^2 Observed:                8.719273162E-01
+   @S^2 Observed:                8.719273140E-01
    @S   Expected:                5.000000000E-01
    @S   Observed:                5.000000000E-01
 
@@ -226,9 +228,9 @@ Scratch directory: /scratch/jiang/
 
     Alpha Occupied:                                                       
 
-       1A    -11.495305     2A    -11.495291     3A    -11.494078  
+       1A    -11.495304     2A    -11.495291     3A    -11.494078  
        4A    -11.494045     5A    -11.442162     6A    -11.441956  
-       7A     -1.401110     8A     -1.280953     9A     -1.236593  
+       7A     -1.401110     8A     -1.280953     9A     -1.236594  
       10A     -1.061728    11A     -1.054984    12A     -0.936797  
       13A     -0.864865    14A     -0.857338    15A     -0.829019  
       16A     -0.800193    17A     -0.754837    18A     -0.721359  
@@ -245,30 +247,30 @@ Scratch directory: /scratch/jiang/
       40A      0.568889    41A      0.578758    42A      0.605167  
       43A      0.615846    44A      0.616396    45A      0.619368  
       46A      0.623271    47A      0.666027    48A      0.706239  
-      49A      0.774274    50A      0.889191    51A      0.897617  
+      49A      0.774274    50A      0.889192    51A      0.897617  
       52A      0.898360    53A      0.906614    54A      0.921987  
       55A      0.965309    56A      0.966893    57A      0.991258  
-      58A      1.023043    59A      1.071305    60A      1.091036  
+      58A      1.023044    59A      1.071305    60A      1.091036  
       61A      1.153723    62A      1.166942    63A      1.242021  
       64A      1.262251    65A      1.406922    66A      1.474537  
-      67A      1.477720    68A      1.505778    69A      1.524028  
+      67A      1.477721    68A      1.505778    69A      1.524028  
       70A      1.525068    71A      1.563469    72A      1.796734  
       73A      1.852112    74A      1.938717    75A      1.943216  
-      76A      2.058696    77A      2.085226    78A      2.149822  
+      76A      2.058696    77A      2.085226    78A      2.149821  
       79A      2.155240    80A      2.206060    81A      2.211483  
       82A      2.230374    83A      2.244964    84A      2.369328  
       85A      2.401998    86A      2.403913    87A      2.625836  
       88A      2.652002    89A      2.754622    90A      2.829446  
       91A      2.834920    92A      2.845615    93A      2.849870  
       94A      2.854182    95A      3.156276    96A      3.560706  
-      97A      4.268431    98A      4.283486    99A      4.316110  
-     100A      4.500648   101A      4.529740   102A      4.858294  
+      97A      4.268431    98A      4.283486    99A      4.316109  
+     100A      4.500648   101A      4.529741   102A      4.858293  
 
     Beta Occupied:                                                        
 
        1A    -11.486776     2A    -11.486754     3A    -11.485742  
        4A    -11.485707     5A    -11.449303     6A    -11.449029  
-       7A     -1.375638     8A     -1.240951     9A     -1.227678  
+       7A     -1.375638     8A     -1.240951     9A     -1.227679  
       10A     -1.049481    11A     -1.040402    12A     -0.932663  
       13A     -0.858733    14A     -0.850871    15A     -0.819312  
       16A     -0.802208    17A     -0.719893    18A     -0.714828  
@@ -287,7 +289,7 @@ Scratch directory: /scratch/jiang/
       45A      0.631489    46A      0.632668    47A      0.700192  
       48A      0.711441    49A      0.789124    50A      0.895785  
       51A      0.903014    52A      0.905259    53A      0.907045  
-      54A      0.920324    55A      0.967258    56A      0.973289  
+      54A      0.920323    55A      0.967258    56A      0.973289  
       57A      0.992384    58A      1.025530    59A      1.082369  
       60A      1.091275    61A      1.163038    62A      1.166778  
       63A      1.245475    64A      1.289196    65A      1.430031  
@@ -299,10 +301,10 @@ Scratch directory: /scratch/jiang/
       81A      2.235283    82A      2.237786    83A      2.242391  
       84A      2.397805    85A      2.406366    86A      2.412183  
       87A      2.645260    88A      2.650642    89A      2.766596  
-      90A      2.835197    91A      2.840923    92A      2.844989  
+      90A      2.835197    91A      2.840923    92A      2.844988  
       93A      2.853680    94A      2.858908    95A      3.158497  
-      96A      3.563263    97A      4.275202    98A      4.295468  
-      99A      4.315036   100A      4.511796   101A      4.527361  
+      96A      3.563263    97A      4.275203    98A      4.295468  
+      99A      4.315036   100A      4.511796   101A      4.527362  
      102A      4.862450  
 
     Final Occupation by Irrep:
@@ -310,14 +312,14 @@ Scratch directory: /scratch/jiang/
     DOCC [    20 ]
     SOCC [     1 ]
 
-  @UHF Final Energy:  -230.41721642960363
+  @UHF Final Energy:  -230.41721644023730
 
    => Energetics <=
 
     Nuclear Repulsion Energy =            203.7109313602788916
-    One-Electron Energy =                -703.9938395779947768
-    Two-Electron Energy =                 269.8656917881122581
-    Total Energy =                       -230.4172164296036271
+    One-Electron Energy =                -703.9938395439428405
+    Two-Electron Energy =                 269.8656917434266234
+    Total Energy =                       -230.4172164402373255
 
   UHF NO Occupations:
   HONO-2 :   19  A 1.9835728
@@ -349,29 +351,29 @@ Properties computed using the SCF density matrix
      X:    -8.9224      Y:    -1.3792      Z:    -0.0000     Total:     9.0283
 
 
-*** tstop() called on jacket at Tue Jan  4 15:14:37 2022
+*** tstop() called on ds10 at Sun Feb 20 19:50:06 2022
 Module time:
-	user time   =      72.09 seconds =       1.20 minutes
-	system time =       0.36 seconds =       0.01 minutes
-	total time  =          4 seconds =       0.07 minutes
+	user time   =      66.07 seconds =       1.10 minutes
+	system time =       0.12 seconds =       0.00 minutes
+	total time  =         12 seconds =       0.20 minutes
 Total time:
-	user time   =      72.09 seconds =       1.20 minutes
-	system time =       0.36 seconds =       0.01 minutes
-	total time  =          4 seconds =       0.07 minutes
+	user time   =      66.07 seconds =       1.10 minutes
+	system time =       0.12 seconds =       0.00 minutes
+	total time  =         12 seconds =       0.20 minutes
     UHF Energy (using LinK algo)..........................................................PASSED
 
 Scratch directory: /scratch/jiang/
 
-*** tstart() called on jacket
-*** at Tue Jan  4 15:14:37 2022
+*** tstart() called on ds10
+*** at Sun Feb 20 19:50:06 2022
 
    => Loading Basis Set <=
 
     Name: 6-31G*
     Role: ORBITAL
     Keyword: BASIS
-    atoms 1-6  entry C          line   111 file /theoryfs2/ds/jiang/p4dev/psi4/objdir-anna/stage/share/psi4/basis/6-31gs.gbs 
-    atoms 7-12 entry H          line    44 file /theoryfs2/ds/jiang/p4dev/psi4/objdir-anna/stage/share/psi4/basis/6-31gs.gbs 
+    atoms 1-6  entry C          line   111 file /theoryfs2/ds/jiang/p4dev/psi4/objdir-brendon/stage/share/psi4/basis/6-31gs.gbs 
+    atoms 7-12 entry H          line    44 file /theoryfs2/ds/jiang/p4dev/psi4/objdir-brendon/stage/share/psi4/basis/6-31gs.gbs 
 
 
          ---------------------------------------------------------
@@ -379,7 +381,7 @@ Scratch directory: /scratch/jiang/
                by Justin Turney, Rob Parrish, Andy Simmonett
                           and Daniel G. A. Smith
                              ROHF Reference
-                       18 Threads,    500 MiB Core
+                        6 Threads,    500 MiB Core
          ---------------------------------------------------------
 
   ==> Geometry <==
@@ -445,10 +447,12 @@ Scratch directory: /scratch/jiang/
     J Algorithm:            DIRECT
     K tasked:                  Yes
     K Algorithm:              LINK
-    Integrals threads:          18
+    Integrals threads:           6
+    Screening Type:        DENSITY
+    Screening Cutoff:        1E-12
 
   Minimum eigenvalue in the overlap matrix is 5.0916634930E-04.
-  Reciprocal condition number of the overlap matrix is 6.6215194190E-05.
+  Reciprocal condition number of the overlap matrix is 6.6215194189E-05.
     Using symmetric orthogonalization.
 
   ==> Pre-Iterations <==
@@ -467,17 +471,17 @@ Scratch directory: /scratch/jiang/
 
                         Total Energy        Delta E     RMS |[F,P]|
 
-   @ROHF iter SAD:  -229.97627956888971   -2.29976e+02   0.00000e+00 
-   @ROHF iter   1:  -230.34044786613725   -3.64168e-01   1.97112e-03 DIIS
-   @ROHF iter   2:  -230.39747336476199   -5.70255e-02   5.92170e-04 DIIS
-   @ROHF iter   3:  -230.40205322435571   -4.57986e-03   2.54100e-04 DIIS
-   @ROHF iter   4:  -230.40277634821035   -7.23124e-04   2.60331e-05 DIIS
-   @ROHF iter   5:  -230.40279009048720   -1.37423e-05   1.09637e-05 DIIS
-   @ROHF iter   6:  -230.40279198900703   -1.89852e-06   2.55497e-06 DIIS
-   @ROHF iter   7:  -230.40279220801443   -2.19007e-07   5.52954e-07 DIIS
-   @ROHF iter   8:  -230.40279221653788   -8.52344e-09   6.61634e-08 DIIS
-   @ROHF iter   9:  -230.40279221665304   -1.15165e-10   2.77726e-08 DIIS
-   @ROHF iter  10:  -230.40279221667134   -1.83036e-11   1.23437e-08 DIIS
+   @ROHF iter SAD:  -229.97627956888977   -2.29976e+02   0.00000e+00 
+   @ROHF iter   1:  -230.34044789161419   -3.64168e-01   1.97112e-03 DIIS
+   @ROHF iter   2:  -230.39747337637459   -5.70255e-02   5.92170e-04 DIIS
+   @ROHF iter   3:  -230.40205323520922   -4.57986e-03   2.54100e-04 DIIS
+   @ROHF iter   4:  -230.40277635898190   -7.23124e-04   2.60331e-05 DIIS
+   @ROHF iter   5:  -230.40279010127335   -1.37423e-05   1.09637e-05 DIIS
+   @ROHF iter   6:  -230.40279199978750   -1.89851e-06   2.55497e-06 DIIS
+   @ROHF iter   7:  -230.40279221879598   -2.19008e-07   5.52954e-07 DIIS
+   @ROHF iter   8:  -230.40279222732454   -8.52856e-09   6.61631e-08 DIIS
+   @ROHF iter   9:  -230.40279222743976   -1.15222e-10   2.77723e-08 DIIS
+   @ROHF iter  10:  -230.40279222745812   -1.83604e-11   1.23437e-08 DIIS
   Energy and wave function converged.
 
 
@@ -509,9 +513,9 @@ Scratch directory: /scratch/jiang/
       34A      0.281311    35A      0.443064    36A      0.499349  
       37A      0.529394    38A      0.557450    39A      0.566073  
       40A      0.573208    41A      0.603434    42A      0.616954  
-      43A      0.618133    44A      0.619309    45A      0.621442  
+      43A      0.618134    44A      0.619309    45A      0.621442  
       46A      0.622520    47A      0.687946    48A      0.700366  
-      49A      0.779039    50A      0.891767    51A      0.899838  
+      49A      0.779039    50A      0.891768    51A      0.899838  
       52A      0.900787    53A      0.905792    54A      0.920035  
       55A      0.965146    56A      0.969071    57A      0.990878  
       58A      1.023143    59A      1.076459    60A      1.090442  
@@ -519,15 +523,15 @@ Scratch directory: /scratch/jiang/
       64A      1.275057    65A      1.418528    66A      1.475980  
       67A      1.480349    68A      1.519584    69A      1.528548  
       70A      1.544587    71A      1.561840    72A      1.806804  
-      73A      1.852878    74A      1.939014    75A      1.944822  
+      73A      1.852878    74A      1.939014    75A      1.944821  
       76A      2.065603    77A      2.083447    78A      2.150881  
       79A      2.158330    80A      2.217212    81A      2.223687  
       82A      2.231765    83A      2.242751    84A      2.383087  
       85A      2.403928    86A      2.406111    87A      2.634818  
       88A      2.650125    89A      2.759577    90A      2.831372  
       91A      2.837091    92A      2.844027    93A      2.852638  
-      94A      2.853390    95A      3.156198    96A      3.560914  
-      97A      4.270663    98A      4.288476    99A      4.314056  
+      94A      2.853391    95A      3.156198    96A      3.560914  
+      97A      4.270663    98A      4.288475    99A      4.314056  
      100A      4.505246   101A      4.526797   102A      4.859016  
 
     Final Occupation by Irrep:
@@ -535,14 +539,14 @@ Scratch directory: /scratch/jiang/
     DOCC [    20 ]
     SOCC [     1 ]
 
-  @ROHF Final Energy:  -230.40279221667134
+  @ROHF Final Energy:  -230.40279222745812
 
    => Energetics <=
 
     Nuclear Repulsion Energy =            203.7109313602788916
-    One-Electron Energy =                -703.9661920694120454
-    Two-Electron Energy =                 269.8524684924618100
-    Total Energy =                       -230.4027922166713438
+    One-Electron Energy =                -703.9661920351668414
+    Two-Electron Energy =                 269.8524684474298283
+    Total Energy =                       -230.4027922274581215
 
 Computation Completed
 
@@ -555,27 +559,27 @@ Properties computed using the SCF density matrix
      X:  -147.6125      Y:   -22.9025      Z:     0.0000
 
   Electronic Dipole Moment: [e a0]
-     X:   144.1020      Y:    22.3602      Z:    -0.0000
+     X:   144.1020      Y:    22.3602      Z:     0.0000
 
   Dipole Moment: [e a0]
-     X:    -3.5105      Y:    -0.5423      Z:    -0.0000     Total:     3.5521
+     X:    -3.5105      Y:    -0.5423      Z:     0.0000     Total:     3.5521
 
   Dipole Moment: [D]
-     X:    -8.9228      Y:    -1.3783      Z:    -0.0000     Total:     9.0286
+     X:    -8.9228      Y:    -1.3783      Z:     0.0000     Total:     9.0286
 
 
-*** tstop() called on jacket at Tue Jan  4 15:14:40 2022
+*** tstop() called on ds10 at Sun Feb 20 19:50:13 2022
 Module time:
-	user time   =      47.27 seconds =       0.79 minutes
-	system time =       0.27 seconds =       0.00 minutes
-	total time  =          3 seconds =       0.05 minutes
-Total time:
-	user time   =     119.53 seconds =       1.99 minutes
-	system time =       0.63 seconds =       0.01 minutes
+	user time   =      40.88 seconds =       0.68 minutes
+	system time =       0.10 seconds =       0.00 minutes
 	total time  =          7 seconds =       0.12 minutes
+Total time:
+	user time   =     107.01 seconds =       1.78 minutes
+	system time =       0.22 seconds =       0.00 minutes
+	total time  =         19 seconds =       0.32 minutes
     ROHF Energy (using LinK algo).........................................................PASSED
 
-    Psi4 stopped on: Tuesday, 04 January 2022 03:14PM
-    Psi4 wall time for execution: 0:00:07.33
+    Psi4 stopped on: Sunday, 20 February 2022 07:50PM
+    Psi4 wall time for execution: 0:00:18.23
 
 *** Psi4 exiting successfully. Buy a developer a beer!
