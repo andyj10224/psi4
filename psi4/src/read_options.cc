@@ -1446,11 +1446,11 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_int("INCFOCK_FULL_FOCK_EVERY", 5);
 
         /*- Do perform Continuous Fast Multipole Method (J-Build), as described in [White:1994:8]_ -*/
-        options.add_bool("DO_CFMM", false);
+        // options.add_bool("DO_CFMM", false);
         /*- The maximum multipole order to use in the CFMM algorithm -*/
-        options.add_int("CFMM_ORDER", 10);
+        // options.add_int("CFMM_ORDER", 10);
         /*- The maximum tree depth to use in the CFMM algorithm -*/
-        options.add_int("CFMM_GRAIN", 3);
+        // options.add_int("CFMM_GRAIN", 3);
         
         /*- SUBSECTION Composite JK Algorithms -*/
         options.add_str("J_TYPE", "DIRECT", "DIRECT DIRECT_DF CFMM");
