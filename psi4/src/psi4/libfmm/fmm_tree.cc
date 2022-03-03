@@ -354,12 +354,50 @@ CFMMTree::CFMMTree(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, const std::
         shell_pairs_.push_back(std::make_shared<ShellPair>(basisset_, pair, mpole_coefs_));
     }
 
+    decontract();
     // sort_shell_pairs();
     make_root_node();
     make_children();
 
     int print = Process::environment.options.get_int("PRINT");
     if (print >= 2) print_out();
+}
+
+void CFMMTree::decontract() {
+
+    /*
+    // Number of total unique primative Gaussians in the basis set (Same AM and EXP)
+    int nunique_primative_;
+    // AMs of each unique primative
+    std::vector<int> primative_am_;
+    // Exponents of each unique primative
+    std::vector<double> primative_exps_;
+    // Map of which shells use each primative Gaussian, as well as coefficients
+    std::vector<std::pair<int, double>> primative_to_shells_;
+    */
+    
+    nunique_primitive_ += 1;
+    std::vector<std::unordered_set<double>> unique_exps;
+
+    for (int P = 0; P < basisset_->nshell(); P++) {
+        const GaussianShell& Pshell = basisset_->shell(P);
+        int am = Pshell.am();
+        if (am >= unique_exps.size()) unique_exps.resize(am+1);
+
+        for (int prim = 0; prim < Pshell.nprimitive(); prim++) {
+            double exp = Pshell.exp(prim);
+            bool unique = true;
+            for (const double& uexp : unique_exps[am]) {
+                if (std::abs(exp - uexp) < 1.0e-6) {
+                    unique = false;
+                    break;
+                }
+            }
+            if (unique) {
+                nunique_primitive_ += 1;
+            }
+        }
+    }
 }
 
 void CFMMTree::sort_shell_pairs() {

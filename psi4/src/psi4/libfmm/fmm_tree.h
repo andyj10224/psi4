@@ -43,6 +43,7 @@
 #include <memory>
 #include <tuple>
 #include <vector>
+#include <unordered_set>
 #include <unordered_map>
 
 #define ERFCI10 (4.572824967389485)
@@ -176,6 +177,14 @@ class PSI_API CFMMTree {
       std::vector<SharedMatrix> J_;
       // List of all the significant shell-pairs in the molecule
       std::vector<std::shared_ptr<ShellPair>> shell_pairs_;
+      // Number of total unique primitive Gaussians in the basis set (Same AM and EXP)
+      int nunique_primitive_;
+      // AMs of each unique primitive
+      std::vector<int> primitive_am_;
+      // Exponents of each unique primitive
+      std::vector<double> primitive_exps_;
+      // Map of which shells use each primitive Gaussian, as well as coefficients
+      std::vector<std::pair<int, double>> primitive_to_shells_;
       // Number of Levels in the CFMM Tree
       int nlevels_;
       // Maximum Multipole Angular Momentum
@@ -195,6 +204,8 @@ class PSI_API CFMMTree {
       // The integral objects used to compute the integrals
       std::vector<std::shared_ptr<TwoBodyAOInt>> ints_;
 
+      // Decontracts the Basis Set into primatives
+      void decontract();
       // Sort the shell-pairs (radix sort)
       void sort_shell_pairs();
       // Make the root node of the CFMMTree
