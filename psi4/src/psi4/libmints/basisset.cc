@@ -125,16 +125,127 @@ BasisSet::BasisSet() {
 BasisSet::~BasisSet() {
 }
 
-std::shared_ptr<BasisSet> BasisSet::build(std::shared_ptr<Molecule> /*molecule*/,
-                                          const std::vector<ShellInfo> & /*shells*/) {
-    // TRIAL//    //TODO fixme!!!
-    // TRIAL//    auto basis = std::make_shared<BasisSet>();
-    // TRIAL//    //    basis->molecule_ = molecule;
-    // TRIAL//    //    basis->shells_ = shells;
-    // TRIAL//    //    basis->refresh();
-    // TRIAL//
-    throw NOT_IMPLEMENTED_EXCEPTION();
-    // TRIAL//    return basis;
+std::shared_ptr<BasisSet> BasisSet::build(std::shared_ptr<Molecule> molecule,
+                                          const std::vector<GaussianShell>& shells) {
+    
+    auto basis = std::make_shared<BasisSet>();
+    basis->molecule_ = molecule;
+    basis->n_uprimitive_ = 0;
+    basis->n_shells_ = 0;
+    basis->nprimitive_ = 0;
+    basis->nao_ = 0;
+    basis->nbf_ = 0;
+    basis->n_prim_per_shell_ = std::vector<int>(0);
+    basis->uexponents_ = std::vector<double>(0);
+    basis->ucoefficients_ = std::vector<double>(0);
+    // uerd_coefficients_ = std::vector<double>(0);
+    // uoriginal_coefficients_ = std::vector<double>(0);
+    basis->shell_first_ao_ = std::vector<int>(0);
+    basis->shell_first_basis_function_ = std::vector<int>(0);
+    basis->shells_ = std::vector<GaussianShell>(0);
+    basis->l2_shells_ = std::vector<libint2::Shell>(0);
+    basis->ao_to_shell_ = std::vector<int>(0);
+    basis->function_to_shell_ = std::vector<int>(0);
+    basis->function_center_ = std::vector<int>(0);
+    basis->shell_center_ = std::vector<int>(0);
+    basis->center_to_nshell_ = std::vector<int>(0);
+    basis->center_to_shell_ = std::vector<int>(0);
+    basis->xyz_ = std::vector<double>(0);
+    basis->puream_ = false;
+    basis->max_am_ = 0;
+    basis->max_nprimitive_ = 0;
+    basis->name_ = "C Generated Basis Set";
+    basis->key_ = "C Generated Basis Set";
+    basis->target_ = "C Generated Basis Set";
+
+    std::vector<std::vector<double>> unique_exps;
+    std::vector<std::vector<double>> unique_coefs;
+
+    int center = -1;
+    for (const auto& shell : shells) {
+        int nprim = shell.nprimitive();
+        int nfunc = shell.nfunction();
+        int ncart = shell.ncartesian();
+        int am = shell.am();
+        bool is_puream = shell.is_pure();
+        const double* Cxyz = shell.center();
+        int ncent = shell.ncenter();
+        int start = shell.start();
+
+        if (am >= unique_exps.size()) {
+            unique_exps.resize(am+1);
+            unique_coefs.resize(am+1);
+        }
+
+        if (ncent > center) {
+            basis->center_to_shell_.push_back(basis->n_shells_);
+        }
+
+        basis->shell_first_ao_.push_back(basis->nao_);
+        basis->shell_first_basis_function_.push_back(basis->nbf_);
+        basis->n_prim_per_shell_.push_back(nprim);
+        basis->shells_.push_back(shell);
+        for (int ao = basis->nao_; ao < basis->nao_ + ncart; ao++) {
+            basis->ao_to_shell_.push_back(basis->n_shells_);
+        }
+        for (int bf = basis->nbf_; bf < basis->nbf_ + nfunc; bf++) {
+            basis->function_to_shell_.push_back(basis->n_shells_);
+            basis->function_center_.push_back(ncent);
+        }
+        basis->shell_center_.push_back(ncent);
+        basis->xyz_.push_back(Cxyz[0]);
+        basis->xyz_.push_back(Cxyz[1]);
+        basis->xyz_.push_back(Cxyz[2]);
+        basis->puream_ = is_puream;
+        basis->max_am_ = std::max(basis->max_am_, am);
+        basis->max_nprimitive_ = std::max(basis->max_nprimitive_, nprim);
+
+        double *pexps = const_cast<double *>(shell.exps());
+        double *pcoefs = const_cast<double *>(shell.coefs());
+
+        auto l2c = libint2::svector<double>(pcoefs, pcoefs + nprim);
+        auto l2e = libint2::svector<double>(pexps, pexps + nprim);
+        
+        basis->l2_shells_.push_back(libint2::Shell{l2e, {{am, static_cast<bool>(basis->puream_), l2c}}, {{Cxyz[0], Cxyz[1], Cxyz[2]}}});
+
+        for (int pi = 0; pi < nprim; pi++) {
+            double pexp = pexps[pi];
+            double pcoef = pcoefs[pi];
+            bool exp_unique = true;
+            bool coef_unique = true;
+            for (const double& uexp : unique_exps[am]) {
+                if (std::abs(pexp - uexp) < 1.0e-6) {
+                    exp_unique = false;
+                    break;
+                }
+            }
+            for (const double& ucoef : unique_coefs[am]) {
+                if (std::abs(pcoef - ucoef) < 1.0e-6) {
+                    coef_unique = false;
+                }
+                break;
+            }
+            if (exp_unique || coef_unique) {
+                unique_exps[am].push_back(pexp);
+                unique_coefs[am].push_back(pcoef);
+                basis->n_uprimitive_ += 1;
+            }
+        }
+
+        basis->nprimitive_ += nprim;
+        basis->n_shells_ += 1;
+        basis->nao_ += ncart;
+        basis->nbf_ += nfunc;
+    }
+
+    int natom = basis->center_to_shell_.size();
+    for (int center = 0; center < natom - 1; center++) {
+        int dshell = basis->center_to_shell_[center+1] - basis->center_to_shell_[center];
+        basis->center_to_nshell_.push_back(dshell);
+    }
+    basis->center_to_nshell_.push_back(basis->n_shells_ - basis->center_to_shell_[natom-1]);
+
+    return basis;
 }
 
 void BasisSet::initialize_singletons() {

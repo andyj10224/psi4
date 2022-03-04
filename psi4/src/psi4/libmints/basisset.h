@@ -180,7 +180,7 @@ class PSI_API BasisSet {
      * @param shells array of *atom-numbered* GaussianShells to build the BasisSet from
      * @return BasisSet corresponding to this molecule and set of shells
      */
-    static std::shared_ptr<BasisSet> build(std::shared_ptr<Molecule> molecule, const std::vector<ShellInfo> &shells);
+    static std::shared_ptr<BasisSet> build(std::shared_ptr<Molecule> molecule, const std::vector<GaussianShell> &shells);
 
     /** Initialize singleton values that are shared by all basis set objects. */
     static void initialize_singletons();
