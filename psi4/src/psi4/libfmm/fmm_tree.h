@@ -177,14 +177,12 @@ class PSI_API CFMMTree {
       std::vector<SharedMatrix> J_;
       // List of all the significant shell-pairs in the molecule
       std::vector<std::shared_ptr<ShellPair>> shell_pairs_;
-      // Number of total unique primitive Gaussians in the basis set (Same AM and EXP)
-      int nunique_primitive_;
-      // AMs of each unique primitive
-      std::vector<int> primitive_am_;
-      // Exponents of each unique primitive
-      std::vector<double> primitive_exps_;
-      // Map of which shells use each primitive Gaussian, as well as coefficients
-      std::vector<std::pair<int, double>> primitive_to_shells_;
+      // The decontracted primitive basisset
+      std::shared_ptr<BasisSet> primitive_basis_;
+      // Map of which shells use each primitive Gaussian, as well as the coefficients
+      std::vector<std::vector<std::pair<int, double>>> primitive_to_shells_;
+      // List of all the significant shell-pairs for the molecule in the primitive shell basis
+      std::vector<std::shared_ptr<ShellPair>> primitive_pairs_;
       // Number of Levels in the CFMM Tree
       int nlevels_;
       // Maximum Multipole Angular Momentum

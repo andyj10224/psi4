@@ -112,7 +112,7 @@ void ShellPair::calculate_mpoles(Vector3 box_center, std::shared_ptr<OneBodyAOIn
                 int l_ncart = ncart(l);
                 for (int m = -l; m <= l; m++) {
                     int mu = m_addr(m);
-                    std::unordered_map<int, double>& mpole_terms= mpole_coefs_->get_terms(l, mu);
+                    std::unordered_map<int, double>& mpole_terms = mpole_coefs_->get_terms(l, mu);
 
                     int powdex = 0;
                     for (int ii = 0; ii <= l; ii++) {
@@ -142,7 +142,6 @@ void ShellPair::calculate_mpoles(Vector3 box_center, std::shared_ptr<OneBodyAOIn
 CFMMBox::CFMMBox(std::shared_ptr<CFMMBox> parent, std::vector<std::shared_ptr<ShellPair>> shell_pairs, 
               Vector3 origin, double length, int level, int lmax, int ws, int nmat) {
     parent_ = parent;
-
     shell_pairs_ = shell_pairs;
     origin_ = origin;
     center_ = origin_ + 0.5 * Vector3(length, length, length);
@@ -355,7 +354,6 @@ CFMMTree::CFMMTree(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, const std::
     }
 
     decontract();
-    // sort_shell_pairs();
     make_root_node();
     make_children();
 
@@ -365,38 +363,70 @@ CFMMTree::CFMMTree(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, const std::
 
 void CFMMTree::decontract() {
 
-    /*
-    // Number of total unique primative Gaussians in the basis set (Same AM and EXP)
-    int nunique_primative_;
-    // AMs of each unique primative
-    std::vector<int> primative_am_;
-    // Exponents of each unique primative
-    std::vector<double> primative_exps_;
-    // Map of which shells use each primative Gaussian, as well as coefficients
-    std::vector<std::pair<int, double>> primative_to_shells_;
-    */
-    
-    nunique_primitive_ += 1;
-    std::vector<std::unordered_set<double>> unique_exps;
+    int natom = molecule_->natom();
+    int max_am = basisset_->max_am();
+    bool is_pure = basisset_->has_puream();
 
+    std::vector<GaussianShell> primitive_shells;
+    std::vector<std::vector<double>> unique_exps(natom * max_am);
+
+    int nunique_prim = 0;
     for (int P = 0; P < basisset_->nshell(); P++) {
         const GaussianShell& Pshell = basisset_->shell(P);
         int am = Pshell.am();
-        if (am >= unique_exps.size()) unique_exps.resize(am+1);
+        int atom = Pshell.ncenter();
+        const double* Rxyz = Pshell.center();
 
         for (int prim = 0; prim < Pshell.nprimitive(); prim++) {
+            double coef = Pshell.coef(prim);
             double exp = Pshell.exp(prim);
             bool unique = true;
-            for (const double& uexp : unique_exps[am]) {
+            for (const double& uexp : unique_exps[atom * max_am + am]) {
                 if (std::abs(exp - uexp) < 1.0e-6) {
                     unique = false;
                     break;
                 }
             }
             if (unique) {
-                nunique_primitive_ += 1;
+                ShellType shelltype = Gaussian;
+                std::vector<double> ucoef = {1.0};
+                std::vector<double> uexp = {exp};
+                GaussianType gtype = (is_pure) ? Pure : Cartesian;
+                const double* cp = const_cast<const double*>(ucoef.data());
+                const double* ep = const_cast<const double*>(uexp.data());
+                primitive_shells.push_back(GaussianShell(shelltype, am, 1, cp, cp, cp, ep,
+                                                         gtype, atom, Rxyz, nunique_prim));
+                nunique_prim += 1;
             }
         }
+    }
+
+    primitive_to_shells_.resize(primitive_shells.size());
+
+    for (int prim_shell = 0; prim_shell < primitive_shells.size(); prim_shell++) {
+        const GaussianShell& PRshell = primitive_shells[prim_shell];
+        double pr_exp = PRshell.exp(0);
+        int pr_center = PRshell.ncenter();
+        for (int P = 0; P < basisset_->nshell(); P++) {
+            const GaussianShell& Pshell = basisset_->shell(P);
+            int p_center = Pshell.ncenter();
+            for (int prim = 0; prim < Pshell.nprimitive(); prim++) {
+                double p_exp = Pshell.exp(prim);
+                double p_coef = Pshell.coef(prim);
+                if (std::abs(p_exp - pr_exp) < 1.0e-6 && pr_center == p_center) {
+                    primitive_to_shells_[prim_shell].emplace_back(P, p_coef);
+                }
+            }
+        }
+    }
+
+    primitive_basis_ = BasisSet::build(molecule_, primitive_shells);
+
+    auto primitive_factory = std::make_shared<IntegralFactory>(primitive_basis_);
+    auto primitive_eri = std::shared_ptr<TwoBodyAOInt>(primitive_factory->eri());
+
+    for (const auto& pair : primitive_eri->shell_pairs()) {
+        primitive_pairs_.push_back(std::make_shared<ShellPair>(primitive_basis_, pair, mpole_coefs_));
     }
 }
 
@@ -519,7 +549,7 @@ void CFMMTree::make_root_node() {
     Vector3 origin = Vector3(min_dim, min_dim, min_dim);
     double length = (max_dim - min_dim);
 
-    tree_[0] = std::make_shared<CFMMBox>(nullptr, shell_pairs_, origin, length, 0, lmax_, 2, D_.size());
+    tree_[0] = std::make_shared<CFMMBox>(nullptr, primitive_pairs_, origin, length, 0, lmax_, 2, D_.size());
 }
 
 void CFMMTree::make_children() {
