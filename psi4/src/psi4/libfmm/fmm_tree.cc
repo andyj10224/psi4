@@ -36,7 +36,7 @@ int num_digits(long n) {
 }
 
 ShellPair::ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pair_index, 
-                     std::shared_ptr<HarmonicCoefficients>& mpole_coefs) {
+                     std::shared_ptr<HarmonicCoefficients>& mpole_coefs, double cfmm_extent_tol) {
     basisset_ = basisset;
     pair_index_ = pair_index;
 
@@ -66,13 +66,13 @@ ShellPair::ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pa
         }
     }
     center_ /= (nprim_p * nprim_q);
-    extent_ = ERFCI10 * std::sqrt(2.0 / exp_);
+    extent_ = ENC * std::sqrt(-std::log(cfmm_extent_tol) / exp_);
 
     mpole_coefs_ = mpole_coefs;
 }
 
-void ShellPair::calculate_mpoles(Vector3 box_center, std::shared_ptr<OneBodyAOInt> s_ints,
-                            std::shared_ptr<OneBodyAOInt> mpole_ints, int lmax) {
+void ShellPair::calculate_mpoles(Vector3 box_center, std::shared_ptr<OneBodyAOInt>& s_ints, 
+                                 std::shared_ptr<OneBodyAOInt>& mpole_ints, int lmax) {
     
     // number of total multipoles to compute, -1 since the overlap is not computed
     int nmpoles = (lmax + 1) * (lmax + 2) * (lmax + 3) / 6 - 1;
@@ -85,7 +85,6 @@ void ShellPair::calculate_mpoles(Vector3 box_center, std::shared_ptr<OneBodyAOIn
     const double* sbuffer = s_ints->buffers()[0];
 
     // Calculate the multipole integrals
-    mpole_ints->set_origin(box_center);
     mpole_ints->compute_shell(P, Q);
     const double* mbuffer = mpole_ints->buffers()[0];
 
@@ -261,33 +260,15 @@ void CFMMBox::compute_far_field() {
 
 }
 
-void CFMMBox::compute_mpoles(std::shared_ptr<BasisSet>& basisset, std::vector<SharedMatrix>& D) {
+void CFMMBox::compute_mpoles(std::shared_ptr<BasisSet>& basisset, std::vector<SharedMatrix>& D,
+                             std::shared_ptr<OneBodyAOInt>& mpint, std::shared_ptr<OneBodyAOInt>& sint) {
 
-    std::shared_ptr<IntegralFactory> int_factory = std::make_shared<IntegralFactory>(basisset);
-
-    std::vector<std::shared_ptr<OneBodyAOInt>> mpints(nthread_);
-    std::vector<std::shared_ptr<OneBodyAOInt>> sints(nthread_);
-
-    for (int thread = 0; thread < nthread_; thread++) {
-        mpints[thread] = std::shared_ptr<OneBodyAOInt>(int_factory->ao_multipoles(lmax_));
-        sints[thread] = std::shared_ptr<OneBodyAOInt>(int_factory->ao_overlap());
-        mpints[thread]->set_origin(center_);
-    }
-
-    // Compute multipoles for all function pairs in the shell pair
-#pragma omp parallel for
-    for (int ind = 0; ind < shell_pairs_.size(); ind++) {
-        std::shared_ptr<ShellPair> sp = shell_pairs_[ind];
-        
-        int thread = 0;
-#ifdef _OPENMP
-        thread = omp_get_thread_num();
-#endif
-        sp->calculate_mpoles(center_, sints[thread], mpints[thread], lmax_);
-    }
+    mpint->set_origin(center_);
 
     // Contract the multipoles with the density matrix to get box multipoles
     for (const auto& sp : shell_pairs_) {
+
+        sp->calculate_mpoles(center_, sint, mpint, lmax_);
         std::vector<std::shared_ptr<RealSolidHarmonics>>& sp_mpoles = sp->get_mpoles();
 
         std::pair<int, int> PQ = sp->get_shell_pair_index();
@@ -343,121 +324,51 @@ CFMMTree::CFMMTree(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, const std::
 #ifdef _OPENMP
     nthread_ = Process::environment.get_n_threads();
 #endif
+
     density_screening_ = (options_.get_str("SCREENING") == "DENSITY");
 
     int num_boxes = (nlevels_ == 1) ? 1 : (0.5 * std::pow(16, nlevels_) + 7) / 15;
     tree_.resize(num_boxes);
 
     mpole_coefs_ = std::make_shared<HarmonicCoefficients>(lmax_, Regular);
+    double cfmm_extent_tol = Process::environment.options.get_double("CFMM_EXTENT_TOLERANCE");
 
-    for (const auto& pair : ints[0]->shell_pairs()) {
-        shell_pairs_.push_back(std::make_shared<ShellPair>(basisset_, pair, mpole_coefs_));
+    auto& ints_shell_pairs = ints[0]->shell_pairs();
+    size_t nshell_pairs = ints_shell_pairs.size();
+    shell_pairs_.resize(nshell_pairs);
+
+#pragma omp parallel for
+    for (size_t pair_index = 0; pair_index < nshell_pairs; pair_index++) {
+        const auto& pair = ints_shell_pairs[pair_index];
+        shell_pairs_[pair_index] = std::make_shared<ShellPair>(basisset_, pair, mpole_coefs_, cfmm_extent_tol);
     }
 
-    // sort_shell_pairs();
     make_root_node();
     make_children();
+    sort_leaf_boxes();
 
     int print = Process::environment.options.get_int("PRINT");
     if (print >= 2) print_out();
 }
 
-void CFMMTree::sort_shell_pairs() {
+void CFMMTree::sort_leaf_boxes() {
 
-    // Number of digits of each phase of the sort
-    // Resolution for floats is 0.001 bohr
-    // Sort by z, y, x, and then radial extents
-    int zdig = 1, ydig = 1, xdig = 1, rdig = 1;
+    // Starting and ending leaf node box indices
+    int start = (nlevels_ == 1) ? 0 : (0.5 * std::pow(16, nlevels_-1) + 7) / 15;
+    int end = (nlevels_ == 1) ? 1 : (0.5 * std::pow(16, nlevels_) + 7) / 15;
 
-    for (const auto& shell_pair : shell_pairs_) {
-        Vector3 center = shell_pair->get_center();
-        double x = center[0];
-        double y = center[1];
-        double z = center[2];
-        double r = shell_pair->get_extent();
-
-        zdig = std::max(zdig, num_digits(z * 1000));
-        ydig = std::max(ydig, num_digits(y * 1000));
-        xdig = std::max(xdig, num_digits(x * 1000));
-        rdig = std::max(rdig, num_digits(r * 1000));
+    for (int bi = start; bi < end; bi++) {
+        std::shared_ptr<CFMMBox> box = tree_[bi];
+        if (box->nshell_pair() > 0) {
+            sorted_leaf_boxes_.push_back(box);
+        }
     }
 
-    std::vector<std::vector<std::shared_ptr<ShellPair>>> buckets(19);
+    auto box_compare = [](const std::shared_ptr<CFMMBox> &a, 
+                                const std::shared_ptr<CFMMBox> &b) { return a->nshell_pair() > b->nshell_pair(); };
 
-    // Sort by x coordinates
-    long curr10 = 10;
+    std::sort(sorted_leaf_boxes_.begin(), sorted_leaf_boxes_.end(), box_compare);
 
-    for (int iter = 0; iter < xdig; iter++) {
-        for (int ind = 0; ind < shell_pairs_.size(); ind++) {
-            int dig = ((long)(shell_pairs_[ind]->get_center()[0] * 1000) / curr10) % 10;
-            buckets[dig + 9].push_back(shell_pairs_[ind]);
-        }
-        shell_pairs_.clear();
-        for (int b = 0; b < 19; b++) {
-            int nelem = buckets[b].size();
-            for (int idx = 0; idx < nelem; idx++) {
-                shell_pairs_.push_back(buckets[b].back());
-                buckets[b].pop_back();
-            }
-        }
-        curr10 *= 10;
-    }
-
-    // Sort by y coordinates
-    curr10 = 10;
-
-    for (int iter = 0; iter < ydig; iter++) {
-        for (int ind = 0; ind < shell_pairs_.size(); ind++) {
-            int dig = ((long)(shell_pairs_[ind]->get_center()[1] * 1000) / curr10) % 10;
-            buckets[dig + 9].push_back(shell_pairs_[ind]);
-        }
-        shell_pairs_.clear();
-        for (int b = 0; b < 19; b++) {
-            int nelem = buckets[b].size();
-            for (int idx = 0; idx < nelem; idx++) {
-                shell_pairs_.push_back(buckets[b].back());
-                buckets[b].pop_back();
-            }
-        }
-        curr10 *= 10;
-    }
-
-    // Sort by z coordinates
-    curr10 = 10;
-
-    for (int iter = 0; iter < zdig; iter++) {
-        for (int ind = 0; ind < shell_pairs_.size(); ind++) {
-            int dig = ((long)(shell_pairs_[ind]->get_center()[2] * 1000) / curr10) % 10;
-            buckets[dig + 9].push_back(shell_pairs_[ind]);
-        }
-        shell_pairs_.clear();
-        for (int b = 0; b < 19; b++) {
-            int nelem = buckets[b].size();
-            for (int idx = 0; idx < nelem; idx++) {
-                shell_pairs_.push_back(buckets[b].back());
-                buckets[b].pop_back();
-            }
-        }
-        curr10 *= 10;
-    }
-
-    // Sort by radial extents
-    curr10 = 10;
-    for (int iter = 0; iter < rdig; iter++) {
-        for (int ind = 0; ind < shell_pairs_.size(); ind++) {
-            int dig = ((long)(shell_pairs_[ind]->get_extent() * 1000) / curr10) % 10;
-            buckets[dig + 9].push_back(shell_pairs_[ind]);
-        }
-        shell_pairs_.clear();
-        for (int b = 0; b < 19; b++) {
-            int nelem = buckets[b].size();
-            for (int idx = 0; idx < nelem; idx++) {
-                shell_pairs_.push_back(buckets[b].back());
-                buckets[b].pop_back();
-            }
-        }
-        curr10 *= 10;
-    }
 }
 
 void CFMMTree::make_root_node() {
@@ -516,22 +427,28 @@ void CFMMTree::make_children() {
 void CFMMTree::calculate_multipoles() {
     timer_on("CFMMTree::calculate_multipoles");
 
-    // Compute bottom layer mpoles (parallel in call)
-    int start, end;
-    if (nlevels_ == 1) {
-        start = 0;
-        end = 1;
-    } else {
-        start = (0.5 * std::pow(16, nlevels_-1) + 7) / 15;
-        end = (0.5 * std::pow(16, nlevels_) + 7) / 15;
+    std::vector<std::shared_ptr<OneBodyAOInt>> sints;
+    std::vector<std::shared_ptr<OneBodyAOInt>> mpints;
+
+    auto int_factory = std::make_shared<IntegralFactory>(basisset_);
+    for (int thread = 0; thread < nthread_; thread++) {
+        mpints.push_back(std::shared_ptr<OneBodyAOInt>(int_factory->ao_multipoles(lmax_)));
+        sints.push_back(std::shared_ptr<OneBodyAOInt>(int_factory->ao_overlap()));
     }
 
-    for (int bi = start; bi < end; bi += 1) {
-        if (tree_[bi]->nshell_pair() == 0) continue;
-        tree_[bi]->compute_mpoles(basisset_, D_);
+    // Compute leaf node mpoles
+#pragma omp parallel for
+    for (int bi = 0; bi < sorted_leaf_boxes_.size(); bi++) {
+
+        int thread = 0;
+#ifdef _OPENMP
+        thread = omp_get_thread_num();
+#endif
+
+        sorted_leaf_boxes_[bi]->compute_mpoles(basisset_, D_, mpints[thread], sints[thread]);
     }
 
-    // Translate parents (parallel here)
+    // Translate parents
     for (int level = nlevels_ - 2; level >= 0; level -= 1) {
         int start, end;
         if (level == 0) {
@@ -582,10 +499,6 @@ void CFMMTree::build_nf_J() {
     timer_on("CFMMTree::build_nf_J");
 
     int nshell = basisset_->nshell();
-
-    // Starting and ending box indices
-    int start = (nlevels_ == 1) ? 0 : (0.5 * std::pow(16, nlevels_-1) + 7) / 15;
-    int end = (nlevels_ == 1) ? 1 : (0.5 * std::pow(16, nlevels_) + 7) / 15;
     
     // A map of the function (num_p * num_q) offsets per shell-pair
     std::unordered_map<int, int> offsets;
@@ -593,6 +506,9 @@ void CFMMTree::build_nf_J() {
     // Maximum space (pfunc * qfunc) to allocate per box-task
     size_t max_alloc = 0;
     
+    int start = (nlevels_ == 1) ? 0 : (0.5 * std::pow(16, nlevels_-1) + 7) / 15;
+    int end = (nlevels_ == 1) ? 1 : (0.5 * std::pow(16, nlevels_) + 7) / 15;
+
     for (int bi = start; bi < end; bi++) {
         auto& PQshells = tree_[bi]->get_shell_pairs();
         int PQoff = 0;
@@ -619,17 +535,9 @@ void CFMMTree::build_nf_J() {
         JT.push_back(J2);
     }
 
-    std::vector<std::shared_ptr<CFMMBox>> dense_tree;
-    for (int bi = start; bi < end; bi++) {
-        std::shared_ptr<CFMMBox> box = tree_[bi];
-        if (box->nshell_pair() > 0) {
-            dense_tree.push_back(box);
-        }
-    }
-
 #pragma omp parallel for
-    for (int i = 0; i < dense_tree.size(); i++) {
-        std::shared_ptr<CFMMBox> curr = dense_tree[i];
+    for (int i = 0; i < sorted_leaf_boxes_.size(); i++) {
+        std::shared_ptr<CFMMBox> curr = sorted_leaf_boxes_[i];
         auto& PQshells = curr->get_shell_pairs();
         auto& nf_boxes = curr->near_field_boxes();
 

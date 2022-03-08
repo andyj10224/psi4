@@ -45,7 +45,8 @@
 #include <vector>
 #include <unordered_map>
 
-#define ERFCI10 (4.572824967389485)
+// Extent normalization constant (to calculate extents of shell pairs)
+#define ENC (1.306076308436251)
 
 namespace psi {
 
@@ -69,11 +70,12 @@ class PSI_API ShellPair {
       std::shared_ptr<HarmonicCoefficients> mpole_coefs_;
 
     public:
-      ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pair_index, std::shared_ptr<HarmonicCoefficients>& mpole_coefs);
+      ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pair_index, 
+                std::shared_ptr<HarmonicCoefficients>& mpole_coefs, double cfmm_extent_tol);
 
       // Calculate the multipole moments of the Shell-Pair about a center
-      void calculate_mpoles(Vector3 box_center, std::shared_ptr<OneBodyAOInt> s_ints,
-                            std::shared_ptr<OneBodyAOInt> mpole_ints, int lmax);
+      void calculate_mpoles(Vector3 box_center, std::shared_ptr<OneBodyAOInt>& s_ints,
+                            std::shared_ptr<OneBodyAOInt>& mpole_ints, int lmax);
 
       // Returns the shell pair index
       std::pair<int, int> get_shell_pair_index() { return pair_index_; }
@@ -135,7 +137,9 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       // Make children for this multipole box
       void make_children();
       // Compute multipoles directly
-      void compute_mpoles(std::shared_ptr<BasisSet>& basisset, std::vector<SharedMatrix>& D);
+      void compute_mpoles(std::shared_ptr<BasisSet>& basisset, std::vector<SharedMatrix>& D,
+                          std::shared_ptr<OneBodyAOInt>& mpint, std::shared_ptr<OneBodyAOInt>& sint);
+
       // Compute multipoles from children
       void compute_mpoles_from_children();
       // Sets the near field and local far field and calculates far field vector from local and parent far fields
@@ -182,6 +186,8 @@ class PSI_API CFMMTree {
       int lmax_;
       // The tree structure (implemented as list for random access)
       std::vector<std::shared_ptr<CFMMBox>> tree_;
+      // List of all the leaf boxes (sorted by number of shell pairs for parallel efficiency)
+      std::vector<std::shared_ptr<CFMMBox>> sorted_leaf_boxes_;
       // Harmonic Coefficients used to calculate multipoles
       std::shared_ptr<HarmonicCoefficients> mpole_coefs_;
 
@@ -195,8 +201,8 @@ class PSI_API CFMMTree {
       // The integral objects used to compute the integrals
       std::vector<std::shared_ptr<TwoBodyAOInt>> ints_;
 
-      // Sort the shell-pairs (radix sort)
-      void sort_shell_pairs();
+      // Sort the leaf nodes by number of shell-pairs
+      void sort_leaf_boxes();
       // Make the root node of the CFMMTree
       void make_root_node();
       // Create children

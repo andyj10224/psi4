@@ -1476,6 +1476,8 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_int("CFMM_ORDER", 10);
         /*- The maximum tree depth to use in the CFMM algorithm -*/
         options.add_int("CFMM_GRAIN", 3);
+        /*- CFMM Extent Tolerance (for well-separated) -*/
+        options.add_double("CFMM_EXTENT_TOLERANCE", 1.0e-16);
 
         /*- SUBSECTION Fractional Occupation UHF/UKS -*/
         /*- The iteration to start fractionally occupying orbitals (or 0 for no fractional occupation) -*/
