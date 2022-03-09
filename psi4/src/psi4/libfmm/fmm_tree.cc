@@ -30,11 +30,6 @@
 
 namespace psi {
 
-int num_digits(long n) {
-    if (n == 0) return 1;
-    return (int) std::log10(std::abs(n)) + 1;
-}
-
 ShellPair::ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pair_index, 
                      std::shared_ptr<HarmonicCoefficients>& mpole_coefs, double cfmm_extent_tol) {
     basisset_ = basisset;
@@ -111,7 +106,7 @@ void ShellPair::calculate_mpoles(Vector3 box_center, std::shared_ptr<OneBodyAOIn
                 int l_ncart = ncart(l);
                 for (int m = -l; m <= l; m++) {
                     int mu = m_addr(m);
-                    std::unordered_map<int, double>& mpole_terms= mpole_coefs_->get_terms(l, mu);
+                    std::unordered_map<int, double>& mpole_terms = mpole_coefs_->get_terms(l, mu);
 
                     int powdex = 0;
                     for (int ii = 0; ii <= l; ii++) {
@@ -140,8 +135,8 @@ void ShellPair::calculate_mpoles(Vector3 box_center, std::shared_ptr<OneBodyAOIn
 
 CFMMBox::CFMMBox(std::shared_ptr<CFMMBox> parent, std::vector<std::shared_ptr<ShellPair>> shell_pairs, 
               Vector3 origin, double length, int level, int lmax, int ws, int nmat) {
+                  
     parent_ = parent;
-
     shell_pairs_ = shell_pairs;
     origin_ = origin;
     center_ = origin_ + 0.5 * Vector3(length, length, length);
@@ -215,10 +210,13 @@ void CFMMBox::compute_far_field() {
         // Siblings of this box (Technically near fields include self in this implementation)
         for (std::shared_ptr<CFMMBox> sibling : parent->children_) {
             Vector3 Rab = center_ - sibling->center_;
-            double rab = std::sqrt(Rab.dot(Rab));
+            // double rab = std::sqrt(Rab.dot(Rab));
+            int dx = std::abs(Rab[0] / length_);
+            int dy = std::abs(Rab[1] / length_);
+            int dz = std::abs(Rab[2] / length_);
 
             int ref_ws = (ws_ + sibling->ws_) / 2;
-            if (rab <= ref_ws * length_) {
+            if (dx <= ref_ws || dy <= ref_ws || dz <= ref_ws) {
                 near_field_.push_back(sibling);
             } else {
                 local_far_field_.push_back(sibling);
@@ -230,10 +228,13 @@ void CFMMBox::compute_far_field() {
             if (uncle.get() == parent.get()) continue;
             for (std::shared_ptr<CFMMBox> cousin : uncle->children_) {
                 Vector3 Rab = center_ - cousin->center_;
-                double rab = std::sqrt(Rab.dot(Rab));
+                // double rab = std::sqrt(Rab.dot(Rab));
+                int dx = std::abs(Rab[0] / length_);
+                int dy = std::abs(Rab[1] / length_);
+                int dz = std::abs(Rab[2] / length_);
 
                 int ref_ws = (ws_ + cousin->ws_) / 2;
-                if (rab <= ref_ws * length_) {
+                if (dx <= ref_ws || dy <= ref_ws || dz <= ref_ws) {
                     near_field_.push_back(cousin);
                 } else {
                     local_far_field_.push_back(cousin);
@@ -318,6 +319,11 @@ CFMMTree::CFMMTree(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, const std::
     basisset_ = ints[0]->basis();
     molecule_ = basisset_->molecule();
     nlevels_ = options_.get_int("CFMM_GRAIN");
+    if (nlevels_ <= 2) {
+        throw PSIEXCEPTION("Too little boxes! Why do you wanna do CFMM with Direct SCF?");
+    } else if (nlevels_ >= 6) {
+        throw PSIEXCEPTION("Too many boxes! You memory hog.");
+    }
     lmax_ = options_.get_int("CFMM_ORDER");
 
     nthread_ = 1;
@@ -331,7 +337,7 @@ CFMMTree::CFMMTree(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, const std::
     tree_.resize(num_boxes);
 
     mpole_coefs_ = std::make_shared<HarmonicCoefficients>(lmax_, Regular);
-    double cfmm_extent_tol = Process::environment.options.get_double("CFMM_EXTENT_TOLERANCE");
+    double cfmm_extent_tol = options.get_double("CFMM_EXTENT_TOLERANCE");
 
     auto& ints_shell_pairs = ints[0]->shell_pairs();
     size_t nshell_pairs = ints_shell_pairs.size();
@@ -551,28 +557,27 @@ void CFMMTree::build_nf_J() {
         for (int nfi = 0; nfi < nf_boxes.size(); nfi++) {
             std::shared_ptr<CFMMBox> neighbor = nf_boxes[nfi];
             auto& RSshells = neighbor->get_shell_pairs();
+            Vector3 curr_center = curr->center();
+            Vector3 neighbor_center = neighbor->center();
+            Vector3 Rab = curr_center - neighbor_center;
+            double rab = std::sqrt(Rab.dot(Rab));
 
             if (neighbor->nshell_pair() == 0) continue;
             
             bool touched = false;
-            for (int PQind = 0; PQind < PQshells.size(); PQind++) {
-                std::pair<int, int> PQ = PQshells[PQind]->get_shell_pair_index();
+            for (const auto& PQsh : PQshells) {
+                auto PQ = PQsh->get_shell_pair_index();
+                double PQextent = PQsh->get_extent();
                 int P = PQ.first;
                 int Q = PQ.second;
             
-                for (int RSind = 0; RSind < RSshells.size(); RSind++) {
-                    std::pair<int, int> RS = RSshells[RSind]->get_shell_pair_index();
+                for (const auto& RSsh : RSshells) {
+                    auto RS = RSsh->get_shell_pair_index();
+                    double RSextent = RSsh->get_extent();
                     int R = RS.first;
                     int S = RS.second;
                     
                     if (R * nshell + S > P * nshell + Q) continue;
-                    if (!ints_[thread]->shell_significant(P, Q, R, S)) continue;
-                    if (density_screening_ && !ints_[thread]->shell_significant_density_J(P, Q, R, S)) continue;
-
-                    double prefactor = 1.0;
-                    if (P != Q) prefactor *= 2;
-                    if (R != S) prefactor *= 2;
-                    if (P == R && Q == S) prefactor *= 0.5;
 
                     const GaussianShell& Pshell = basisset_->shell(P);
                     const GaussianShell& Qshell = basisset_->shell(Q);
@@ -591,11 +596,48 @@ void CFMMTree::build_nf_J() {
                     int s_start = Sshell.start();
                     int num_s = Sshell.nfunction();
 
+                    if (!ints_[thread]->shell_significant(P, Q, R, S)) continue;
+                    if (density_screening_ && !ints_[thread]->shell_significant_density_J(P, Q, R, S)) continue;
+
+                    double prefactor = 1.0;
+                    if (P != Q) prefactor *= 2;
+                    if (R != S) prefactor *= 2;
+                    if (P == R && Q == S) prefactor *= 0.5;
+
                     int PQoff = offsets[P * nshell + Q];
                     int RSoff = offsets[R * nshell + S];
 
-                    if (ints_[thread]->compute_shell(P, Q, R, S) == 0) continue;
-                    const double* pqrs = ints_[thread]->buffer();
+                    const double* pqrs;
+                    std::vector<double> mpole_eri_buffer;
+                    // Use multipoles rather than ERIs (if PQ and RS are well separated)
+                    if (PQextent + RSextent < 0.5 * rab) {
+                        auto PQmpoles = PQsh->get_mpoles();
+                        auto RSmpoles = RSsh->get_mpoles();
+                        mpole_eri_buffer.resize(num_p * num_q * num_r * num_s);
+
+                        size_t index = 0;
+                        for (int p = p_start; p < p_start + num_p; p++) {
+                            int dp = p - p_start;
+                            for (int q = q_start; q < q_start + num_q; q++) {
+                                int dq = q - q_start;
+                                auto pq_mpole = PQmpoles[dp * num_q + dq];
+                                auto pq_ff = pq_mpole->far_field_vector(neighbor_center);
+                                for (int r = r_start; r < r_start + num_r; r++) {
+                                    int dr = r - r_start;
+                                    for (int s = s_start; s < s_start + num_s; s++) {
+                                        int ds = s - s_start;
+                                        auto rs_mpole = RSmpoles[dr * num_s + ds];
+                                        mpole_eri_buffer[index] = pq_ff->dot(rs_mpole);
+                                        index++;
+                                    }
+                                }
+                            }
+                        }
+                        pqrs = const_cast<const double*>(mpole_eri_buffer.data());
+                    } else {
+                        if (ints_[thread]->compute_shell(P, Q, R, S) == 0) continue;
+                        pqrs = ints_[thread]->buffer();
+                    }
 
                     for (int N = 0; N < D_.size(); N++) {
                         double** Jp = J_[N]->pointer();
@@ -748,11 +790,7 @@ void CFMMTree::build_ff_J() {
                     for (int N = 0; N < J_.size(); N++) {
                         double** Jp = J_[N]->pointer();
                         // Far field multipole contributions
-                        for (int l = 0; l <= lmax_; l++) {
-                            for (int mu = 0; mu < 2*l+1; mu++) {
-                                Jp[p][q] += prefactor * Vff[N]->get(l, mu) * PQ_mpoles[dp * num_q + dq]->get(l, mu);
-                            } // end mu
-                        } // end l
+                        Jp[p][q] += prefactor * Vff[N]->dot(PQ_mpoles[dp * num_q + dq]);
                     } // end N
                 } // end q
             } // end p
@@ -797,10 +835,12 @@ void CFMMTree::print_out() {
         int ws = box->get_ws();
         if (nshells > 0) {
             outfile->Printf("  BOX INDEX: %d, LEVEL: %d, WS: %d, NSHELLS: %d\n", bi, level, ws, nshells);
+            /*
             for (int si = 0; si < sp.size(); si++) {
                 Vector3 center = sp[si]->get_center();
                 outfile->Printf("  SHELL: %d, x: %8.5f, y: %8.5f, z: %8.5f\n\n", si, center[0], center[1], center[2]);
             }
+            */
         }
     }
 }

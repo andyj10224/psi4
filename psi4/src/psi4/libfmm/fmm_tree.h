@@ -160,6 +160,8 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       std::vector<std::shared_ptr<ShellPair>>& get_shell_pairs() { return shell_pairs_; }
       // Gets the number of shell pairs in the box
       int nshell_pair() { return shell_pairs_.size(); }
+      // Get the center of this box
+      Vector3 center() { return center_; }
       // Gets the near_field_boxes of the box
       std::vector<std::shared_ptr<CFMMBox>>& near_field_boxes() { return near_field_; }
       // Gets the far field vector

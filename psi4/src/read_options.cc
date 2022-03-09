@@ -1474,10 +1474,10 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
 
         /*- The maximum multipole order to use in the CFMM algorithm -*/
         options.add_int("CFMM_ORDER", 10);
-        /*- The maximum tree depth to use in the CFMM algorithm -*/
-        options.add_int("CFMM_GRAIN", 3);
+        /*- The maximum tree depth to use in the CFMM algorithm (Must be at least 3) -*/
+        options.add_int("CFMM_GRAIN", 4);
         /*- CFMM Extent Tolerance (for well-separated) -*/
-        options.add_double("CFMM_EXTENT_TOLERANCE", 1.0e-16);
+        options.add_double("CFMM_EXTENT_TOLERANCE", 1.0e-10);
 
         /*- SUBSECTION Fractional Occupation UHF/UKS -*/
         /*- The iteration to start fractionally occupying orbitals (or 0 for no fractional occupation) -*/

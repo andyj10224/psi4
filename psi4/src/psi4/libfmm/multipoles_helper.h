@@ -189,6 +189,9 @@ class PSI_API RealSolidHarmonics {
       // Adds two harmonics together
       void add(const RealSolidHarmonics& rsh);
       void add(const std::shared_ptr<RealSolidHarmonics>& rsh);
+      // Element-wise multiplication of two multtipoles
+      double dot(const RealSolidHarmonics& rsh);
+      double dot(const std::shared_ptr<RealSolidHarmonics>& rsh);
       // Scale the harmonics by a constant
       void scale(double val);
       // Adds to a specific harmonic term
