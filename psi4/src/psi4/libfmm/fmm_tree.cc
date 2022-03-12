@@ -62,7 +62,7 @@ ShellPair::ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pa
         }
     }
     center_ /= (nprim_p * nprim_q);
-    extent_ = ENC * std::sqrt(-std::log(cfmm_extent_tol) / exp_);
+    extent_ = std::sqrt(-0.5 * std::log(cfmm_extent_tol) / exp_);
 
     mpole_coefs_ = mpole_coefs;
 }
