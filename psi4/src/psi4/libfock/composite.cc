@@ -492,7 +492,8 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
         max_functions_per_atom = std::max(max_functions_per_atom, size);
     }
 
-    // ==> Prep Atom Pairs (Better for parallel performance than shell pairs) <== //
+    // ==> Prep Atom Pairs <== //
+    // Based on limited evidence, atom blocking is better for parallel performance than shell-pair blocking
 
     std::vector<std::pair<int, int>> atom_pairs;
     for (size_t Patom = 0; Patom < natom; Patom++) {
@@ -520,6 +521,7 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
     std::vector<std::vector<int>> significant_bras(nshell);
     double max_integral = ints_[0]->max_integral();
 
+#pragma omp parallel for
     for (size_t P = 0; P < nshell; P++) {
         std::vector<std::pair<int, double>> PQ_shell_values;
         for (size_t Q = 0; Q < nshell; Q++) {
@@ -542,10 +544,12 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
     std::vector<double> shell_ceilings(nshell, 0.0);
 
     // sqrt(Umax|Umax) in Ochsenfeld Eq. 3
+#pragma omp parallel for
     for (int P = 0; P < nshell; P++) {
         for (int Q = 0; Q <= P; Q++) {
             double val = std::sqrt(ints_[0]->shell_ceiling2(P, Q, P, Q));
             shell_ceilings[P] = std::max(shell_ceilings[P], val);
+#pragma omp critical
             shell_ceilings[Q] = std::max(shell_ceilings[Q], val);
         }
     }
@@ -553,6 +557,7 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
     std::vector<std::vector<int>> significant_kets(nshell);
 
     // => Use shell ceilings to compute significant ket-shells for each bra-shell <= //
+#pragma omp parallel for
     for (size_t P = 0; P < nshell; P++) {
         std::vector<std::pair<int, double>> PR_shell_values;
         for (size_t R = 0; R < nshell; R++) {
@@ -628,21 +633,21 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
                 int dP = P - Pstart;
                 int dQ = Q - Qstart;
 
-                // => "Formation of Significant Shell Pair List ML" <= //
+                // => Formation of Significant Shell Pair List ML <= //
 
                 // Significant ket shell pairs RS for bra shell pair PQ
-                // represents the merge of ML_P and ML_Q as defined in Oschenfeld
+                // represents the merge of ML_P and ML_Q (mini-lists) as defined in Oschenfeld
                 // Unordered set structure allows for automatic merging as new elements are added
                 std::unordered_set<int> ML_PQ;
 
-                // Form ML_P inside ML_PQ
+                // Form ML_P as part of ML_PQ
                 for (const int R : significant_kets[P]) {
-                    int count = 0;
+                    bool is_significant = false;
                     for (const int S : significant_bras[R]) {
                         double screen_val = ints_[0]->shell_pair_max_density(P, R) * std::sqrt(ints_[0]->shell_ceiling2(P, Q, R, S));
 
                         if (screen_val >= linK_ints_cutoff_) {
-                            count += 1;
+                            if (!is_significant) is_significant = true;
                             int RS = (R >= S) ? (R * nshell + S) : (S * nshell + R);
                             if (RS > P * nshell + Q) continue;
                             ML_PQ.emplace(RS);
@@ -650,17 +655,17 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
                         }
                         else break;
                     }
-                    if (count == 0) break;
+                    if (!is_significant) break;
                 }
 
-                // Form ML_Q inside ML_PQ
+                // Form ML_Q as part of ML_PQ
                 for (const int R : significant_kets[Q]) {
-                    int count = 0;
+                    bool is_significant = false;
                     for (const int S : significant_bras[R]) {
                         double screen_val = ints_[0]->shell_pair_max_density(Q, R) * std::sqrt(ints_[0]->shell_ceiling2(P, Q, R, S));
 
                         if (screen_val >= linK_ints_cutoff_) {
-                            count += 1;
+                            if (!is_significant) is_significant = true;
                             int RS = (R >= S) ? (R * nshell + S) : (S * nshell + R);
                             if (RS > P * nshell + Q) continue;
                             ML_PQ.emplace(RS);
@@ -668,7 +673,7 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
                         }
                         else break;
                     }
-                    if (count == 0) break;
+                    if (!is_significant) break;
                 }
 
                 // Loop over significant RS pairs
