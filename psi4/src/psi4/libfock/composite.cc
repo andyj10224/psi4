@@ -6,10 +6,12 @@
 #include "psi4/lib3index/dftensor.h"
 #include "psi4/libfmm/fmm_tree.h"
 #include "psi4/libqt/qt.h"
+#include "psi4/libpsi4util/PsiOutStream.h"
 
 #include <vector>
 #include <unordered_set>
 #include <algorithm>
+#include <sstream>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -20,47 +22,30 @@ using namespace psi;
 
 namespace psi {
 
-void C_DGESV_wrapper(SharedMatrix A, SharedMatrix B) {
-    int N = B->rowspi(0);
-    int M = B->colspi(0);
-    if (N == 0 || M == 0) return;
-
-    // create a copy of B in fortran ordering
-    std::vector<double> B_fortran(N * M, 0.0);
-    for (int n = 0; n < N; n++) {
-        for (int m = 0; m < M; m++) {
-            B_fortran[m * N + n] = B->get(n, m);
-        }
-    }
-
-    // make the C_DGESV call, solving AX=B for X
-    std::vector<int> ipiv(N);
-    int errcode = C_DGESV(N, M, A->pointer()[0], N, ipiv.data(), B_fortran.data(), N);
-
-    // copy the fortran-ordered X into the original matrix, reverting to C-ordering
-    for (int n = 0; n < N; n++) {
-        for (int m = 0; m < M; m++) {
-            B->set(n, m, B_fortran[m * N + n]);
-        }
-    }
-}
-
 JBase::JBase(std::shared_ptr<BasisSet> primary, Options& options) 
             : primary_(primary), options_(options) {
-    nthread_ = 1;
+    print_ = options_.get_int("PRINT");
+    debug_ = options_.get_int("DEBUG");
+    bench_ = options_.get_int("BENCH");
 
+    nthread_ = 1;
 #ifdef _OPENMP
     nthread_ = Process::environment.get_n_threads();
 #endif
+
 }
 
 KBase::KBase(std::shared_ptr<BasisSet> primary, Options& options) 
             : primary_(primary), options_(options) {
+    print_ = options_.get_int("PRINT");
+    debug_ = options_.get_int("DEBUG");
+    bench_ = options_.get_int("BENCH");
+    
     nthread_ = 1;
-
 #ifdef _OPENMP
     nthread_ = Process::environment.get_n_threads();
 #endif
+
 }
 
 CompositeJK::CompositeJK(std::shared_ptr<BasisSet> primary, Options& options) : DirectJK(primary, options) {
@@ -823,6 +808,16 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
     for (auto& Kmat : K) {
         Kmat->scale(2.0);
         Kmat->hermitivitize();
+    }
+
+    if (bench_) {
+        auto mode = std::ostream::app;
+        auto printer = PsiOutStream("bench.dat", mode);
+        size_t ntri = nshell * (nshell + 1L) / 2L;
+        size_t possible_shells = ntri * (ntri + 1L) / 2L;
+        double computed_fraction = ((double) computed_shells) / possible_shells;
+        printer.Printf("LinK: Computed %20zu Shell Quartets out of %20zu, (%11.3E ratio)\n", 
+                        computed_shells, possible_shells, computed_fraction);
     }
 
     timer_off("LinK::build_K()");

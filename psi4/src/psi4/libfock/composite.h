@@ -48,6 +48,13 @@ class JBase {
    int nthread_;
    /// Options
    Options& options_;
+   /// Print flag, defaults to 1
+   int print_;
+   /// Debug flag, defaults to 0
+   int debug_;
+   /// Bench flag, defaults to 0
+   int bench_;
+
    /// Integral objects (one per thread)
    std::vector<std::shared_ptr<TwoBodyAOInt>> ints_;
    /// The primary basis set
@@ -81,6 +88,13 @@ class KBase {
    int nthread_;
    /// Options
    Options& options_;
+   /// Print flag, defaults to 1
+   int print_;
+   /// Debug flag, defaults to 0
+   int debug_;
+   /// Bench flag, defaults to 0
+   int bench_;
+
    /// Integral objects (one per thread)
    std::vector<std::shared_ptr<TwoBodyAOInt>> ints_;
    /// The primary basis set

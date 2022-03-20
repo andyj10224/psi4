@@ -197,11 +197,15 @@ class PSI_API CFMMTree {
       Options& options_;
       // Number of threads
       int nthread_;
-      // Use density-based integral screening?
-      bool density_screening_;
+      // Print flag, defaults to 1
+      int print_;
+      // Bench flag, defaults to 0
+      int bench_;
 
       // The integral objects used to compute the integrals
       std::vector<std::shared_ptr<TwoBodyAOInt>> ints_;
+      // Use density-based integral screening?
+      bool density_screening_;
 
       // Sort the leaf nodes by number of shell-pairs
       void sort_leaf_boxes();

@@ -14,6 +14,7 @@
 #include "psi4/libmints/twobody.h"
 #include "psi4/libqt/qt.h"
 #include "psi4/libpsi4util/process.h"
+#include "psi4/libpsi4util/PsiOutStream.h"
 
 #include <functional>
 #include <memory>
@@ -21,9 +22,9 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
-#include <unordered_set> // HAPPY?
 #include <unordered_map>
 #include <utility>
+#include <sstream>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -331,6 +332,8 @@ CFMMTree::CFMMTree(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, const std::
 #ifdef _OPENMP
     nthread_ = Process::environment.get_n_threads();
 #endif
+    print_ = options_.get_int("PRINT");
+    bench_ = options_.get_int("BENCH");
 
     density_screening_ = (options_.get_str("SCREENING") == "DENSITY");
 
@@ -354,8 +357,7 @@ CFMMTree::CFMMTree(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, const std::
     make_children();
     sort_leaf_boxes();
 
-    int print = Process::environment.options.get_int("PRINT");
-    if (print >= 2) print_out();
+    if (print_ >= 2) print_out();
 }
 
 void CFMMTree::sort_leaf_boxes() {
@@ -569,7 +571,10 @@ void CFMMTree::build_nf_J() {
         JT.push_back(J2);
     }
 
-#pragma omp parallel for schedule(guided)
+    // Benchmark Number of Computed Shells
+    size_t computed_shells = 0L;
+
+#pragma omp parallel for schedule(guided) reduction(+ : computed_shells)
     for (int task = 0; task < shell_pair_tasks.size(); task++) {
         int P = shell_pair_tasks[task].first;
         int Q = shell_pair_tasks[task].second;
@@ -601,6 +606,7 @@ void CFMMTree::build_nf_J() {
                 if (!ints_[thread]->shell_significant(P, Q, R, S)) continue;
                 if (density_screening_ && !ints_[thread]->shell_significant_density_J(P, Q, R, S)) continue;
                 if (ints_[thread]->compute_shell(P, Q, R, S) == 0) continue;
+                computed_shells++;
 
                 const GaussianShell& Rshell = basisset_->shell(R);
                 const GaussianShell& Sshell = basisset_->shell(S);
@@ -710,6 +716,16 @@ void CFMMTree::build_nf_J() {
         } // end nf_box
     } // end atom_tasks
 
+    if (bench_) {
+        auto mode = std::ostream::app;
+        auto printer = PsiOutStream("bench.dat", mode);
+        size_t ntri = nshell * (nshell + 1L) / 2L;
+        size_t possible_shells = ntri * (ntri + 1L) / 2L;
+        double computed_fraction = ((double) computed_shells) / possible_shells;
+        printer.Printf("CFMM Near Field: Computed %20zu Shell Quartets out of %20zu, (%11.3E ratio)\n", 
+                        computed_shells, possible_shells, computed_fraction);
+    }
+
     timer_off("CFMMTree::build_nf_J");
 }
 
@@ -797,12 +813,6 @@ void CFMMTree::print_out() {
         int ws = box->get_ws();
         if (nshells > 0) {
             outfile->Printf("  BOX INDEX: %d, LEVEL: %d, WS: %d, NSHELLS: %d\n", bi, level, ws, nshells);
-            /*
-            for (int si = 0; si < sp.size(); si++) {
-                Vector3 center = sp[si]->get_center();
-                outfile->Printf("  SHELL: %d, x: %8.5f, y: %8.5f, z: %8.5f\n\n", si, center[0], center[1], center[2]);
-            }
-            */
         }
     }
 }
