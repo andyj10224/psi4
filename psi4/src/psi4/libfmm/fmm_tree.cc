@@ -209,37 +209,21 @@ void CFMMBox::compute_far_field() {
 
     // Parent is not a nullpointer
     if (parent) {
-        // Siblings of this box (Technically near fields include self in this implementation)
-        for (std::shared_ptr<CFMMBox> sibling : parent->children_) {
-            Vector3 Rab = center_ - sibling->center_;
-            // double rab = std::sqrt(Rab.dot(Rab));
-            int dx = std::abs(Rab[0] / length_);
-            int dy = std::abs(Rab[1] / length_);
-            int dz = std::abs(Rab[2] / length_);
-
-            int ref_ws = (ws_ + sibling->ws_) / 2;
-            if (dx <= ref_ws && dy <= ref_ws && dz <= ref_ws) {
-                near_field_.push_back(sibling);
-            } else {
-                local_far_field_.push_back(sibling);
-            }
-        }
-
-        // Parent's near field (Cousins)
-        for (std::shared_ptr<CFMMBox> uncle : parent->near_field_) {
-            if (uncle.get() == parent.get()) continue;
-            for (std::shared_ptr<CFMMBox> cousin : uncle->children_) {
-                Vector3 Rab = center_ - cousin->center_;
+        // Near field or local far fields are from children of parents
+        // and children of parent's near field
+        for (std::shared_ptr<CFMMBox> parent_nf : parent->near_field_) {
+            for (std::shared_ptr<CFMMBox> child : parent_nf->children_) {
+                Vector3 Rab = center_ - child->center_;
                 // double rab = std::sqrt(Rab.dot(Rab));
                 int dx = std::abs(Rab[0] / length_);
                 int dy = std::abs(Rab[1] / length_);
                 int dz = std::abs(Rab[2] / length_);
 
-                int ref_ws = (ws_ + cousin->ws_) / 2;
+                int ref_ws = (ws_ + child->ws_) / 2;
                 if (dx <= ref_ws && dy <= ref_ws && dz <= ref_ws) {
-                    near_field_.push_back(cousin);
+                    near_field_.push_back(child);
                 } else {
-                    local_far_field_.push_back(cousin);
+                    local_far_field_.push_back(child);
                 }
             }
         }
