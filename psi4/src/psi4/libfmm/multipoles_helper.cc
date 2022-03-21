@@ -486,7 +486,7 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::translate_irregular(Vect
                 int mu = m_addr(m);
                 double coef = std::sqrt((double) choose(j+m,l+m)*choose(j-m,l-m));
 
-                trans_rot_mpoles[l][mu] += coef * std::pow(-R, j-l) * rot_mpoles[j][mu];
+                trans_rot_mpoles[l][mu] += coef * std::pow(R, j-l) * rot_mpoles[j][mu];
             }
         }
     }

@@ -254,13 +254,23 @@ void CFMMBox::compute_far_field() {
         }
 
         // Add the parent's far field contribution
+        /*
+        for (std::shared_ptr<CFMMBox> box1 : parent->local_far_field_)  {
+            for (std::shared_ptr<CFMMBox> box2 : box1->children_) {
+                for (int N = 0; N < Vff_.size(); N++) {
+                    std::shared_ptr<RealSolidHarmonics> far_field = box2->mpoles_[N]->far_field_vector(center_);
+                    Vff_[N]->add(far_field);
+                }
+            }
+        }
+        */
         for (int N = 0; N < Vff_.size(); N++) {
-            Vff_[N]->add(parent->Vff_[N]->translate(center_));
+            auto parent_cont = parent->Vff_[N]->translate(center_);
+            Vff_[N]->add(parent_cont);
         }
     } else {
         near_field_.push_back(this->get());
     }
-
 }
 
 void CFMMBox::compute_mpoles(std::shared_ptr<BasisSet>& basisset, std::vector<SharedMatrix>& D,
