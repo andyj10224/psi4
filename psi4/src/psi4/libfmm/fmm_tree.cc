@@ -218,7 +218,7 @@ void CFMMBox::compute_far_field() {
             int dz = std::abs(Rab[2] / length_);
 
             int ref_ws = (ws_ + sibling->ws_) / 2;
-            if (dx <= ref_ws || dy <= ref_ws || dz <= ref_ws) {
+            if (dx <= ref_ws && dy <= ref_ws && dz <= ref_ws) {
                 near_field_.push_back(sibling);
             } else {
                 local_far_field_.push_back(sibling);
@@ -236,7 +236,7 @@ void CFMMBox::compute_far_field() {
                 int dz = std::abs(Rab[2] / length_);
 
                 int ref_ws = (ws_ + cousin->ws_) / 2;
-                if (dx <= ref_ws || dy <= ref_ws || dz <= ref_ws) {
+                if (dx <= ref_ws && dy <= ref_ws && dz <= ref_ws) {
                     near_field_.push_back(cousin);
                 } else {
                     local_far_field_.push_back(cousin);
