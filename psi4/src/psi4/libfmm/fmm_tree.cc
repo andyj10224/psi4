@@ -32,6 +32,16 @@
 
 namespace psi {
 
+double sign(double x) {
+    if (std::abs(x) < 1.0e-8) {
+        return 0.0;
+    } else if (x < 0) {
+        return -1.0;
+    } else {
+        return 1.0;
+    }
+}
+
 ShellPair::ShellPair(std::shared_ptr<BasisSet>& basisset, std::pair<int, int> pair_index, 
                      std::shared_ptr<HarmonicCoefficients>& mpole_coefs, double cfmm_extent_tol) {
     basisset_ = basisset;
@@ -146,6 +156,7 @@ CFMMBox::CFMMBox(std::shared_ptr<CFMMBox> parent, std::vector<std::shared_ptr<Sh
     level_ = level;
     lmax_ = lmax;
     ws_ = ws;
+    ws_max_ = ws;
     nmat_ = nmat;
 
     nthread_ = 1;
@@ -170,6 +181,10 @@ void CFMMBox::make_children() {
     int nchild = (level_ > 0) ? 16 : 8;
     std::vector<std::vector<std::shared_ptr<ShellPair>>> child_shell_pair_buffer(nchild);
 
+    // Max WS at the child's level
+    int child_level_max_ws = std::max(2, (int) std::pow(2, level_+1));
+    int diffuse_child_max_ws = child_level_max_ws;
+
     // Fill order (ws,z,y,x) (0)000 (0)001 (0)010 (0)011 (0)100 (0)101 (0)110 (0)111
     // (1)000 (1)001 (1)010 (1)011 (1)100 (1)101 (1)110 (1)111
     for (std::shared_ptr<ShellPair> shell_pair : shell_pairs_) {
@@ -187,6 +202,9 @@ void CFMMBox::make_children() {
 
         int boxind = 8 * rbit + 4 * zbit + 2 * ybit + 1 * xbit;
         child_shell_pair_buffer[boxind].push_back(shell_pair);
+
+        int child_ws = std::max(2, (int)std::ceil(2.0 * extent / length_));
+        if (child_ws > diffuse_child_max_ws) diffuse_child_max_ws = child_ws;
     }
 
     // Make the children
@@ -199,6 +217,7 @@ void CFMMBox::make_children() {
         int child_ws = 2 * ws_ - 2 + 2 * rbit;
         children_.push_back(std::make_shared<CFMMBox>(this->get(), child_shell_pair_buffer[boxind], new_origin, 
                                                           0.5 * length_, level_ + 1, lmax_, child_ws, nmat_));
+        if (child_ws == child_level_max_ws) children_[boxind]->set_ws_max(diffuse_child_max_ws);
     }
 }
 
@@ -206,6 +225,8 @@ void CFMMBox::compute_far_field() {
 
     // Creates a temporary parent shared pointer
     std::shared_ptr<CFMMBox> parent = parent_.lock();
+    // Maximum possible WS for a box at this level
+    int max_ws = std::max(2, (int)std::pow(2, level_));
 
     // Parent is not a nullpointer
     if (parent) {
@@ -213,14 +234,18 @@ void CFMMBox::compute_far_field() {
         // and children of parent's near field
         for (std::shared_ptr<CFMMBox> parent_nf : parent->near_field_) {
             for (std::shared_ptr<CFMMBox> child : parent_nf->children_) {
-                Vector3 Rab = center_ - child->center_;
-                // double rab = std::sqrt(Rab.dot(Rab));
-                int dx = std::abs(Rab[0] / length_);
-                int dy = std::abs(Rab[1] / length_);
-                int dz = std::abs(Rab[2] / length_);
+                // WS Max formulation takes the most diffuse branch into account
+                int ref_ws = (ws_max_ + child->ws_max_) / 2;
 
-                int ref_ws = (ws_ + child->ws_) / 2;
-                if (dx <= ref_ws && dy <= ref_ws && dz <= ref_ws) {
+                Vector3 Rab = child->center_ - center_;
+                double dx = sign(Rab[0]);
+                double dy = sign(Rab[1]);
+                double dz = sign(Rab[2]);
+
+                Rab = Rab - length_ * Vector3(dx, dy, dz);
+                double rab = std::sqrt(Rab.dot(Rab));
+                
+                if (rab <= length_ * ref_ws) {
                     near_field_.push_back(child);
                 } else {
                     local_far_field_.push_back(child);

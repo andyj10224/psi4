@@ -110,6 +110,9 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       int lmax_;
       // Well-separatedness criterion for this box
       int ws_;
+      // Maximum well-separatedness for any given shell in the box 
+      // (same as ws_ except for the most diffuse boxes in the level)
+      int ws_max_;
       // Number of multipoles to form (for each density matrix)
       int nmat_;
 
@@ -145,7 +148,13 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       // Sets the near field and local far field and calculates far field vector from local and parent far fields
       void compute_far_field();
 
+      // => USEFUL SETTER METHODS <= //
+
+      // Set the maximum ws of the box
+      void set_ws_max(int ws_max) { ws_max_ = ws_max; }
+
       // => USEFUL GETTER METHODS <= //
+
       // Get the multipole level the box is on
       int get_level() { return level_; }
       // Get the ws criterion of the box
