@@ -146,8 +146,6 @@ void CompositeJK::compute_JK() {
         }
     }
     */
-
-
     
     if (!jalgo_ && !kalgo_) build_JK_matrices(ints_, D_ref, J_ref, K_ref);
     else {
@@ -194,7 +192,7 @@ void DirectDFJ::build_ints() {
 
 void DirectDFJ::build_J(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J) {
     
-    timer_on("DirectDFJ::build_J()");
+    timer_on("DirectDFJ: J");
 
     // => Zeroing <= //
 
@@ -386,11 +384,14 @@ void DirectDFJ::build_J(const std::vector<SharedMatrix>& D, std::vector<SharedMa
         Jmat->hermitivitize();
     }
 
-    timer_off("DirectDFJ::build_J()");
+    timer_off("DirectDFJ: J");
 }
 
 CFMM::CFMM(std::shared_ptr<BasisSet> primary, Options& options) : JBase(primary, options) {
+
+    cfmmtree_ = std::make_shared<CFMMTree>(primary_, options_);
     build_ints();
+
 }
 
 void CFMM::build_ints() {
@@ -403,17 +404,11 @@ void CFMM::build_ints() {
 
 void CFMM::build_J(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J) {
 
-    timer_on("CFMM::build_J()");
+    timer_on("CFMM: J");
 
-    // => Update the Density (for density screening the near-field) <= //
-    for (int thread = 0; thread < nthread_; thread++) {
-        ints_[thread]->update_density(D);
-    }
+    cfmmtree_->build_J(ints_, D, J);
 
-    auto tree = std::make_shared<CFMMTree>(ints_, D, J, options_);
-    tree->build_J();
-
-    timer_off("CFMM::build_J()");
+    timer_off("CFMM: J");
 }
 
 LinK::LinK(std::shared_ptr<BasisSet> primary, Options& options)
@@ -433,7 +428,7 @@ void LinK::build_ints() {
 
 void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& K) {
 
-    timer_on("LinK::build_K()");
+    timer_on("LinK: K");
 
     for (auto& integral : ints_) {
         integral->update_density(D);
@@ -820,7 +815,7 @@ void LinK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
                         computed_shells, possible_shells, computed_fraction);
     }
 
-    timer_off("LinK::build_K()");
+    timer_off("LinK: K");
 }
 
 COSK::COSK(std::shared_ptr<BasisSet> primary, Options& options)
@@ -841,7 +836,7 @@ void COSK::build_ints() {
 
 void COSK::grid_setup() {
 
-    timer_on("COSK::grid_setup()");
+    timer_on("COSK: Grid Setup");
 
     // COSK Grid Options
     std::map<std::string, int> cosk_grid_options_int;
@@ -894,11 +889,11 @@ void COSK::grid_setup() {
         }
     }
 
-    timer_off("COSK::grid_setup()");
+    timer_off("COSK: Grid Setup");
 }
 
 void COSK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& K) {
-    timer_on("COSK::build_K()");
+    timer_on("COSK: K");
 
     for (auto& Kmat : K) {
         Kmat->zero();
@@ -1120,7 +1115,7 @@ void COSK::build_K(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>
 
     }
 
-    timer_off("COSK::build_K()");
+    timer_off("COSK: K");
 }
 
 } // namespace Psi

@@ -37,6 +37,7 @@
 #include "psi4/libmints/twobody.h"
 #include "psi4/libfock/cubature.h"
 #include "psi4/lib3index/dfhelper.h"
+#include "psi4/libfmm/fmm_tree.h"
 
 #include <unordered_set>
 
@@ -163,7 +164,8 @@ class DirectDFJ : public JBase {
 
 class CFMM : public JBase {
   protected:
-   void build_ints() override;
+    std::shared_ptr<CFMMTree> cfmmtree_;
+    void build_ints() override;
 
    public:
     CFMM(std::shared_ptr<BasisSet> primary, Options& options);

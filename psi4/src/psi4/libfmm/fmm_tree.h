@@ -113,8 +113,6 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
       // Maximum well-separatedness for any given shell in the box 
       // (same as ws_ except for the most diffuse boxes in the level)
       int ws_max_;
-      // Number of multipoles to form (for each density matrix)
-      int nmat_;
 
       // Number of threads the calculation is running on
       int nthread_;
@@ -135,18 +133,20 @@ class PSI_API CFMMBox : public std::enable_shared_from_this<CFMMBox> {
     public:
       // Generic Constructor
       CFMMBox(std::shared_ptr<CFMMBox> parent, std::vector<std::shared_ptr<ShellPair>> shell_pairs, 
-              Vector3 origin, double length, int level, int lmax, int ws, int nmat);
+              Vector3 origin, double length, int level, int lmax, int ws);
 
       // Make children for this multipole box
       void make_children();
-      // Compute multipoles directly
-      void compute_mpoles(std::shared_ptr<BasisSet>& basisset, std::vector<SharedMatrix>& D,
-                          std::shared_ptr<OneBodyAOInt>& mpint, std::shared_ptr<OneBodyAOInt>& sint);
+      // Sets the near field and local far field regions of the box
+      void set_regions();
+
+      // Compute multipoles for the box (contracted with a density matrix)
+      void compute_multipoles(std::shared_ptr<BasisSet>& basisset, const std::vector<SharedMatrix>& D);
 
       // Compute multipoles from children
       void compute_mpoles_from_children();
-      // Sets the near field and local far field and calculates far field vector from local and parent far fields
-      void compute_far_field();
+      // Calculates far field vector from local and parent far fields
+      void compute_far_field_vector();
 
       // => USEFUL SETTER METHODS <= //
 
@@ -186,15 +186,17 @@ class PSI_API CFMMTree {
       // The basis set that the molecule uses
       std::shared_ptr<BasisSet> basisset_;
       // Density Matrix of Molecule
-      std::vector<SharedMatrix> D_;
+      // std::vector<SharedMatrix> D_;
       // Coulomb Matrix of Molecule
-      std::vector<SharedMatrix> J_;
+      // std::vector<SharedMatrix> J_;
       // List of all the significant shell-pairs in the molecule
       std::vector<std::shared_ptr<ShellPair>> shell_pairs_;
+
       // Number of Levels in the CFMM Tree
       int nlevels_;
       // Maximum Multipole Angular Momentum
       int lmax_;
+
       // The tree structure (implemented as list for random access)
       std::vector<std::shared_ptr<CFMMBox>> tree_;
       // List of all the leaf boxes (sorted by number of shell pairs for parallel efficiency)
@@ -213,31 +215,53 @@ class PSI_API CFMMTree {
 
       // The integral objects used to compute the integrals
       std::vector<std::shared_ptr<TwoBodyAOInt>> ints_;
+
+      // List of all the shell-pairs to compute
+      std::vector<std::pair<int, int>> shellpair_tasks_;
+      // Index from the shell-pair index to the object
+      std::vector<std::shared_ptr<ShellPair>> shellpair_list_;
+      // The box each shell-pair belongs to
+      std::vector<std::shared_ptr<CFMMBox>> shellpair_to_box_;
+      // List of all the near field boxes that belong to a given shell-pair
+      std::vector<std::vector<std::shared_ptr<CFMMBox>>> shellpair_to_nf_boxes_;
+
       // Use density-based integral screening?
       bool density_screening_;
 
-      // Sort the leaf nodes by number of shell-pairs
-      void sort_leaf_boxes();
+      // => Functions called ONLY once <= //
+
       // Make the root node of the CFMMTree
       void make_root_node();
       // Create children
       void make_children();
+      // Sort the leaf nodes by number of shell-pairs
+      void sort_leaf_boxes();
+      // Set up near field and far field information for each box in the tree
+      void setup_regions();
+      // Setup shell-pair information and Calculate multipoles for each shell-pair
+      void setup_shellpair_info();
+      // Calculate ALL the shell-pair multipoles at each leaf box
+      void calculate_shellpair_multipoles();
+
+      // => Functions called ONCE per iteration <= //
+
       // Calculate multipoles
-      void calculate_multipoles();
+      void calculate_multipoles(const std::vector<SharedMatrix>& D);
       // Helper method to compute far field
       void compute_far_field();
       // Build near-field J (Direct SCF)
-      void build_nf_J();
+      void build_nf_J(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, 
+                      const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J);
       // Build far-field J (long-range multipole interactions)
-      void build_ff_J();
+      void build_ff_J(std::vector<SharedMatrix>& J);
     
     public:
-      // Constructor
-      CFMMTree(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, const std::vector<SharedMatrix>& D, 
-                std::vector<SharedMatrix>& J, Options& options);
+      // Constructor (automatically sets up the tree)
+      CFMMTree(std::shared_ptr<BasisSet> basis, Options& options);
 
       // Build the J matrix of CFMMTree
-      void build_J();
+      void build_J(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, 
+                    const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J);
       // Print the CFMM Tree out
       void print_out();
 
