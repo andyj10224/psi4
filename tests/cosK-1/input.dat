@@ -1,0 +1,31 @@
+#! RHF Chain-of-Spheres Exchange Algorithm test for water
+
+ref_energy = -76.04125669409474 # TEST (Plain Jane Direct SCF)
+
+molecule mol {
+    0 1
+    O
+    H 1 0.96
+    H 1 0.96 2 104.5
+    symmetry c1
+    no_reorient
+    no_com
+}
+
+set {
+    scf_type composite
+    k_type cosk
+    basis aug-cc-pVDZ
+    ints_tolerance 1.0e-12
+    e_convergence 1.0e-10
+    d_convergence 1.0e-6
+    screening density
+    incfock true
+    incfock_full_fock_every 4
+    linK_ints_tolerance 1.0e-14
+    cos_radial_points 50
+    cos_spherical_points 86
+}
+
+linK_energy = energy('scf')
+psi4.compare_values(ref_energy, linK_energy, 9, "HF Energy (Using cosK algo)")

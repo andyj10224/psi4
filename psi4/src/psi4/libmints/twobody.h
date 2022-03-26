@@ -118,6 +118,8 @@ class PSI_API TwoBodyAOInt {
     /// The threshold below which integrals are to be neglected
     double screening_threshold_;
     double screening_threshold_squared_;
+    /// The threshold for density matrix based ERI sieving
+    double density_screening_threshold_;
     int nshell_;
     int nbf_;
     /// The algorithm to use for screening
@@ -205,6 +207,10 @@ class PSI_API TwoBodyAOInt {
      */
     /// Update max_dens_shell_pair_ given an updated density matrix (Haser 1989)
     void update_density(const std::vector<SharedMatrix>& D);
+    /// Whether the ERI contributes to the J matrix by the density test (Haser 1989)
+    bool shell_significant_density_J(int M, int N, int R, int S) const;
+    /// Whether the ERI contributes to the K matrix by the density test (Haser 1989)
+    bool shell_significant_density_K(int M, int N, int R, int S) const;
     /// Ask the built in sieve whether this quartet contributes
     bool shell_significant(int M, int N, int R, int S) const { return sieve_impl_(M, N, R, S); };
     /// Are any of the quartets within a given shellpair list significant
@@ -233,6 +239,8 @@ class PSI_API TwoBodyAOInt {
     const std::vector<std::pair<int, int> >& function_pairs() const { return function_pairs_; }
     /// Significant unique shell pair pair list, with only M>=N elements listed
     const std::vector<std::pair<int, int> >& shell_pairs() const { return shell_pairs_; }
+    const std::vector<std::pair<int, int> >& shell_pairs_bra() const { return shell_pairs_bra_; }
+    const std::vector<std::pair<int, int> >& shell_pairs_ket() const { return shell_pairs_ket_; }
     /// Unique function pair indexing, element m*(m+1)/2 + n (where m>=n) gives the dense index or
     /// -1 if the function pair does not contribute
     const std::vector<long int> function_pairs_to_dense() const { return function_pairs_reverse_; }

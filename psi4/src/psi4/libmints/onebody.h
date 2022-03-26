@@ -129,7 +129,7 @@ class PSI_API OneBodyAOInt {
     void compute(SharedMatrix& result);
     /*! @} */
 
-    /// Computes all integrals and stores them in result by default this method throws
+    ///// Computes all integrals and stores them in result by default this method throws
     virtual void compute(std::vector<SharedMatrix>& result);
 
     /// Does the method provide first derivatives?

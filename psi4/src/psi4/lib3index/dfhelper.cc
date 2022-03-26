@@ -547,7 +547,7 @@ void DFHelper::prepare_AO_core() {
             timer_off("DFH: AO-Met. Contraction");
         }
         // no more need for metrics
-        if (hold_met_) metrics_.clear();
+        if (!hold_met_) metrics_.clear();
     }
     // outfile->Printf("\n    ==> End AO Blocked Construction <==");
 }

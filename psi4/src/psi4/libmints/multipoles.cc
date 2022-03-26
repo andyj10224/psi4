@@ -90,6 +90,7 @@ MultipoleInt::MultipoleInt(std::vector<SphericalTransform>& spherical_transforms
     for (int d = 0; d < order_ + 1; ++d) {
         comps_mul_[d] = generate_am_components_cca(d);
     }
+    buffers_.resize(nchunk_);
 }
 
 MultipoleInt::~MultipoleInt() { delete[] buffer_; }

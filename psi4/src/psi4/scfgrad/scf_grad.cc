@@ -474,6 +474,13 @@ SharedMatrix SCFDeriv::compute_hessian()
                 for (int q = 0; q < nQ; q++) {
                     Dvals.push_back(Dp[p + oP][q + oQ]);
                 }
+                // build the Hessian contributions for each buffer entry
+                std::vector<double> Hvals;
+                for (int i = 0; i < buffers.size(); ++i) {
+                    const double *buffer = buffers[i];
+                    Hvals.push_back(std::inner_product(Dvals.begin(), Dvals.end(), buffer, 0.0));
+                }
+                process_buffers(Vp, Hvals, aP, aQ, natom, P==Q, true);
             }
             // build the Hessian contributions for each buffer entry
             std::vector<double> Hvals;
@@ -534,6 +541,12 @@ SharedMatrix SCFDeriv::compute_hessian()
                 for (int q = 0; q < nQ; q++) {
                     Dvals.push_back(Dp[p + oP][q + oQ]);
                 }
+                // build the Hessian contributions for each buffer entry
+                std::vector<double> Hvals;
+                for (const double *buffer : buffers) {
+                    Hvals.push_back(std::inner_product(Dvals.begin(), Dvals.end(), buffer, 0.0));
+                }
+                process_buffers(Tp, Hvals, aP, aQ, natom, P==Q, false);
             }
             // build the Hessian contributions for each buffer entry
             std::vector<double> Hvals;
@@ -618,6 +631,13 @@ SharedMatrix SCFDeriv::compute_hessian()
                 for (int q = 0; q < nQ; q++) {
                     Wvals.push_back(Wp[p + oP][q + oQ]);
                 }
+                // build the Hessian contributions for each buffer entry
+                std::vector<double> Hvals;
+                for (int i = 0; i < buffers.size(); ++i) {
+                    const double *buffer = buffers[i];
+                    Hvals.push_back(std::inner_product(Wvals.begin(), Wvals.end(), buffer, 0.0));
+                }
+                process_buffers(Sp, Hvals, aP, aQ, natom, P==Q, false);
             }
             // build the Hessian contributions for each buffer entry
             std::vector<double> Hvals;

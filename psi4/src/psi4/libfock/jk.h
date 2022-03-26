@@ -38,6 +38,10 @@ PRAGMA_WARNING_IGNORE_DEPRECATED_DECLARATIONS
 PRAGMA_WARNING_POP
 #include "psi4/libmints/typedefs.h"
 #include "psi4/libmints/dimension.h"
+#include "psi4/lib3index/dfhelper.h"
+#include "psi4/libmints/basisset.h"
+#include "psi4/libmints/mintshelper.h"
+#include "psi4/libmints/wavefunction.h"
 
 namespace psi {
 class MinimalInterface;
@@ -763,20 +767,6 @@ class PSI_API DirectJK : public JK {
     void incfock_postiter();
 
     /**
-     * @author Andy Jiang, Georgia Tech, December 2021
-     * 
-     * @brief constructs the K matrix using the LinK algorithm, described in [Ochsenfeld:1998:1663]_
-     * doi: 10.1063/1.476741
-     * 
-     * @param ints A list of TwoBodyAOInt objects (one per thread) to optimize parallel efficiency
-     * @param D The list of AO density matrices to contract to form J and K (1 for RHF, 2 for UHF/ROHF)
-     * @param K The list of AO K matrices to build (Same size as D)
-     * 
-     */
-    void build_linK(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, const std::vector<SharedMatrix>& D,
-                  std::vector<SharedMatrix>& K);
-
-    /**
      * @brief The standard J and K matrix builds for this integral class
      * 
      * @param ints A list of TwoBodyAOInt objects (one per thread) to optimize parallel efficiency
@@ -901,7 +891,7 @@ class PSI_API DiskDFJK : public JK {
     /// Number of threads for DF integrals
     int df_ints_num_threads_;
     /// Condition cutoff in fitting metric, defaults to 1.0E-12
-    double condition_;
+    double condition_ = 1.0e-12;
     /// File number for (Q|mn) tensor
     size_t unit_;
     /// Core or disk?
