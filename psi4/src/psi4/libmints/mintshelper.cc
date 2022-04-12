@@ -2762,7 +2762,6 @@ std::vector<SharedMatrix> MintsHelper::ao_overlap_half_deriv1_helper(const std::
                 }
             }
         }
-    }
 
         if (aQ == atom && half_der_side == "RIGHT") {
             // Qx
