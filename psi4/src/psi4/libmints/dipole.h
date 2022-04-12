@@ -55,8 +55,6 @@ class DipoleInt : public OneBodyAOInt {
     bool has_deriv1() override { return false; }
 
     void compute_pair(const libint2::Shell &, const libint2::Shell &) override;
-
-    void compute_pair(const libint2::Shell &, const libint2::Shell &) override;
     void compute_pair_deriv1(const libint2::Shell &, const libint2::Shell &) override;
 
     /// Returns the nuclear contribution to the dipole moment

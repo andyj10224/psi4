@@ -442,7 +442,6 @@ void MintsHelper::one_body_ao_computer(std::vector<std::shared_ptr<OneBodyAOInt>
         const size_t num_nu = bs2->shell(nu).nfunction();
         const size_t index_nu = bs2->shell(nu).function_index();
 
-<<<<<<< HEAD
         ints[rank]->compute_shell(mu, nu);
         const auto *ints_buff = ints[rank]->buffers()[0];
 
@@ -457,40 +456,6 @@ void MintsHelper::one_body_ao_computer(std::vector<std::shared_ptr<OneBodyAOInt>
             for (size_t mu = index_mu; mu < (index_mu + num_mu); ++mu) {
                 for (size_t nu = index_nu; nu < (index_nu + num_nu); ++nu) {
                     outp[mu][nu] = ints_buff[index++];
-=======
-        if (symm) {
-            // Triangular
-            for (size_t NU = 0; NU <= MU; ++NU) {
-                const size_t num_nu = bs2->shell(NU).nfunction();
-                const size_t index_nu = bs2->shell(NU).function_index();
-
-                ints[rank]->compute_shell(MU, NU);
-                const auto *ints_buff = ints[rank]->buffers()[0];
-
-                size_t index = 0;
-                for (size_t mu = index_mu; mu < (index_mu + num_mu); ++mu) {
-                    for (size_t nu = index_nu; nu < (index_nu + num_nu); ++nu) {
-                        outp[nu][mu] = outp[mu][nu] = ints_buff[index++];
-                    }
-                }
-            }  // End NU
-        }      // End Symm
-        else {
-            // Rectangular
-            for (size_t NU = 0; NU < bs2->nshell(); ++NU) {
-                const size_t num_nu = bs2->shell(NU).nfunction();
-                const size_t index_nu = bs2->shell(NU).function_index();
-
-                ints[rank]->compute_shell(MU, NU);
-                const auto *ints_buff = ints[rank]->buffers()[0];
-
-                size_t index = 0;
-                for (size_t mu = index_mu; mu < (index_mu + num_mu); ++mu) {
-                    for (size_t nu = index_nu; nu < (index_nu + num_nu); ++nu) {
-                        // printf("%zu %zu | %zu %zu | %lf\n", MU, NU, mu, nu, ints_buff[rank][index]);
-                        outp[mu][nu] = ints_buff[index++];
-                    }
->>>>>>> md-cfmm
                 }
             }
         }
@@ -530,16 +495,10 @@ void MintsHelper::grad_two_center_computer(std::vector<std::shared_ptr<OneBodyAO
 #ifdef _OPENMP
         rank = omp_get_thread_num();
 #endif
-<<<<<<< HEAD
         auto P = shell_pairs[p].first;
         auto Q = shell_pairs[p].second;
         ints[rank]->compute_shell_deriv1(P, Q);
         const auto &ints_buff = ints[rank]->buffers();
-=======
-        for (size_t Q = 0; Q <= P; Q++) {
-            ints[rank]->compute_shell_deriv1(P, Q);
-            const auto &ints_buff = ints[rank]->buffers();
->>>>>>> md-cfmm
 
         size_t nP = basisset_->shell(P).nfunction();
         size_t oP = basisset_->shell(P).function_index();
@@ -549,7 +508,6 @@ void MintsHelper::grad_two_center_computer(std::vector<std::shared_ptr<OneBodyAO
         size_t oQ = basisset_->shell(Q).function_index();
         size_t aQ = basisset_->shell(Q).ncenter();
 
-<<<<<<< HEAD
         size_t offset = nP * nQ;
         double perm = (P == Q ? 1.0 : 2.0);
 
@@ -559,22 +517,9 @@ void MintsHelper::grad_two_center_computer(std::vector<std::shared_ptr<OneBodyAO
         for (size_t p = 0; p < nP; p++) {
             for (size_t q = 0; q < nQ; q++) {
                 Px += perm * Dp[p + oP][q + oQ] * (*ref++);
-=======
-            size_t offset = nP * nQ;
-            double perm = (P == Q ? 1.0 : 2.0);
-
-            // Px
-            double Px = 0.0;
-            const double *ref = ints_buff[0];
-            for (size_t p = 0; p < nP; p++) {
-                for (size_t q = 0; q < nQ; q++) {
-                    Px += perm * Dp[p + oP][q + oQ] * (*ref++);
-                }
->>>>>>> md-cfmm
             }
         }
 #pragma omp atomic update
-<<<<<<< HEAD
         outp[aP][0] += Px;
 
         // Py
@@ -583,21 +528,9 @@ void MintsHelper::grad_two_center_computer(std::vector<std::shared_ptr<OneBodyAO
         for (size_t p = 0; p < nP; p++) {
             for (size_t q = 0; q < nQ; q++) {
                 Py += perm * Dp[p + oP][q + oQ] * (*ref++);
-=======
-            outp[aP][0] += Px;
-
-            // Py
-            double Py = 0.0;
-            ref = ints_buff[1];
-            for (size_t p = 0; p < nP; p++) {
-                for (size_t q = 0; q < nQ; q++) {
-                    Py += perm * Dp[p + oP][q + oQ] * (*ref++);
-                }
->>>>>>> md-cfmm
             }
         }
 #pragma omp atomic update
-<<<<<<< HEAD
         outp[aP][1] += Py;
 
         // Pz
@@ -606,21 +539,9 @@ void MintsHelper::grad_two_center_computer(std::vector<std::shared_ptr<OneBodyAO
         for (size_t p = 0; p < nP; p++) {
             for (size_t q = 0; q < nQ; q++) {
                 Pz += perm * Dp[p + oP][q + oQ] * (*ref++);
-=======
-            outp[aP][1] += Py;
-
-            // Pz
-            double Pz = 0.0;
-            ref = ints_buff[2];
-            for (size_t p = 0; p < nP; p++) {
-                for (size_t q = 0; q < nQ; q++) {
-                    Pz += perm * Dp[p + oP][q + oQ] * (*ref++);
-                }
->>>>>>> md-cfmm
             }
         }
 #pragma omp atomic update
-<<<<<<< HEAD
         outp[aP][2] += Pz;
 
         // Qx
@@ -629,21 +550,9 @@ void MintsHelper::grad_two_center_computer(std::vector<std::shared_ptr<OneBodyAO
         for (size_t p = 0; p < nP; p++) {
             for (size_t q = 0; q < nQ; q++) {
                 Qx += perm * Dp[p + oP][q + oQ] * (*ref++);
-=======
-            outp[aP][2] += Pz;
-
-            // Qx
-            double Qx = 0.0;
-            ref = ints_buff[3];
-            for (size_t p = 0; p < nP; p++) {
-                for (size_t q = 0; q < nQ; q++) {
-                    Qx += perm * Dp[p + oP][q + oQ] * (*ref++);
-                }
->>>>>>> md-cfmm
             }
         }
 #pragma omp atomic update
-<<<<<<< HEAD
         outp[aQ][0] += Qx;
 
         // Qy
@@ -652,21 +561,9 @@ void MintsHelper::grad_two_center_computer(std::vector<std::shared_ptr<OneBodyAO
         for (size_t p = 0; p < nP; p++) {
             for (size_t q = 0; q < nQ; q++) {
                 Qy += perm * Dp[p + oP][q + oQ] * (*ref++);
-=======
-            outp[aQ][0] += Qx;
-
-            // Qy
-            double Qy = 0.0;
-            ref = ints_buff[4];
-            for (size_t p = 0; p < nP; p++) {
-                for (size_t q = 0; q < nQ; q++) {
-                    Qy += perm * Dp[p + oP][q + oQ] * (*ref++);
-                }
->>>>>>> md-cfmm
             }
         }
 #pragma omp atomic update
-<<<<<<< HEAD
         outp[aQ][1] += Qy;
 
         // Qz
@@ -675,17 +572,6 @@ void MintsHelper::grad_two_center_computer(std::vector<std::shared_ptr<OneBodyAO
         for (size_t p = 0; p < nP; p++) {
             for (size_t q = 0; q < nQ; q++) {
                 Qz += perm * Dp[p + oP][q + oQ] * (*ref++);
-=======
-            outp[aQ][1] += Qy;
-
-            // Qz
-            double Qz = 0.0;
-            ref = ints_buff[5];
-            for (size_t p = 0; p < nP; p++) {
-                for (size_t q = 0; q < nQ; q++) {
-                    Qz += perm * Dp[p + oP][q + oQ] * (*ref++);
-                }
->>>>>>> md-cfmm
             }
         }
 #pragma omp atomic update
@@ -2096,11 +1982,8 @@ SharedMatrix MintsHelper::potential_grad(SharedMatrix D) {
 
         double **Vp = Vtemps[rank]->pointer();
 
-<<<<<<< HEAD
         // The three buffers have Px, Py, Pz, then the next three are Qx, Qy, Qz, with the next
         // 3*natom containing derivatives with respect to each atom's nuclear charge position.
-=======
->>>>>>> md-cfmm
         for (size_t X = 0; X < 2 + natom; X++) {
             auto A = (X == 0) ? aP : ((X == 1) ? aQ : X - 2);
 
@@ -2222,7 +2105,6 @@ SharedMatrix MintsHelper::multipole_grad(SharedMatrix D, int order, const std::v
     double** Dp = D->pointer();
 
     int natom = molecule_->natom();
-<<<<<<< HEAD
     int nmult = (order + 1) * (order + 2) * (order + 3) / 6 - 1;
     auto ret = std::make_shared<Matrix>("Multipole dervatives (pert*component, i.e. 3NxN_mult)", 3 * natom, nmult);
     double** Pp = ret->pointer();
@@ -2268,181 +2150,6 @@ SharedMatrix MintsHelper::multipole_grad(SharedMatrix D, int order, const std::v
                         Pp[3 * aP + comp][chunk] += prefac * Dp[p + oP][q + oQ] * (*ref_bra++);
                         Pp[3 * aQ + comp][chunk] += prefac * Dp[p + oP][q + oQ] * (*ref_ket++);
                     }
-=======
-    auto ret = std::make_shared<Matrix>("Dipole dervatives (pert*component, i.e. 3Nx3)", 3 * natom, 3);
-    double **Pp = ret->pointer();
-
-    std::shared_ptr<OneBodyAOInt> Dint(integral_->ao_dipole(1));
-
-    for (int P = 0; P < basisset_->nshell(); P++) {
-        for (int Q = 0; Q <= P; Q++) {
-            Dint->compute_shell_deriv1(P, Q);
-            const auto &buffers = Dint->buffers();
-
-            const auto &shellP = basisset_->shell(P);
-            const auto &shellQ = basisset_->shell(Q);
-
-            int nP = shellP.nfunction();
-            int oP = shellP.function_index();
-            int aP = shellP.ncenter();
-
-            int nQ = shellQ.nfunction();
-            int oQ = shellQ.function_index();
-            int aQ = shellQ.ncenter();
-
-            double prefac = (P == Q ? 1.0 : 2.0);
-
-            /*
-             * Mu X derivatives
-             */
-            // Px
-            const double *ref = buffers[0];
-            for (int p = 0; p < nP; p++) {
-                for (int q = 0; q < nQ; q++) {
-                    Pp[3 * aP + 0][0] += prefac * Dp[p + oP][q + oQ] * (*ref++);
-                }
-            }
-
-            // Py
-            ref = buffers[1];
-            for (int p = 0; p < nP; p++) {
-                for (int q = 0; q < nQ; q++) {
-                    Pp[3 * aP + 1][0] += prefac * Dp[p + oP][q + oQ] * (*ref++);
-                }
-            }
-
-            // Pz
-            ref = buffers[2];
-            for (int p = 0; p < nP; p++) {
-                for (int q = 0; q < nQ; q++) {
-                    Pp[3 * aP + 2][0] += prefac * Dp[p + oP][q + oQ] * (*ref++);
-                }
-            }
-
-            // Qx
-            ref = buffers[3];
-            for (int p = 0; p < nP; p++) {
-                for (int q = 0; q < nQ; q++) {
-                    Pp[3 * aQ + 0][0] += prefac * Dp[p + oP][q + oQ] * (*ref++);
-                }
-            }
-
-            // Qy
-            ref = buffers[4];
-            for (int p = 0; p < nP; p++) {
-                for (int q = 0; q < nQ; q++) {
-                    Pp[3 * aQ + 1][0] += prefac * Dp[p + oP][q + oQ] * (*ref++);
-                }
-            }
-
-            // Qz
-            ref = buffers[5];
-            for (int p = 0; p < nP; p++) {
-                for (int q = 0; q < nQ; q++) {
-                    Pp[3 * aQ + 2][0] += prefac * Dp[p + oP][q + oQ] * (*ref++);
-                }
-            }
-
-            /*
-             * Mu Y derivatives
-             */
-            // Px
-            ref = buffers[6];
-            for (int p = 0; p < nP; p++) {
-                for (int q = 0; q < nQ; q++) {
-                    Pp[3 * aP + 0][1] += prefac * Dp[p + oP][q + oQ] * (*ref++);
-                }
-            }
-
-            // Py
-            ref = buffers[7];
-            for (int p = 0; p < nP; p++) {
-                for (int q = 0; q < nQ; q++) {
-                    Pp[3 * aP + 1][1] += prefac * Dp[p + oP][q + oQ] * (*ref++);
-                }
-            }
-
-            // Pz
-            ref = buffers[8];
-            for (int p = 0; p < nP; p++) {
-                for (int q = 0; q < nQ; q++) {
-                    Pp[3 * aP + 2][1] += prefac * Dp[p + oP][q + oQ] * (*ref++);
-                }
-            }
-
-            // Qx
-            ref = buffers[9];
-            for (int p = 0; p < nP; p++) {
-                for (int q = 0; q < nQ; q++) {
-                    Pp[3 * aQ + 0][1] += prefac * Dp[p + oP][q + oQ] * (*ref++);
-                }
-            }
-
-            // Qy
-            ref = buffers[10];
-            for (int p = 0; p < nP; p++) {
-                for (int q = 0; q < nQ; q++) {
-                    Pp[3 * aQ + 1][1] += prefac * Dp[p + oP][q + oQ] * (*ref++);
-                }
-            }
-
-            // Qz
-            ref = buffers[11];
-            for (int p = 0; p < nP; p++) {
-                for (int q = 0; q < nQ; q++) {
-                    Pp[3 * aQ + 2][1] += prefac * Dp[p + oP][q + oQ] * (*ref++);
-                }
-            }
-
-            /*
-             * Mu Z derivatives
-             */
-            // Px
-            ref = buffers[12];
-            for (int p = 0; p < nP; p++) {
-                for (int q = 0; q < nQ; q++) {
-                    Pp[3 * aP + 0][2] += prefac * Dp[p + oP][q + oQ] * (*ref++);
-                }
-            }
-
-            // Py
-            ref = buffers[13];
-            for (int p = 0; p < nP; p++) {
-                for (int q = 0; q < nQ; q++) {
-                    Pp[3 * aP + 1][2] += prefac * Dp[p + oP][q + oQ] * (*ref++);
-                }
-            }
-
-            // Pz
-            ref = buffers[14];
-            for (int p = 0; p < nP; p++) {
-                for (int q = 0; q < nQ; q++) {
-                    Pp[3 * aP + 2][2] += prefac * Dp[p + oP][q + oQ] * (*ref++);
-                }
-            }
-
-            // Qx
-            ref = buffers[15];
-            for (int p = 0; p < nP; p++) {
-                for (int q = 0; q < nQ; q++) {
-                    Pp[3 * aQ + 0][2] += prefac * Dp[p + oP][q + oQ] * (*ref++);
-                }
-            }
-
-            // Qy
-            ref = buffers[16];
-            for (int p = 0; p < nP; p++) {
-                for (int q = 0; q < nQ; q++) {
-                    Pp[3 * aQ + 1][2] += prefac * Dp[p + oP][q + oQ] * (*ref++);
-                }
-            }
-
-            // Qz
-            ref = buffers[17];
-            for (int p = 0; p < nP; p++) {
-                for (int q = 0; q < nQ; q++) {
-                    Pp[3 * aQ + 2][2] += prefac * Dp[p + oP][q + oQ] * (*ref++);
->>>>>>> md-cfmm
                 }
             }
         }
@@ -2772,7 +2479,6 @@ std::vector<SharedMatrix> MintsHelper::ao_overlap_kinetic_deriv1_helper(const st
         grad.push_back(std::make_shared<Matrix>(sstream.str(), nbf1, nbf2));
     }
 
-<<<<<<< HEAD
     const auto& shell_pairs = GInt->shellpairs();
     size_t n_pairs = shell_pairs.size();
 
@@ -2786,26 +2492,11 @@ std::vector<SharedMatrix> MintsHelper::ao_overlap_kinetic_deriv1_helper(const st
         int nP = shellP.nfunction();
         int oP = shellP.function_index();
         int aP = shellP.ncenter();
-=======
-    for (int P = 0; P < bs1->nshell(); P++)
-        for (int Q = 0; Q < bs2->nshell(); Q++) {
-            const auto& shellP = basisset_->shell(P);
-            const auto& shellQ = basisset_->shell(Q);
-
-            int nP = shellP.nfunction();
-            int oP = shellP.function_index();
-            int aP = shellP.ncenter();
-
-            int nQ = shellQ.nfunction();
-            int oQ = shellQ.function_index();
-            int aQ = shellQ.ncenter();
->>>>>>> md-cfmm
 
         int nQ = shellQ.nfunction();
         int oQ = shellQ.function_index();
         int aQ = shellQ.ncenter();
 
-<<<<<<< HEAD
         if (aP != atom && aQ != atom) continue;
 
         GInt->compute_shell_deriv1(P, Q);
@@ -2861,55 +2552,6 @@ std::vector<SharedMatrix> MintsHelper::ao_overlap_kinetic_deriv1_helper(const st
                     grad[2]->add(p + oP, q + oQ, scale * buffers[5][p * nQ + q]);
                     grad[2]->add(q + oQ, p + oP, scale * buffers[5][p * nQ + q]);
                 }
-=======
-            GInt->compute_shell_deriv1(P, Q);
-            const auto &buffers = GInt->buffers();
-
-            if (aP == atom) {
-                // Px
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        grad[0]->add(p + oP, q + oQ, buffers[0][p * nQ + q]);
-                    }
-                }
-
-                // Py
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        grad[1]->add(p + oP, q + oQ, buffers[1][p * nQ + q]);
-                    }
-                }
-
-                // Pz
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        grad[2]->add(p + oP, q + oQ, buffers[2][p * nQ + q]);
-                    }
-                }
-            }
-
-            if (aQ == atom) {
-                // Qx
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        grad[0]->add(p + oP, q + oQ, buffers[3][p * nQ + q]);
-                    }
-                }
-
-                // Qy
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        grad[1]->add(p + oP, q + oQ, buffers[4][p * nQ + q]);
-                    }
-                }
-
-                // Qz
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        grad[2]->add(p + oP, q + oQ, buffers[5][p * nQ + q]);
-                    }
-                }
->>>>>>> md-cfmm
             }
         }
     }
@@ -2936,7 +2578,6 @@ std::vector<SharedMatrix> MintsHelper::ao_potential_deriv1_helper(int atom) {
         grad.push_back(std::make_shared<Matrix>(sstream.str(), nbf1, nbf2));
     }
 
-<<<<<<< HEAD
     const auto& shell_pairs = Vint->shellpairs();
     size_t n_pairs = shell_pairs.size();
 
@@ -2994,27 +2635,6 @@ std::vector<SharedMatrix> MintsHelper::ao_potential_deriv1_helper(int atom) {
             ref0 = buffers[3];
             ref1 = buffers[4];
             ref2 = buffers[5];
-=======
-    for (int P = 0; P < bs1->nshell(); P++) {
-        for (int Q = 0; Q < bs2->nshell(); Q++) {
-            const auto &shellP = bs1->shell(P);
-            const auto &shellQ = bs2->shell(Q);
-
-            int nP = shellP.nfunction();
-            int oP = shellP.function_index();
-            int aP = shellP.ncenter();
-
-            int nQ = shellQ.nfunction();
-            int oQ = shellQ.function_index();
-            int aQ = shellQ.ncenter();
-
-            Vint->compute_shell_deriv1(P, Q);
-            const auto &buffers = Vint->buffers();
-
-            const double *ref0 = buffers[3 * atom + 6];
-            const double *ref1 = buffers[3 * atom + 7];
-            const double *ref2 = buffers[3 * atom + 8];
->>>>>>> md-cfmm
             for (int p = 0; p < nP; p++) {
                 for (int q = 0; q < nQ; q++) {
                     grad[0]->add(p + oP, q + oQ, scale*(*ref0));
@@ -3025,35 +2645,6 @@ std::vector<SharedMatrix> MintsHelper::ao_potential_deriv1_helper(int atom) {
                     grad[2]->add(q + oQ, p + oP, scale*(*ref2++));
                 }
             }
-<<<<<<< HEAD
-=======
-
-            if (aP == atom) {
-                ref0 = buffers[0];
-                ref1 = buffers[1];
-                ref2 = buffers[2];
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        grad[0]->add(p + oP, q + oQ, (*ref0++));
-                        grad[1]->add(p + oP, q + oQ, (*ref1++));
-                        grad[2]->add(p + oP, q + oQ, (*ref2++));
-                    }
-                }
-            }
-
-            if (aQ == atom) {
-                ref0 = buffers[3];
-                ref1 = buffers[4];
-                ref2 = buffers[5];
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        grad[0]->add(p + oP, q + oQ, (*ref0++));
-                        grad[1]->add(p + oP, q + oQ, (*ref1++));
-                        grad[2]->add(p + oP, q + oQ, (*ref2++));
-                    }
-                }
-            }
->>>>>>> md-cfmm
         }
     }
 
@@ -3080,7 +2671,6 @@ std::vector<SharedMatrix> MintsHelper::ao_overlap_half_deriv1_helper(const std::
         grad.push_back(std::make_shared<Matrix>(sstream.str(), nbf1, nbf2));
     }
 
-<<<<<<< HEAD
     const auto& shell_pairs = GInt->shellpairs();
     size_t n_pairs = shell_pairs.size();
 
@@ -3094,26 +2684,11 @@ std::vector<SharedMatrix> MintsHelper::ao_overlap_half_deriv1_helper(const std::
         int nP = shellP.nfunction();
         int oP = shellP.function_index();
         int aP = shellP.ncenter();
-=======
-    for (int P = 0; P < bs1->nshell(); P++) {
-        for (int Q = 0; Q < bs2->nshell(); Q++) {
-            const auto &shellP = basisset_->shell(P);
-            const auto &shellQ = basisset_->shell(Q);
-
-            int nP = shellP.nfunction();
-            int oP = shellP.function_index();
-            int aP = shellP.ncenter();
-
-            int nQ = shellQ.nfunction();
-            int oQ = shellQ.function_index();
-            int aQ = shellQ.ncenter();
->>>>>>> md-cfmm
 
         int nQ = shellQ.nfunction();
         int oQ = shellQ.function_index();
         int aQ = shellQ.ncenter();
 
-<<<<<<< HEAD
         if (aP != atom && aQ != atom) continue;
 
         GInt->compute_shell_deriv1(P, Q);
@@ -3138,37 +2713,10 @@ std::vector<SharedMatrix> MintsHelper::ao_overlap_half_deriv1_helper(const std::
             for (int p = 0; p < nP; p++) {
                 for (int q = 0; q < nQ; q++) {
                     grad[2]->add(p + oP, q + oQ, buffers[2][p * nQ + q]);
-=======
-            GInt->compute_shell_deriv1(P, Q);
-            const auto &buffers = GInt->buffers();
-            int offset = 0;
-
-            if (aP == atom && half_der_side == "LEFT") {
-                // Px
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        grad[0]->add(p + oP, q + oQ, buffers[0][p * nQ + q]);
-                    }
-                }
-
-                // Py
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        grad[1]->add(p + oP, q + oQ, buffers[1][p * nQ + q]);
-                    }
-                }
-
-                // Pz
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        grad[2]->add(p + oP, q + oQ, buffers[2][p * nQ + q]);
-                    }
->>>>>>> md-cfmm
                 }
             }
         }
 
-<<<<<<< HEAD
         if (aQ == atom && half_der_side == "LEFT") {
             // Qx
             for (int p = 0; p < nP; p++) {
@@ -3212,29 +2760,6 @@ std::vector<SharedMatrix> MintsHelper::ao_overlap_half_deriv1_helper(const std::
                 for (int q = 0; q < nQ; q++) {
                     grad[2]->add(q + oQ, p + oP, buffers[2][p * nQ + q]);
                 }
-=======
-            if (aQ == atom && half_der_side == "RIGHT") {
-                // Qx
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        grad[0]->add(p + oP, q + oQ, buffers[3][p * nQ + q]);
-                    }
-                }
-
-                // Qy
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        grad[1]->add(p + oP, q + oQ, buffers[4][p * nQ + q]);
-                    }
-                }
-
-                // Qz
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        grad[2]->add(p + oP, q + oQ, buffers[5][p * nQ + q]);
-                    }
-                }
->>>>>>> md-cfmm
             }
         }
     }
@@ -3295,7 +2820,6 @@ std::vector<SharedMatrix> MintsHelper::ao_potential_deriv2_helper(int atom1, int
         }
 
     const double scale = (atom1 == atom2 ? 2.0 : 1.0);
-<<<<<<< HEAD
 
     auto upper_triangle_index = [](int matrix_dim, long i, long j) {
          return std::min(i, j) * (2*matrix_dim - std::min(i, j) - 1) / 2 + std::max(i, j);
@@ -3528,191 +3052,6 @@ std::vector<SharedMatrix> MintsHelper::ao_potential_deriv2_helper(int atom1, int
                     hess[6]->add(q + oQ, p + oP, perm *       (*CzBx++));
                     hess[7]->add(q + oQ, p + oP, perm *       (*CzBy++));
                     hess[8]->add(q + oQ, p + oP, perm * scale*(*CzBz++));
-=======
-
-    auto upper_triangle_index = [](int matrix_dim, long i, long j) {
-         return std::min(i, j) * (2*matrix_dim - std::min(i, j) - 1) / 2 + std::max(i, j);
-    };
-
-    for (int P = 0; P < bs1->nshell(); P++) {
-        for (int Q = 0; Q < bs2->nshell(); Q++) {
-            const auto &shellP = bs1->shell(P);
-            const auto &shellQ = bs2->shell(Q);
-
-            int nP = shellP.nfunction();
-            int oP = shellP.function_index();
-            int aP = shellP.ncenter();
-
-            int nQ = shellQ.nfunction();
-            int oQ = shellQ.function_index();
-            int aQ = shellQ.ncenter();
-
-            bool do_full_field;
-            int num_buffers;
-            if (atom1 != aP && atom2 != aQ) {
-                // Neither bra nor ket are atoms of interest - only compute external charge contributions for atom1 and atom2
-                do_full_field = false;
-                num_buffers = 12;
-                std::dynamic_pointer_cast<PotentialInt>(Vint)->set_charge_field({
-                    {(double)mol->Z(atom1), {mol->x(atom1), mol->y(atom1), mol->z(atom1)}},
-                    {(double)mol->Z(atom2), {mol->x(atom2), mol->y(atom2), mol->z(atom2)}}
-                });
-            } else {
-                // One of the atoms of interest is in the bra or ket - do a full computation
-                do_full_field = true;
-                num_buffers = 3 * (natom + 2);
-                std::dynamic_pointer_cast<PotentialInt>(Vint)->set_charge_field(full_params);
-            }
-
-            Vint->compute_shell_deriv2(P, Q);
-            const auto &buffers = Vint->buffers();
-
-            // clang-format off
-            // The derivatives emerge in upper triangular order 
-            // AxAx, AxAy, AxAz, AxBx, AxBy, AxBz, AxC1x, AxC2x, ... AxCNz
-            //       AyAy, AyAz, AyBx, AyBy, AyBz, AyC1x, AyC2x, ... AyCNz
-            //             AzAz, AzBx, AzBy, AyBz, AzC1x, AzC2x, ... AzCNz
-            //                                                         .
-            //                                                         .
-            //                                                         .
-            //                                               CNyCNz CNzCNz
-            //                                                      CNzCNz
-            // clang-format on
-            // For each shell pair, we get 3 buffers in the bra, 3 in the ket and 3 for each atom
-
-            if (aP == atom1 && aP == atom2) {
-                const double *AxAx = buffers[upper_triangle_index(num_buffers, 0, 0)];
-                const double *AxAy = buffers[upper_triangle_index(num_buffers, 0, 1)];
-                const double *AxAz = buffers[upper_triangle_index(num_buffers, 0, 2)];
-                const double *AyAy = buffers[upper_triangle_index(num_buffers, 1, 1)];
-                const double *AyAz = buffers[upper_triangle_index(num_buffers, 1, 2)];
-                const double *AzAz = buffers[upper_triangle_index(num_buffers, 2, 2)];
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        hess[0]->add(p + oP, q + oQ, *AxAx++);
-                        hess[1]->add(p + oP, q + oQ, *AxAy++);
-                        hess[2]->add(p + oP, q + oQ, *AxAz++);
-                        hess[4]->add(p + oP, q + oQ, *AyAy++);
-                        hess[5]->add(p + oP, q + oQ, *AyAz++);
-                        hess[8]->add(p + oP, q + oQ, *AzAz++);
-                    }
-                }
-            }
-
-            if (aQ == atom1 && aQ == atom2) {
-                const double *BxBx = buffers[upper_triangle_index(num_buffers, 3, 3)];
-                const double *BxBy = buffers[upper_triangle_index(num_buffers, 3, 4)];
-                const double *BxBz = buffers[upper_triangle_index(num_buffers, 3, 5)];
-                const double *ByBy = buffers[upper_triangle_index(num_buffers, 4, 4)];
-                const double *ByBz = buffers[upper_triangle_index(num_buffers, 4, 5)];
-                const double *BzBz = buffers[upper_triangle_index(num_buffers, 5, 5)];
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        hess[0]->add(p + oP, q + oQ, *BxBx++);
-                        hess[1]->add(p + oP, q + oQ, *BxBy++);
-                        hess[2]->add(p + oP, q + oQ, *BxBz++);
-                        hess[4]->add(p + oP, q + oQ, *ByBy++);
-                        hess[5]->add(p + oP, q + oQ, *ByBz++);
-                        hess[8]->add(p + oP, q + oQ, *BzBz++);
-                    }
-                }
-            }
-
-            if (aP == atom1 && aQ == atom2) {
-                const double *AxBx = buffers[upper_triangle_index(num_buffers, 0, 3)];
-                const double *AyBx = buffers[upper_triangle_index(num_buffers, 1, 3)];
-                const double *AzBx = buffers[upper_triangle_index(num_buffers, 2, 3)];
-                const double *AxBy = buffers[upper_triangle_index(num_buffers, 0, 4)];
-                const double *AyBy = buffers[upper_triangle_index(num_buffers, 1, 4)];
-                const double *AzBy = buffers[upper_triangle_index(num_buffers, 2, 4)];
-                const double *AxBz = buffers[upper_triangle_index(num_buffers, 0, 5)];
-                const double *AyBz = buffers[upper_triangle_index(num_buffers, 1, 5)];
-                const double *AzBz = buffers[upper_triangle_index(num_buffers, 2, 5)];
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        hess[0]->add(p + oP, q + oQ, scale*(*AxBx++));
-                        hess[1]->add(p + oP, q + oQ,       (*AxBy++));
-                        hess[2]->add(p + oP, q + oQ,       (*AxBz++));
-                        hess[3]->add(p + oP, q + oQ,       (*AyBx++));
-                        hess[4]->add(p + oP, q + oQ, scale*(*AyBy++));
-                        hess[5]->add(p + oP, q + oQ,       (*AyBz++));
-                        hess[6]->add(p + oP, q + oQ,       (*AzBx++));
-                        hess[7]->add(p + oP, q + oQ,       (*AzBy++));
-                        hess[8]->add(p + oP, q + oQ, scale*(*AzBz++));
-                    }
-                }
-            }
-
-            if (atom1 == atom2) {
-                int C = do_full_field ? 3*atom1+6 : 6;
-                const double *CxCx = buffers[upper_triangle_index(num_buffers, C+0, C+0)];
-                const double *CxCy = buffers[upper_triangle_index(num_buffers, C+0, C+1)];
-                const double *CxCz = buffers[upper_triangle_index(num_buffers, C+0, C+2)];
-                const double *CyCy = buffers[upper_triangle_index(num_buffers, C+1, C+1)];
-                const double *CyCz = buffers[upper_triangle_index(num_buffers, C+1, C+2)];
-                const double *CzCz = buffers[upper_triangle_index(num_buffers, C+2, C+2)];
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        hess[0]->add(p + oP, q + oQ, *CxCx++);
-                        hess[1]->add(p + oP, q + oQ, *CxCy++);
-                        hess[2]->add(p + oP, q + oQ, *CxCz++);
-                        hess[4]->add(p + oP, q + oQ, *CyCy++);
-                        hess[5]->add(p + oP, q + oQ, *CyCz++);
-                        hess[8]->add(p + oP, q + oQ, *CzCz++);
-                    }
-                }
-            }
-
-            if (aP == atom1) {
-                int C = do_full_field ? 3*atom2+6 : 9;
-                const double *AxCx = buffers[upper_triangle_index(num_buffers, 0, C+0)];
-                const double *AyCx = buffers[upper_triangle_index(num_buffers, 1, C+0)];
-                const double *AzCx = buffers[upper_triangle_index(num_buffers, 2, C+0)];
-                const double *AxCy = buffers[upper_triangle_index(num_buffers, 0, C+1)];
-                const double *AyCy = buffers[upper_triangle_index(num_buffers, 1, C+1)];
-                const double *AzCy = buffers[upper_triangle_index(num_buffers, 2, C+1)];
-                const double *AxCz = buffers[upper_triangle_index(num_buffers, 0, C+2)];
-                const double *AyCz = buffers[upper_triangle_index(num_buffers, 1, C+2)];
-                const double *AzCz = buffers[upper_triangle_index(num_buffers, 2, C+2)];
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        hess[0]->add(p + oP, q + oQ, scale*(*AxCx++));
-                        hess[1]->add(p + oP, q + oQ,       (*AxCy++));
-                        hess[2]->add(p + oP, q + oQ,       (*AxCz++));
-                        hess[3]->add(p + oP, q + oQ,       (*AyCx++));
-                        hess[4]->add(p + oP, q + oQ, scale*(*AyCy++));
-                        hess[5]->add(p + oP, q + oQ,       (*AyCz++));
-                        hess[6]->add(p + oP, q + oQ,       (*AzCx++));
-                        hess[7]->add(p + oP, q + oQ,       (*AzCy++));
-                        hess[8]->add(p + oP, q + oQ, scale*(*AzCz++));
-                    }
-                }
-            }
-
-            if (aQ == atom2) {
-                int C = do_full_field ? 3*atom1+6 : 6;
-                const double *CxBx = buffers[upper_triangle_index(num_buffers, C+0, 3)];
-                const double *CxBy = buffers[upper_triangle_index(num_buffers, C+0, 4)];
-                const double *CxBz = buffers[upper_triangle_index(num_buffers, C+0, 5)];
-                const double *CyBx = buffers[upper_triangle_index(num_buffers, C+1, 3)];
-                const double *CyBy = buffers[upper_triangle_index(num_buffers, C+1, 4)];
-                const double *CyBz = buffers[upper_triangle_index(num_buffers, C+1, 5)];
-                const double *CzBx = buffers[upper_triangle_index(num_buffers, C+2, 3)];
-                const double *CzBy = buffers[upper_triangle_index(num_buffers, C+2, 4)];
-                const double *CzBz = buffers[upper_triangle_index(num_buffers, C+2, 5)];
-                for (int p = 0; p < nP; p++) {
-                    for (int q = 0; q < nQ; q++) {
-                        hess[0]->add(p + oP, q + oQ, scale*(*CxBx++));
-                        hess[1]->add(p + oP, q + oQ,       (*CxBy++));
-                        hess[2]->add(p + oP, q + oQ,       (*CxBz++));
-                        hess[3]->add(p + oP, q + oQ,       (*CyBx++));
-                        hess[4]->add(p + oP, q + oQ, scale*(*CyBy++));
-                        hess[5]->add(p + oP, q + oQ,       (*CyBz++));
-                        hess[6]->add(p + oP, q + oQ,       (*CzBx++));
-                        hess[7]->add(p + oP, q + oQ,       (*CzBy++));
-                        hess[8]->add(p + oP, q + oQ, scale*(*CzBz++));
-                    }
->>>>>>> md-cfmm
                 }
             }
         }
@@ -3753,7 +3092,6 @@ std::vector<SharedMatrix> MintsHelper::ao_overlap_kinetic_deriv2_helper(const st
         }
     }
 
-<<<<<<< HEAD
     const auto& shell_pairs = GInt->shellpairs();
     size_t n_pairs = shell_pairs.size();
 
@@ -3766,48 +3104,17 @@ std::vector<SharedMatrix> MintsHelper::ao_overlap_kinetic_deriv2_helper(const st
         int nP = shellP.nfunction();
         int oP = shellP.function_index();
         int aP = shellP.ncenter();
-=======
-    for (int P = 0; P < bs1->nshell(); P++) {
-        for (int Q = 0; Q < bs2->nshell(); Q++) {
-            const auto &shellP = bs1->shell(P);
-            const auto &shellQ = bs2->shell(Q);
-
-            int nP = shellP.nfunction();
-            int oP = shellP.function_index();
-            int aP = shellP.ncenter();
-
-            int nQ = shellQ.nfunction();
-            int oQ = shellQ.function_index();
-            int aQ = shellQ.ncenter();
->>>>>>> md-cfmm
 
         int nQ = shellQ.nfunction();
         int oQ = shellQ.function_index();
         int aQ = shellQ.ncenter();
 
-<<<<<<< HEAD
         if (aP != atom1 && aQ != atom1 && aP != atom2 && aQ != atom2) continue;
 
         GInt->compute_shell_deriv2(P, Q);
         const auto &buffers = GInt->buffers();
 
         double perm = P == Q ? 0.5 : 1.0;
-=======
-            GInt->compute_shell_deriv2(P, Q);
-            const auto &buffers = GInt->buffers();
-
-            // This code makes use of the translational invariance relations
-            //     ∂^2 S   ∂^2 S       ∂^2 S
-            //     ----- = -----  =  - -----
-            //     ∂A ∂A   ∂B ∂B       ∂A ∂B
-            // and writes everything in terms of derivs w.r.t. center A only
-            const double *pxx = buffers[0];
-            const double *pxy = buffers[1];
-            const double *pxz = buffers[2];
-            const double *pyy = buffers[6];
-            const double *pyz = buffers[7];
-            const double *pzz = buffers[11];
->>>>>>> md-cfmm
 
         // This code makes use of the translational invariance relations
         //     ∂^2 S   ∂^2 S       ∂^2 S
@@ -3851,7 +3158,6 @@ std::vector<SharedMatrix> MintsHelper::ao_overlap_kinetic_deriv2_helper(const st
                         grad[7]->set(q + oQ, p + oP, perm * -tmpyz);
                         grad[8]->set(q + oQ, p + oP, perm * 0);
                     } else {
-<<<<<<< HEAD
                         grad[0]->set(p + oP, q + oQ, perm * tmpxx);
                         grad[1]->set(p + oP, q + oQ, perm * tmpxy);
                         grad[2]->set(p + oP, q + oQ, perm * tmpxz);
@@ -3885,19 +3191,6 @@ std::vector<SharedMatrix> MintsHelper::ao_overlap_kinetic_deriv2_helper(const st
                         grad[6]->set(q + oQ, p + oP, perm * -tmpxz);
                         grad[7]->set(q + oQ, p + oP, perm * -tmpyz);
                         grad[8]->set(q + oQ, p + oP, perm * -tmpzz);
-=======
-                        if (aP == atom1 && aQ == atom2) {
-                            grad[0]->set(p + oP, q + oQ, -tmpxx);
-                            grad[1]->set(p + oP, q + oQ, -tmpxy);
-                            grad[2]->set(p + oP, q + oQ, -tmpxz);
-                            grad[3]->set(p + oP, q + oQ, -tmpxy);
-                            grad[4]->set(p + oP, q + oQ, -tmpyy);
-                            grad[5]->set(p + oP, q + oQ, -tmpyz);
-                            grad[6]->set(p + oP, q + oQ, -tmpxz);
-                            grad[7]->set(p + oP, q + oQ, -tmpyz);
-                            grad[8]->set(p + oP, q + oQ, -tmpzz);
-                        }
->>>>>>> md-cfmm
                     }
                 }
 
@@ -3937,7 +3230,6 @@ std::vector<SharedMatrix> MintsHelper::ao_elec_dip_deriv1_helper(int atom) {
         }
     }
 
-<<<<<<< HEAD
     const auto& shell_pairs = Dint->shellpairs();
     size_t n_pairs = shell_pairs.size();
 
@@ -3947,13 +3239,6 @@ std::vector<SharedMatrix> MintsHelper::ao_elec_dip_deriv1_helper(int atom) {
         int nP = basisset_->shell(P).nfunction();
         int oP = basisset_->shell(P).function_index();
         int aP = basisset_->shell(P).ncenter();
-=======
-    for (int P = 0; P < bs1->nshell(); P++) {
-        for (int Q = 0; Q < bs2->nshell(); Q++) {
-            int nP = basisset_->shell(P).nfunction();
-            int oP = basisset_->shell(P).function_index();
-            int aP = basisset_->shell(P).ncenter();
->>>>>>> md-cfmm
 
         int nQ = basisset_->shell(Q).nfunction();
         int oQ = basisset_->shell(Q).function_index();
@@ -3961,7 +3246,6 @@ std::vector<SharedMatrix> MintsHelper::ao_elec_dip_deriv1_helper(int atom) {
 
         if (aP != atom && aQ != atom) continue;
 
-<<<<<<< HEAD
         Dint->compute_shell_deriv1(P, Q);
         const auto &buffers = Dint->buffers();
 
@@ -3984,23 +3268,6 @@ std::vector<SharedMatrix> MintsHelper::ao_elec_dip_deriv1_helper(int atom) {
                                 grad[3 * mu_cart + atom_cart]->add(q + oQ, p + oP, *bufferQ);
                             }
                             bufferQ++;
-=======
-            Dint->compute_shell_deriv1(P, Q);
-            const auto &buffers = Dint->buffers();
-
-            for (int mu_cart = 0; mu_cart < 3; mu_cart++) {
-                for (int atom_cart = 0; atom_cart < 3; atom_cart++) {
-                    const double * bufferP = buffers[6*mu_cart + atom_cart];
-                    const double * bufferQ = buffers[6*mu_cart + atom_cart + 3];
-                    for (int p = 0; p < nP; p++) {
-                        for (int q = 0; q < nQ; q++) {
-                            if (atom == aP) {
-                                grad[3 * mu_cart + atom_cart]->add(p + oP, q + oQ, *bufferP++);
-                            }
-                            if (atom == aQ) {
-                                grad[3 * mu_cart + atom_cart]->add(p + oP, q + oQ, *bufferQ++);
-                            }
->>>>>>> md-cfmm
                         }
                     }
                 }
