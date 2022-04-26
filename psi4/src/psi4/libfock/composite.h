@@ -128,17 +128,30 @@ class CFMM : public SplitJKBase {
   protected:
    /// The CFMMTree object used to compute the CFMM integrals
    std::shared_ptr<CFMMTree> cfmmtree_;
+   /// An auxiliary basis set (used for density fitted near fields)
+   std::shared_ptr<BasisSet> auxiliary_ = nullptr;
    /// Builds the integrals (CFMMTree) for the DirectDFJ class
    void build_ints() override;
 
   public:
    /**
-    * @brief Construct a new CFMM object
+    * @brief Construct a new CFMM object (for non-density fitted near field builds)
     * 
-    * @param primary The primary basis set used in DirectDFJ
+    * @param primary The primary basis set used in CFMM
     * @param options The options object
     */
    CFMM(std::shared_ptr<BasisSet> primary, Options& options);
+
+   /**
+    * @brief Construct a new CFMM object (for density fitted near fields)
+    * 
+    * @param primary The primary basis set for CFMM computation
+    * @param auxiliary The auxiliary basis set used for the near field DF calculation
+    * @param options The options object
+    * 
+    */
+   CFMM(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> auxiliary, Options& options);
+
 
    /**
     * @author Andy Jiang, Andy Simmonett, David Poole, Georgia Tech, April 2022

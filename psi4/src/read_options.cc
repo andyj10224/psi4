@@ -1467,6 +1467,8 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_int("CFMM_GRAIN", 4);
         /*- CFMM Extent Tolerance (for well-separated) -*/
         options.add_double("CFMM_EXTENT_TOLERANCE", 1.0e-10);
+        /*- CFMM Near Field SCF algorithm -*/
+        options.add_str("CFMM_NF_TYPE", "DIRECT", "DIRECT DIRECT_DF");
         
         /*- The screening tolerance used for ERI/Density sparsity in the LinK algorithm -*/
         options.add_double("LINK_INTS_TOLERANCE", 1.0e-12);

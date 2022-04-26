@@ -48,7 +48,11 @@ void CompositeJK::common_init() {
     if (jtype_ == "DIRECT_DF") {
         jalgo_ = std::make_shared<DirectDFJ>(primary_, auxiliary_, options_);
     } else if (jtype_ == "CFMM") {
-        jalgo_ = std::make_shared<CFMM>(primary_, options_);
+        if (options_.get_str("CFMM_NF_TYPE") == "DIRECT") {
+            jalgo_ = std::make_shared<CFMM>(primary_, options_);
+        } else {
+            jalgo_ = std::make_shared<CFMM>(primary_, auxiliary_, options_);
+        }
     } else {
         throw PSIEXCEPTION("J BUILD TYPE " + jtype_ + " IS NOT SUPPORTED IN COMPOSITE JK!");
     }
@@ -800,8 +804,18 @@ CFMM::CFMM(std::shared_ptr<BasisSet> primary, Options& options) : SplitJKBase(pr
     build_ints();
 }
 
+CFMM::CFMM(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> auxiliary, Options& options) : SplitJKBase(primary, options) {
+    auxiliary_ = auxiliary;
+    cfmmtree_ = std::make_shared<CFMMTree>(primary_, auxiliary_, options_);
+    build_ints();
+}
+
 void CFMM::build_ints() {
-    auto factory = std::make_shared<IntegralFactory>(primary_, primary_, primary_, primary_);
+
+    auto zero = BasisSet::zero_ao_basis_set();
+    auto factory = (auxiliary_) ? std::make_shared<IntegralFactory>(auxiliary_, zero, primary_, primary_) 
+                    : std::make_shared<IntegralFactory>(primary_);
+
     ints_.push_back(std::shared_ptr<TwoBodyAOInt>(factory->eri()));
     for (int thread = 1; thread < nthread_; thread++) {
         ints_.push_back(std::shared_ptr<TwoBodyAOInt>(ints_[0]->clone()));
@@ -821,6 +835,7 @@ void CFMM::print_header() {
     if (print_) {
         outfile->Printf("  ==> Continuous Fast Multipole Method (CFMM) <==\n\n");
         outfile->Printf("    Primary Basis: %11s\n", primary_->name().c_str());
+        if (auxiliary_) outfile->Printf("    Auxiliary Basis: %11s\n", auxiliary_->name().c_str());
         outfile->Printf("    Max Multipole Order: %11d\n", cfmmtree_->lmax());
         outfile->Printf("    Max Tree Depth: %11d\n", cfmmtree_->nlevels());
         outfile->Printf("\n");

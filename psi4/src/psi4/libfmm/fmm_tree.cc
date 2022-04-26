@@ -12,6 +12,7 @@
 #include "psi4/libmints/multipoles.h"
 #include "psi4/libmints/overlap.h"
 #include "psi4/libmints/twobody.h"
+#include "psi4/lib3index/dftensor.h"
 #include "psi4/libqt/qt.h"
 #include "psi4/libpsi4util/process.h"
 #include "psi4/libpsi4util/PsiOutStream.h"
@@ -400,6 +401,12 @@ CFMMTree::CFMMTree(std::shared_ptr<BasisSet> basis, Options& options)
     if (print_ >= 2) print_out();
 }
 
+CFMMTree::CFMMTree(std::shared_ptr<BasisSet> basis, std::shared_ptr<BasisSet> auxiliary,
+                        Options& options) : CFMMTree(basis, options) {
+    auxiliary_ = auxiliary;
+    build_metric();
+}
+
 void CFMMTree::sort_leaf_boxes() {
 
     // Starting and ending leaf node box indices
@@ -604,6 +611,16 @@ void CFMMTree::calculate_shellpair_multipoles() {
 
 }
 
+void CFMMTree::build_metric() {
+    timer_on("CFMMTree: Build Metric");
+
+    auto metric = std::make_shared<FittingMetric>(auxiliary_, true);
+    metric->form_fitting_metric();
+    Jmet_ = metric->get_metric();
+
+    timer_off("CFMMTree: Build Metric");
+}
+
 void CFMMTree::calculate_multipoles(const std::vector<SharedMatrix>& D) {
     timer_on("CFMMTree: Box Multipoles");
 
@@ -671,6 +688,200 @@ void CFMMTree::compute_far_field() {
 
     timer_off("CFMMTree: Far Field Vector");
 
+}
+
+void CFMMTree::build_df_nf_J(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, 
+                          const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J) {
+    
+    timer_on("CFMMTree: DF Near Field J");
+
+    int pri_nshell = basisset_->nshell();
+    int aux_nshell = auxiliary_->nshell();
+    int nmat = D.size();
+
+    int nbf = basisset_->nbf();
+    int naux = auxiliary_->nbf();
+
+    // GammaP and GammaQ
+    SharedMatrix gamma = std::make_shared<Matrix>(nmat, naux);
+    double* gamp = gamma->pointer()[0];
+
+    int max_nbf_per_shell = 0;
+    for (int P = 0; P < pri_nshell; P++) {
+        max_nbf_per_shell = std::max(max_nbf_per_shell, basisset_->shell(P).nfunction());
+    }
+
+    // Temporary buffers for J to minimize race conditions
+    std::vector<std::vector<SharedMatrix>> JT;
+
+    for (int thread = 0; thread < nthread_; thread++) {
+        std::vector<SharedMatrix> J2;
+        for (size_t ind = 0; ind < nmat; ind++) {
+            J2.push_back(std::make_shared<Matrix>(max_nbf_per_shell, max_nbf_per_shell));
+            J2[ind]->zero();
+        }
+        JT.push_back(J2);
+    }
+
+
+    // Jpq = (pq|rs)*Drs (where rs \in pq's near-field)
+    // Jpq = (pq|Q) * (Q|P)^-1 * (P|rs) * Drs (where rs \in pq's near field)
+    for (const auto& box : sorted_leaf_boxes_) {
+        gamma->zero();
+        for (const auto& nf_box : box->near_field_boxes()) {
+            const auto& UVshells = nf_box->get_shell_pairs();
+
+#pragma omp parallel for schedule(guided)
+            for (int P = 0; P < aux_nshell; P++) {
+
+                int p_start = auxiliary_->shell_to_basis_function(P);
+                int num_p = auxiliary_->shell(P).nfunction();
+
+                int thread = 0;
+#ifdef _OPENMP
+                thread = omp_get_thread_num();
+#endif
+
+                for (const auto& UVsh : UVshells) {
+
+                    auto UV = UVsh->get_shell_pair_index();
+                    int U = UV.first;
+                    int V = UV.second;
+
+                    const GaussianShell& Ushell = basisset_->shell(U);
+                    const GaussianShell& Vshell = basisset_->shell(V);
+
+                    int u_start = Ushell.start();
+                    int num_u = Ushell.nfunction();
+
+                    int v_start = Vshell.start();
+                    int num_v = Vshell.nfunction();
+
+                    ints[thread]->compute_shell(P, 0, U, V);
+
+                    const double* buffer = ints[thread]->buffer();
+
+                    double prefactor = 2.0;
+                    if (U == V) prefactor *= 0.5;
+
+                    for (int i = 0; i < nmat; i++) {
+                        double** Dp = D[i]->pointer();
+                        double *Puv = const_cast<double *>(buffer);
+
+                        /*
+                        std::vector<double> Dbuff(num_u * num_v, 0.0);
+                        for (int u = u_start; u < u_start + num_u; u++) {
+                            int du = u - u_start;
+                            for (int v = v_start; v < v_start + num_v; v++) {
+                                int dv = v - v_start;
+                                Dbuff[du * num_v + dv] = Dp[u][v];
+                            }
+                        }
+                        */
+
+                        for (int p = p_start; p < p_start + num_p; p++) {
+                            int dp = p - p_start;
+                            for (int u = u_start; u < u_start + num_u; u++) {
+                                int du = u - u_start;
+                                for (int v = v_start; v < v_start + num_v; v++) {
+                                    int dv = v - v_start;
+
+                                    gamp[i * naux + p] += prefactor * (*Puv) * Dp[u][v];
+                                    Puv++;
+                                }
+                            }
+                        }
+
+                        // C_DGEMV('N', num_p, num_u * num_v, prefactor, Puv, num_u * num_v, Dbuff.data(), 1, 1.0, &(gamp[i * naux + p_start]), 1);
+                    }
+                }
+            }
+        }
+
+        // Solve for gammaQ, (P|Q) * gammaQ = gammaP
+        SharedMatrix Jmet_copy = Jmet_->clone();
+
+        std::vector<int> ipiv(naux);
+        C_DGESV(naux, nmat, Jmet_copy->pointer()[0], naux, ipiv.data(), gamp, naux);
+
+        std::vector<std::shared_ptr<ShellPair>>& UVshells2 = box->get_shell_pairs();
+
+#pragma omp parallel for schedule(guided)
+        for (int uvidx = 0; uvidx < UVshells2.size(); uvidx++) {
+
+            const auto& UVsh = UVshells2[uvidx];
+            auto UV = UVsh->get_shell_pair_index();
+            int U = UV.first;
+            int V = UV.second;
+
+            const GaussianShell& Ushell = basisset_->shell(U);
+            const GaussianShell& Vshell = basisset_->shell(V);
+
+            int u_start = Ushell.start();
+            int num_u = Ushell.nfunction();
+
+            int v_start = Vshell.start();
+            int num_v = Vshell.nfunction();
+
+            double prefactor = 2.0;
+            if (U == V) prefactor *= 0.5;
+
+            int thread = 0;
+#ifdef _OPENMP
+            thread = omp_get_thread_num();
+#endif
+
+            for (int Q = 0; Q < aux_nshell; Q++) {
+
+                int q_start = auxiliary_->shell_to_basis_function(Q);
+                int num_q = auxiliary_->shell(Q).nfunction();
+
+                ints[thread]->compute_shell(Q, 0, U, V);
+                const double* buffer = ints[thread]->buffer();
+
+                for (int i = 0; i < nmat; i++) {
+                    double* JTp = JT[thread][i]->pointer()[0];
+                    double* Quv = const_cast<double *>(buffer);
+
+                    for (int q = q_start; q < q_start + num_q; q++) {
+                        int dq = q - q_start;
+                        for (int u = u_start; u < u_start + num_u; u++) {
+                            int du = u - u_start;
+                            for (int v = v_start; v < v_start + num_v; v++) {
+                                int dv = v - v_start;
+
+                                JTp[du * num_v + dv] += prefactor * (*Quv) * gamp[i * naux + q];
+                                Quv++;
+                            }
+                        }
+                    }
+                        // C_DGEMV('T', num_q, num_u * num_v, prefactor, Quv, num_u * num_v, &(gamp[i * naux + q_start]), 1, 1.0, JTp, 1);
+                }
+            }
+
+            // => Stripeout <= //
+
+            for (int i = 0; i < nmat; i++) {
+                double* JTp = JT[thread][i]->pointer()[0];
+                double** Jp = J[i]->pointer();
+                for (int u = u_start; u < u_start + num_u; u++) {
+                    int du = u - u_start;
+                    for (int v = v_start; v < v_start + num_v; v++) {
+                        int dv = v - v_start;
+
+                        Jp[u][v] += JTp[du * num_v + dv];
+                    }
+                }
+                JT[thread][i]->zero();
+            }
+        }
+    }
+
+    for (auto& Jmat : J) {
+        Jmat->hermitivitize();
+    }
+
+    timer_off("CFMMTree: DF Near Field J");
 }
 
 void CFMMTree::build_nf_J(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, 
@@ -926,8 +1137,10 @@ void CFMMTree::build_J(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints,
     }
 
     // Update the densities
-    for (int thread = 0; thread < nthread_; thread++) {
-        ints[thread]->update_density(D);
+    if (!auxiliary_) {
+        for (int thread = 0; thread < nthread_; thread++) {
+            ints[thread]->update_density(D);
+        }
     }
 
     // Compute multipoles and far field
@@ -935,7 +1148,8 @@ void CFMMTree::build_J(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints,
     compute_far_field();
 
     // Compute near field J and far field J
-    build_nf_J(ints, D, J);
+    if (!auxiliary_) build_nf_J(ints, D, J);
+    else build_df_nf_J(ints, D, J);
     build_ff_J(J);
 
     // Hermitivitize J matrix afterwards

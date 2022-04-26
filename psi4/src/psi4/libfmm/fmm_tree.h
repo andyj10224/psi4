@@ -192,6 +192,13 @@ class PSI_API CFMMTree {
       // List of all the significant shell-pairs in the molecule
       std::vector<std::shared_ptr<ShellPair>> shell_pairs_;
 
+      // => Density Fitted Near Field <= //
+
+      /// The metrix used in the DF algorithm J_PQ = (P|Q)
+      SharedMatrix Jmet_;
+      // The auxiliary basis set (for density-fitted near field builds)
+      std::shared_ptr<BasisSet> auxiliary_ = nullptr;
+
       // Number of Levels in the CFMM Tree
       int nlevels_;
       // Maximum Multipole Angular Momentum
@@ -248,6 +255,8 @@ class PSI_API CFMMTree {
       void setup_local_far_field_task_pairs();
       // Calculate ALL the shell-pair multipoles at each leaf box
       void calculate_shellpair_multipoles();
+      // Build the metric for DirectDFJ
+      void build_metric();
 
       // => Functions called ONCE per iteration <= //
 
@@ -255,8 +264,11 @@ class PSI_API CFMMTree {
       void calculate_multipoles(const std::vector<SharedMatrix>& D);
       // Helper method to compute far field
       void compute_far_field();
-      // Build near-field J (Direct SCF)
+      // Build near-field J (Direct J Algorithm)
       void build_nf_J(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, 
+                      const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J);
+      // Build near-field J (Direct DF J)
+      void build_df_nf_J(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, 
                       const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J);
       // Build far-field J (long-range multipole interactions)
       void build_ff_J(std::vector<SharedMatrix>& J);
@@ -268,6 +280,8 @@ class PSI_API CFMMTree {
     public:
       // Constructor (automatically sets up the tree)
       CFMMTree(std::shared_ptr<BasisSet> basis, Options& options);
+      // Constructor for DF near fields
+      CFMMTree(std::shared_ptr<BasisSet> basis, std::shared_ptr<BasisSet> auxiliary, Options& options);
 
       // Build the J matrix of CFMMTree
       void build_J(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints, 
