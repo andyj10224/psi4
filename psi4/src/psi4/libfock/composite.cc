@@ -182,10 +182,6 @@ void DirectDFJ::build_G_component(const std::vector<SharedMatrix>& D, std::vecto
 
     timer_on("DirectDFJ: J");
 
-    //for (auto& integral : ints_) {
-    //    integral->update_density(D);
-    //}
-
     // => Zeroing <= //
 
     for (auto& Jmat : J) {
@@ -204,30 +200,23 @@ void DirectDFJ::build_G_component(const std::vector<SharedMatrix>& D, std::vecto
     // => Get significant primary shells <=
     const auto& shell_pairs = ints_[0]->shell_pairs();
 
-    std::vector<std::vector<int>> shell_partners(pri_nshell);
-    for (const auto& pair : shell_pairs) {
-        int U = pair.first;
-        int V = pair.second;
-        shell_partners[U].push_back(V);
-    }
-
     // maximum values of Density matrix for shell pair block UV
     // TODO: Integrate this more smoothly into current density screening framework
     Matrix D_max(pri_nshell, pri_nshell);
     auto D_maxp = D_max.pointer();
 
-    for(size_t U = 0; U < pri_nshell; U++) {
+    for (size_t U = 0; U < pri_nshell; U++) {
         int u_start = primary_->shell_to_basis_function(U);
         int num_u = primary_->shell(U).nfunction();
 	
-	for(size_t V = 0; V < pri_nshell; V++) {
+	    for (size_t V = 0; V < pri_nshell; V++) {
             int v_start = primary_->shell_to_basis_function(V);
             int num_v = primary_->shell(V).nfunction();
             
-	    for(size_t i = 0; i < D.size(); i++) {
+	        for (size_t i = 0; i < D.size(); i++) {
                 auto Dp = D[i]->pointer();
-                for(size_t u = u_start; u < u_start + num_u; u++) {
-                    for(size_t v = v_start; v < v_start + num_v; v++) {
+                for (size_t u = u_start; u < u_start + num_u; u++) {
+                    for (size_t v = v_start; v < v_start + num_v; v++) {
                         D_maxp[U][V] = std::max(D_maxp[U][V], std::abs(Dp[u][v]));
                     }
                 }
@@ -277,8 +266,8 @@ void DirectDFJ::build_G_component(const std::vector<SharedMatrix>& D, std::vecto
             int U = UV.first;
             int V = UV.second;
        
-	    double screen_val = D_maxp[U][V] * D_maxp[U][V] * Jmet_max_[P] * ints_[thread]->shell_pair_value(U,V);
-	    if (screen_val < cutoff_*cutoff_) continue;
+	        double screen_val = D_maxp[U][V] * D_maxp[U][V] * Jmet_max_[P] * ints_[thread]->shell_pair_value(U, V);
+	        if (screen_val < cutoff_ * cutoff_) continue;
  
             int u_start = primary_->shell_to_basis_function(U);
             int num_u = primary_->shell(U).nfunction();
@@ -343,38 +332,38 @@ void DirectDFJ::build_G_component(const std::vector<SharedMatrix>& D, std::vecto
     }
     
 #pragma omp parallel for num_threads(nthread_) schedule(dynamic)
-    for (int U = 0; U < pri_nshell; U++) {
+    for (int UV = 0; UV < shell_pairs.size(); UV++) {
+        int U = shell_pairs[UV].first;
+        int V = shell_pairs[UV].second;
 
         int u_start = primary_->shell_to_basis_function(U);
         int num_u = primary_->shell(U).nfunction();
+
+        int v_start = primary_->shell_to_basis_function(V);
+        int num_v = primary_->shell(V).nfunction();
+
+        double prefactor = 2.0;
+        if (U == V) prefactor *= 0.5;
 
         int thread = 0;
 #ifdef _OPENMP
         thread = omp_get_thread_num();
 #endif
 
-        for (const int V : shell_partners[U]) {
-
-            int v_start = primary_->shell_to_basis_function(V);
-            int num_v = primary_->shell(V).nfunction();
-
-            double prefactor = 2.0;
-            if (U == V) prefactor *= 0.5;
-
-            for (int Q = 0; Q < aux_nshell; Q++) {
-                double screen_val = gamp_max[Q] * gamp_max[Q] * Jmet_max_[Q] * ints_[thread]->shell_pair_value(U,V);
-	        if (screen_val < cutoff_*cutoff_) continue;
+        for (int Q = 0; Q < aux_nshell; Q++) {
+            double screen_val = gamp_max[Q] * gamp_max[Q] * Jmet_max_[Q] * ints_[thread]->shell_pair_value(U,V);
+	        if (screen_val < cutoff_ * cutoff_) continue;
                 
-		int q_start = auxiliary_->shell_to_basis_function(Q);
-                int num_q = auxiliary_->shell(Q).nfunction();
+		    int q_start = auxiliary_->shell_to_basis_function(Q);
+            int num_q = auxiliary_->shell(Q).nfunction();
 
-                ints_[thread]->compute_shell(Q, 0, U, V);
+            ints_[thread]->compute_shell(Q, 0, U, V);
 
-                const double* buffer = ints_[thread]->buffer();
+            const double* buffer = ints_[thread]->buffer();
 
-                for (int i = 0; i < D.size(); i++) {
-                    double* JTp = JT[thread][i]->pointer()[0];
-                    double* Quv = const_cast<double *>(buffer);
+            for (int i = 0; i < D.size(); i++) {
+                double* JTp = JT[thread][i]->pointer()[0];
+                double* Quv = const_cast<double *>(buffer);
 
                     /*
                     for (int q = q_start; q < q_start + num_q; q++) {
@@ -389,25 +378,23 @@ void DirectDFJ::build_G_component(const std::vector<SharedMatrix>& D, std::vecto
                         }
                     }
                     */
-                    C_DGEMV('T', num_q, num_u * num_v, prefactor, (double *) Quv, num_u * num_v, &(gamp[i * naux + q_start]), 1, 1.0, JTp, 1);
+                C_DGEMV('T', num_q, num_u * num_v, prefactor, (double *) Quv, num_u * num_v, &(gamp[i * naux + q_start]), 1, 1.0, JTp, 1);
+            }
+        }
+
+        // => Stripeout <= //
+
+        for (int i = 0; i < D.size(); i++) {
+            double* JTp = JT[thread][i]->pointer()[0];
+            double** Jp = J[i]->pointer();
+            for (int u = u_start; u < u_start + num_u; u++) {
+                int du = u - u_start;
+                for (int v = v_start; v < v_start + num_v; v++) {
+                    int dv = v - v_start;
+                    Jp[u][v] += JTp[du * num_v + dv];
                 }
             }
-
-            // => Stripeout <= //
-
-            for (int i = 0; i < D.size(); i++) {
-                double* JTp = JT[thread][i]->pointer()[0];
-                double** Jp = J[i]->pointer();
-                for (int u = u_start; u < u_start + num_u; u++) {
-                    int du = u - u_start;
-                    for (int v = v_start; v < v_start + num_v; v++) {
-                        int dv = v - v_start;
-
-                        Jp[u][v] += JTp[du * num_v + dv];
-                    }
-                }
-                JT[thread][i]->zero();
-            }
+            JT[thread][i]->zero();
         }
     }
 
@@ -1080,18 +1067,18 @@ void LocalDFJ::build_rho_a_L(const std::vector<SharedMatrix>& D) {
     Matrix D_max(pri_nshell, pri_nshell);
     auto D_maxp = D_max.pointer();
 
-    for(size_t U = 0; U < pri_nshell; U++) {
+    for (size_t U = 0; U < pri_nshell; U++) {
         int u_start = primary_->shell_to_basis_function(U);
         int num_u = primary_->shell(U).nfunction();
 	
-	for(size_t V = 0; V < pri_nshell; V++) {
+	    for (size_t V = 0; V < pri_nshell; V++) {
             int v_start = primary_->shell_to_basis_function(V);
             int num_v = primary_->shell(V).nfunction();
             
-	    for(size_t i = 0; i < D.size(); i++) {
+	        for (size_t i = 0; i < D.size(); i++) {
                 auto Dp = D[i]->pointer();
-                for(size_t u = u_start; u < u_start + num_u; u++) {
-                    for(size_t v = v_start; v < v_start + num_v; v++) {
+                for (size_t u = u_start; u < u_start + num_u; u++) {
+                    for (size_t v = v_start; v < v_start + num_v; v++) {
                         D_maxp[U][V] = std::max(D_maxp[U][V], std::abs(Dp[u][v]));
                     }
                 }
@@ -1116,8 +1103,8 @@ void LocalDFJ::build_rho_a_L(const std::vector<SharedMatrix>& D) {
                 int U = UV_a / pri_nshell;
                 int V = UV_a % pri_nshell;
 
-    		double screen_val = D_maxp[U][V] * D_maxp[U][V] * Jmet_max_[L] * ints_[thread]->shell_pair_value(U,V);
-                if (screen_val < cutoff_*cutoff_) continue;
+    		    double screen_val = D_maxp[U][V] * D_maxp[U][V] * Jmet_max_[L] * ints_[thread]->shell_pair_value(U,V);
+                if (screen_val < cutoff_ * cutoff_) continue;
 
                 double prefactor = (U == V) ? 1.0 : 2.0;
 
@@ -1309,27 +1296,21 @@ void LocalDFJ::build_G_component(const std::vector<SharedMatrix>& D, std::vector
     build_J_L(D);
     build_I_KX();
 
-    // rho_tilde_K_[0]->print_out();
-    // J_tilde_L_[0]->print_out();
-    // J_L_[0]->print_out();
-
     // Contraction in Equation 23
     df_cfmm_tree_->df_set_contraction(ContractionType::DF_PRI_AUX);
     df_cfmm_tree_->build_J(ints_, rho_tilde_K_, J, Jmet_max_);
-
-    // J[0]->print_out();
 
     // set up I_KX_max for screening purposes
     SharedMatrix I_KX_max = std::make_shared<Matrix>(natom, aux_nshell);
     I_KX_max->zero();
     auto I_KX_maxp = I_KX_max->pointer();
 
-    for(size_t atom = 0; atom < natom; atom++) {
+    for (size_t atom = 0; atom < natom; atom++) {
         for (const auto K : atom_to_aux_shells_[atom]) { 
-            for(size_t i = 0; i < D.size(); i++) {
+            for (size_t i = 0; i < D.size(); i++) {
                 double* IKXp = I_KX_[atom][i]->pointer()[0];
             	
-		int k_off = atom_aux_shell_function_offset_[atom][K];
+		        int k_off = atom_aux_shell_function_offset_[atom][K];
                 int num_k = auxiliary_->shell(K).nfunction();
                 for (int k = k_off; k < k_off + num_k; k++) {
                     I_KX_maxp[atom][K] = std::max(I_KX_maxp[atom][K], std::abs(IKXp[k]));
@@ -1357,7 +1338,7 @@ void LocalDFJ::build_G_component(const std::vector<SharedMatrix>& D, std::vector
                 int V = UV_a % pri_nshell;
 
     		double screen_val = I_KX_maxp[atom][K] * I_KX_maxp[atom][K] * Jmet_max_[K] * ints_[thread]->shell_pair_value(U,V);
-		if (screen_val < cutoff_*cutoff_) continue;
+		    if (screen_val < cutoff_ * cutoff_) continue;
 
                 int u_start = primary_->shell(U).start();
                 int num_u = primary_->shell(U).nfunction();
@@ -1392,8 +1373,6 @@ void LocalDFJ::build_G_component(const std::vector<SharedMatrix>& D, std::vector
     for (const auto& Jmat : J) {
         Jmat->hermitivitize();
     }
-
-    // J[0]->print_out();
 
     timer_off("LocalDFJ: J");
 
