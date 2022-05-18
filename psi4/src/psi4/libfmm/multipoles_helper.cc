@@ -420,6 +420,7 @@ std::shared_ptr<RealSolidHarmonics> RealSolidHarmonics::copy() {
 void RealSolidHarmonics::add(const RealSolidHarmonics& rsh) {
     for (int l = 0; l <= lmax_; l++) {
         for (int mu = 0; mu < 2*l+1; mu++) {
+#pragma omp atomic
             Ylm_[l][mu] += rsh.Ylm_[l][mu];
         }
     }
