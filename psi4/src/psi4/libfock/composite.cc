@@ -927,10 +927,12 @@ void DFCFMM::print_header() {
 }
 
 LocalDFJ::LocalDFJ(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> auxiliary, 
-               Options& options) : r0_(4.0), r1_(5.0), DirectDFJ(primary, auxiliary, options) {
+               Options& options) : DirectDFJ(primary, auxiliary, options) {
 
     df_cfmm_tree_ = std::make_shared<CFMMTree>(primary_, auxiliary_, options_);
     molecule_ = primary_->molecule();
+    r0_ = options_.get_double("LOCAL_DF_R0");
+    r1_ = options_.get_double("LOCAL_DF_R1");
 
     setup_local_regions();
     build_atomic_inverse();
