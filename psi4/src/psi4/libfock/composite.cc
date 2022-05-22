@@ -59,6 +59,8 @@ void CompositeJK::common_init() {
 
     if (ktype_ == "LINK") {
         kalgo_ = std::make_shared<LinK>(primary_, options_);
+    } else if (ktype_ == "LOCAL_DF") {
+        kalgo_ = std::make_shared<LocalDFK>(primary_, auxiliary_, options_);
     } else {
         throw PSIEXCEPTION("K BUILD TYPE " + ktype_ + " IS NOT SUPPORTED IN COMPOSITE JK!");
     }
@@ -1002,7 +1004,7 @@ void LocalDFJ::setup_local_regions() {
         int Ucenter = primary_->shell(U).ncenter();
         int Vcenter = primary_->shell(V).ncenter();
 
-        atom_to_pri_shells_[Ucenter].push_back(U * pri_nshell + V);      
+        atom_to_pri_shells_[Ucenter].push_back(U * pri_nshell + V);
     }
 }
 
@@ -1387,6 +1389,255 @@ void LocalDFJ::print_header() {
         outfile->Printf("    Auxiliary Basis: %11s\n", auxiliary_->name().c_str());
         outfile->Printf("    Max Multipole Order: %11d\n", df_cfmm_tree_->lmax());
         outfile->Printf("    Max Tree Depth: %11d\n", df_cfmm_tree_->nlevels());
+        outfile->Printf("\n");
+    }
+}
+
+LocalDFK::LocalDFK(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> auxiliary, Options& options) : LocalDFJ(primary, auxiliary, options) {};
+
+void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& K) {
+
+    timer_on("LocalDFK: K");
+
+    for (auto& Kmat : K) {
+        Kmat->zero();
+    }
+
+    int nmat = D.size();
+    int nbf = primary_->nbf();
+    int nshell = primary_->nshell();
+    int natom = molecule_->natom();
+
+    std::vector<std::vector<int>> S_junction(nshell);
+    std::vector<std::vector<int>> D_junction(nshell);
+
+    // Used for density screening
+    std::vector<std::vector<double>> shell_pair_max_density(nmat, std::vector<double>(nshell * nshell));
+
+#pragma omp parallel for
+    for (int M = 0; M < nshell; M++) {
+        for (int N = M; N < nshell; N++) {
+            int m_start = primary_->shell(M).function_index();
+            int num_m = primary_->shell(M).nfunction();
+
+            int n_start = primary_->shell(N).function_index();
+            int num_n = primary_->shell(N).nfunction();
+
+            for (int i = 0; i < D.size(); i++) {
+                double** Dp = D[i]->pointer();
+                double max_dens = 0.0;
+                for (int m = m_start; m < m_start + num_m; m++) {
+                    for (int n = n_start; n < n_start + num_n; n++) {
+                        max_dens = std::max(max_dens, std::abs(Dp[m][n]));
+                    }
+                }
+                shell_pair_max_density[i][M * nshell + N] = max_dens;
+                if (M != N) shell_pair_max_density[i][N * nshell + M] = max_dens;
+            }
+        }
+    }
+
+    const auto& shell_pairs = ints_[0]->shell_pairs_ket();
+
+    // Set up overlap sparsity information
+    for (const auto& UV : shell_pairs) {
+        int U = UV.first;
+        int V = UV.second;
+        S_junction[U].push_back(V);
+        if (U != V) S_junction[V].push_back(U);
+    }
+
+    // Set up density sparsity information
+    for (int U = 0; U < nshell; U++) {
+        for (int V = 0; V < nshell; V++) {
+
+            double UVmax = 0.0;
+            for (int i = 0; i < nmat; i++) {
+                UVmax = std::max(UVmax, shell_pair_max_density[i][U * nshell + V]);
+            }
+
+            if (UVmax >= cutoff_) {
+                D_junction[U].push_back(V);
+            }
+        }
+    }
+
+    std::vector<std::unordered_set<int>> atom_to_VS(natom);
+    std::vector<int> VS_size_per_atom(natom);
+    std::vector<std::unordered_map<int, int>> VS_to_starting_index_per_atom(natom);
+    std::vector<std::unordered_set<int>> atom_to_UL(natom);
+
+    for (const auto& UV : shell_pairs) {
+        int U = UV.first;
+        int V = UV.second;
+
+        int Ucenter = primary_->shell(U).ncenter();
+        int Vcenter = primary_->shell(V).ncenter();
+
+        atom_to_VS[Ucenter].emplace(U * nshell + V);
+        atom_to_VS[Vcenter].emplace(V * nshell + U);
+    }
+
+    for (int atom = 0; atom < natom; atom++) {
+
+        int dVS = 0;
+        for (const int& VS : atom_to_VS[atom]) {
+            int V = VS / nshell;
+            int S = VS % nshell;
+
+            int v_start = primary_->shell(V).start();
+            int num_v = primary_->shell(V).nfunction();
+
+            int s_start = primary_->shell(S).start();
+            int num_s = primary_->shell(S).nfunction();
+
+            VS_to_starting_index_per_atom[atom][V * nshell + S] = dVS;
+
+            for (const int& L : D_junction[S]) {
+                for (const int& U : S_junction[L]) {
+                    atom_to_UL[atom].emplace(U * nshell + L);
+                }
+            }
+            dVS += num_v * num_s;
+        }
+        VS_size_per_atom[atom] = dVS;
+    }
+    
+    for (int atom = 0; atom < natom; atom++) {
+        int atom_naux = naux_per_atom_[atom];
+        int atom_nvs = VS_size_per_atom[atom];
+
+        std::vector<double> Pvs(atom_naux * atom_nvs);
+
+#pragma omp parallel for
+        for (int Pind = 0; Pind < atom_to_aux_shells_[atom].size(); Pind++) {
+
+            int thread = 0;
+#ifdef _OPENMP
+            thread = omp_get_thread_num();
+#endif
+
+            int P = atom_to_aux_shells_[atom][Pind];
+            int p_start = auxiliary_->shell(P).start();
+            int num_p = auxiliary_->shell(P).nfunction();
+            int p_off = atom_aux_shell_function_offset_[atom][P];
+            double p_bump = atom_aux_shell_bump_value_[atom][P];
+
+            for (const int& VS : atom_to_VS[atom]) {
+                int V = VS / nshell;
+                int S = VS % nshell;
+
+                int VSstart = VS_to_starting_index_per_atom[atom][V * nshell + S];
+
+                int v_start = primary_->shell(V).start();
+                int num_v = primary_->shell(V).nfunction();
+
+                int s_start = primary_->shell(S).start();
+                int num_s = primary_->shell(S).nfunction();
+
+                ints_[thread]->compute_shell(P, 0, V, S);
+                double* buffer = const_cast<double *>(ints_[thread]->buffer());
+
+                for (int dp = 0; dp < num_p; dp++) {
+                    for (int dv = 0; dv < num_v; dv++) {
+                        for (int ds = 0; ds < num_s; ds++) {
+                            Pvs[(VSstart + dv * num_s + ds) * atom_naux + (p_off + dp)] = p_bump * (*buffer);
+                            (buffer)++;
+                        } // end ds
+                    } // end dv
+                } // end dp
+            }
+        }
+
+        SharedMatrix JXcopy = J_X_[atom]->clone();
+        double* JXcp = JXcopy->pointer()[0];
+
+        // Linear solve (Pvs is now Qvs)
+        std::vector<int> ipiv(atom_naux);
+        C_DGESV(atom_naux, atom_nvs, JXcp, atom_naux, ipiv.data(), Pvs.data(), atom_naux);
+
+#pragma omp parallel for
+        for (int Qind = 0; Qind < atom_to_aux_shells_[atom].size(); Qind++) {
+
+            int Q = atom_to_aux_shells_[atom][Qind];
+
+            int q_start = auxiliary_->shell(Q).start();
+            int num_q = auxiliary_->shell(Q).nfunction();
+            int q_off = atom_aux_shell_function_offset_[atom][Q];
+            double q_bump = atom_aux_shell_bump_value_[atom][Q];
+
+            int thread = 0;
+#ifdef _OPENMP
+            thread = omp_get_thread_num();
+#endif
+
+            for (const int& UL : atom_to_UL[atom]) {
+                int U = UL / nshell;
+                int L = UL % nshell;
+
+                int u_start = primary_->shell(U).start();
+                int num_u = primary_->shell(U).nfunction();
+
+                int l_start = primary_->shell(L).start();
+                int num_l = primary_->shell(L).nfunction();
+
+                ints_[thread]->compute_shell(Q, 0, U, L);
+                const double* buffer = ints_[thread]->buffer();
+
+                for (const int& VS : atom_to_VS[atom]) {
+                    int V = VS / nshell;
+                    int S = VS % nshell;
+
+                    int VSstart = VS_to_starting_index_per_atom[atom][V * nshell + S];
+
+                    int v_start = primary_->shell(V).start();
+                    int num_v = primary_->shell(V).nfunction();
+
+                    int s_start = primary_->shell(S).start();
+                    int num_s = primary_->shell(S).nfunction();
+                    
+                    double** Dp = D[0]->pointer();
+                    double** Kp = K[0]->pointer();
+
+                    for (int dq = 0; dq < num_q; dq++) {
+                        for (int dv = 0; dv < num_v; dv++) {
+                            for (int dl = 0; dl < num_l; dl++) {
+                                double Qpvl = 0.0;
+                                for (int ds = 0; ds < num_s; ds++) {
+                                    Qpvl += q_bump * Pvs[(VSstart + dv * num_s + ds) * atom_naux + (q_off + dq)] * 
+                                            Dp[l_start + dl][s_start + ds];
+                                } // end dl
+                                
+                                for (int du = 0; du < num_u; du++) {
+#pragma omp atomic
+                                    Kp[u_start + du][v_start + dv] += Qpvl * buffer[dq * num_u * num_l + du * num_l + dl];
+                                } // end du
+                            } // end ds
+                        } // end dv
+                    } // end dq
+
+                } // end VS
+
+            } // end UL
+
+        } // end Q
+        
+
+    } // end atom
+
+    for (auto& Kmat : K) {
+        Kmat->hermitivitize();
+    }
+
+    timer_off("LocalDFK: K");
+
+}
+
+void LocalDFK::print_header() {
+    if (print_) {
+        outfile->Printf("  ==> Direct Local Density Fitted K <==\n\n");
+        outfile->Printf("    Primary Basis: %11s\n", primary_->name().c_str());
+        outfile->Printf("    Auxiliary Basis: %11s\n", auxiliary_->name().c_str());
         outfile->Printf("\n");
     }
 }

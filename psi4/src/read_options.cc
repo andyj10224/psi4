@@ -178,7 +178,7 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
     /*- What algorithm to use for the SCF computation. See Table :ref:`SCF
     Convergence & Algorithm <table:conv_scf>` for default algorithm for
     different calculation types. -*/
-    options.add_str("SCF_TYPE", "PK", "DIRECT DF MEM_DF DISK_DF PK OUT_OF_CORE CD GTFOCK DIRECT_DF_LINK LINEAR DF_LINEAR LOCAL_DF");
+    options.add_str("SCF_TYPE", "PK", "DIRECT DF MEM_DF DISK_DF PK OUT_OF_CORE CD GTFOCK DIRECT_DF_LINK LINEAR DF_LINEAR LOCAL_DF LOCAL_DF2");
     /*- Algorithm to use for MP2 computation.
     See :ref:`Cross-module Redundancies <table:managedmethods>` for details. -*/
     options.add_str("MP2_TYPE", "DF", "DF CONV CD");

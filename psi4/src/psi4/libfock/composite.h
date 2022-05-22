@@ -267,13 +267,41 @@ class LocalDFJ : public DirectDFJ {
       *
       * @brief Builds the J matrix using LocalDF Algorithm combined with CFMM (Sodt 2006)
       * 
-      * @param D The list of AO density matrixes to contract to form the J matrix (1 for RHF, 2 for UHF/ROHF)
+      * @param D The list of AO density matrices to contract to form the J matrix (1 for RHF, 2 for UHF/ROHF)
       * @param J The list of AO J matrices to build (Same size as D)
       */
       void build_G_component(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& J) override;
 
     /**
       * @brief Prints information regarding DFCFMM run
+      * 
+      */
+      void print_header() override;
+};
+
+class LocalDFK : public LocalDFJ {
+  public:
+    /**
+      * @brief Construct a new LocalDFJ object
+      * 
+      * @param primary The primary basis set used in DFCFMM
+      * @param auxiliary The auxiliary basis set used in DFCFMM
+      * @param options The options object
+      */
+      LocalDFK(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> auxiliary, Options& options);
+
+    /**
+      * @author Andy Jiang and David Poole, Georgia Tech, May 2022
+      *
+      * @brief Builds the K matrix using LADF Algorithm (Sodt 2008)
+      * 
+      * @param D The list of AO density matrices to contract to form the J matrix (1 for RHF, 2 for UHF/ROHF)
+      * @param J The list of AO J matrices to build (Same size as D)
+      */
+      void build_G_component(const std::vector<SharedMatrix>& D, std::vector<SharedMatrix>& K) override;
+
+    /**
+      * @brief Prints information regarding LocalDFK run
       * 
       */
       void print_header() override;

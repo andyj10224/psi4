@@ -203,6 +203,12 @@ std::shared_ptr<JK> JK::build_JK(std::shared_ptr<BasisSet> primary, std::shared_
         if (!options["INCFOCK"].has_changed()) jk->set_incfock(true);
 
         return std::shared_ptr<JK>(jk);
+    } else if (jk_type == "LOCAL_DF2") {
+        CompositeJK* jk = new CompositeJK(primary, auxiliary, "LOCAL_DF", "LOCAL_DF", options);
+        // Composite JK algorithms should use Incremental Fock build by default
+        if (!options["INCFOCK"].has_changed()) jk->set_incfock(true);
+
+        return std::shared_ptr<JK>(jk);
     } else {  // otherwise it has already been set
         return build_JK(primary, auxiliary, options, options.get_str("SCF_TYPE"));
     }
