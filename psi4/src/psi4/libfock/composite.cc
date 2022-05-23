@@ -1462,60 +1462,92 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
         }
     }
 
-    std::vector<std::unordered_set<int>> atom_to_VS(natom);
-    std::vector<int> VS_size_per_atom(natom);
-    std::vector<std::unordered_map<int, int>> VS_to_starting_index_per_atom(natom);
-    std::vector<std::unordered_set<int>> atom_to_UL(natom);
+    // Local DF K build algorithm
+    // K_mn += (ml|Q) * (Q|P)^{-1} * (P|ns) * D_ls
+    // To localize this: B -> (P, Q, n)
+    // n -> s (by overlap), s -> l (by density), l -> m (by overlap)
 
-    for (const auto& UV : shell_pairs) {
-        int U = UV.first;
-        int V = UV.second;
+    // Algorithm steps to exploit sparsity:
+    // B_Pnl = (P|ns) * D_ls
+    // B_Qnl = (Q|P)^{-1} * B_Pnl
+    // K_mn += (ml|Q) * B_Qnl
+    // Hermitivitize K
 
-        int Ucenter = primary_->shell(U).ncenter();
-        int Vcenter = primary_->shell(V).ncenter();
+    std::vector<int> num_l_per_atom(natom);
+    std::vector<int> num_n_per_atom(natom);
 
-        atom_to_VS[Ucenter].emplace(U * nshell + V);
-        atom_to_VS[Vcenter].emplace(V * nshell + U);
+    std::vector<std::unordered_set<int>> atom_to_NS(natom);
+    std::vector<std::unordered_set<int>> atom_to_N(natom);
+    std::vector<std::unordered_set<int>> atom_to_L(natom);
+    std::vector<std::unordered_set<int>> atom_to_ML(natom);
+    std::vector<std::unordered_map<int, std::unordered_set<int>>> atom_L_to_N(natom);
+
+    std::vector<std::unordered_map<int, int>> atom_N_shell_function_offset(natom);
+    std::vector<std::unordered_map<int, int>> atom_L_shell_function_offset(natom);
+
+    for (const auto& NS : shell_pairs) {
+        int N = NS.first;
+        int S = NS.second;
+
+        int Ncenter = primary_->shell(N).ncenter();
+        int Scenter = primary_->shell(S).ncenter();
+
+        atom_to_NS[Ncenter].emplace(N * nshell + S);
+        atom_to_NS[Scenter].emplace(S * nshell + N);
     }
 
     for (int atom = 0; atom < natom; atom++) {
+        for (const int& NS : atom_to_NS[atom]) {
+            int N = NS / nshell;
+            int S = NS % nshell;
+            atom_to_N[atom].emplace(N);
 
-        int dVS = 0;
-        for (const int& VS : atom_to_VS[atom]) {
-            int V = VS / nshell;
-            int S = VS % nshell;
+            for (const int& L: D_junction[S]) {
+                atom_to_L[atom].emplace(L);
+                if (!atom_L_to_N[atom].count(L)) {
+                    atom_L_to_N[atom][L] = std::unordered_set<int>();
+                }
+                atom_L_to_N[atom][L].emplace(N);
 
-            int v_start = primary_->shell(V).start();
-            int num_v = primary_->shell(V).nfunction();
-
-            int s_start = primary_->shell(S).start();
-            int num_s = primary_->shell(S).nfunction();
-
-            VS_to_starting_index_per_atom[atom][V * nshell + S] = dVS;
-
-            for (const int& L : D_junction[S]) {
-                for (const int& U : S_junction[L]) {
-                    atom_to_UL[atom].emplace(U * nshell + L);
+                for (const int& M: S_junction[L]) {
+                    atom_to_ML[atom].emplace(M * nshell + L);
                 }
             }
-            dVS += num_v * num_s;
         }
-        VS_size_per_atom[atom] = dVS;
+
+        size_t n_per_atom = 0;
+        for (const int& N : atom_to_N[atom]) {
+            int num_n = primary_->shell(N).nfunction();
+
+            atom_N_shell_function_offset[atom][N] = n_per_atom;
+            n_per_atom += num_n;
+        }
+        num_n_per_atom[atom] = n_per_atom;
+
+        size_t l_per_atom = 0;
+        for (const int& L : atom_to_L[atom]) {
+            int num_l = primary_->shell(L).nfunction();
+
+            atom_L_shell_function_offset[atom][L] = l_per_atom;
+            l_per_atom += num_l;
+        }
+        num_l_per_atom[atom] = l_per_atom;
     }
     
     for (int atom = 0; atom < natom; atom++) {
         int atom_naux = naux_per_atom_[atom];
-        int atom_nvs = VS_size_per_atom[atom];
+        int atom_num_n = num_n_per_atom[atom];
+        int atom_num_l = num_l_per_atom[atom];
 
-        std::vector<double> Pvs(atom_naux * atom_nvs);
+        std::vector<SharedMatrix> B_Pnl_buffer(nthread_);
+        for (int thread = 0; thread < nthread_; thread++) {
+            B_Pnl_buffer[thread] = std::make_shared<Matrix>(atom_naux * atom_num_n * atom_num_l, 1);
+            B_Pnl_buffer[thread]->zero();
+        }
 
+        // B_Pnl = (P|ns) * D_ls
 #pragma omp parallel for
         for (int Pind = 0; Pind < atom_to_aux_shells_[atom].size(); Pind++) {
-
-            int thread = 0;
-#ifdef _OPENMP
-            thread = omp_get_thread_num();
-#endif
 
             int P = atom_to_aux_shells_[atom][Pind];
             int p_start = auxiliary_->shell(P).start();
@@ -1523,44 +1555,69 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
             int p_off = atom_aux_shell_function_offset_[atom][P];
             double p_bump = atom_aux_shell_bump_value_[atom][P];
 
-            for (const int& VS : atom_to_VS[atom]) {
-                int V = VS / nshell;
-                int S = VS % nshell;
+            int thread = 0;
+#ifdef _OPENMP
+            thread = omp_get_thread_num();
+#endif
 
-                int VSstart = VS_to_starting_index_per_atom[atom][V * nshell + S];
+            for (const int& NS : atom_to_NS[atom]) {
+                int N = NS / nshell;
+                int S = NS % nshell;
 
-                int v_start = primary_->shell(V).start();
-                int num_v = primary_->shell(V).nfunction();
+                int n_start = primary_->shell(N).start();
+                int num_n = primary_->shell(N).nfunction();
+                int n_off = atom_N_shell_function_offset[atom][N];
 
                 int s_start = primary_->shell(S).start();
                 int num_s = primary_->shell(S).nfunction();
 
-                ints_[thread]->compute_shell(P, 0, V, S);
-                double* buffer = const_cast<double *>(ints_[thread]->buffer());
+                ints_[thread]->compute_shell(P, 0, N, S);
+                double* Pns = const_cast<double *>(ints_[thread]->buffer());
 
-                for (int dp = 0; dp < num_p; dp++) {
-                    for (int dv = 0; dv < num_v; dv++) {
-                        for (int ds = 0; ds < num_s; ds++) {
-                            Pvs[(VSstart + dv * num_s + ds) * atom_naux + (p_off + dp)] = p_bump * (*buffer);
-                            (buffer)++;
-                        } // end ds
-                    } // end dv
-                } // end dp
-            }
+                for (const int& L : D_junction[S]) {
+                    int l_start = primary_->shell(L).start();
+                    int num_l = primary_->shell(L).nfunction();
+                    int l_off = atom_L_shell_function_offset[atom][L];
+
+                    double *B_Pnlp = B_Pnl_buffer[thread]->pointer()[0];
+                    double **Dp = D[0]->pointer();
+
+                    for (int dp = 0; dp < num_p; dp++) {
+                        for (int dn = 0; dn < num_n; dn++) {
+                            for (int dl = 0; dl < num_l; dl++) {
+                                for (int ds = 0; ds < num_s; ds++) {
+                                    B_Pnlp[(l_off + dl) * atom_num_n * atom_naux + 
+                                            (n_off + dn) * atom_naux + (p_off + dp)] += 
+                                            p_bump * Pns[dp * num_n * num_s + dn * num_s + ds] * Dp[l_start + dl][s_start + ds];
+                                } // end ds
+                            } // end dl
+                        } // end dn
+                    } // end dp
+
+                } // end L
+            } // end NS
+        } // end Pind
+
+        SharedMatrix B_Qnl = std::make_shared<Matrix>(atom_naux * atom_num_n * atom_num_l, 1);
+        B_Qnl->zero();
+
+        for (int thread = 0; thread < nthread_; thread++) {
+            B_Qnl->add(B_Pnl_buffer[thread]);
+            B_Pnl_buffer[thread]->zero();
         }
 
         SharedMatrix JXcopy = J_X_[atom]->clone();
         double* JXcp = JXcopy->pointer()[0];
+        double* B_Qnlp = B_Qnl->pointer()[0];
 
-        // Linear solve (Pvs is now Qvs)
+        // Linear solve for B_Qnl
         std::vector<int> ipiv(atom_naux);
-        C_DGESV(atom_naux, atom_nvs, JXcp, atom_naux, ipiv.data(), Pvs.data(), atom_naux);
+        C_DGESV(atom_naux, atom_num_n * atom_num_l, JXcp, atom_naux, ipiv.data(), B_Qnlp, atom_naux);
 
 #pragma omp parallel for
         for (int Qind = 0; Qind < atom_to_aux_shells_[atom].size(); Qind++) {
 
             int Q = atom_to_aux_shells_[atom][Qind];
-
             int q_start = auxiliary_->shell(Q).start();
             int num_q = auxiliary_->shell(Q).nfunction();
             int q_off = atom_aux_shell_function_offset_[atom][Q];
@@ -1571,58 +1628,47 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
             thread = omp_get_thread_num();
 #endif
 
-            for (const int& UL : atom_to_UL[atom]) {
-                int U = UL / nshell;
-                int L = UL % nshell;
+            for (const int& ML : atom_to_ML[atom]) {
+                int M = ML / nshell;
+                int L = ML % nshell;
 
-                int u_start = primary_->shell(U).start();
-                int num_u = primary_->shell(U).nfunction();
+                int m_start = primary_->shell(M).start();
+                int num_m = primary_->shell(M).nfunction();
 
                 int l_start = primary_->shell(L).start();
                 int num_l = primary_->shell(L).nfunction();
+                int l_off = atom_L_shell_function_offset[atom][L];
 
-                ints_[thread]->compute_shell(Q, 0, U, L);
-                const double* buffer = ints_[thread]->buffer();
+                ints_[thread]->compute_shell(Q, 0, M, L);
+                double* buffer = const_cast<double *>(ints_[thread]->buffer());
 
-                for (const int& VS : atom_to_VS[atom]) {
-                    int V = VS / nshell;
-                    int S = VS % nshell;
+                for (const int& N : atom_L_to_N[atom][L]) {
+                    int n_start = primary_->shell(N).start();
+                    int num_n = primary_->shell(N).nfunction();
+                    int n_off = atom_N_shell_function_offset[atom][N];
 
-                    int VSstart = VS_to_starting_index_per_atom[atom][V * nshell + S];
-
-                    int v_start = primary_->shell(V).start();
-                    int num_v = primary_->shell(V).nfunction();
-
-                    int s_start = primary_->shell(S).start();
-                    int num_s = primary_->shell(S).nfunction();
-                    
-                    double** Dp = D[0]->pointer();
                     double** Kp = K[0]->pointer();
 
+                    double* buffer2 = buffer;
+                    
+                    // K_mn += (ml|Q) * B_Qnl
                     for (int dq = 0; dq < num_q; dq++) {
-                        for (int dv = 0; dv < num_v; dv++) {
+                        for (int dm = 0; dm < num_m; dm++) {
                             for (int dl = 0; dl < num_l; dl++) {
-                                double Qpvl = 0.0;
-                                for (int ds = 0; ds < num_s; ds++) {
-                                    Qpvl += q_bump * Pvs[(VSstart + dv * num_s + ds) * atom_naux + (q_off + dq)] * 
-                                            Dp[l_start + dl][s_start + ds];
-                                } // end dl
-                                
-                                for (int du = 0; du < num_u; du++) {
-#pragma omp atomic
-                                    Kp[u_start + du][v_start + dv] += Qpvl * buffer[dq * num_u * num_l + du * num_l + dl];
-                                } // end du
-                            } // end ds
-                        } // end dv
+                                for (int dn = 0; dn < num_n; dn++) {
+                                    Kp[m_start + dm][n_start + dn] += q_bump * 
+                                        B_Qnlp[(l_off + dl) * atom_num_n * atom_naux + 
+                                            (n_off + dn) * atom_naux + (q_off + dq)] * (*buffer2);
+                                } // end dn
+                                (buffer2)++;
+                            } // end dl
+                        } // end dm
                     } // end dq
 
-                } // end VS
+                } // end N
 
-            } // end UL
-
+            } // end ML
         } // end Q
-        
-
     } // end atom
 
     for (auto& Kmat : K) {
@@ -1630,7 +1676,6 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
     }
 
     timer_off("LocalDFK: K");
-
 }
 
 void LocalDFK::print_header() {
