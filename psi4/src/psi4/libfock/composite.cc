@@ -1533,12 +1533,28 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
         }
         num_l_per_atom[atom] = l_per_atom;
     }
-    
+
+    // Task blocking for parallel efficiency
+    std::vector<std::vector<int>> PNS_tasks_per_atom(natom);
+    std::vector<std::vector<int>> QML_tasks_per_atom(natom);
+
+    for (int atom = 0; atom < natom; atom++) {
+        for (const auto& P : atom_to_aux_shells_[atom]) {
+            for (const int& NS : atom_to_NS[atom]) {
+                PNS_tasks_per_atom[atom].push_back(P * nshell * nshell + NS);
+            }
+            for (const int& ML : atom_to_ML[atom]) {
+                QML_tasks_per_atom[atom].push_back(P * nshell * nshell + ML);
+            }
+        }
+    }
+
     for (int atom = 0; atom < natom; atom++) {
         int atom_naux = naux_per_atom_[atom];
         int atom_num_n = num_n_per_atom[atom];
         int atom_num_l = num_l_per_atom[atom];
 
+        // B_Pnl buffer
         std::vector<SharedMatrix> B_Pnl_buffer(nthread_);
         for (int thread = 0; thread < nthread_; thread++) {
             B_Pnl_buffer[thread] = std::make_shared<Matrix>(atom_naux * atom_num_n * atom_num_l, 1);
@@ -1546,64 +1562,67 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
         }
 
         // B_Pnl = (P|ns) * D_ls
-#pragma omp parallel for
-        for (int Pind = 0; Pind < atom_to_aux_shells_[atom].size(); Pind++) {
+#pragma omp parallel for schedule(guided)
+        for (int PNSidx = 0; PNSidx < PNS_tasks_per_atom[atom].size(); PNSidx++) {
+            // Index decomposition
+            int PNS = PNS_tasks_per_atom[atom][PNSidx];
+            int P = PNS / (nshell * nshell);
+            int NS = PNS % (nshell * nshell);
+            int N = NS / nshell;
+            int S = NS % nshell;
 
-            int P = atom_to_aux_shells_[atom][Pind];
+            // P index info
             int p_start = auxiliary_->shell(P).start();
             int num_p = auxiliary_->shell(P).nfunction();
             int p_off = atom_aux_shell_function_offset_[atom][P];
             double p_bump = atom_aux_shell_bump_value_[atom][P];
+
+            // N index info
+            int n_start = primary_->shell(N).start();
+            int num_n = primary_->shell(N).nfunction();
+            int n_off = atom_N_shell_function_offset[atom][N];
+
+            // S index info
+            int s_start = primary_->shell(S).start();
+            int num_s = primary_->shell(S).nfunction();
 
             int thread = 0;
 #ifdef _OPENMP
             thread = omp_get_thread_num();
 #endif
 
-            for (const int& NS : atom_to_NS[atom]) {
-                int N = NS / nshell;
-                int S = NS % nshell;
+            ints_[thread]->compute_shell(P, 0, N, S);
+            double* Pns = const_cast<double *>(ints_[thread]->buffer());
 
-                int n_start = primary_->shell(N).start();
-                int num_n = primary_->shell(N).nfunction();
-                int n_off = atom_N_shell_function_offset[atom][N];
+            for (const int& L : D_junction[S]) {
 
-                int s_start = primary_->shell(S).start();
-                int num_s = primary_->shell(S).nfunction();
+                // L index info
+                int l_start = primary_->shell(L).start();
+                int num_l = primary_->shell(L).nfunction();
+                int l_off = atom_L_shell_function_offset[atom][L];
 
-                ints_[thread]->compute_shell(P, 0, N, S);
-                double* Pns = const_cast<double *>(ints_[thread]->buffer());
+                double *B_Pnlp = B_Pnl_buffer[thread]->pointer()[0];
+                double **Dp = D[0]->pointer();
 
-                for (const int& L : D_junction[S]) {
-                    int l_start = primary_->shell(L).start();
-                    int num_l = primary_->shell(L).nfunction();
-                    int l_off = atom_L_shell_function_offset[atom][L];
-
-                    double *B_Pnlp = B_Pnl_buffer[thread]->pointer()[0];
-                    double **Dp = D[0]->pointer();
-
-                    for (int dp = 0; dp < num_p; dp++) {
-                        for (int dn = 0; dn < num_n; dn++) {
-                            for (int dl = 0; dl < num_l; dl++) {
-                                for (int ds = 0; ds < num_s; ds++) {
-                                    B_Pnlp[(l_off + dl) * atom_num_n * atom_naux + 
-                                            (n_off + dn) * atom_naux + (p_off + dp)] += 
-                                            p_bump * Pns[dp * num_n * num_s + dn * num_s + ds] * Dp[l_start + dl][s_start + ds];
-                                } // end ds
-                            } // end dl
-                        } // end dn
-                    } // end dp
-
-                } // end L
-            } // end NS
-        } // end Pind
+                for (int dp = 0; dp < num_p; dp++) {
+                    for (int dn = 0; dn < num_n; dn++) {
+                        for (int dl = 0; dl < num_l; dl++) {
+                            for (int ds = 0; ds < num_s; ds++) {
+                                B_Pnlp[(l_off + dl) * atom_num_n * atom_naux + 
+                                        (n_off + dn) * atom_naux + (p_off + dp)] += 
+                                        p_bump * Pns[dp * num_n * num_s + dn * num_s + ds] * Dp[l_start + dl][s_start + ds];
+                            } // end ds
+                        } // end dl
+                    } // end dn
+                } // end dp
+            } // end L
+        } // end PNSidx
 
         SharedMatrix B_Qnl = std::make_shared<Matrix>(atom_naux * atom_num_n * atom_num_l, 1);
         B_Qnl->zero();
 
         for (int thread = 0; thread < nthread_; thread++) {
             B_Qnl->add(B_Pnl_buffer[thread]);
-            B_Pnl_buffer[thread]->zero();
         }
 
         SharedMatrix JXcopy = J_X_[atom]->clone();
@@ -1614,61 +1633,65 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
         std::vector<int> ipiv(atom_naux);
         C_DGESV(atom_naux, atom_num_n * atom_num_l, JXcp, atom_naux, ipiv.data(), B_Qnlp, atom_naux);
 
-#pragma omp parallel for
-        for (int Qind = 0; Qind < atom_to_aux_shells_[atom].size(); Qind++) {
+#pragma omp parallel for schedule(guided)
+        for (int QMLidx = 0; QMLidx < QML_tasks_per_atom[atom].size(); QMLidx++) {
+            // Index decomposition
+            int QML = QML_tasks_per_atom[atom][QMLidx];
+            int Q = QML / (nshell * nshell);
+            int ML = QML % (nshell * nshell);
+            int M = ML / nshell;
+            int L = ML % nshell;
 
-            int Q = atom_to_aux_shells_[atom][Qind];
+            // Q index info
             int q_start = auxiliary_->shell(Q).start();
             int num_q = auxiliary_->shell(Q).nfunction();
             int q_off = atom_aux_shell_function_offset_[atom][Q];
             double q_bump = atom_aux_shell_bump_value_[atom][Q];
+
+            // M index info
+            int m_start = primary_->shell(M).start();
+            int num_m = primary_->shell(M).nfunction();
+
+            // L index info
+            int l_start = primary_->shell(L).start();
+            int num_l = primary_->shell(L).nfunction();
+            int l_off = atom_L_shell_function_offset[atom][L];
 
             int thread = 0;
 #ifdef _OPENMP
             thread = omp_get_thread_num();
 #endif
 
-            for (const int& ML : atom_to_ML[atom]) {
-                int M = ML / nshell;
-                int L = ML % nshell;
+            ints_[thread]->compute_shell(Q, 0, M, L);
+            double* buffer = const_cast<double *>(ints_[thread]->buffer());
 
-                int m_start = primary_->shell(M).start();
-                int num_m = primary_->shell(M).nfunction();
+            for (const int& N : atom_L_to_N[atom][L]) {
+                // N index info
+                int n_start = primary_->shell(N).start();
+                int num_n = primary_->shell(N).nfunction();
+                int n_off = atom_N_shell_function_offset[atom][N];
 
-                int l_start = primary_->shell(L).start();
-                int num_l = primary_->shell(L).nfunction();
-                int l_off = atom_L_shell_function_offset[atom][L];
+                double** Kp = K[0]->pointer();
 
-                ints_[thread]->compute_shell(Q, 0, M, L);
-                double* buffer = const_cast<double *>(ints_[thread]->buffer());
-
-                for (const int& N : atom_L_to_N[atom][L]) {
-                    int n_start = primary_->shell(N).start();
-                    int num_n = primary_->shell(N).nfunction();
-                    int n_off = atom_N_shell_function_offset[atom][N];
-
-                    double** Kp = K[0]->pointer();
-
-                    double* buffer2 = buffer;
+                double* buffer2 = buffer;
                     
-                    // K_mn += (ml|Q) * B_Qnl
-                    for (int dq = 0; dq < num_q; dq++) {
-                        for (int dm = 0; dm < num_m; dm++) {
-                            for (int dl = 0; dl < num_l; dl++) {
-                                for (int dn = 0; dn < num_n; dn++) {
-                                    Kp[m_start + dm][n_start + dn] += q_bump * 
-                                        B_Qnlp[(l_off + dl) * atom_num_n * atom_naux + 
-                                            (n_off + dn) * atom_naux + (q_off + dq)] * (*buffer2);
-                                } // end dn
-                                (buffer2)++;
-                            } // end dl
-                        } // end dm
-                    } // end dq
+                // K_mn += (ml|Q) * B_Qnl
+                for (int dq = 0; dq < num_q; dq++) {
+                    for (int dm = 0; dm < num_m; dm++) {
+                        for (int dl = 0; dl < num_l; dl++) {
+                            for (int dn = 0; dn < num_n; dn++) {
+#pragma omp atomic
+                                Kp[m_start + dm][n_start + dn] += q_bump * 
+                                    B_Qnlp[(l_off + dl) * atom_num_n * atom_naux + 
+                                           (n_off + dn) * atom_naux + (q_off + dq)] * (*buffer2);
+                            } // end dn
+                            (buffer2)++;
+                        } // end dl
+                    } // end dm
+                } // end dq
 
-                } // end N
-
-            } // end ML
-        } // end Q
+            } // end N
+        } // end QMLidx
     } // end atom
 
     for (auto& Kmat : K) {
