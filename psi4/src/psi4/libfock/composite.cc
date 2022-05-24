@@ -1399,6 +1399,8 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
 
     timer_on("LocalDFK: K");
 
+    timer_on("LocalDFK: Preprocessing");
+
     for (auto& Kmat : K) {
         Kmat->zero();
     }
@@ -1448,6 +1450,7 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
     }
 
     // Set up density sparsity information
+#pragma omp parallel for
     for (int U = 0; U < nshell; U++) {
         for (int V = 0; V < nshell; V++) {
 
@@ -1496,6 +1499,7 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
         atom_to_NS[Scenter].emplace(S * nshell + N);
     }
 
+#pragma omp parallel for
     for (int atom = 0; atom < natom; atom++) {
         for (const int& NS : atom_to_NS[atom]) {
             int N = NS / nshell;
@@ -1538,6 +1542,7 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
     std::vector<std::vector<int>> PNS_tasks_per_atom(natom);
     std::vector<std::vector<int>> QML_tasks_per_atom(natom);
 
+#pragma omp parallel for
     for (int atom = 0; atom < natom; atom++) {
         for (const auto& P : atom_to_aux_shells_[atom]) {
             for (const int& NS : atom_to_NS[atom]) {
@@ -1549,17 +1554,38 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
         }
     }
 
+    size_t max_nbf_per_shell = 0;
+    for (int M = 0; M < nshell; M++) {
+        max_nbf_per_shell = std::max(max_nbf_per_shell, (size_t)primary_->shell(M).nfunction());
+    }
+
+
+    std::vector<SharedMatrix> Kbuff(nthread_);
+#pragma omp parallel for
+    for (int thread = 0; thread < nthread_; thread++) {
+        Kbuff[thread] = std::make_shared<Matrix>(max_nbf_per_shell, max_nbf_per_shell);
+        Kbuff[thread]->zero();
+    }
+
+    timer_off("LocalDFK: Preprocessing");
+
     for (int atom = 0; atom < natom; atom++) {
         int atom_naux = naux_per_atom_[atom];
         int atom_num_n = num_n_per_atom[atom];
         int atom_num_l = num_l_per_atom[atom];
 
+        // Integral buffer
+        std::unordered_map<int, SharedMatrix> atomic_integral_stash;
+
         // B_Pnl buffer
         std::vector<SharedMatrix> B_Pnl_buffer(nthread_);
+#pragma omp parallel for
         for (int thread = 0; thread < nthread_; thread++) {
             B_Pnl_buffer[thread] = std::make_shared<Matrix>(atom_naux * atom_num_n * atom_num_l, 1);
             B_Pnl_buffer[thread]->zero();
         }
+
+        timer_on("LocalDFK: Contraction 1");
 
         // B_Pnl = (P|ns) * D_ls
 #pragma omp parallel for schedule(guided)
@@ -1590,7 +1616,21 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
 #ifdef _OPENMP
             thread = omp_get_thread_num();
 #endif
-
+            /*
+            if (!atomic_integral_stash.count(PNS)) {
+                ints_[thread]->compute_shell(P, 0, N, S);
+                const double *buff = ints_[thread]->buffer();
+                auto pns_int = std::make_shared<Matrix>(num_p * num_n * num_s, 1);
+                double *pnsp = pns_int->pointer()[0];
+                for (int i = 0; i < num_p * num_n * num_s; i++) {
+                    pnsp[i] = buff[i];
+                }
+#pragma omp critical
+                atomic_integral_stash[PNS] = pns_int;
+            }
+            double* Pns;
+#pragma omp critical
+            */
             ints_[thread]->compute_shell(P, 0, N, S);
             double* Pns = const_cast<double *>(ints_[thread]->buffer());
 
@@ -1618,6 +1658,10 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
             } // end L
         } // end PNSidx
 
+        timer_off("LocalDFK: Contraction 1");
+
+        timer_on("LocalDFK: Metric Solve");
+
         SharedMatrix B_Qnl = std::make_shared<Matrix>(atom_naux * atom_num_n * atom_num_l, 1);
         B_Qnl->zero();
 
@@ -1632,6 +1676,10 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
         // Linear solve for B_Qnl
         std::vector<int> ipiv(atom_naux);
         C_DGESV(atom_naux, atom_num_n * atom_num_l, JXcp, atom_naux, ipiv.data(), B_Qnlp, atom_naux);
+
+        timer_off("LocalDFK: Metric Solve");
+
+        timer_on("LocalDFK: Contraction 2");
 
 #pragma omp parallel for schedule(guided)
         for (int QMLidx = 0; QMLidx < QML_tasks_per_atom[atom].size(); QMLidx++) {
@@ -1661,6 +1709,20 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
 #ifdef _OPENMP
             thread = omp_get_thread_num();
 #endif
+            /*
+            if (!atomic_integral_stash.count(QML)) {
+                ints_[thread]->compute_shell(Q, 0, M, L);
+                const double *buff = ints_[thread]->buffer();
+                auto qml_int = std::make_shared<Matrix>(num_q * num_m * num_l, 1);
+                double *qmlp = qml_int->pointer()[0];
+                for (int i = 0; i < num_q * num_m * num_l; i++) {
+                    qmlp[i] = buff[i];
+                }
+#pragma omp critical
+                atomic_integral_stash[QML] = qml_int;
+            }
+            #pragma omp critical
+            */
 
             ints_[thread]->compute_shell(Q, 0, M, L);
             double* buffer = const_cast<double *>(ints_[thread]->buffer());
@@ -1672,6 +1734,7 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
                 int n_off = atom_N_shell_function_offset[atom][N];
 
                 double** Kp = K[0]->pointer();
+                double** KBp = Kbuff[thread]->pointer();
 
                 double* buffer2 = buffer;
                     
@@ -1680,9 +1743,7 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
                     for (int dm = 0; dm < num_m; dm++) {
                         for (int dl = 0; dl < num_l; dl++) {
                             for (int dn = 0; dn < num_n; dn++) {
-#pragma omp atomic
-                                Kp[m_start + dm][n_start + dn] += q_bump * 
-                                    B_Qnlp[(l_off + dl) * atom_num_n * atom_naux + 
+                                KBp[dm][dn] += q_bump * B_Qnlp[(l_off + dl) * atom_num_n * atom_naux + 
                                            (n_off + dn) * atom_naux + (q_off + dq)] * (*buffer2);
                             } // end dn
                             (buffer2)++;
@@ -1690,8 +1751,17 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
                     } // end dm
                 } // end dq
 
+                for (int dm = 0; dm < num_m; dm++) {
+                    for (int dn = 0; dn < num_n; dn++) {
+#pragma omp atomic
+                        Kp[m_start + dm][n_start + dn] += KBp[dm][dn];
+                    }
+                }
+                Kbuff[thread]->zero();
             } // end N
         } // end QMLidx
+
+        timer_off("LocalDFK: Contraction 2");
     } // end atom
 
     for (auto& Kmat : K) {
