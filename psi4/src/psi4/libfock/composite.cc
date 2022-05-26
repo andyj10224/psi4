@@ -1723,7 +1723,9 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
     timer_on("LocalDFK: Contraction 2");
 
     // K_mn += \sum_A \sum_B \sum_Q \sum_P \sum_l B_Qml * (Q|P) * A_Pnl
-    // 
+    // 1.) B_Qml -> B_Pml (contraction 1)
+    // 2.) K_mn += B_Pml * A_Pnl
+
 #pragma omp parallel for schedule(dynamic)
     for (int A = 0; A < natom; A++) {
         int atom_a_naux = naux_per_atom_[A];
@@ -1738,76 +1740,92 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
             int atom_b_naux = naux_per_atom_[B];
             int atom_b_num_m = num_n_per_atom[B];
 
-            for (const auto& Q : atom_to_aux_shells_[B]) {
-                int q_start = auxiliary_->shell(Q).start();
-                int num_q = auxiliary_->shell(Q).nfunction();
-                int q_off = atom_aux_shell_function_offset_[B][Q];
-                double q_bump = atom_aux_shell_bump_value_[B][Q];
+            for (const auto& P : atom_to_aux_shells_[A]) {
+                int p_start = auxiliary_->shell(P).start();
+                int num_p = auxiliary_->shell(P).nfunction();
+                int p_off = atom_aux_shell_function_offset_[A][P];
+                double p_bump = atom_aux_shell_bump_value_[A][P];
 
-                for (const auto& P : atom_to_aux_shells_[A]) {
-                    int p_start = auxiliary_->shell(P).start();
-                    int num_p = auxiliary_->shell(P).nfunction();
-                    int p_off = atom_aux_shell_function_offset_[A][P];
-                    double p_bump = atom_aux_shell_bump_value_[A][P];
+                for (const auto& ML : atom_to_NS[B]) {
+                    int M = ML / nshell;
+                    int L = ML % nshell;
 
-                    for (const auto& ML : atom_to_NS[B]) {
-                        int M = ML / nshell;
-                        int L = ML % nshell;
+                    if (!atom_to_L[A].count(L)) continue;
 
-                        if (!atom_to_L[A].count(L)) continue;
+                    int m_start = primary_->shell(M).start();
+                    int num_m = primary_->shell(M).nfunction();
+                    int m_off = atom_N_shell_function_offset[B][M];
 
-                        int m_start = primary_->shell(M).start();
-                        int num_m = primary_->shell(M).nfunction();
-                        int m_off = atom_N_shell_function_offset[B][M];
+                    int l_start = primary_->shell(L).start();
+                    int num_l = primary_->shell(L).nfunction();
+                    int l_off_B = atom_S_shell_function_offset[B][L];
+                    int l_off_A = atom_L_shell_function_offset[A][L];
 
-                        int l_start = primary_->shell(L).start();
-                        int num_l = primary_->shell(L).nfunction();
-                        int l_off_B = atom_S_shell_function_offset[B][L];
-                        int l_off_A = atom_L_shell_function_offset[A][L];
+                    std::vector<double> B_Pml(num_p * num_m * num_l, 0.0);
 
-                        for (const auto& N : atom_to_N[A]) {
-                            if (!atom_to_NL[A].count(N * nshell + L)) continue;
+                    for (const auto& Q : atom_to_aux_shells_[B]) {
+                        int q_start = auxiliary_->shell(Q).start();
+                        int num_q = auxiliary_->shell(Q).nfunction();
+                        int q_off = atom_aux_shell_function_offset_[B][Q];
+                        double q_bump = atom_aux_shell_bump_value_[B][Q];
 
-                            int n_start = primary_->shell(N).start();
-                            int num_n = primary_->shell(N).nfunction();
-                            int n_off = atom_N_shell_function_offset[A][N];
+                        // form B_Pml intermediate
+                        double** Jmetp = Jmet_->pointer();
+                        double* gamma_B_Qmlp = gamma_B_Qml[B]->pointer()[0];
 
-                            double** KBp = Kbuff[thread]->pointer();
-                            double** Jmetp = Jmet_->pointer();
-                            double* gamma_A_Pnlp = gamma_A_Pnl[A]->pointer()[0];
-                            double* gamma_B_Qmlp = gamma_B_Qml[B]->pointer()[0];
-
-                            // Deep loop of death
-                            // Abandon ALL hope, ye who enter here -Dante's inferno
-                            // K_mn += \sum_A \sum_B \sum_Q \sum_P \sum_l B_Qml * (Q|P) * A_Pnl
+                        for (int dq = 0; dq < num_q; dq++) {
                             for (int dp = 0; dp < num_p; dp++) {
-                                for (int dq = 0; dq < num_q; dq++) {
-                                    for (int dm = 0; dm < num_m; dm++) {
-                                        for (int dl = 0; dl < num_l; dl++) {
-                                            for (int dn = 0; dn < num_n; dn++) {
-                                                int indB = (l_off_B+dl) * atom_b_num_m * atom_b_naux + (m_off+dm) * atom_b_naux + (q_off+dq);
-                                                double tempB = gamma_B_Qmlp[indB];
-                                                double tempPQ = q_bump * Jmetp[q_start+dq][p_start+dp] * p_bump;
-                                                int indA = (l_off_A+dl) * atom_a_num_n * atom_a_naux + (n_off+dn) * atom_a_naux + (p_off+dp);
-                                                double tempA = gamma_A_Pnlp[indA];
-                                                KBp[dm][dn] += tempB * tempPQ * tempA;
-                                            } // end dn
-                                        } // end dl
-                                    } // end dn
-                                } // end dq
-                            } // end dp
-
-                            double** Kp = K[0]->pointer();
-                            // Flush the toilet (for parallel efficiency)
-                            for (int dm = 0; dm < num_m; dm++) {
-                                for (int dn = 0; dn < num_n; dn++) {
-#pragma omp atomic
-                                    Kp[m_start + dm][n_start + dn] += KBp[dm][dn];
+                                for (int dm = 0; dm < num_m; dm++) {
+                                    for (int dl = 0; dl < num_l; dl++) {
+                                        int indB = (l_off_B+dl) * atom_b_num_m * atom_b_naux + (m_off+dm) * atom_b_naux + (q_off+dq);
+                                        double gamB = gamma_B_Qmlp[indB];
+                                        double J_PQ_bump = q_bump * Jmetp[q_start+dq][p_start+dp] * p_bump;
+                                        B_Pml[dl * num_m * num_p + dm * num_p + dp] += gamB * J_PQ_bump;
+                                    }
                                 }
                             }
-                            Kbuff[thread]->zero();
+                        }
+                    } // salvation from deep loops :)
 
-                        } // end N
+                    for (const auto& N : atom_to_N[A]) {
+                        if (!atom_to_NL[A].count(N * nshell + L)) continue;
+
+                        int n_start = primary_->shell(N).start();
+                        int num_n = primary_->shell(N).nfunction();
+                        int n_off = atom_N_shell_function_offset[A][N];
+
+                        double** KBp = Kbuff[thread]->pointer();
+                        double* gamma_A_Pnlp = gamma_A_Pnl[A]->pointer()[0];
+                        
+
+                        // Deep loop of death
+                        // Abandon ALL hope, ye who enter here -Dante's inferno
+                        // K_mn += \sum_A \sum_B \sum_Pl \sum_l B_Pml * A_Pnl
+                        for (int dl = 0; dl < num_l; dl++) {
+                            for (int dm = 0; dm < num_m; dm++) {
+                                for (int dn = 0; dn < num_n; dn++) {
+                                    double temp = 0.0;
+                                    for (int dp = 0; dp < num_p; dp++) {
+                                        int indA = (l_off_A+dl) * atom_a_num_n * atom_a_naux + (n_off+dn) * atom_a_naux + (p_off+dp);
+                                        double Bpml = B_Pml[dl * num_m * num_p + dm * num_p + dp];
+                                        double gamA = gamma_A_Pnlp[indA];
+                                        temp += Bpml * gamA;
+                                    } // end dn
+                                    KBp[dm][dn] += temp;
+                                } // end dl
+                            } // end dn
+                        } // end dp
+
+                        double** Kp = K[0]->pointer();
+                        // Flush the toilet (for parallel efficiency)
+                        for (int dm = 0; dm < num_m; dm++) {
+                            for (int dn = 0; dn < num_n; dn++) {
+#pragma omp atomic
+                                Kp[m_start + dm][n_start + dn] += KBp[dm][dn];
+                            }
+                        }
+                        Kbuff[thread]->zero();
+
                     } // end ML
                 } // end P
             } // end Q
