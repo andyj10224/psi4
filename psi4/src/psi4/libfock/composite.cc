@@ -1606,9 +1606,8 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
 
     timer_off("LocalDFK: Preprocessing");
 
-    timer_on("LocalDFK: Contraction 1");
+    timer_on("LocalDFK: Form Gamma B");
 
-    // gamma_A_Pnl = bump_AP * (P|ns) * D_ls
     // gamma_B_Qml = bump_BQ * (Q|ml)
     for (int atom = 0; atom < natom; atom++) {
         int atom_naux = naux_per_atom_[atom];
@@ -1618,7 +1617,6 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
 
         std::vector<int>& atomic_aux_shells = atom_to_aux_shells_[atom];
 
-        // gamma_A_Pnl = bump_AQ * (P|ns) * D_ls
         // gamma_B_Qml = bump_BQ * (Q|ml)
 #pragma omp parallel for schedule(dynamic)
         for (int Pind = 0; Pind < atomic_aux_shells.size(); Pind++) {
@@ -1663,6 +1661,65 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
                         } // end ds
                     } // end dn
                 } // end dp
+            } // end NS
+        } // end atom
+    }
+
+    timer_off("LocalDFK: Form Gamma B");
+
+    timer_on("LocalDFK: Metric Solve");
+
+    for (int atom = 0; atom < natom; atom++) {
+        int atom_naux = naux_per_atom_[atom];
+        int atom_num_n = num_n_per_atom[atom];
+        int atom_num_s = num_s_per_atom[atom];
+
+        // Linear solve gamma_B_Qml
+        SharedMatrix JXcopy = J_X_[atom]->clone();
+        double* JXcp = JXcopy->pointer()[0];
+        double* gamma_B_Qmlp = gamma_B_Qml[atom]->pointer()[0];
+
+        std::vector<int> ipiv(atom_naux);
+        C_DGESV(atom_naux, atom_num_n * atom_num_s, JXcp, atom_naux, ipiv.data(), gamma_B_Qmlp, atom_naux);
+    }
+
+    timer_off("LocalDFK: Metric Solve");
+    
+    timer_on("LocalDFK: Form Gamma A");
+
+    // gamma_A_Pnl = gamma_A_Pns (from solved Gamma B) * D_ls
+    for (int atom = 0; atom < natom; atom++) {
+        int atom_naux = naux_per_atom_[atom];
+        int atom_num_n = num_n_per_atom[atom];
+        int atom_num_l = num_l_per_atom[atom];
+        int atom_num_s = num_s_per_atom[atom];
+
+        std::vector<int>& atomic_aux_shells = atom_to_aux_shells_[atom];
+
+        // gamma_A_Pnl = bump_AQ * (P|ns) * D_ls
+        // gamma_B_Qml = bump_BQ * (Q|ml)
+#pragma omp parallel for schedule(dynamic)
+        for (int Pind = 0; Pind < atomic_aux_shells.size(); Pind++) {
+            // P index info
+            int P = atomic_aux_shells[Pind];
+            int p_start = auxiliary_->shell(P).start();
+            int num_p = auxiliary_->shell(P).nfunction();
+            int p_off = atom_aux_shell_function_offset_[atom][P];
+            double p_bump = atom_aux_shell_bump_value_[atom][P];
+
+            for (const auto& NS: atom_to_NS[atom]) {
+                int N = NS / nshell;
+                int S = NS % nshell;
+
+                // N index info
+                int n_start = primary_->shell(N).start();
+                int num_n = primary_->shell(N).nfunction();
+                int n_off = atom_N_shell_function_offset[atom][N];
+
+                // S index info
+                int s_start = primary_->shell(S).start();
+                int num_s = primary_->shell(S).nfunction();
+                int s_off = atom_S_shell_function_offset[atom][S];
 
                 for (const int& L : D_junction[S]) {
                     // L index info
@@ -1671,56 +1728,29 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
                     int l_off = atom_L_shell_function_offset[atom][L];
 
                     double* gamma_A_Pnlp = gamma_A_Pnl[atom]->pointer()[0];
+                    double* gamma_B_Qmlp = gamma_B_Qml[atom]->pointer()[0];
                     double **Dp = D[0]->pointer();
 
-                    double* Pns = const_cast<double *>(buffer);
                     for (int dp = 0; dp < num_p; dp++) {
                         for (int dn = 0; dn < num_n; dn++) {
                             for (int ds = 0; ds < num_s; ds++) {
                                 for (int dl = 0; dl < num_l; dl++) {
                                     gamma_A_Pnlp[(l_off + dl) * atom_num_n * atom_naux + 
-                                                    (n_off + dn) * atom_naux + (p_off + dp)] += 
-                                                    p_bump * (*Pns) * Dp[s_start + ds][l_start + dl];
+                                                 (n_off + dn) * atom_naux + (p_off + dp)] += 
+                                                 gamma_B_Qmlp[(s_off + ds) * atom_num_n * atom_naux +
+                                                              (n_off + dn) * atom_naux + (p_off + dp)] * Dp[s_start + ds][l_start + dl];
                                 } // end dl
-                                (Pns++);
                             } // end ds
                         } // end dn
                     } // end dp
                 } // end L
             } // end NS
-        } // end atom
-    }
+        } // end Pind
+    } // end atom
 
-    timer_off("LocalDFK: Contraction 1");
+    timer_off("LocalDFK: Form Gamma A");
 
-    timer_on("LocalDFK: Metric Solve");
-
-    for (int atom = 0; atom < natom; atom++) {
-        int atom_naux = naux_per_atom_[atom];
-        int atom_num_n = num_n_per_atom[atom];
-        int atom_num_s = num_s_per_atom[atom];
-        int atom_num_l = num_l_per_atom[atom];
-
-        SharedMatrix JXcopy = J_X_[atom]->clone();
-        double* JXcp = JXcopy->pointer()[0];
-        double* gamma_A_Pnlp = gamma_A_Pnl[atom]->pointer()[0];
-
-        // Linear solve gamma_A_Pnl
-        std::vector<int> ipiv(atom_naux);
-        C_DGESV(atom_naux, atom_num_n * atom_num_l, JXcp, atom_naux, ipiv.data(), gamma_A_Pnlp, atom_naux);
-
-        SharedMatrix JXcopy2 = J_X_[atom]->clone();
-        double* JXcp2 = JXcopy2->pointer()[0];
-        double* gamma_B_Qmlp = gamma_B_Qml[atom]->pointer()[0];
-
-        // Linear solve gamma_B_Qml
-        std::vector<int> ipiv2(atom_naux);
-        C_DGESV(atom_naux, atom_num_n * atom_num_s, JXcp2, atom_naux, ipiv2.data(), gamma_B_Qmlp, atom_naux);
-    }
-
-    timer_off("LocalDFK: Metric Solve");
-
-    timer_on("LocalDFK: Contraction 2");
+    timer_on("LocalDFK: Form K");
 
     // K_mn += \sum_A \sum_B \sum_Q \sum_P \sum_l B_Qml * (Q|P) * A_Pnl
     // 1.) B_Qml -> B_Pml (contraction 1)
@@ -1832,7 +1862,7 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
         } // end B
     } // end A
 
-    timer_off("LocalDFK: Contraction 2");
+    timer_off("LocalDFK: Form K");
 
     for (auto& Kmat : K) {
         Kmat->hermitivitize();
