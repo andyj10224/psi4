@@ -1472,9 +1472,9 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_double("LINK_INTS_TOLERANCE", 1.0e-12);
 
         /*- The inner bump radius used for local density fitting (in bohr) !expert -*/
-        options.add_double("LOCAL_DF_R0", 8.0);
+        options.add_double("LOCAL_DF_R0", 6.0);
         /*- The outer bump radium used for local density fitting (in bohr) !expert -*/
-        options.add_double("LOCAL_DF_R1", 10.0);
+        options.add_double("LOCAL_DF_R1", 7.0);
 
         /*- SUBSECTION Fractional Occupation UHF/UKS -*/
 

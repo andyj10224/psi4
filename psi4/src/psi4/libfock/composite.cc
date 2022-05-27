@@ -1754,21 +1754,95 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
 
     // K_mn += \sum_A \sum_B \sum_Q \sum_P \sum_l B_Qml * (Q|P) * A_Pnl
     // 1.) B_Qml -> B_Pml (contraction 1)
-    // 2.) K_mn += B_Pml * A_Pnl
+    // 2.) K_mn += B_Pml * A_Pnl (contraction 2)
+
+    std::vector<std::unordered_set<int>> atom_D_junction_aux_shells(natom);
+    std::vector<int> atom_D_junction_naux(natom);
+    std::vector<std::unordered_map<int, int>> atom_D_junction_aux_shell_offset(natom);
+
+    for (int B = 0; B < natom; B++) {
+        for (const auto& A: atom_D_junction[B]) {
+            for (const auto& P : atom_to_aux_shells_[A]) {
+                atom_D_junction_aux_shells[B].emplace(P);
+            }
+        }
+        size_t offset = 0;
+        for (const auto& P : atom_D_junction_aux_shells[B]) {
+            atom_D_junction_aux_shell_offset[B][P] = offset;
+            offset += auxiliary_->shell(P).nfunction();
+        }
+        atom_D_junction_naux[B] = offset;
+    }
 
 #pragma omp parallel for schedule(dynamic)
-    for (int A = 0; A < natom; A++) {
-        int atom_a_naux = naux_per_atom_[A];
-        int atom_a_num_n = num_n_per_atom[A];
+    for (int B = 0; B < natom; B++) {
+        int atom_b_naux = naux_per_atom_[B];
+        int atom_b_num_m = num_n_per_atom[B];
+        int atom_b_num_l = num_s_per_atom[B];
+        int atom_b_d_naux = atom_D_junction_naux[B];
+
+        // Only allocating B times < so we good fam :) >
+        std::vector<double> B_Pml(atom_b_d_naux * atom_b_num_m * atom_b_num_l);
 
         int thread = 0;
 #ifdef _OPENMP
         thread = omp_get_thread_num();
 #endif
 
-        for (const auto& B : atom_D_junction[A]) {
-            int atom_b_naux = naux_per_atom_[B];
-            int atom_b_num_m = num_n_per_atom[B];
+        // First step: Form B_Pml_intermediate
+        // 1.) B_Qml -> B_Pml (contraction 1)
+        for (const auto& P : atom_D_junction_aux_shells[B]) {
+            int p_start = auxiliary_->shell(P).start();
+            int num_p = auxiliary_->shell(P).nfunction();
+            // No oil in ocean here :)
+            int d_p_off = atom_D_junction_aux_shell_offset[B][P];
+
+            for (const int& Q : atom_to_aux_shells_[B]) {
+                int q_start = auxiliary_->shell(Q).start();
+                int num_q = auxiliary_->shell(Q).nfunction();
+                int q_off = atom_aux_shell_function_offset_[B][Q];
+                double q_bump = atom_aux_shell_bump_value_[B][Q];
+
+                for (const auto& ML : atom_to_NS[B]) {
+                    int M = ML / nshell;
+                    int L = ML % nshell;
+
+                    int m_start = primary_->shell(M).start();
+                    int num_m = primary_->shell(M).nfunction();
+                    int m_off = atom_N_shell_function_offset[B][M];
+
+                    int l_start = primary_->shell(L).start();
+                    int num_l = primary_->shell(L).nfunction();
+                    int l_off = atom_S_shell_function_offset[B][L];
+
+                    // form B_Pml intermediate
+                    double** Jmetp = Jmet_->pointer();
+                    double* gamma_B_Qmlp = gamma_B_Qml[B]->pointer()[0];
+
+                    for (int dl = 0; dl < num_l; dl++) {
+                        for (int dm = 0; dm < num_m; dm++) {
+                            for (int dq = 0; dq < num_q; dq++) {
+                                for (int dp = 0; dp < num_p; dp++) {
+                                    // Inputs
+                                    int ind_B_Qml = (l_off+dl) * atom_b_num_m * atom_b_naux + (m_off+dm) * atom_b_naux + (q_off+dq);
+                                    double gamB = gamma_B_Qmlp[ind_B_Qml];
+                                    double J_PQ_bump = q_bump * Jmetp[q_start+dq][p_start+dp];
+
+                                    // Output
+                                    int ind_B_Pml = (l_off+dl) * atom_b_num_m * atom_b_d_naux + (m_off+dm) * atom_b_d_naux + (d_p_off+dp);
+                                    B_Pml[ind_B_Pml] += gamB * J_PQ_bump;
+                                } // end dp
+                            } // end dq
+                        } // end dm
+                    } // end dl
+
+                } // end ML
+            } // end Q
+        } // end P
+
+        for (const auto& A : atom_D_junction[B]) {
+            int atom_a_naux = naux_per_atom_[A];
+            int atom_a_num_n = num_n_per_atom[A];
 
             for (const auto& P : atom_to_aux_shells_[A]) {
                 int p_start = auxiliary_->shell(P).start();
@@ -1776,11 +1850,11 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
                 int p_off = atom_aux_shell_function_offset_[A][P];
                 double p_bump = atom_aux_shell_bump_value_[A][P];
 
+                int d_p_off = atom_D_junction_aux_shell_offset[B][P];
+
                 for (const auto& ML : atom_to_NS[B]) {
                     int M = ML / nshell;
                     int L = ML % nshell;
-
-                    if (!atom_to_L[A].count(L)) continue;
 
                     int m_start = primary_->shell(M).start();
                     int num_m = primary_->shell(M).nfunction();
@@ -1791,31 +1865,7 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
                     int l_off_B = atom_S_shell_function_offset[B][L];
                     int l_off_A = atom_L_shell_function_offset[A][L];
 
-                    std::vector<double> B_Pml(num_p * num_m * num_l, 0.0);
-
-                    for (const auto& Q : atom_to_aux_shells_[B]) {
-                        int q_start = auxiliary_->shell(Q).start();
-                        int num_q = auxiliary_->shell(Q).nfunction();
-                        int q_off = atom_aux_shell_function_offset_[B][Q];
-                        double q_bump = atom_aux_shell_bump_value_[B][Q];
-
-                        // form B_Pml intermediate
-                        double** Jmetp = Jmet_->pointer();
-                        double* gamma_B_Qmlp = gamma_B_Qml[B]->pointer()[0];
-
-                        for (int dq = 0; dq < num_q; dq++) {
-                            for (int dp = 0; dp < num_p; dp++) {
-                                for (int dm = 0; dm < num_m; dm++) {
-                                    for (int dl = 0; dl < num_l; dl++) {
-                                        int indB = (l_off_B+dl) * atom_b_num_m * atom_b_naux + (m_off+dm) * atom_b_naux + (q_off+dq);
-                                        double gamB = gamma_B_Qmlp[indB];
-                                        double J_PQ_bump = q_bump * Jmetp[q_start+dq][p_start+dp] * p_bump;
-                                        B_Pml[dl * num_m * num_p + dm * num_p + dp] += gamB * J_PQ_bump;
-                                    }
-                                }
-                            }
-                        }
-                    } // salvation from deep loops :)
+                    if (!atom_to_L[A].count(L)) continue;
 
                     for (const auto& N : atom_to_N[A]) {
                         if (!atom_to_NL[A].count(N * nshell + L)) continue;
@@ -1826,20 +1876,20 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
 
                         double** KBp = Kbuff[thread]->pointer();
                         double* gamma_A_Pnlp = gamma_A_Pnl[A]->pointer()[0];
-                        
 
-                        // Deep loop of death
-                        // Abandon ALL hope, ye who enter here -Dante's inferno
-                        // K_mn += \sum_A \sum_B \sum_Pl \sum_l B_Pml * A_Pnl
                         for (int dl = 0; dl < num_l; dl++) {
                             for (int dm = 0; dm < num_m; dm++) {
                                 for (int dn = 0; dn < num_n; dn++) {
                                     double temp = 0.0;
                                     for (int dp = 0; dp < num_p; dp++) {
+                                        // A terms
                                         int indA = (l_off_A+dl) * atom_a_num_n * atom_a_naux + (n_off+dn) * atom_a_naux + (p_off+dp);
-                                        double Bpml = B_Pml[dl * num_m * num_p + dm * num_p + dp];
                                         double gamA = gamma_A_Pnlp[indA];
-                                        temp += Bpml * gamA;
+                                        // B terms
+                                        int indB = (l_off_B+dl) * atom_b_num_m * atom_b_d_naux + (m_off+dm) * atom_b_d_naux + (d_p_off+dp);
+                                        double gamB = B_Pml[indB];
+
+                                        temp += p_bump * gamA * gamB;
                                     } // end dn
                                     KBp[dm][dn] += temp;
                                 } // end dl
@@ -1856,11 +1906,11 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
                         }
                         Kbuff[thread]->zero();
 
-                    } // end ML
-                } // end P
-            } // end Q
-        } // end B
-    } // end A
+                    }
+                }
+            }
+        } // end A
+    } // end B
 
     timer_off("LocalDFK: Form K");
 
