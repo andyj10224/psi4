@@ -1770,6 +1770,66 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
 
     timer_off("LocalDFK: Form Gamma A");
 
+    timer_on("LocalDFK: Reshape Tensors");
+
+    // Reshaped Atomic Buffers
+    std::vector<SharedMatrix> gamma_A_Pnl2(natom);
+    std::vector<SharedMatrix> gamma_B_Qml2(natom);
+
+#pragma omp parallel for 
+    for (int atom = 0; atom < natom; atom++) {
+        int atom_naux = naux_per_atom_[atom];
+        int atom_num_nl = num_nl_per_atom[atom];
+        int atom_num_ns = num_ns_per_atom[atom];
+
+        gamma_A_Pnl2[atom] = std::make_shared<Matrix>(atom_naux * atom_num_nl, 1);
+        gamma_B_Qml2[atom] = std::make_shared<Matrix>(atom_naux * atom_num_ns, 1);
+
+        double* A_Pnlp = gamma_A_Pnl[atom]->pointer()[0];
+        double* A_Pnlp2 = gamma_A_Pnl2[atom]->pointer()[0];
+
+        for (const auto& NL : atom_to_NL[atom]) {
+            int N = NL / nshell;
+            int L = NL % nshell;
+
+            int nl_off = atom_NL_shell_function_offset[atom][NL];
+            int num_n = primary_->shell(N).nfunction();
+            int num_l = primary_->shell(L).nfunction();
+
+            for (int dn = 0; dn < num_n; dn++) {
+                for (int dl = 0; dl < num_l; dl++) {
+                    C_DCOPY(atom_naux, &A_Pnlp[(nl_off + dl * num_n + dn) * atom_naux], 1, 
+                                        &A_Pnlp2[(nl_off + dn * num_l + dl) * atom_naux], 1);
+                }
+            }
+        }
+
+        double* B_Qmlp = gamma_B_Qml[atom]->pointer()[0];
+        double* B_Qmlp2 = gamma_B_Qml2[atom]->pointer()[0];
+
+        for (const auto& NS : atom_to_NS[atom]) {
+            int N = NS / nshell;
+            int S = NS % nshell;
+
+            int ns_off = atom_NS_shell_function_offset[atom][NS];
+            int num_n = primary_->shell(N).nfunction();
+            int num_s = primary_->shell(S).nfunction();
+
+            for (int dn = 0; dn < num_n; dn++) {
+                for (int ds = 0; ds < num_s; ds++) {
+                    C_DCOPY(atom_naux, &B_Qmlp[(ns_off + ds * num_n + dn) * atom_naux], 1, 
+                                        &B_Qmlp2[(ns_off + dn * num_s + ds) * atom_naux], 1);
+                }
+            }
+        }
+
+        // Redefine references (old matrices will be automatically freed since reference count drops to 0)
+        gamma_A_Pnl[atom] = gamma_A_Pnl2[atom];
+        gamma_B_Qml[atom] = gamma_B_Qml2[atom];
+    }
+
+    timer_off("LocalDFK: Reshape Tensors");
+
     timer_on("LocalDFK: Form K");
 
     // K_mn += \sum_A \sum_B \sum_Q \sum_P \sum_l B_Qml * (Q|P) * A_Pnl
@@ -1875,7 +1935,6 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
                 int d_p_off = atom_D_junction_aux_shell_offset[B][P];
 
                 // Copy into temporary buffers
-                // TODO: Replace with BLAS calls
                 for (int dp = 0; dp < num_p; dp++) {
                     C_DCOPY(atom_b_num_ml, &B_Pml[(d_p_off+dp)], atom_b_d_naux, &B_Pml_temp[p_off+dp], atom_a_naux);
                 }
@@ -1902,53 +1961,18 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
                         int ml_off = atom_NS_shell_function_offset[B][M * nshell + L];
                         int nl_off = atom_NL_shell_function_offset[A][N * nshell + L];
 
-                        double* gamma_A_Pnlp = gamma_A_Pnl[A]->pointer()[0];
+                        double* A_Pnlp = gamma_A_Pnl[A]->pointer()[0];
 
-                        /*
-                        for (int p = 0; p < atom_a_naux; p++) {
-                            for (int dl = 0; dl < num_l; dl++) {
-                                for (int dm = 0; dm < num_m; dm++) {
-                                    for (int dn = 0; dn < num_n; dn++) {
-                                        // A terms
-                                        int indA = p * atom_a_num_nl + (nl_off + dl * num_n + dn);
-                                        double gamA = A_Pnl_temp[indA];
-
-                                        // B terms
-                                        int indB = p * atom_b_num_ml + (ml_off + dl * num_m + dm);
-                                        double gamB = B_Pml_temp[indB];
-
-                                        KBp[dm][dn] += prefactor * gamA * gamB;
-                                    } // end dp
-                                } // end dn
-                            } // end dm
-                        }
-                        */
-
-                       double* A_Pnlp = gamma_A_Pnl[A]->pointer()[0];
-
-                       for (int dl = 0; dl < num_l; dl++) {
-                            double* a = &A_Pnlp[(nl_off + dl * num_n) * atom_a_naux];
-                            double* b = &B_Pml_temp[(ml_off + dl * num_m) * atom_a_naux];
-                            double* c = KBp[0];
-
-                            int lda = atom_a_naux;
-                            int ldb = atom_a_naux;
-                            int ldc = max_nbf_per_shell;
-
-                            C_DGEMM('N', 'T', num_n, num_m, atom_a_naux, prefactor, a, lda, b, ldb, 1.0, KBp[0], max_nbf_per_shell);
-                       }
-
-                        /*
-                        double* a = &B_Pml_temp[ml_off];
-                        double* b = &A_Pnl_temp[nl_off];
+                        // Contract K_mn = B_Pml * A_Pnl
+                        double* a = &A_Pnlp[(nl_off) * atom_a_naux];
+                        double* b = &B_Pml_temp[(ml_off) * atom_a_naux];
                         double* c = KBp[0];
 
-                        int lda = atom_b_num_ml;
-                        int ldb = atom_a_num_nl;
+                        int lda = num_l * atom_a_naux;
+                        int ldb = num_l * atom_a_naux;
                         int ldc = max_nbf_per_shell;
 
-                        C_DGEMM('T', 'N', num_m, num_n, atom_a_naux * num_l, prefactor, a, lda, b, ldb, 1.0, KBp[0], ldc);
-                        */
+                        C_DGEMM('N', 'T', num_n, num_m, num_l * atom_a_naux, prefactor, a, lda, b, ldb, 1.0, KBp[0], max_nbf_per_shell);
                         
                     } // end P
 
