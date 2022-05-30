@@ -1410,7 +1410,7 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
 
     std::vector<std::unordered_set<int>> S_junction(nshell);
     std::vector<std::unordered_set<int>> D_junction(nshell);
-    std::unordered_map<int, std::unordered_set<int>> DS_junction;
+    std::vector<std::unordered_set<int>> DS_junction(nshell);
 
     // Set up overlap sparsity information
     const auto& shell_pairs = ints_[0]->shell_pairs_ket();
@@ -1484,13 +1484,10 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
 
     // Form DS junction
 #pragma omp parallel for
-    for (int M = 0; M < nshell; M++) {
-        for (const int& L : S_junction[M]) {
-            if (!DS_junction.count(M * nshell + L)) DS_junction[M * nshell + L] = std::unordered_set<int>();
-            for (const int& S : D_junction[L]) {
-                for (const int& N : S_junction[S]) {
-                    DS_junction[M * nshell + L].emplace(N);
-                }
+    for (int L = 0; L < nshell; L++) {
+        for (const int& S : D_junction[L]) {
+            for (const int& N : S_junction[S]) {
+                DS_junction[L].emplace(N);
             }
         }
     }
@@ -1642,9 +1639,10 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
 
         timer_on("LocalDFK: Form I2");
 
-        // => Build I2 (density three-center intermediate) <= //
+        // => Build I2 (density three-center intermediate) and Delta (density-contracted I2) <= //
         SharedMatrix I2 = std::make_shared<Matrix>(atom_naux * atom_num_density, 1);
         I2->zero();
+        SharedMatrix delta = std::make_shared<Matrix>(atom_naux * atom_num_braket, 1);
 
         std::vector<int> density_tasks;
         density_tasks.insert(density_tasks.end(), atom_density_shells[atom].begin(), atom_density_shells[atom].end());
@@ -1685,6 +1683,29 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
                     }
                 }
             }
+
+            for (const int& L : atom_S_L_partners[atom][S]) {
+                int l_start = primary_->shell(L).start();
+                int num_l = primary_->shell(L).nfunction();
+                int nl_off = atom_braket_shell_function_offset[atom][N * nshell + L];
+
+                double** Dp = D[0]->pointer();
+                double* I2p = I2->pointer()[0];
+                double* deltp = delta->pointer()[0];
+
+                
+                for (int dn = 0; dn < num_n; dn++) {
+                    for (int ds = 0; ds < num_s; ds++) {
+                        for (int dl = 0; dl < num_l; dl++) {
+                            for (int aq = 0; aq < atom_naux; aq++) {
+#pragma omp atomic
+                                deltp[(nl_off + dn * num_l + dl) * atom_naux + aq] += 
+                                      I2p[(ns_off + dn * num_s + ds) * atom_naux + aq] * Dp[l_start+dl][s_start+ds];
+                            }
+                        }
+                    }
+                }
+            }
         }
         
         timer_off("LocalDFK: Form I2");
@@ -1710,44 +1731,36 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
 
             int ml_off = atom_overlap_shell_function_offset[atom][M * nshell + L];
 
-            for (const int& S : D_junction[L]) {
-                int s_start = primary_->shell(S).start();
-                int num_s = primary_->shell(S).nfunction();
-                
-                for (const int& N : S_junction[S]) {
-                    int n_start = primary_->shell(N).start();
-                    int num_n = primary_->shell(N).nfunction();
+            for (const int& N : DS_junction[L]) {
+                int n_start = primary_->shell(N).start();
+                int num_n = primary_->shell(N).nfunction();
 
-                    int ns_off = atom_density_shell_function_offset[atom][N * nshell + S];
+                int nl_off = atom_braket_shell_function_offset[atom][N * nshell + L];
 
-                    double** Dp = D[0]->pointer();
-                    double** KBp = Kbuff[thread]->pointer();
-                    double* I1p = I1->pointer()[0];
-                    double* I2p = I2->pointer()[0];
+                double** KBp = Kbuff[thread]->pointer();
+                double* I1p = I1->pointer()[0];
+                double* deltp = delta->pointer()[0];
 
-                    for (int dm = 0; dm < num_m; dm++) {
-                        for (int dn = 0; dn < num_n; dn++) {
-                            for (int ds = 0; ds < num_s; ds++) {
-                                for (int dl = 0; dl < num_l; dl++) {
-                                    for (int aq = 0; aq < atom_naux; aq++) {
-                                        KBp[dm][dn] += I2p[(ns_off + dn * num_s + ds) * atom_naux + (aq)] *
-                                                        I1p[(ml_off + dm * num_l + dl) * atom_naux + (aq)] * Dp[l_start+dl][s_start+ds];
-                                    }
-                                }
+                for (int dm = 0; dm < num_m; dm++) {
+                    for (int dn = 0; dn < num_n; dn++) {
+                        for (int dl = 0; dl < num_l; dl++) {
+                            for (int aq = 0; aq < atom_naux; aq++) {
+                                KBp[dm][dn] += deltp[(nl_off + dn * num_l + dl) * atom_naux + (aq)] *
+                                                I1p[(ml_off + dm * num_l + dl) * atom_naux + (aq)];
                             }
                         }
                     }
-
-                    double** Kp = K[0]->pointer();
-                    // Flush the toilet (for parallel efficiency)
-                    for (int dm = 0; dm < num_m; dm++) {
-                        for (int dn = 0; dn < num_n; dn++) {
-#pragma omp atomic
-                            Kp[m_start + dm][n_start + dn] += KBp[dm][dn];
-                        }
-                    }
-                    Kbuff[thread]->zero();
                 }
+
+                double** Kp = K[0]->pointer();
+                // Flush the toilet (for parallel efficiency)
+                for (int dm = 0; dm < num_m; dm++) {
+                    for (int dn = 0; dn < num_n; dn++) {
+#pragma omp atomic
+                        Kp[m_start + dm][n_start + dn] += KBp[dm][dn];
+                    }
+                }
+                Kbuff[thread]->zero();
             }
         }
         timer_off("LocalDFK: Form K");
