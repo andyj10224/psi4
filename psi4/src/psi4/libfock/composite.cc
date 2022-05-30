@@ -1399,7 +1399,7 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
 
     timer_on("LocalDFK: K");
 
-    timer_on("LocalDFK: Preprocessing");
+    timer_on("LocalDFK: Preprocessing 1");
 
     for (auto& Kmat : K) {
         Kmat->zero();
@@ -1413,15 +1413,22 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
     std::vector<std::unordered_set<int>> S_junction(nshell);
     std::vector<std::unordered_set<int>> D_junction(nshell);
 
-    // Set up overlap sparsity information
-    const auto& shell_pairs = ints_[0]->shell_pairs_ket();
-    int num_shell_pairs = shell_pairs.size();
+    // Build a dummy integral factory for Schwarz and Density Screening
+    IntegralFactory factory(primary_);
+    auto eri = std::shared_ptr<TwoBodyAOInt>(factory.eri());
 
-    for (int UVidx = 0; UVidx < shell_pairs.size(); UVidx++) {
-        int U = shell_pairs[UVidx].first;
-        int V = shell_pairs[UVidx].second;
-        S_junction[U].emplace(V);
-        S_junction[V].emplace(U);
+    // Set up overlap sparsity information
+    double max_integral = eri->max_integral();
+
+#pragma omp parallel for
+    for (size_t P = 0; P < nshell; P++) {
+        for (size_t Q = 0; Q < nshell; Q++) {
+            double pq_pq = std::sqrt(ints_[0]->shell_ceiling2(P, Q, P, Q));
+            double schwarz_value = std::sqrt(pq_pq * max_integral);
+            if (schwarz_value >= cutoff_) {
+                S_junction[P].emplace(Q);
+            }
+        }
     }
 
     // Used for density screening
@@ -1449,10 +1456,6 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
             }
         }
     }
-
-    // Set up density sparsity information
-    IntegralFactory factory(primary_);
-    auto eri = std::shared_ptr<TwoBodyAOInt>(factory.eri());
 
     // => Calculate Shell Ceilings <= //
     std::vector<double> shell_ceilings(nshell, 0.0);
@@ -1483,71 +1486,6 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
         }
     }
 
-    std::vector<std::unordered_set<int>> atom_overlap_shells(natom); // MU LAMBDA
-    std::vector<std::unordered_set<int>> atom_density_shells(natom); // NU SIGMA
-    std::vector<std::unordered_set<int>> atom_braket_shells(natom); // MU SIGMA
-
-    std::vector<int> overlap_pair_nfunc(natom);
-    std::vector<int> density_pair_nfunc(natom);
-    std::vector<int> braket_pair_nfunc(natom);
-
-    std::vector<std::unordered_map<int, int>> atom_overlap_shell_function_offset(natom);
-    std::vector<std::unordered_map<int, int>> atom_density_shell_function_offset(natom);
-    std::vector<std::unordered_map<int, int>> atom_braket_shell_function_offset(natom);
-
-#pragma omp parallel for
-    for (int atom = 0; atom < natom; atom++) {
-        int M_start = primary_->shell_on_center(atom, 0);
-        int num_M = primary_->nshell_on_center(atom);
-        for (int M = M_start; M < M_start + num_M; M++) {
-            for (const int& L : S_junction[M]) {
-                atom_overlap_shells[atom].emplace(M * nshell + L);
-                for (const int& S : D_junction[L]) {
-                    atom_braket_shells[atom].emplace(M * nshell + S);
-                    for (const int& N : S_junction[S]) {
-                        atom_density_shells[atom].emplace(N * nshell + S);
-                    } // end N
-                } // end S
-            } // end L
-        } // end U
-
-        size_t ml_offset = 0;
-        for (const int& ML : atom_overlap_shells[atom]) {
-            int M = ML / nshell;
-            int L = ML % nshell;
-            int num_m = primary_->shell(M).nfunction();
-            int num_l = primary_->shell(L).nfunction();
-
-            atom_overlap_shell_function_offset[atom][ML] = ml_offset;
-            ml_offset += num_m * num_l;
-        }
-        overlap_pair_nfunc[atom] = ml_offset;
-
-        size_t ns_offset = 0;
-        for (const int& NS : atom_density_shells[atom]) {
-            int N = NS / nshell;
-            int S = NS % nshell;
-            int num_n = primary_->shell(N).nfunction();
-            int num_s = primary_->shell(S).nfunction();
-
-            atom_density_shell_function_offset[atom][NS] = ns_offset;
-            ns_offset += num_n * num_s;
-        }
-        density_pair_nfunc[atom] = ns_offset;
-
-        size_t ms_offset = 0;
-        for (const int& MS : atom_braket_shells[atom]) {
-            int M = MS / nshell;
-            int S = MS % nshell;
-            int num_m = primary_->shell(M).nfunction();
-            int num_s = primary_->shell(S).nfunction();
-
-            atom_braket_shell_function_offset[atom][MS] = ms_offset;
-            ms_offset += num_m * num_s;
-        }
-        braket_pair_nfunc[atom] = ms_offset;
-    } // end atom
-
     // Create K buffers to help with parallel efficiency
     size_t max_nbf_per_shell = 0;
     for (int M = 0; M < nshell; M++) {
@@ -1561,22 +1499,93 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
         Kbuff[thread]->zero();
     }
 
-    timer_off("LocalDFK: Preprocessing");
+    timer_off("LocalDFK: Preprocessing 1");
 
     for (int atom = 0; atom < natom; atom++) {
+
+        timer_on("LocalDFK: Preprocessing 2");
+
         int atom_naux = naux_per_atom_[atom];
-        int atom_num_overlap = overlap_pair_nfunc[atom];
-        int atom_num_density = density_pair_nfunc[atom];
-        int atom_num_braket = braket_pair_nfunc[atom];
+
+        std::unordered_set<int> atom_overlap_shells; // MU LAMBDA
+        std::unordered_set<int> atom_density_shells; // NU SIGMA
+        std::unordered_set<int> atom_braket_shells; // MU SIGMA
+        std::unordered_set<int> atom_S_shells; // SIGMA
+
+        std::vector<int> overlap_tasks;
+        std::vector<int> braket_tasks;
+        std::vector<int> density_tasks;
+
+        std::unordered_map<int, int> atom_overlap_shell_function_offset;
+        std::unordered_map<int, int> atom_density_shell_function_offset;
+        std::unordered_map<int, int> atom_braket_shell_function_offset;
+
+        int M_start = primary_->shell_on_center(atom, 0);
+        int num_M = primary_->nshell_on_center(atom);
+        
+        for (int M = M_start; M < M_start + num_M; M++) {
+            for (const int& L : S_junction[M]) {
+                atom_overlap_shells.emplace(M * nshell + L);
+                for (const int& S : D_junction[L]) {
+                    atom_S_shells.emplace(S);
+                    atom_braket_shells.emplace(M * nshell + S);
+                } // end S
+            } // end L
+        } // end M
+
+        overlap_tasks.insert(overlap_tasks.end(), atom_overlap_shells.begin(), atom_overlap_shells.end());
+        braket_tasks.insert(braket_tasks.end(), atom_braket_shells.begin(), atom_braket_shells.end());
+
+        for (const int& S : atom_S_shells) {
+            for (const int& N : S_junction[S]) {
+                atom_density_shells.emplace(N * nshell + S);
+            }
+        }
+        density_tasks.insert(density_tasks.end(), atom_density_shells.begin(), atom_density_shells.end());
+
+        size_t ml_offset = 0;
+        for (const int& ML : atom_overlap_shells) {
+            int M = ML / nshell;
+            int L = ML % nshell;
+            int num_m = primary_->shell(M).nfunction();
+            int num_l = primary_->shell(L).nfunction();
+
+            atom_overlap_shell_function_offset[ML] = ml_offset;
+            ml_offset += num_m * num_l;
+        }
+        int atom_num_overlap = ml_offset;
+
+        size_t ms_offset = 0;
+        for (const int& MS : atom_braket_shells) {
+            int M = MS / nshell;
+            int S = MS % nshell;
+            int num_m = primary_->shell(M).nfunction();
+            int num_s = primary_->shell(S).nfunction();
+
+            atom_braket_shell_function_offset[MS] = ms_offset;
+            ms_offset += num_m * num_s;
+        }
+        int atom_num_braket = ms_offset;
+
+        size_t ns_offset = 0;
+        for (const int& NS : atom_density_shells) {
+            int N = NS / nshell;
+            int S = NS % nshell;
+            int num_n = primary_->shell(N).nfunction();
+            int num_s = primary_->shell(S).nfunction();
+
+            atom_density_shell_function_offset[NS] = ns_offset;
+            ns_offset += num_n * num_s;
+        }
+        int atom_num_density = ns_offset;
+
+        timer_off("LocalDFK: Preprocessing 2");
 
         timer_on("LocalDFK: Form I1");
 
         // => Build I1 (overlap three-center intermediate) <= //
         SharedMatrix I1 = std::make_shared<Matrix>(atom_naux * atom_num_overlap, 1);
         I1->zero();
-
-        std::vector<int> overlap_tasks;
-        overlap_tasks.insert(overlap_tasks.end(), atom_overlap_shells[atom].begin(), atom_overlap_shells[atom].end());
 
 #pragma omp parallel for schedule(dynamic)
         for (int task = 0; task < overlap_tasks.size(); task++) {
@@ -1592,7 +1601,7 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
             int num_m = primary_->shell(M).nfunction();
             int num_l = primary_->shell(L).nfunction();
 
-            int ml_off = atom_overlap_shell_function_offset[atom][M * nshell + L];
+            int ml_off = atom_overlap_shell_function_offset[M * nshell + L];
 
             for (const int& P : atom_to_aux_shells_[atom]) {
                 int p_off = atom_aux_shell_function_offset_[atom][P];
@@ -1632,29 +1641,31 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
         delta->zero();
 
 #pragma omp parallel for schedule(dynamic)
-        for (int task = 0; task < overlap_tasks.size(); task++) {
-            int ML = overlap_tasks[task];
-            int M = ML / nshell;
-            int L = ML % nshell;
+        for (int task = 0; task < braket_tasks.size(); task++) {
+            int MS = braket_tasks[task];
+            int M = MS / nshell;
+            int S = MS % nshell;
 
             int m_start = primary_->shell(M).start();
             int num_m = primary_->shell(M).nfunction();
 
-            int l_start = primary_->shell(L).start();
-            int num_l = primary_->shell(L).nfunction();
+            int s_start = primary_->shell(S).start();
+            int num_s = primary_->shell(S).nfunction();
 
-            int ml_off = atom_overlap_shell_function_offset[atom][M * nshell + L];
+            int ms_off = atom_braket_shell_function_offset[M * nshell + S];
 
             int thread = 0;
 #ifdef _OPENMP
             thread = omp_get_thread_num();
 #endif
 
-            for (const int& S : S_junction[L]) {
+            for (const int& L : S_junction[M]) {
 
-                int s_start = primary_->shell(S).start();
-                int num_s = primary_->shell(S).nfunction();
-                int ms_off = atom_braket_shell_function_offset[atom][M * nshell + S];
+                if (!D_junction[S].count(L)) continue;
+
+                int l_start = primary_->shell(L).start();
+                int num_l = primary_->shell(L).nfunction();
+                int ml_off = atom_overlap_shell_function_offset[M * nshell + L];
 
                 double** Dp = D[0]->pointer();
                 double* I1p = I1->pointer()[0];
@@ -1664,13 +1675,24 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
                     for (int ds = 0; ds < num_s; ds++) {
                         for (int dl = 0; dl < num_l; dl++) {
                             for (int ap = 0; ap < atom_naux; ap++) {
-#pragma omp atomic
                                 deltp[(ms_off + dm * num_s + ds) * atom_naux + (ap)] +=
-                                        I1p[(ml_off + dm * num_l + dl) * atom_naux + (ap)] * Dp[l_start+dl][s_start+ds];
+                                        Dp[s_start+ds][l_start+dl] * I1p[(ml_off + dm * num_l + dl) * atom_naux + (ap)];
                             }
                         }
                     }
                 }
+
+                /*
+                double* Abuff = &Dp[s_start][l_start];
+                double* Bbuff = &I1p[(ml_off) * atom_naux];
+                double* Cbuff = &deltp[(ms_off) * atom_naux];
+
+                int lda = nbf;
+                int ldb = atom_naux * num_m;
+                int ldc = atom_naux * num_m;
+
+                C_DGEMM('N', 'N', num_s, atom_naux * num_m, num_l, 1.0, Abuff, lda, Bbuff, ldb, 1.0, Cbuff, ldc);
+                */
             }
         }
 
@@ -1681,9 +1703,6 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
         // => Build I2 (density three-center intermediate) and Delta (density-contracted I2) <= //
         SharedMatrix I2 = std::make_shared<Matrix>(atom_naux * atom_num_density, 1);
         I2->zero();
-
-        std::vector<int> density_tasks;
-        density_tasks.insert(density_tasks.end(), atom_density_shells[atom].begin(), atom_density_shells[atom].end());
 
 #pragma omp parallel for schedule(dynamic)
         for (int task = 0; task < density_tasks.size(); task++) {
@@ -1700,12 +1719,12 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
             int num_s = primary_->shell(S).nfunction();
             int s_start = primary_->shell(S).start();
 
-            bool redundant = (atom_density_shells[atom].count(S * nshell + N) && (N != S));
+            bool redundant = (atom_density_shells.count(S * nshell + N) && (N != S));
             if (redundant && (S > N)) continue;
 
-            int ns_off = atom_density_shell_function_offset[atom][N * nshell + S];
+            int ns_off = atom_density_shell_function_offset[N * nshell + S];
             int sn_off;
-            if (redundant) sn_off = atom_density_shell_function_offset[atom][S * nshell + N];
+            if (redundant) sn_off = atom_density_shell_function_offset[S * nshell + N];
 
             for (const int& Q : atom_to_aux_shells_[atom]) {
                 int q_off = atom_aux_shell_function_offset_[atom][Q];
@@ -1733,9 +1752,6 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
 
         timer_on("LocalDFK: Form K");
 
-        std::vector<int> braket_tasks;
-        braket_tasks.insert(braket_tasks.end(), atom_braket_shells[atom].begin(), atom_braket_shells[atom].end());
-
 #pragma omp parallel for schedule(dynamic)
         for (int task = 0; task < braket_tasks.size(); task++) {
             int MS = braket_tasks[task];
@@ -1753,18 +1769,19 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
             int num_m = primary_->shell(M).nfunction();
             int num_s = primary_->shell(S).nfunction();
 
-            int ms_off = atom_braket_shell_function_offset[atom][M * nshell + S];
+            int ms_off = atom_braket_shell_function_offset[M * nshell + S];
 
             for (const int& N : S_junction[S]) {
                 int n_start = primary_->shell(N).start();
                 int num_n = primary_->shell(N).nfunction();
 
-                int ns_off = atom_density_shell_function_offset[atom][N * nshell + S];
+                int ns_off = atom_density_shell_function_offset[N * nshell + S];
 
                 double** KBp = Kbuff[thread]->pointer();
                 double* I2p = I2->pointer()[0];
                 double* deltp = delta->pointer()[0];
 
+                /*
                 for (int dm = 0; dm < num_m; dm++) {
                     for (int dn = 0; dn < num_n; dn++) {
                         for (int ds = 0; ds < num_s; ds++) {
@@ -1775,6 +1792,17 @@ void LocalDFK::build_G_component(const std::vector<SharedMatrix>& D, std::vector
                         }
                     }
                 }
+                */
+
+                double* Abuff = &deltp[(ms_off) * atom_naux];
+                double* Bbuff = &I2p[(ns_off) * atom_naux];
+                double* Cbuff = KBp[0];
+
+                int lda = atom_naux * num_s;
+                int ldb = atom_naux * num_s;
+                int ldc = max_nbf_per_shell;
+
+                C_DGEMM('N', 'T', num_m, num_n, atom_naux * num_s, 1.0, Abuff, lda, Bbuff, ldb, 1.0, Cbuff, ldc);
 
                 double** Kp = K[0]->pointer();
                 // Flush the toilet (for parallel efficiency)
