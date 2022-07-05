@@ -2490,6 +2490,14 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         /*- Fock matrix threshold for treating ampltudes as coupled during local MP2 iterations !expert -*/
         options.add_double("F_CUT", 1e-5);
     }
+    if (name == "DLPNO" || options.read_globals()) {
+        /*- MODULEDESCRIPTION Performs THC computations (MP2, CCSD, or CCSD(T)) for RHF reference wavefunctions. -*/
+
+        /*- SUBSECTION General Options -*/
+        /*- Auxiliary basis set for MP2 density fitting computations.
+        :ref:`Defaults <apdx:basisFamily>` to a RI basis. -*/
+        options.add_str("DF_BASIS_MP2", "");
+    }
     if (name == "PSIMRCC" || options.read_globals()) {
         /*- MODULEDESCRIPTION Performs multireference coupled cluster computations.  This theory
            should be used only by advanced users with a good working knowledge of multireference

@@ -4237,6 +4237,61 @@ def run_dlpnomp2(name, **kwargs):
     core.tstop()
     return dlpnomp2_wfn
 
+def run_thcmp2(name, **kwargs):
+    """Function encoding sequence of PSI module calls for
+    a THC-MP2 calculation (MP2 with tensor hypercontraction).
+
+    """
+    optstash = p4util.OptionsState(
+        ['DF_BASIS_MP2'],
+        ['SCF_TYPE'])
+
+    # Alter default algorithm
+    if not core.has_global_option_changed('SCF_TYPE'):
+        core.set_global_option('SCF_TYPE', 'DF')
+        core.print_out("""    SCF Algorithm Type (re)set to DF.\n""")
+
+    # THC-MP2 is only DF
+    if core.get_global_option('MP2_TYPE') != "DF":
+        raise ValidationError("""  THC-MP2 is only implemented with density fitting.\n"""
+                              """  'mp2_type' must be set to 'DF'.\n""")
+
+    # Bypass the scf call if a reference wavefunction is given
+    ref_wfn = kwargs.get('ref_wfn', None)
+    if ref_wfn is None:
+        ref_wfn = scf_helper(name, use_c1=True, **kwargs)  # C1 certified
+    elif ref_wfn.molecule().schoenflies_symbol() != 'c1':
+        raise ValidationError("""  THC-MP2 does not make use of molecular symmetry: """
+                              """reference wavefunction must be C1.\n""")
+
+    if core.get_global_option('REFERENCE') != "RHF":
+        raise ValidationError("THC-MP2 is not available for %s references.",
+                              core.get_global_option('REFERENCE'))
+
+    core.tstart()
+    core.print_out('\n')
+    p4util.banner('THC-MP2')
+    core.print_out('\n')
+
+    aux_basis = core.BasisSet.build(ref_wfn.molecule(), "DF_BASIS_MP2",
+                                    core.get_option("THC", "DF_BASIS_MP2"),
+                                    "RIFIT", core.get_global_option('BASIS'))
+    ref_wfn.set_basisset("DF_BASIS_MP2", aux_basis)
+
+    thcmp2_wfn = core.thc(ref_wfn)
+    thcmp2_wfn.compute_energy()
+
+    elif name == 'dlpno-mp2':
+        thcmp2_wfn.set_variable('CURRENT ENERGY', thcmp2_wfn.variable('MP2 TOTAL ENERGY'))
+        thcmp2_wfn.set_variable('CURRENT CORRELATION ENERGY', thcmp2_wfn.variable('MP2 CORRELATION ENERGY'))
+
+    # Shove variables into global space
+    for k, v in thcmp2_wfn.variables().items():
+        core.set_variable(k, v)
+
+    optstash.restore()
+    core.tstop()
+    return thcmp2_wfn
 
 def run_dmrgscf(name, **kwargs):
     """Function encoding sequence of PSI module calls for
