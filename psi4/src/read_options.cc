@@ -178,7 +178,7 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
     /*- What algorithm to use for the SCF computation. See Table :ref:`SCF
     Convergence & Algorithm <table:conv_scf>` for default algorithm for
     different calculation types. -*/
-    options.add_str("SCF_TYPE", "PK", "DIRECT DF MEM_DF DISK_DF PK OUT_OF_CORE CD GTFOCK COSX LINK");
+    options.add_str("SCF_TYPE", "PK", "DIRECT DF MEM_DF DISK_DF PK OUT_OF_CORE CD GTFOCK COSX LINK DFCFMM+LINK CFMM+LINK LOCAL_DF_J+LINK DFCFMM+COSX CFMM+COSX LOCAL_DF_J+COSX");
     /*- Algorithm to use for MP2 computation.
     See :ref:`Cross-module Redundancies <table:managedmethods>` for details. -*/
     options.add_str("MP2_TYPE", "DF", "DF CONV CD");
@@ -1569,6 +1569,22 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
 
         /*- The screening tolerance used for ERI/Density sparsity in the LinK algorithm -*/
         options.add_double("LINK_INTS_TOLERANCE", 1.0e-12);
+
+        /*- SUBSECTION CFMM Algorithm -*/
+
+        /*- The maximum multipole order to use in the CFMM algorithm -*/
+        options.add_int("CFMM_ORDER", 10);
+        /*- The maximum tree depth to use in the CFMM algorithm (Must be at least 3) -*/
+        options.add_int("CFMM_GRAIN", 4);
+        /*- CFMM Extent Tolerance (for well-separated) -*/
+        options.add_double("CFMM_EXTENT_TOLERANCE", 1.0e-10);
+
+        /*- SUBSECTION Local DF J Algorithm -*/
+
+        /*- The inner bump radius used for local density fitting (in bohr) !expert -*/
+        options.add_double("LOCAL_DF_R0", 8.0);
+        /*- The outer bump radium used for local density fitting (in bohr) !expert -*/
+        options.add_double("LOCAL_DF_R1", 10.0);
 
         /*- SUBSECTION SAD Guess Algorithm -*/
 

@@ -48,6 +48,12 @@ void CompositeJK::common_init() {
 
     if (jtype_ == "DIRECT_DF") {
         jalgo_ = std::make_shared<DirectDFJ>(primary_, auxiliary_, options_);
+    } else if (jtype_ == "CFMM") {
+        jalgo_ = std::make_shared<CFMM>(primary_, options_);
+    } else if (jtype_ == "DFCFMM") {
+        jalgo_ = std::make_shared<DFCFMM>(primary_, auxiliary_, options_);
+    } else if (jtype_ == "LOCAL_DF") {
+        jalgo_ = std::make_shared<LocalDFJ>(primary_, auxiliary_, options_);
     } else {
         throw PSIEXCEPTION("J BUILD TYPE " + jtype_ + " IS NOT SUPPORTED IN COMPOSITE JK!");
     }

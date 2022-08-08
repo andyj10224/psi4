@@ -1227,6 +1227,7 @@ def scf_wavefunction_factory(name, ref_wfn, reference, **kwargs):
     # Set the DF basis sets
     df_needed = core.get_global_option("SCF_TYPE") in ["DF", "MEM_DF", "DISK_DF", "COSX", "LINK"]
     df_needed |= (core.get_global_option("SCF_TYPE") == "DIRECT" and core.get_option("SCF", "DF_SCF_GUESS"))
+    df_needed |= ("DF" in core.get_global_option("SCF_TYPE"))
     if df_needed:
         aux_basis = core.BasisSet.build(wfn.molecule(), "DF_BASIS_SCF",
                                         core.get_option("SCF", "DF_BASIS_SCF"),
