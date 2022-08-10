@@ -1022,12 +1022,16 @@ void CFMMTree::build_nf_gamma_P(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints
     Matrix D_max(pri_nshell, pri_nshell);
     auto D_maxp = D_max.pointer();
 
-    for(size_t U = 0; U < pri_nshell; U++) {
-        int u_start = primary_->shell(U).start();
-        int num_u = primary_->shell(U).nfunction();
+    if (density_screening_) {
+#pragma omp parallel for
+        for(size_t UV = 0; UV < pri_nshell * pri_nshell; UV++) {
+            size_t U = UV / pri_nshell;
+            size_t V = UV % pri_nshell;
 
-        for(size_t V = 0; V < pri_nshell; V++) {
-	    int v_start = primary_->shell(V).start();
+            int u_start = primary_->shell(U).start();
+            int num_u = primary_->shell(U).nfunction();
+            
+	        int v_start = primary_->shell(V).start();
             int num_v = primary_->shell(V).nfunction();
 
             for(size_t i = 0; i < D.size(); i++) {
@@ -1063,8 +1067,10 @@ void CFMMTree::build_nf_gamma_P(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints
                 int U = UV.first;
                 int V = UV.second;
 
-                double screen_val = D_maxp[U][V] * D_maxp[U][V] * Jmet_max[P] * ints[thread]->shell_pair_value(U,V);
-                if (screen_val < ints_tolerance_*ints_tolerance_) continue; 
+                if (density_screening_) {
+                    double screen_val = D_maxp[U][V] * D_maxp[U][V] * Jmet_max[P] * ints[thread]->shell_pair_value(U,V);
+                    if (screen_val < ints_tolerance_*ints_tolerance_) continue;
+                }
 	
                 int u_start = primary_->shell(U).start();
                 int num_u = primary_->shell(U).nfunction();
@@ -1152,14 +1158,20 @@ void CFMMTree::build_nf_df_J(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints,
 
     // set up D_max for screening purposes
     std::vector<double> D_max(aux_nshell, 0.0);
-    for(size_t i = 0; i < D.size(); i++) {
+
+    if (density_screening_) {
+#pragma omp parallel for
         for (int P = 0; P < aux_nshell; P++) {
             int p_start = auxiliary_->shell(P).start();
             int num_p = auxiliary_->shell(P).nfunction();
-            for (int p = p_start; p < p_start + num_p; p++) {
-                D_max[P] = std::max(D_max[P], std::abs(D[i]->get(p,0)));
+            for (size_t i = 0; i < D.size(); i++) {
+                double* Dp = D[i]->pointer()[0];
+                for (int p = p_start; p < p_start + num_p; p++) {
+                    D_max[P] = std::max(D_max[P], std::abs(Dp[p]));
+                }
             }
         }
+
     }
 
 #pragma omp parallel for schedule(guided)
@@ -1192,8 +1204,10 @@ void CFMMTree::build_nf_df_J(std::vector<std::shared_ptr<TwoBodyAOInt>>& ints,
 
                 int Q = Qsh->get_shell_pair_index().first;
 
-		double screen_val = D_max[Q] * D_max[Q] * Jmet_max[Q] * ints[thread]->shell_pair_value(U,V);
-                if (screen_val < ints_tolerance_*ints_tolerance_) continue; 
+                if (density_screening_) {
+		            double screen_val = D_max[Q] * D_max[Q] * Jmet_max[Q] * ints[thread]->shell_pair_value(U,V);
+                    if (screen_val < ints_tolerance_*ints_tolerance_) continue;
+                }
 	
                 int q_start = auxiliary_->shell(Q).start();
                 int num_q = auxiliary_->shell(Q).nfunction();
