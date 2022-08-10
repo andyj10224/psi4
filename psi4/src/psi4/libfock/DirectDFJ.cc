@@ -48,12 +48,15 @@ void DirectDFJ::build_metric() {
 
     // build Coulomb metric maximums vector
     Jmet_max_= std::vector<double>(auxiliary_->nshell(), 0.0);
+    double **Jmetp = Jmet_->pointer();
+
     if (density_screening_) {
+#pragma omp parallel for
         for (size_t P = 0; P < auxiliary_->nshell(); P++) {
             int p_start = auxiliary_->shell_to_basis_function(P);
             int num_p = auxiliary_->shell(P).nfunction();
             for (size_t p = p_start; p < p_start + num_p; p++) {
-                Jmet_max_[P] = std::max(Jmet_max_[P], Jmet_->get(p, p));
+                Jmet_max_[P] = std::max(Jmet_max_[P], Jmetp[p][p]);
             }
         }
     }
@@ -101,11 +104,14 @@ void DirectDFJ::build_G_component(const std::vector<SharedMatrix>& D, std::vecto
     Matrix D_max(pri_nshell, pri_nshell);
     auto D_maxp = D_max.pointer();
 
-    for (size_t U = 0; U < pri_nshell; U++) {
-        int u_start = primary_->shell_to_basis_function(U);
-        int num_u = primary_->shell(U).nfunction();
+    if (density_screening_) {
+        for (size_t UV = 0; UV < pri_nshell * pri_nshell; UV++) {
+            size_t U = UV / pri_nshell;
+            size_t V = UV % pri_nshell;
 
-	    for (size_t V = 0; V < pri_nshell; V++) {
+            int u_start = primary_->shell_to_basis_function(U);
+            int num_u = primary_->shell(U).nfunction();
+	        
             int v_start = primary_->shell_to_basis_function(V);
             int num_v = primary_->shell(V).nfunction();
 
@@ -162,8 +168,10 @@ void DirectDFJ::build_G_component(const std::vector<SharedMatrix>& D, std::vecto
             int U = UV.first;
             int V = UV.second;
 
-	        double screen_val = D_maxp[U][V] * D_maxp[U][V] * Jmet_max_[P] * ints_[thread]->shell_pair_value(U, V);
-	        if (screen_val < cutoff_ * cutoff_) continue;
+            if (density_screening_) {
+	            double screen_val = D_maxp[U][V] * D_maxp[U][V] * Jmet_max_[P] * ints_[thread]->shell_pair_value(U, V);
+	            if (screen_val < cutoff_ * cutoff_) continue;
+            }
 
             int u_start = primary_->shell_to_basis_function(U);
             int num_u = primary_->shell(U).nfunction();
@@ -217,12 +225,15 @@ void DirectDFJ::build_G_component(const std::vector<SharedMatrix>& D, std::vecto
 
     // set up gamp_max for screening purposes
     std::vector<double> gamp_max(aux_nshell, 0.0);
-    for(size_t i = 0; i < D.size(); i++) {
+    if (density_screening_) {
+#pragma omp parallel for
         for (int P = 0; P < aux_nshell; P++) {
             int p_start = auxiliary_->shell_to_basis_function(P);
             int num_p = auxiliary_->shell(P).nfunction();
-            for (int p = p_start; p < p_start + num_p; p++) {
-                gamp_max[P] = std::max(gamp_max[P], std::abs(gamp[i * naux + p]));
+            for (size_t i = 0; i < D.size(); i++) {
+                for (int p = p_start; p < p_start + num_p; p++) {
+                    gamp_max[P] = std::max(gamp_max[P], std::abs(gamp[i * naux + p]));
+                }
             }
         }
     }
@@ -247,8 +258,10 @@ void DirectDFJ::build_G_component(const std::vector<SharedMatrix>& D, std::vecto
 #endif
 
         for (int Q = 0; Q < aux_nshell; Q++) {
-            double screen_val = gamp_max[Q] * gamp_max[Q] * Jmet_max_[Q] * ints_[thread]->shell_pair_value(U,V);
-	        if (screen_val < cutoff_ * cutoff_) continue;
+            if (density_screening_) {
+                double screen_val = gamp_max[Q] * gamp_max[Q] * Jmet_max_[Q] * ints_[thread]->shell_pair_value(U,V);
+	            if (screen_val < cutoff_ * cutoff_) continue;
+            }
 
 		    int q_start = auxiliary_->shell_to_basis_function(Q);
             int num_q = auxiliary_->shell(Q).nfunction();

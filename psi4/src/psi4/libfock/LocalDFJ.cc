@@ -163,11 +163,15 @@ void LocalDFJ::build_rho_a_L(const std::vector<SharedMatrix>& D) {
     Matrix D_max(pri_nshell, pri_nshell);
     auto D_maxp = D_max.pointer();
 
-    for (size_t U = 0; U < pri_nshell; U++) {
-        int u_start = primary_->shell_to_basis_function(U);
-        int num_u = primary_->shell(U).nfunction();
+    if (density_screening_) {
+#pragma omp parallel for
+        for (size_t UV = 0; UV < pri_nshell * pri_nshell; UV++) {
+            size_t U = UV / pri_nshell;
+            size_t V = UV % pri_nshell;
 
-	    for (size_t V = 0; V < pri_nshell; V++) {
+            int u_start = primary_->shell_to_basis_function(U);
+            int num_u = primary_->shell(U).nfunction();
+	        
             int v_start = primary_->shell_to_basis_function(V);
             int num_v = primary_->shell(V).nfunction();
 
@@ -179,6 +183,7 @@ void LocalDFJ::build_rho_a_L(const std::vector<SharedMatrix>& D) {
                     }
                 }
             }
+
         }
     }
 
@@ -199,8 +204,10 @@ void LocalDFJ::build_rho_a_L(const std::vector<SharedMatrix>& D) {
                 int U = UV_a / pri_nshell;
                 int V = UV_a % pri_nshell;
 
-    		    double screen_val = D_maxp[U][V] * D_maxp[U][V] * Jmet_max_[L] * ints_[thread]->shell_pair_value(U,V);
-                if (screen_val < cutoff_ * cutoff_) continue;
+                if (density_screening_) {
+    		        double screen_val = D_maxp[U][V] * D_maxp[U][V] * Jmet_max_[L] * ints_[thread]->shell_pair_value(U,V);
+                    if (screen_val < cutoff_ * cutoff_) continue;
+                }
 
                 double prefactor = (U == V) ? 1.0 : 2.0;
 
@@ -401,15 +408,18 @@ void LocalDFJ::build_G_component(const std::vector<SharedMatrix>& D, std::vector
     I_KX_max->zero();
     auto I_KX_maxp = I_KX_max->pointer();
 
-    for (size_t atom = 0; atom < natom; atom++) {
-        for (const auto K : atom_to_aux_shells_[atom]) { 
-            for (size_t i = 0; i < D.size(); i++) {
-                double* IKXp = I_KX_[atom][i]->pointer()[0];
+    if (density_screening_) {
+#pragma omp parallel for
+        for (size_t atom = 0; atom < natom; atom++) {
+            for (const auto K : atom_to_aux_shells_[atom]) { 
+                for (size_t i = 0; i < D.size(); i++) {
+                    double* IKXp = I_KX_[atom][i]->pointer()[0];
 
-		        int k_off = atom_aux_shell_function_offset_[atom][K];
-                int num_k = auxiliary_->shell(K).nfunction();
-                for (int k = k_off; k < k_off + num_k; k++) {
-                    I_KX_maxp[atom][K] = std::max(I_KX_maxp[atom][K], std::abs(IKXp[k]));
+		            int k_off = atom_aux_shell_function_offset_[atom][K];
+                    int num_k = auxiliary_->shell(K).nfunction();
+                    for (int k = k_off; k < k_off + num_k; k++) {
+                        I_KX_maxp[atom][K] = std::max(I_KX_maxp[atom][K], std::abs(IKXp[k]));
+                    }
                 }
             }
         }
@@ -433,8 +443,10 @@ void LocalDFJ::build_G_component(const std::vector<SharedMatrix>& D, std::vector
                 int U = UV_a / pri_nshell;
                 int V = UV_a % pri_nshell;
 
-    		double screen_val = I_KX_maxp[atom][K] * I_KX_maxp[atom][K] * Jmet_max_[K] * ints_[thread]->shell_pair_value(U,V);
-		    if (screen_val < cutoff_ * cutoff_) continue;
+                if (density_screening_) {
+    		        double screen_val = I_KX_maxp[atom][K] * I_KX_maxp[atom][K] * Jmet_max_[K] * ints_[thread]->shell_pair_value(U,V);
+		            if (screen_val < cutoff_ * cutoff_) continue;
+                }
 
                 int u_start = primary_->shell(U).start();
                 int num_u = primary_->shell(U).nfunction();
