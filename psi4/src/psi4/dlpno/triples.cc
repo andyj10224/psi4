@@ -881,6 +881,7 @@ double DLPNOCCSD_T::compute_lccsd_t0(bool store_amplitudes) {
                 q_vv_tmp = linalg::triplet(X_tno_[ijk], q_vv_tmp, X_tno_[ijk], true, false, false);
                     
                 C_DCOPY(ntno_ijk * ntno_ijk, &(*q_vv_tmp)(0, 0), 1, &(*q_vv)(q_ijk, 0), 1);
+            }
         }
 
         auto A_solve = submatrix_rows_and_cols(*full_metric_, lmotriplet_to_ribfs_[ijk], lmotriplet_to_ribfs_[ijk]);
