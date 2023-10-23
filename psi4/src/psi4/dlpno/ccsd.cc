@@ -955,9 +955,8 @@ void DLPNOCCSD::compute_cc_integrals() {
         auto q_ov = std::make_shared<Matrix>(naux_ij, nlmo_ij * npno_ij);
         auto q_vv = std::make_shared<Matrix>(naux_ij, npno_ij * npno_ij);
 
-        for (int centerq = 0; centerq < lmopair_to_riatoms_[ij].size(); ++centerq) {
-            for (int q_idx = 0; q_idx < atom_to_ribf_[centerq].size(); ++q_idx) {
-                const int q = atom_to_ribf_[centerq][q_idx];
+        for (const int &centerq : lmopair_to_riatoms_[ij]) {
+            for (const int& q : atom_to_ribf_[centerq]) {
                 const int q_ij = std::find(lmopair_to_ribfs_[ij].begin(), lmopair_to_ribfs_[ij].end(), q) - lmopair_to_ribfs_[ij].begin();
 
                 const int i_sparse = riatom_to_lmos_ext_dense_[centerq][i];

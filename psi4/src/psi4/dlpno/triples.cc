@@ -831,9 +831,8 @@ double DLPNOCCSD_T::compute_lccsd_t0(bool store_amplitudes) {
 
         auto q_vv = std::make_shared<Matrix>(naux_ijk, ntno_ijk * ntno_ijk);
 
-        for (int centerq = 0; centerq < lmotriplet_to_riatoms_[ijk].size(); ++centerq) {
-            for (int q_idx = 0; q_idx < atom_to_ribf_[centerq].size(); ++q_idx) {
-                const int q = atom_to_ribf_[centerq][q_idx];
+        for (const int &centerq : lmotriplet_to_riatoms_[ijk]) {
+            for (const int& q : atom_to_ribf_[centerq]) {
                 const int q_ijk = std::find(lmotriplet_to_ribfs_[ijk].begin(), lmotriplet_to_ribfs_[ijk].end(), q) - lmotriplet_to_ribfs_[ijk].begin();
 
                 const int i_sparse = riatom_to_lmos_ext_dense_[centerq][i];
