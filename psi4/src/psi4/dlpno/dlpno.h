@@ -409,6 +409,7 @@ class DLPNOCCSD_T : public DLPNOCCSD {
     // Sparsity information
     // WARNING: Only unique triplets are used
     SparseMap lmotriplet_to_ribfs_; ///< which ribfs are on an LMO triplet (i, j, k)
+    SparseMap lmotriplet_to_riatoms_; ///< which riatoms are on an LMO triplet (i, j, k)
     SparseMap lmotriplet_to_lmos_; ///< which LMOs l form a significant pair with (i, j, or k)
     SparseMap lmotriplet_to_paos_; ///< which PAOs span the virtual space of a triplet of LMOs?
     std::unordered_map<int, int> i_j_k_to_ijk_; ///< LMO indices (i, j, k) to significant LMO triplet index (ijk), -1 if not found

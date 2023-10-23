@@ -364,6 +364,7 @@ void DLPNOCCSD_T::triples_sparsity(bool prescreening) {
 
     if (!prescreening) {
         lmotriplet_to_ribfs_.clear();
+        lmotriplet_to_riatoms_.clear();
         lmotriplet_to_lmos_.clear();
         lmotriplet_to_paos_.clear();
 
@@ -372,6 +373,7 @@ void DLPNOCCSD_T::triples_sparsity(bool prescreening) {
     }
 
     lmotriplet_to_ribfs_.resize(n_lmo_triplets);
+    lmotriplet_to_riatoms_.resize(n_lmo_triplets);
     lmotriplet_to_lmos_.resize(n_lmo_triplets);
     lmotriplet_to_paos_.resize(n_lmo_triplets);
 
@@ -385,6 +387,7 @@ void DLPNOCCSD_T::triples_sparsity(bool prescreening) {
         int ij = i_j_to_ij_[i][j], jk = i_j_to_ij_[j][k], ik = i_j_to_ij_[i][k];
 
         lmotriplet_to_ribfs_[ijk] = merge_lists(lmo_to_ribfs[i], merge_lists(lmo_to_ribfs[j], lmo_to_ribfs[k]));
+        lmotriplet_to_riatoms_[ijk] = merge_lists(lmo_to_riatoms[i], merge_lists(lmo_to_riatoms[j], lmo_to_riatoms[k]));
         for (int l = 0; l < naocc; ++l) {
             int il = i_j_to_ij_[i][l], jl = i_j_to_ij_[j][l], kl = i_j_to_ij_[k][l];
             if (il != -1 && jl != -1 && kl != -1) lmotriplet_to_lmos_[ijk].push_back(l);
@@ -828,55 +831,56 @@ double DLPNOCCSD_T::compute_lccsd_t0(bool store_amplitudes) {
 
         auto q_vv = std::make_shared<Matrix>(naux_ijk, ntno_ijk * ntno_ijk);
 
-        for (int q_ijk = 0; q_ijk < naux_ijk; q_ijk++) {
-            const int q = lmotriplet_to_ribfs_[ijk][q_ijk];
-            const int centerq = ribasis_->function_to_center(q);
+        for (int centerq = 0; centerq < lmotriplet_to_riatoms_[ijk].size(); ++centerq) {
+            for (int q_idx = 0; q_idx < atom_to_ribf_[centerq].size(); ++q_idx) {
+                const int q = atom_to_ribf_[centerq][q_idx];
+                const int q_ijk = std::find(lmotriplet_to_ribfs_[ijk].begin(), lmotriplet_to_ribfs_[ijk].end(), q) - lmotriplet_to_ribfs_[ijk].begin();
 
-            const int i_sparse = riatom_to_lmos_ext_dense_[centerq][i];
-            const std::vector<int> i_slice(1, i_sparse);
-            const int j_sparse = riatom_to_lmos_ext_dense_[centerq][j];
-            const std::vector<int> j_slice(1, j_sparse);
-            const int k_sparse = riatom_to_lmos_ext_dense_[centerq][k];
-            const std::vector<int> k_slice(1, k_sparse);
+                const int i_sparse = riatom_to_lmos_ext_dense_[centerq][i];
+                const std::vector<int> i_slice(1, i_sparse);
+                const int j_sparse = riatom_to_lmos_ext_dense_[centerq][j];
+                const std::vector<int> j_slice(1, j_sparse);
+                const int k_sparse = riatom_to_lmos_ext_dense_[centerq][k];
+                const std::vector<int> k_slice(1, k_sparse);
 
-            auto q_iv_tmp = submatrix_rows_and_cols(*qia_[q], i_slice, lmotriplet_pao_to_riatom_pao_[ijk][q_ijk]);
-            q_iv_tmp = linalg::doublet(q_iv_tmp, X_tno_[ijk], false, false);
-            C_DCOPY(ntno_ijk, &(*q_iv_tmp)(0, 0), 1, &(*q_iv)(q_ijk, 0), 1);
+                auto q_iv_tmp = submatrix_rows_and_cols(*qia_[q], i_slice, lmotriplet_pao_to_riatom_pao_[ijk][q_ijk]);
+                q_iv_tmp = linalg::doublet(q_iv_tmp, X_tno_[ijk], false, false);
+                C_DCOPY(ntno_ijk, &(*q_iv_tmp)(0, 0), 1, &(*q_iv)(q_ijk, 0), 1);
 
-            auto q_jv_tmp = submatrix_rows_and_cols(*qia_[q], j_slice, lmotriplet_pao_to_riatom_pao_[ijk][q_ijk]);
-            q_jv_tmp = linalg::doublet(q_jv_tmp, X_tno_[ijk], false, false);
-            C_DCOPY(ntno_ijk, &(*q_jv_tmp)(0, 0), 1, &(*q_jv)(q_ijk, 0), 1);
+                auto q_jv_tmp = submatrix_rows_and_cols(*qia_[q], j_slice, lmotriplet_pao_to_riatom_pao_[ijk][q_ijk]);
+                q_jv_tmp = linalg::doublet(q_jv_tmp, X_tno_[ijk], false, false);
+                C_DCOPY(ntno_ijk, &(*q_jv_tmp)(0, 0), 1, &(*q_jv)(q_ijk, 0), 1);
 
-            auto q_kv_tmp = submatrix_rows_and_cols(*qia_[q], k_slice, lmotriplet_pao_to_riatom_pao_[ijk][q_ijk]);
-            q_kv_tmp = linalg::doublet(q_kv_tmp, X_tno_[ijk], false, false);
-            C_DCOPY(ntno_ijk, &(*q_kv_tmp)(0, 0), 1, &(*q_kv)(q_ijk, 0), 1);
+                auto q_kv_tmp = submatrix_rows_and_cols(*qia_[q], k_slice, lmotriplet_pao_to_riatom_pao_[ijk][q_ijk]);
+                q_kv_tmp = linalg::doublet(q_kv_tmp, X_tno_[ijk], false, false);
+                C_DCOPY(ntno_ijk, &(*q_kv_tmp)(0, 0), 1, &(*q_kv)(q_ijk, 0), 1);
 
-            auto q_io_tmp = submatrix_rows_and_cols(*qij_[q], i_slice, lmotriplet_lmo_to_riatom_lmo_[ijk][q_ijk]);
-            C_DCOPY(nlmo_ijk, &(*q_io_tmp)(0, 0), 1, &(*q_io)(q_ijk, 0), 1);
+                auto q_io_tmp = submatrix_rows_and_cols(*qij_[q], i_slice, lmotriplet_lmo_to_riatom_lmo_[ijk][q_ijk]);
+                C_DCOPY(nlmo_ijk, &(*q_io_tmp)(0, 0), 1, &(*q_io)(q_ijk, 0), 1);
 
-            auto q_jo_tmp = submatrix_rows_and_cols(*qij_[q], j_slice, lmotriplet_lmo_to_riatom_lmo_[ijk][q_ijk]);
-            C_DCOPY(nlmo_ijk, &(*q_jo_tmp)(0, 0), 1, &(*q_jo)(q_ijk, 0), 1);
+                auto q_jo_tmp = submatrix_rows_and_cols(*qij_[q], j_slice, lmotriplet_lmo_to_riatom_lmo_[ijk][q_ijk]);
+                C_DCOPY(nlmo_ijk, &(*q_jo_tmp)(0, 0), 1, &(*q_jo)(q_ijk, 0), 1);
 
-            auto q_ko_tmp = submatrix_rows_and_cols(*qij_[q], k_slice, lmotriplet_lmo_to_riatom_lmo_[ijk][q_ijk]);
-            C_DCOPY(nlmo_ijk, &(*q_ko_tmp)(0, 0), 1, &(*q_ko)(q_ijk, 0), 1);
+                auto q_ko_tmp = submatrix_rows_and_cols(*qij_[q], k_slice, lmotriplet_lmo_to_riatom_lmo_[ijk][q_ijk]);
+                C_DCOPY(nlmo_ijk, &(*q_ko_tmp)(0, 0), 1, &(*q_ko)(q_ijk, 0), 1);
 
-            SharedMatrix q_vv_tmp;
-            if (write_qab_pao_) {
-                std::stringstream toc_entry;
-                toc_entry << "QAB (PAO) " << q;
-                int npao_q = riatom_to_paos_ext_[centerq].size();
-                q_vv_tmp = std::make_shared<Matrix>(toc_entry.str(), npao_q, npao_q);
-#pragma omp critical
-                q_vv_tmp->load(psio_, PSIF_DLPNO_QAB_PAO, psi::Matrix::LowerTriangle);
-                q_vv_tmp = submatrix_rows_and_cols(*q_vv_tmp, lmotriplet_pao_to_riatom_pao_[ijk][q_ijk],
-                                                lmotriplet_pao_to_riatom_pao_[ijk][q_ijk]);
-            } else {
-                q_vv_tmp = submatrix_rows_and_cols(*qab_[q], lmotriplet_pao_to_riatom_pao_[ijk][q_ijk],
-                                                lmotriplet_pao_to_riatom_pao_[ijk][q_ijk]);
-            }
-            q_vv_tmp = linalg::triplet(X_tno_[ijk], q_vv_tmp, X_tno_[ijk], true, false, false);
-                
-            C_DCOPY(ntno_ijk * ntno_ijk, &(*q_vv_tmp)(0, 0), 1, &(*q_vv)(q_ijk, 0), 1);
+                SharedMatrix q_vv_tmp;
+                if (write_qab_pao_) {
+                    std::stringstream toc_entry;
+                    toc_entry << "QAB (PAO) " << q;
+                    int npao_q = riatom_to_paos_ext_[centerq].size();
+                    q_vv_tmp = std::make_shared<Matrix>(toc_entry.str(), npao_q, npao_q);
+    #pragma omp critical
+                    q_vv_tmp->load(psio_, PSIF_DLPNO_QAB_PAO, psi::Matrix::LowerTriangle);
+                    q_vv_tmp = submatrix_rows_and_cols(*q_vv_tmp, lmotriplet_pao_to_riatom_pao_[ijk][q_ijk],
+                                                    lmotriplet_pao_to_riatom_pao_[ijk][q_ijk]);
+                } else {
+                    q_vv_tmp = submatrix_rows_and_cols(*qab_[q], lmotriplet_pao_to_riatom_pao_[ijk][q_ijk],
+                                                    lmotriplet_pao_to_riatom_pao_[ijk][q_ijk]);
+                }
+                q_vv_tmp = linalg::triplet(X_tno_[ijk], q_vv_tmp, X_tno_[ijk], true, false, false);
+                    
+                C_DCOPY(ntno_ijk * ntno_ijk, &(*q_vv_tmp)(0, 0), 1, &(*q_vv)(q_ijk, 0), 1);
         }
 
         auto A_solve = submatrix_rows_and_cols(*full_metric_, lmotriplet_to_ribfs_[ijk], lmotriplet_to_ribfs_[ijk]);
