@@ -1122,17 +1122,100 @@ void DLPNOBase::compute_qab() {
 
     outfile->Printf("\n  ==> Transforming 3-Index Integrals to PAO/PAO basis <==\n");
 
-    if (qab_memory_ * sizeof(double) > 0.5 * memory_) {
+    if (options_.get_str("DLPNO_DISK_IO") == "AUTO") {
+        write_qab_pao_ = (qab_memory_ * sizeof(double) > 0.5 * memory_);
+    } else if (options_.get_str("DLPNO_DISK_IO") == "ON") {
         write_qab_pao_ = true;
-        outfile->Printf("\n    Writing (aux | pao * pao) integrals to disk...\n");
     } else {
         write_qab_pao_ = false;
-        outfile->Printf("\n    Keeping (aux | pao * pao) integrals in core...\n");
     }
 
-    if (write_qab_pao_) {
+    if (write_qab_pao_) { // Disk Algorithm for (Q|ab) integrals
+
+        outfile->Printf("\n    Writing (aux | pao * pao) integrals to disk...\n\n");
         psio_->open(PSIF_DLPNO_QAB_PAO, PSIO_OPEN_NEW);
+
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int centerQ = 0; centerQ < natom; ++centerQ) {
+            int virt_dim = riatom_to_paos_ext_[centerQ].size() * riatom_to_paos_ext_[centerQ].size();
+            SharedMatrix qab_atom_block = std::make_shared<Matrix>(atom_to_ribf_[centerQ].size(), virt_dim);
+            int centerQstart = atom_to_ribf_[centerQ][0];
+
+            size_t thread = 0;
+#ifdef _OPENMP
+            thread = omp_get_thread_num();
+#endif
+
+            for (const int& Q : atom_to_rishell_[centerQ]) {
+                int nq = ribasis_->shell(Q).nfunction();
+                int qstart = ribasis_->shell(Q).function_index();
+
+                // Sparse lists for PAO/PAO
+                auto bf_map_pao = riatom_to_bfs2_[centerQ];
+
+                // inverse map, from global basis function index to auxiliary specific index
+                std::vector<int> bf_map_pao_inv(nbf, -1);
+                for (int m_ind = 0; m_ind < bf_map_pao.size(); m_ind++) {
+                    bf_map_pao_inv[bf_map_pao[m_ind]] = m_ind;
+                }
+
+                std::vector<SharedMatrix> qab_shell_block(nq);
+                for (size_t q = 0; q < nq; q++) {
+                    qab_shell_block[q] = std::make_shared<Matrix>("(mn|Q)", bf_map_pao.size(), bf_map_pao.size());
+                }
+
+                for (int M : riatom_to_shells2_[centerQ]) {
+                    int nm = basisset_->shell(M).nfunction();
+                    int mstart = basisset_->shell(M).function_index();
+                    int centerM = basisset_->shell_to_center(M);
+
+                    for (int N : riatom_to_shells2_[centerQ]) {
+                        int nn = basisset_->shell(N).nfunction();
+                        int nstart = basisset_->shell(N).function_index();
+                        int centerN = basisset_->shell_to_center(N);
+
+                        // TODO: Permutational Symmetry
+                        eris[thread]->compute_shell(Q, 0, M, N);
+                        const double* buffer = eris[thread]->buffer();
+
+                        for (int q = 0; q < nq; q++) {
+                            for (int m = 0; m < nm; m++) {
+                                for (int n = 0; n < nn; n++) {
+                                    int index_m = bf_map_pao_inv[mstart + m];
+                                    int index_n = bf_map_pao_inv[nstart + n];
+                                    qab_shell_block[q]->set(index_m, index_n, *(buffer));
+                                    buffer++;
+                                }
+                            }
+                        }
+
+                    }  // N loop
+                } // M loop
+
+                auto C_pao_slice = submatrix_rows_and_cols(*C_pao_, riatom_to_bfs2_[centerQ], riatom_to_paos_ext_[centerQ]);
+
+                // (mn|Q) C_mi C_nj ->(ij|Q)
+                for (size_t q = 0; q < nq; q++) {
+                    qab_shell_block[q] = linalg::triplet(C_pao_slice, qab_shell_block[q], C_pao_slice, true, false, false);
+                    double *addr1 = &(*qab_shell_block[q])(0, 0);
+                    double *addr2 = &(*qab_atom_block)(qstart - centerQstart + q, 0);
+                    C_DCOPY(virt_dim, addr1, 1, addr2, 1);
+                    qab_shell_block[q] = nullptr;
+                }
+            }
+
+            std::stringstream toc_entry;
+            toc_entry << "QAB (PAO) " << (centerQ);
+            qab_atom_block->set_name(toc_entry.str());
+#pragma omp critical
+            qab_atom_block->save(psio_, PSIF_DLPNO_QAB_PAO, psi::Matrix::ThreeIndexLowerTriangle);
+        }
+
+        psio_->close(PSIF_DLPNO_QAB_PAO, 1);
+        return;
     }
+
+    outfile->Printf("\n    Keeping (aux | pao * pao) integrals in core...\n\n");
 
     qab_.resize(naux);
 
@@ -1194,20 +1277,7 @@ void DLPNOBase::compute_qab() {
         // (mn|Q) C_mi C_nj ->(ij|Q)
         for (size_t q = 0; q < nq; q++) {
             qab_[qstart + q] = linalg::triplet(C_pao_slice, qab_[qstart + q], C_pao_slice, true, false, false);
-
-            if (write_qab_pao_) { // Write to disk
-                std::stringstream toc_entry;
-                toc_entry << "QAB (PAO) " << (qstart + q);
-                qab_[qstart + q]->set_name(toc_entry.str());
-#pragma omp critical
-                qab_[qstart + q]->save(psio_, PSIF_DLPNO_QAB_PAO, psi::Matrix::LowerTriangle);
-                qab_[qstart + q] = nullptr;
-            }
         }
-    }
-
-    if (write_qab_pao_) {
-        psio_->close(PSIF_DLPNO_QAB_PAO, 1);
     }
 
     timer_off("(mn|K)->(ab|K)");

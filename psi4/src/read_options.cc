@@ -2508,6 +2508,8 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_str("DLPNO_ALGORITHM", "CCSD", "MP2 CCSD CCSD(T)");
         /*- Use T0 approximation for DLPNO-CCSD(T)? !expert*/
         options.add_bool("T0_APPROXIMATION", false);
+        /*- Use Disk I/O for DLPNO calculation -*/
+        options.add_str("DLPNO_DISK_IO", "AUTO", "OFF ON AUTO");
 
         /*- SUBSECTION Expert Options -*/
 

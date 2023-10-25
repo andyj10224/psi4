@@ -956,7 +956,18 @@ void DLPNOCCSD::compute_cc_integrals() {
         auto q_vv = std::make_shared<Matrix>(naux_ij, npno_ij * npno_ij);
 
         for (const int &centerq : lmopair_to_riatoms_[ij]) {
-            for (const int& q : atom_to_ribf_[centerq]) {
+            SharedMatrix qab_atom_block;
+            if (write_qab_pao_) {
+                int virt_dim = riatom_to_paos_ext_[centerq].size() * riatom_to_paos_ext_[centerq].size();
+                qab_atom_block = std::make_shared<Matrix>(atom_to_ribf_[centerq].size(), virt_dim);
+                std::stringstream toc_entry;
+                toc_entry << "QAB (PAO) " << (centerq);
+                qab_atom_block->set_name(toc_entry.str());
+#pragma omp critical
+                qab_atom_block->load(psio_, PSIF_DLPNO_QAB_PAO, psi::Matrix::ThreeIndexLowerTriangle);
+            }
+            for (int q_idx = 0; q_idx < atom_to_ribf_[centerq].size(); ++q_idx) {
+                const int q = atom_to_ribf_[centerq][q_idx];
                 const int q_ij = std::find(lmopair_to_ribfs_[ij].begin(), lmopair_to_ribfs_[ij].end(), q) - lmopair_to_ribfs_[ij].begin();
 
                 const int i_sparse = riatom_to_lmos_ext_dense_[centerq][i];
@@ -991,14 +1002,15 @@ void DLPNOCCSD::compute_cc_integrals() {
 
                 SharedMatrix q_vv_tmp;
                 if (write_qab_pao_) {
-                    std::stringstream toc_entry;
-                    toc_entry << "QAB (PAO) " << q;
                     int npao_q = riatom_to_paos_ext_[centerq].size();
-                    q_vv_tmp = std::make_shared<Matrix>(toc_entry.str(), npao_q, npao_q);
-    #pragma omp critical
-                    q_vv_tmp->load(psio_, PSIF_DLPNO_QAB_PAO, psi::Matrix::LowerTriangle);
-                    q_vv_tmp = submatrix_rows_and_cols(*q_vv_tmp, lmopair_pao_to_riatom_pao_[ij][q_ij],
-                                    lmopair_pao_to_riatom_pao_[ij][q_ij]);
+                    q_vv_tmp = std::make_shared<Matrix>(npao_ij, npao_ij);
+                    for (int u_ij = 0; u_ij < npao_ij; ++u_ij) {
+                        int u = lmopair_to_paos_[ij][u_ij];
+                        for (int v_ij = 0; v_ij < npao_ij; ++v_ij) {
+                            int v = lmopair_to_paos_[ij][v_ij];
+                            (*q_vv_tmp)(u_ij, v_ij) = (*qab_atom_block)(q_idx, riatom_to_paos_ext_dense_[centerq][u] * npao_q + riatom_to_paos_ext_dense_[centerq][v]);
+                        }
+                    }
                 } else {
                     q_vv_tmp = submatrix_rows_and_cols(*qab_[q], lmopair_pao_to_riatom_pao_[ij][q_ij],
                                     lmopair_pao_to_riatom_pao_[ij][q_ij]);

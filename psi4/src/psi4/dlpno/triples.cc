@@ -832,7 +832,18 @@ double DLPNOCCSD_T::compute_lccsd_t0(bool store_amplitudes) {
         auto q_vv = std::make_shared<Matrix>(naux_ijk, ntno_ijk * ntno_ijk);
 
         for (const int &centerq : lmotriplet_to_riatoms_[ijk]) {
-            for (const int& q : atom_to_ribf_[centerq]) {
+            SharedMatrix qab_atom_block;
+            if (write_qab_pao_) {
+                int virt_dim = riatom_to_paos_ext_[centerq].size() * riatom_to_paos_ext_[centerq].size();
+                qab_atom_block = std::make_shared<Matrix>(atom_to_ribf_[centerq].size(), virt_dim);
+                std::stringstream toc_entry;
+                toc_entry << "QAB (PAO) " << (centerq);
+                qab_atom_block->set_name(toc_entry.str());
+#pragma omp critical
+                qab_atom_block->load(psio_, PSIF_DLPNO_QAB_PAO, psi::Matrix::ThreeIndexLowerTriangle);
+            }
+            for (int q_idx = 0; q_idx < atom_to_ribf_[centerq].size(); ++q_idx) {
+                const int q = atom_to_ribf_[centerq][q_idx];
                 const int q_ijk = std::find(lmotriplet_to_ribfs_[ijk].begin(), lmotriplet_to_ribfs_[ijk].end(), q) - lmotriplet_to_ribfs_[ijk].begin();
 
                 const int i_sparse = riatom_to_lmos_ext_dense_[centerq][i];
@@ -865,14 +876,15 @@ double DLPNOCCSD_T::compute_lccsd_t0(bool store_amplitudes) {
 
                 SharedMatrix q_vv_tmp;
                 if (write_qab_pao_) {
-                    std::stringstream toc_entry;
-                    toc_entry << "QAB (PAO) " << q;
                     int npao_q = riatom_to_paos_ext_[centerq].size();
-                    q_vv_tmp = std::make_shared<Matrix>(toc_entry.str(), npao_q, npao_q);
-    #pragma omp critical
-                    q_vv_tmp->load(psio_, PSIF_DLPNO_QAB_PAO, psi::Matrix::LowerTriangle);
-                    q_vv_tmp = submatrix_rows_and_cols(*q_vv_tmp, lmotriplet_pao_to_riatom_pao_[ijk][q_ijk],
-                                                    lmotriplet_pao_to_riatom_pao_[ijk][q_ijk]);
+                    q_vv_tmp = std::make_shared<Matrix>(npao_ijk, npao_ijk);
+                    for (int u_ijk = 0; u_ijk < npao_ijk; ++u_ijk) {
+                        int u = lmotriplet_to_paos_[ijk][u_ijk];
+                        for (int v_ijk = 0; v_ijk < npao_ijk; ++v_ijk) {
+                            int v = lmotriplet_to_paos_[ijk][v_ijk];
+                            (*q_vv_tmp)(u_ijk, v_ijk) = (*qab_atom_block)(q_idx, riatom_to_paos_ext_dense_[centerq][u] * npao_q + riatom_to_paos_ext_dense_[centerq][v]);
+                        }
+                    }
                 } else {
                     q_vv_tmp = submatrix_rows_and_cols(*qab_[q], lmotriplet_pao_to_riatom_pao_[ijk][q_ijk],
                                                     lmotriplet_pao_to_riatom_pao_[ijk][q_ijk]);
@@ -1064,6 +1076,14 @@ double DLPNOCCSD_T::compute_lccsd_t0(bool store_amplitudes) {
 #pragma omp critical
             T_ijk->save(psio_, PSIF_DLPNO_TRIPLES, psi::Matrix::Full);
         }
+    }
+
+    if (write_qab_pao_) {
+        psio_->close(PSIF_DLPNO_QAB_PAO, PSIO_OPEN_OLD);
+    }
+
+    if (store_amplitudes && write_amplitudes_) {
+        psio_->close(PSIF_DLPNO_TRIPLES, PSIO_OPEN_OLD);
     }
 
     outfile->Printf("\n");
@@ -1432,6 +1452,10 @@ double DLPNOCCSD_T::compute_energy() {
         outfile->Printf("  * Iterative (T) Contribution: %16.12f\n\n", dE_T);
 
         e_lccsd_t_ += dE_T;
+
+        if (write_amplitudes_) {
+            psio_->close(PSIF_DLPNO_TRIPLES, 0);
+        }
     }
 
     double e_scf = reference_wavefunction_->energy();
@@ -1447,9 +1471,10 @@ double DLPNOCCSD_T::compute_energy() {
 
     if (write_qab_pao_) {
         // Bye bye, you won't be missed
+        psio_->open(PSIF_DLPNO_QAB_PAO, 1);
         psio_->close(PSIF_DLPNO_QAB_PAO, 0);
-        psio_->close(PSIF_DLPNO_TRIPLES, 0);
     }
+    
 
     timer_off("DLPNO-CCSD(T)");
 
