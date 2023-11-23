@@ -60,6 +60,8 @@ class DLPNOBase : public Wavefunction {
       double T_CUT_DO_;
       /// threshold for PNO truncation
       double T_CUT_PNO_;
+      /// threshold for PNO truncation for singles amplitudes
+      double T_CUT_PNO_SINGLES_;
       /// threshold for PNO truncation for MP2 pairs (for DLPNO-CC methods)
       double T_CUT_PNO_MP2_;
       /// tolerance to separate pairs into CCSD and MP2 pairs
@@ -291,12 +293,17 @@ class DLPNOCCSD : public DLPNOBase {
     std::vector<int> n_svd_;
 
     /// PNO overlap integrals
+    std::vector<SharedMatrix> S_pno_i_j_; ///< osv/osv overlaps
+    std::vector<std::vector<SharedMatrix>> S_pno_ij_k_;  ///< pno/osv overlaps
     std::vector<std::vector<SharedMatrix>> S_pno_ij_kj_; ///< pno overlaps
     std::vector<std::vector<SharedMatrix>> S_pno_ij_mn_; ///< pno overlaps
 
-    /// Coupled-cluster amplitudes
+    /// Singles amplitudes and PNOs (also known as orbital-specific virtuals (OSVs))
     std::vector<SharedMatrix> T_ia_; ///< singles amplitudes
     std::vector<SharedMatrix> T_n_ij_; ///< singles amplitudes of LMO n_ij in PNO basis of ij (dim: n_lmo_pairs * nlmo_ij * npno_ij)
+    std::vector<SharedMatrix> X_pno_singles_;
+    std::vector<SharedVector> e_pno_singles_;
+    std::vector<int> n_pno_singles_;
 
     // => Strong and Weak Pair Info <=//
 
@@ -325,7 +332,7 @@ class DLPNOCCSD : public DLPNOBase {
     /// (1 occupied, 3 virtual)
     std::vector<SharedMatrix> K_tilde_chem_; /// (i e_ij | a_ij f_ij) [aka K_tilde] (stored as (e, a*f)) [Chemist's Notation]
     std::vector<SharedMatrix> K_tilde_phys_; /// (i e_ij | a_ij f_ij) [aka K_tilde] (stored as (a, e*f)) [Physicist's Notation]
-    std::vector<SharedMatrix> L_tilde_; /// 2.0 * K_tilde_chem - K_tilde_phys
+    std::vector<SharedMatrix> L_tilde_;
     /// (0 occupied, 4 virtual)
 
     // DF Integrals (Used in DLPNO-T1-CCSD)

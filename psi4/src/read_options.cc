@@ -2519,6 +2519,8 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_double("T_CUT_PNO_MP2", 1e-10);
         /*- How much to scale T_CUT_PNO by for diagonal PNOs !expert */
         options.add_double("T_CUT_PNO_DIAG_SCALE", 3e-2);
+        /*- How much to scale T_CUT_PNO by for singles amplitudes !expert */
+        options.add_double("T_CUT_PNO_SINGLES", 3e-10);
         /*- DOI threshold for including PAO (u) in domain of LMO (i) !expert -*/
         options.add_double("T_CUT_DO", 1e-2);
         /*- DOI threshold for treating LMOs (i,j) as interacting !expert -*/

@@ -69,6 +69,7 @@ void DLPNOBase::common_init() {
     T_CUT_PNO_ = options_.get_double("T_CUT_PNO");
     T_CUT_PNO_MP2_ = options_.get_double("T_CUT_PNO_MP2");
     T_CUT_PNO_DIAG_SCALE_ = options_.get_double("T_CUT_PNO_DIAG_SCALE");
+    T_CUT_PNO_SINGLES_ = options_.get_double("T_CUT_PNO_SINGLES");
     T_CUT_DO_ = options_.get_double("T_CUT_DO");
     T_CUT_PAIRS_ = options_.get_double("T_CUT_PAIRS");
     T_CUT_MKN_ = options_.get_double("T_CUT_MKN");
@@ -87,7 +88,7 @@ void DLPNOBase::common_init() {
 
     // did the user manually change expert level options?
     const bool T_CUT_PNO_changed = options_["T_CUT_PNO"].has_changed();
-    const bool DIAG_SCALE_changed = options_["T_CUT_PNO_DIAG_SCALE"].has_changed();
+    const bool T_CUT_PNO_SINGLES_changed = options_["T_CUT_PNO_SINGLES"].has_changed();
     const bool T_CUT_DO_changed = options_["T_CUT_DO"].has_changed();
     const bool T_CUT_PAIRS_changed = options_["T_CUT_PAIRS"].has_changed();
     const bool T_CUT_MKN_changed = options_["T_CUT_MKN"].has_changed();
@@ -113,28 +114,28 @@ void DLPNOBase::common_init() {
         if (options_.get_str("PNO_CONVERGENCE") == "LOOSE") {
             if (!T_CUT_PNO_changed) T_CUT_PNO_ = 1e-6;
             if (!T_CUT_DO_changed) T_CUT_DO_ = 2e-2;
-            if (!DIAG_SCALE_changed) T_CUT_PNO_DIAG_SCALE_ = 3e-2;
+            if (!T_CUT_PNO_SINGLES_changed) T_CUT_PNO_SINGLES_ = 3e-8;
             if (!T_CUT_PAIRS_changed) T_CUT_PAIRS_ = 1e-3;
             if (!T_CUT_MKN_changed) T_CUT_MKN_ = 1e-3;
             if (!PRESCREENING_changed) options_.set_str("DLPNO", "PRESCREENING_ALGORITHM", "SC_LMP2");
         } else if (options_.get_str("PNO_CONVERGENCE") == "NORMAL") {
             if (!T_CUT_PNO_changed) T_CUT_PNO_ = 3.33e-7;
             if (!T_CUT_DO_changed) T_CUT_DO_ = 1e-2;
-            if (!DIAG_SCALE_changed) T_CUT_PNO_DIAG_SCALE_ = 3e-2;
+            if (!T_CUT_PNO_SINGLES_changed) T_CUT_PNO_SINGLES_ = 1e-8;
             if (!T_CUT_PAIRS_changed) T_CUT_PAIRS_ = 1e-4;
             if (!T_CUT_MKN_changed) T_CUT_MKN_ = 1e-3;
             if (!PRESCREENING_changed) options_.set_str("DLPNO", "PRESCREENING_ALGORITHM", "SC_LMP2");
         } else if (options_.get_str("PNO_CONVERGENCE") == "TIGHT") {
             if (!T_CUT_PNO_changed) T_CUT_PNO_ = 1e-8;
             if (!T_CUT_DO_changed) T_CUT_DO_ = 5e-3;
-            if (!DIAG_SCALE_changed) T_CUT_PNO_DIAG_SCALE_ = 0.0;
+            if (!T_CUT_PNO_SINGLES_changed) T_CUT_PNO_SINGLES_ = 0.0;
             if (!T_CUT_PAIRS_changed) T_CUT_PAIRS_ = 1e-5;
             if (!T_CUT_MKN_changed) T_CUT_MKN_ = 1e-3;
             if (!PRESCREENING_changed) options_.set_str("DLPNO", "PRESCREENING_ALGORITHM", "FULL_LMP2");
         } else if (options_.get_str("PNO_CONVERGENCE") == "VERY_TIGHT") {
             if (!T_CUT_PNO_changed) T_CUT_PNO_ = 1e-8;
             if (!T_CUT_DO_changed) T_CUT_DO_ = 5e-3;
-            if (!DIAG_SCALE_changed) T_CUT_PNO_DIAG_SCALE_ = 0.0;
+            if (!T_CUT_PNO_SINGLES_changed) T_CUT_PNO_SINGLES_ = 0.0;
             if (!T_CUT_PAIRS_changed) T_CUT_PAIRS_ = 1e-6;
             if (!T_CUT_MKN_changed) T_CUT_MKN_ = 1e-4;
             if (!PRESCREENING_changed) options_.set_str("DLPNO", "PRESCREENING_ALGORITHM", "FULL_LMP2");

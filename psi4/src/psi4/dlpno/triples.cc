@@ -153,11 +153,6 @@ void DLPNOCCSD_T::recompute_pnos() {
         auto T_pno_ij = linalg::triplet(X_pno_ij, T_iajb_[ij], X_pno_ij, true, false, false);
         auto Tt_pno_ij = linalg::triplet(X_pno_ij, Tt_iajb_[ij], X_pno_ij, true, false, false);
 
-        // Recompute singles amplitudes
-        if (i == j) {
-            T_ia_[i] = linalg::doublet(X_pno_ij, T_ia_[i], true, false);
-        }
-
         // New PNO transformation matrix
         X_pno_ij = linalg::doublet(X_pno_[ij], X_pno_ij, false, false);
 
@@ -947,15 +942,15 @@ double DLPNOCCSD_T::compute_lccsd_t0(bool store_amplitudes) {
         // Compute overlap between TNOs of triplet ijk and PNOs of pair ii, jj, and kk
         int ii = i_j_to_ij_[i][i];
         auto S_ijk_ii = submatrix_rows_and_cols(*S_pao_, lmotriplet_to_paos_[ijk], lmopair_to_paos_[ii]);
-        S_ijk_ii = linalg::triplet(X_tno_[ijk], S_ijk_ii, X_pno_[ii], true, false, false);
+        S_ijk_ii = linalg::triplet(X_tno_[ijk], S_ijk_ii, X_pno_singles_[i], true, false, false);
 
         int jj = i_j_to_ij_[j][j];
         auto S_ijk_jj = submatrix_rows_and_cols(*S_pao_, lmotriplet_to_paos_[ijk], lmopair_to_paos_[jj]);
-        S_ijk_jj = linalg::triplet(X_tno_[ijk], S_ijk_jj, X_pno_[jj], true, false, false);
+        S_ijk_jj = linalg::triplet(X_tno_[ijk], S_ijk_jj, X_pno_singles_[j], true, false, false);
 
         int kk = i_j_to_ij_[k][k];
         auto S_ijk_kk = submatrix_rows_and_cols(*S_pao_, lmotriplet_to_paos_[ijk], lmopair_to_paos_[kk]);
-        S_ijk_kk = linalg::triplet(X_tno_[ijk], S_ijk_kk, X_pno_[kk], true, false, false);
+        S_ijk_kk = linalg::triplet(X_tno_[ijk], S_ijk_kk, X_pno_singles_[k], true, false, false);
 
         auto T_i = linalg::doublet(S_ijk_ii, T_ia_[i], false, false);
         auto T_j = linalg::doublet(S_ijk_jj, T_ia_[j], false, false);
