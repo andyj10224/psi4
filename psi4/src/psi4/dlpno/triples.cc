@@ -133,6 +133,7 @@ void DLPNOCCSD_T::recompute_pnos() {
         // Construct pair density from amplitudes
         auto D_ij = linalg::doublet(Tt_iajb_[ij], T_iajb_[ij], false, true);
         D_ij->add(linalg::doublet(Tt_iajb_[ij], T_iajb_[ij], true, false));
+        if (i == j) D_ij->scale(0.5);
 
         int nvir_ij = F_pno_ij_init->rowspi(0);
 
@@ -607,12 +608,15 @@ void DLPNOCCSD_T::tno_transform(bool scale_triples, double t_cut_tno) {
         // Construct pair densities from amplitudes
         auto D_ij = linalg::doublet(Tt_pao_ij, T_pao_ij, false, true);
         D_ij->add(linalg::doublet(Tt_pao_ij, T_pao_ij, true, false));
+        if (i == j) D_ij->scale(0.5);
 
         auto D_jk = linalg::doublet(Tt_pao_jk, T_pao_jk, false, true);
         D_jk->add(linalg::doublet(Tt_pao_jk, T_pao_jk, true, false));
+        if (j == k) D_jk->scale(0.5);
 
         auto D_ik = linalg::doublet(Tt_pao_ik, T_pao_ik, false, true);
         D_ik->add(linalg::doublet(Tt_pao_ik, T_pao_ik, true, false));
+        if (i == k) D_ik->scale(0.5);
 
         // Construct triplet density from pair densities
         auto D_ijk = D_ij->clone();
