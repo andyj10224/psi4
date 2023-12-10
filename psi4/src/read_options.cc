@@ -2503,7 +2503,7 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         /*- Maximum number of iterations to determine the MP2 amplitudes. -*/
         options.add_int("DLPNO_MAXITER", 50);
         /*- Use T1-transformed Hamiltonian for DLPNO-CCSD? -*/
-        options.add_bool("DLPNO_T1_HAMILTONIAN", false);
+        options.add_bool("DLPNO_T1_HAMILTONIAN", true);
         /*- Which DLPNO Algorithm to run !expert*/
         options.add_str("DLPNO_ALGORITHM", "CCSD", "MP2 CCSD CCSD(T)");
         /*- Use PAO SCALE APPROXIMATION FOR PAO-LMP2 prescreening? !expert -*/
