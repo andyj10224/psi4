@@ -348,6 +348,7 @@ class DLPNOCCSD : public DLPNOBase {
     SharedMatrix Fkj_;
     std::vector<SharedMatrix> Fkc_;
     std::vector<SharedMatrix> Fai_;
+    std::vector<SharedMatrix> Fab_;
 
     double e_lccsd_; ///< raw (uncorrected) local CCSD correlation energy
 
