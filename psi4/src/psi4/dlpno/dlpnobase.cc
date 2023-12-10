@@ -143,6 +143,7 @@ void DLPNOBase::common_init() {
 
     // TODO: Is this reasonable?
     // Answer: Yes, this is what they do in ORCA
+    T_CUT_PNO_MP2_ = T_CUT_PNO_ * 0.01;
     T_CUT_PAIRS_MP2_ = std::min(1.0e-6, T_CUT_PAIRS_ * 0.1);
 
     name_ = "DLPNO";

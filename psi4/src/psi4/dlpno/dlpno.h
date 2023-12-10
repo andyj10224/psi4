@@ -60,6 +60,8 @@ class DLPNOBase : public Wavefunction {
       double T_CUT_DO_;
       /// threshold for PNO truncation
       double T_CUT_PNO_;
+      /// threshold for PNO truncation for MP2 pairs (for DLPNO-CC methods)
+      double T_CUT_PNO_MP2_;
       /// tolerance to separate pairs into CCSD and MP2 pairs
       double T_CUT_PAIRS_;
       /// tolerance to separate MP2 pairs in between crude and refined prescreening
