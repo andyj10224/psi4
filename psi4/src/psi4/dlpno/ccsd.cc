@@ -391,12 +391,21 @@ template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
 
             double t_cut_scale = (i == j) ? 0.0 : 1.0;
 
+            double occ_pno = 0.0;
+            double occ_total = 0.0;
+
             int nvir_ij_final = 0;
             for (size_t a = 0; a < nvir_ij; ++a) {
+                occ_total += pno_occ.get(a);
                 if (fabs(pno_occ.get(a)) >= t_cut_scale * T_CUT_PNO_MP2_) {
+                    occ_pno += pno_occ.get(a);
                     nvir_ij_final++;
                 }
             }
+
+            outfile->Printf("  Sum of PNO Occupation Numbers: %.8f\n", occ_pno);
+            outfile->Printf("  Sum of all Occupation Numbers: %.8f\n", occ_total);
+            outfile->Printf("  Trace Ratio: %.8f\n\n", occ_pno / occ_total);
 
             // Make sure there is at least one PNO per pair :)
             nvir_ij_final = std::max(1, nvir_ij_final);
@@ -744,12 +753,38 @@ void DLPNOCCSD::pno_lmp2_iterations() {
         // For weak pairs, DO NOT TRUNCATE from original PNO space
         // double tolerance = (i_j_to_ij_strong_[i][j] == -1) ? 0.0 : t_cut_scale * T_CUT_PNO_;
 
-        int nvir_ij_final = 0;
+        auto K_pno_init = linalg::triplet(X_pno_ij, K_iajb_[ij], X_pno_ij, true, false, false);
+        auto Tt_pno_init = linalg::triplet(X_pno_ij, Tt_iajb_[ij], X_pno_ij, true, false, false);
+        double e_pno = 0.0;
+        double e_total = K_iajb_[ij]->vector_dot(Tt_iajb_[ij]);
+
+
+        double occ_pno = 0.0;
+        double occ_total = 0.0;
         for (size_t a = 0; a < nvir_ij; ++a) {
-            if (fabs(pno_occ.get(a)) >= t_cut_scale * T_CUT_PNO_) {
+            occ_total += pno_occ.get(a);
+        }
+
+        int nvir_ij_final = 0;
+        std::vector<int> a_curr;
+        for (size_t a = 0; a < nvir_ij; ++a) {
+            a_curr.push_back(a);
+            if (fabs(pno_occ.get(a)) >= t_cut_scale * T_CUT_PNO_ || occ_pno / occ_total < T_CUT_TRACE_
+                    || std::fabs(e_pno) < T_CUT_ENERGY_ * std::fabs(e_total)) {
+                e_pno = submatrix_rows_and_cols(*K_pno_init, a_curr, a_curr)->vector_dot(submatrix_rows_and_cols(*Tt_pno_init, a_curr, a_curr));
+                occ_pno += pno_occ.get(a);
                 nvir_ij_final++;
             }
         }
+
+        outfile->Printf("  Sum of PNO LMP2 Pair Energies: %.8f\n", e_pno);
+        outfile->Printf("  Sum of all LMP2 Pair Energies: %.8f\n", e_total);
+        outfile->Printf("  Energy Ratio: %.8f\n\n", e_pno / e_total);
+        outfile->Printf("  Sum of PNO Occupation Numbers: %.8f\n", occ_pno);
+        outfile->Printf("  Sum of all Occupation Numbers: %.8f\n", occ_total);
+        outfile->Printf("  Lowest Occupation Number = %.8e\n", pno_occ.get(nvir_ij_final - 1));
+        outfile->Printf("  Trace Ratio: %.8f\n\n", occ_pno / occ_total);
+
         // Make sure there is at least one PNO per pair :)
         nvir_ij_final = std::max(1, nvir_ij_final);
 

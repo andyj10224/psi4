@@ -60,6 +60,10 @@ class DLPNOBase : public Wavefunction {
       double T_CUT_DO_;
       /// threshold for PNO truncation
       double T_CUT_PNO_;
+      /// trace threshold for PNO truncation
+      double T_CUT_TRACE_;
+      /// energy threshold for PNO truncation
+      double T_CUT_ENERGY_;
       /// threshold for PNO truncation for singles amplitudes
       double T_CUT_PNO_SINGLES_;
       /// threshold for PNO truncation for MP2 pairs (for DLPNO-CC methods)

@@ -2515,6 +2515,10 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
 
         /*- Occupation number threshold for removing PNOs !expert -*/
         options.add_double("T_CUT_PNO", 1e-8);
+        /*- Occupation trace threshold for removing PNOs !expert  -*/
+        options.add_double("T_CUT_TRACE", 0.999);
+        /*- Energy contribution threshold for removing PNOs !expert -*/
+        options.add_double("T_CUT_ENERGY", 0.997);
         /*- Occupation number threshold for removing PNOs (for MP2 prescreening) !expert -*/
         options.add_double("T_CUT_PNO_MP2", 1e-10);
         /*- How much to scale T_CUT_PNO by for diagonal PNOs !expert */
