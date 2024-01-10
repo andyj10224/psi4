@@ -349,6 +349,7 @@ class DLPNOCCSD : public DLPNOBase {
     std::vector<SharedMatrix> i_Qa_ij_;   // (q_ij | a_ij i)
     std::vector<SharedMatrix> i_Qk_t1_;   // (q_ij | k_ij i) [T1-dressed]
     std::vector<SharedMatrix> i_Qa_t1_;   // (q_ij | a_ij i) [T1-dressed]
+    std::vector<std::vector<SharedMatrix>> Qab_t1_; // (q_ij | a_ij b_ij) [T1-dressed]
 
     // Dressed Fock matrices (used in DLPNO-T1-CCSD)
     SharedMatrix Fkj_;
@@ -396,7 +397,7 @@ class DLPNOCCSD : public DLPNOBase {
 
     // => T1-CCSD intermediates
     std::vector<SharedMatrix> compute_B_tilde();
-    std::vector<SharedMatrix> compute_C_tilde();
+    std::vector<std::vector<SharedMatrix>> compute_gamma();
     std::vector<SharedMatrix> compute_D_tilde();
     std::vector<SharedMatrix> compute_E_tilde();
     SharedMatrix compute_G_tilde();

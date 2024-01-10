@@ -2069,6 +2069,14 @@ void DLPNOCCSD::t1_ints() {
                 } // end b_ij
             } // end a_ij
         } // end q_ij
+
+        if (i <= j) {
+            Qab_t1_[ij].resize(naux_ij);
+            for (int q_ij = 0; q_ij < naux_ij; ++q_ij) {
+                Qab_t1_[ij][q_ij] = Qab_ij_[ij][q_ij]->clone();
+                Qab_t1_[ij][q_ij]->subtract(linalg::doublet(T_n_ij_[ij], Qma_ij_[ij][q_ij], true, false));
+            }
+        }
     }
 
     timer_off("DLPNO-CCSD: T1 Ints");
@@ -2261,63 +2269,57 @@ std::vector<SharedMatrix> DLPNOCCSD::compute_B_tilde() {
     return B_tilde;
 }
 
-std::vector<SharedMatrix> DLPNOCCSD::compute_C_tilde() {
+std::vector<std::vector<SharedMatrix>> DLPNOCCSD::compute_gamma() {
     
-    timer_on("DLPNO-CCSD: C tilde");
+    timer_on("DLPNO-CCSD: Form gamma");
 
     int naocc = nalpha_ - nfrzc();
     int n_lmo_pairs = ij_to_i_j_.size();
 
-    std::vector<SharedMatrix> C_tilde(n_lmo_pairs);
+    std::vector<std::vector<SharedMatrix>> gamma(n_lmo_pairs);
 
 #pragma omp parallel for schedule(dynamic, 1)
-    for (int ki = 0; ki < n_lmo_pairs; ++ki) {
-        auto &[k, i] = ij_to_i_j_[ki];
-        int ii = i_j_to_ij_[i][i];
+    for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+        auto &[i, j] = ij_to_i_j_[ij];
+        int ji = ij_to_ji_[ij];
 
-        int naux_ki = lmopair_to_ribfs_[ki].size();
-        int nlmo_ki = lmopair_to_lmos_[ki].size();
-        int npno_ki = n_pno_[ki];
-        int k_ki = lmopair_to_lmos_dense_[ki][k], i_ki = lmopair_to_lmos_dense_[ki][i];
-        int pair_idx = (k > i) ? ij_to_ji_[ki] : ki;
+        if (i_j_to_ij_strong_[i][j] == -1) continue;
 
-        // First term of C_tilde is the dressing of J_ijab
-        C_tilde[ki] = J_ijab_[ki]->clone();
+        int naux_ij = lmopair_to_ribfs_[ij].size();
+        int nlmo_ij = lmopair_to_lmos_[ij].size();
+        int pair_idx = (i > j) ? ji : ij;
+        int i_ij = lmopair_to_lmos_dense_[ij][i], j_ij = lmopair_to_lmos_dense_[ij][j];
+        gamma[ij].resize(nlmo_ij);
 
-        auto T_i = linalg::doublet(S_PNO(ki, ii), T_ia_[i]);
-        auto K_temp = linalg::doublet(T_i, K_tilde_chem_[ki], true, false);
-        K_temp->reshape(n_pno_[ki], n_pno_[ki]);
-        C_tilde[ki]->add(K_temp);
+        // Contract T1-dressed DF-integrals
+        for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
+            int k = lmopair_to_lmos_[ij][k_ij];
+            int kj = i_j_to_ij_[k][j];
+            
+            gamma[ij][k_ij] = std::make_shared<Matrix>(n_pno_[ij], n_pno_[ij]);
+            for (int q_ij = 0; q_ij < naux_ij; ++q_ij) {
+                C_DAXPY(n_pno_[ij] * n_pno_[ij], (*i_Qk_t1_[ij])(q_ij, k_ij), Qab_t1_[pair_idx][q_ij]->get_pointer(), 1, gamma[ij][k_ij]->get_pointer(), 1);
+            }
+            gamma[ij][k_ij] = linalg::doublet(gamma[ij][k_ij], S_PNO(ij, kj));
 
-        C_tilde[ki]->subtract(linalg::doublet(T_n_ij_[ki], K_bar_chem_[ki], true, false));
+            for (int l_ij = 0; l_ij < nlmo_ij; ++l_ij) {
+                int l = lmopair_to_lmos_[ij][l_ij];
+                int li = i_j_to_ij_[l][i], kl = i_j_to_ij_[k][l];
+                if (kl == -1) continue;
 
-        for (int l_ki = 0; l_ki < nlmo_ki; ++l_ki) {
-            int l = lmopair_to_lmos_[ki][l_ki];
-            int kl = i_j_to_ij_[k][l], ll = i_j_to_ij_[l][l];
-
-            auto T_l = linalg::doublet(S_PNO(ki, ll), T_ia_[l]);
-            auto T_i_kl = linalg::doublet(S_PNO(kl, ii), T_ia_[i]);
-            auto K_kl = linalg::triplet(S_PNO(ki, kl), K_iajb_[kl], T_i_kl, false, true, false);
-
-            C_DGER(npno_ki, npno_ki, -1.0, T_l->get_pointer(), 1, K_kl->get_pointer(), 1, C_tilde[ki]->get_pointer(), npno_ki);
-
-        }
+                auto T_temp = linalg::doublet(S_PNO(ij, li), T_iajb_[li]);
+                auto K_temp = linalg::triplet(S_PNO(li, kl), K_iajb_[kl], S_PNO(kl, kj));
+                auto gam_temp = linalg::doublet(T_temp, K_temp);
+                gam_temp->scale(0.5);
+                gamma[ij][k_ij]->subtract(gam_temp);
+            }
                 
-        for (int l_ki = 0; l_ki < nlmo_ki; ++l_ki) {
-            int l = lmopair_to_lmos_[ki][l_ki];
-            int li = i_j_to_ij_[l][i], kl = i_j_to_ij_[k][l];
-
-            auto C_tilde_temp = linalg::triplet(T_iajb_[li], S_PNO(li, kl), K_iajb_[kl]);
-            C_tilde_temp = linalg::triplet(S_PNO(ki, li), C_tilde_temp, S_PNO(kl, ki));
-            C_tilde_temp->scale(0.5);
-
-            C_tilde[ki]->subtract(C_tilde_temp);
         }
     }
 
-    timer_off("DLPNO-CCSD: C tilde");
+    timer_off("DLPNO-CCSD: Form gamma");
 
-    return C_tilde;
+    return gamma;
 }
 
 std::vector<SharedMatrix> DLPNOCCSD::compute_D_tilde() {
@@ -2513,6 +2515,7 @@ void DLPNOCCSD::t1_lccsd_iterations() {
 
     i_Qk_t1_.resize(n_lmo_pairs);
     i_Qa_t1_.resize(n_lmo_pairs);
+    Qab_t1_.resize(n_lmo_pairs);
 
     T_n_ij_.resize(n_lmo_pairs);
 
@@ -2549,7 +2552,7 @@ void DLPNOCCSD::t1_lccsd_iterations() {
         t1_fock();
 
         auto B_tilde = compute_B_tilde();
-        auto C_tilde = compute_C_tilde();
+        auto gamma = compute_gamma();
         auto D_tilde = compute_D_tilde();
         auto E_tilde = compute_E_tilde();
         auto G_tilde = compute_G_tilde();
@@ -2691,10 +2694,7 @@ void DLPNOCCSD::t1_lccsd_iterations() {
                 // A_{ij}^{ab} = B^{Q}_{ac} * t_{ij}^{cd} * B^{Q}_{bd} (DePrince Equation 11)
                 auto A_ij = std::make_shared<Matrix>(npno_ij, npno_ij);
                 for (int q_ij = 0; q_ij < naux_ij; ++q_ij) {
-                    auto Qab_t1 = Qab_ij_[ij][q_ij]->clone();
-                    Qab_t1->subtract(linalg::doublet(T_n_ij_[ij], Qma_ij_[ij][q_ij], true, false));
-
-                    A_ij->add(linalg::triplet(Qab_t1, T_iajb_[ij], Qab_t1, false, false, true));
+                    A_ij->add(linalg::triplet(Qab_t1_[pair_idx][q_ij], T_iajb_[ij], Qab_t1_[pair_idx][q_ij], false, false, true));
                 } // end q_ij
                 R_iajb[ij]->add(A_ij);
                 if (i != j) R_iajb[ji]->add(A_ij->transpose());
@@ -2726,8 +2726,7 @@ void DLPNOCCSD::t1_lccsd_iterations() {
                 int k = lmopair_to_lmos_[ij][k_ij];
                 int ki = i_j_to_ij_[k][i], kj = i_j_to_ij_[k][j];
 
-                auto T_kj = linalg::triplet(S_PNO(ij, kj), T_iajb_[kj], S_PNO(kj, ki));
-                C_ij->subtract(linalg::triplet(S_PNO(ij, ki), C_tilde[ki], T_kj, false, false, true));
+                C_ij->subtract(linalg::triplet(gamma[ij][k_ij], T_iajb_[kj], S_PNO(kj, ij), false, true, false));
             }
             // Add all the C terms to the non-symmetrized R buffer
             auto C_ij_total = C_ij->clone();
