@@ -725,6 +725,7 @@ void DLPNOBase::prep_sparsity(bool initial, bool last) {
     }
 
     // For diagonal LMO pairs (ii), the pao (and ri) domain is the union of the pao domain of ALL interacting LMO pairs
+    /*
 #pragma omp parallel for
     for (size_t i = 0; i < naocc; ++i) {
         size_t ii = i_j_to_ij_[i][i];
@@ -739,6 +740,7 @@ void DLPNOBase::prep_sparsity(bool initial, bool last) {
             }
         }
     }
+    */
 
     // Create a list of lmos that "interact" with a lmo_pair by differential overlap
     lmopair_to_lmos_.clear();
@@ -801,7 +803,7 @@ void DLPNOBase::prep_sparsity(bool initial, bool last) {
         // determine maps to extended LMO domains, which are the union of an LMO's domain with domains
         //   of all interacting LMOs
         lmo_to_riatoms_ext_ = extend_maps(lmo_to_riatoms_, ij_to_i_j_);
-        lmo_to_riatoms_ext_ = extend_maps(lmo_to_riatoms_ext_, ij_to_i_j_);
+        // lmo_to_riatoms_ext_ = extend_maps(lmo_to_riatoms_ext_, ij_to_i_j_);
 
         riatom_to_lmos_ext_ = invert_map(lmo_to_riatoms_ext_, natom);
         riatom_to_paos_ext_ = chain_maps(riatom_to_lmos_ext_, lmo_to_paos_);
