@@ -984,6 +984,7 @@ void DLPNOCCSD::compute_cc_integrals() {
     J_ijab_.resize(n_lmo_pairs);
     L_iajb_.resize(n_lmo_pairs);
     M_iajb_.resize(n_lmo_pairs);
+    K_ij_k_.resize(n_lmo_pairs);
     // 3 virtual
     K_tilde_chem_.resize(n_lmo_pairs);
     K_tilde_phys_.resize(n_lmo_pairs);
@@ -1038,6 +1039,18 @@ void DLPNOCCSD::compute_cc_integrals() {
         auto q_ov = std::make_shared<Matrix>(naux_ij, nlmo_ij * npno_ij);
         auto q_vv = std::make_shared<Matrix>(naux_ij, npno_ij * npno_ij);
 
+        K_ij_k_[ij].resize(nlmo_ij);
+
+        std::vector<SharedMatrix> q_ic(nlmo_ij);
+        std::vector<SharedMatrix> q_jc(nlmo_ij);
+
+        for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
+            int k = lmopair_to_lmos_[ij][k_ij];
+            int ik = i_j_to_ij_[i][k], jk = i_j_to_ij_[j][k];
+            q_ic[k_ij] = std::make_shared<Matrix>(naux_ij, n_pno_[ik]);
+            q_jc[k_ij] = std::make_shared<Matrix>(naux_ij, n_pno_[jk]);
+        }
+
         for (int q_ij = 0; q_ij < naux_ij; q_ij++) {
             const int q = lmopair_to_ribfs_[ij][q_ij];
             const int centerq = ribasis_->function_to_center(q);
@@ -1065,6 +1078,28 @@ void DLPNOCCSD::compute_cc_integrals() {
                                 lmopair_pao_to_riatom_pao_[ij][q_ij]);
             q_jv_tmp = linalg::doublet(q_jv_tmp, X_pno_[ij], false, false);
             C_DCOPY(npno_ij, &(*q_jv_tmp)(0,0), 1, &(*q_jv)(q_ij, 0), 1);
+
+            for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
+                int k = lmopair_to_lmos_[ij][k_ij];
+                int ik = i_j_to_ij_[i][k], jk = i_j_to_ij_[j][k];
+                int npao_ik = lmopair_to_paos_[ik].size();
+                int npao_jk = lmopair_to_paos_[jk].size();
+
+                auto q_ic_tmp = std::make_shared<Matrix>(npao_ik, 1);
+                auto q_jc_tmp = std::make_shared<Matrix>(npao_jk, 1);
+                for (int a_ik = 0; a_ik < npao_ik; ++a_ik) {
+                    int a = lmopair_to_paos_[ik][a_ik];
+                    (*q_ic_tmp)(a_ik, 0) = qia_[q]->get(riatom_to_lmos_ext_dense_[centerq][i], riatom_to_paos_ext_dense_[centerq][a]);
+                }
+                q_ic_tmp = linalg::doublet(X_pno_[ik], q_ic_tmp, true, false);
+                C_DCOPY(n_pno_[ik], &(*q_ic_tmp)(0, 0), 1, &(*q_ic[k_ij])(q_ij, 0), 1);
+                for (int a_jk = 0; a_jk < npao_jk; ++a_jk) {
+                    int a = lmopair_to_paos_[jk][a_jk];
+                    (*q_jc_tmp)(a_jk, 0) = qia_[q]->get(riatom_to_lmos_ext_dense_[centerq][j], riatom_to_paos_ext_dense_[centerq][a]);
+                }
+                q_jc_tmp = linalg::doublet(X_pno_[jk], q_jc_tmp, true, false);
+                C_DCOPY(n_pno_[jk], &(*q_jc_tmp)(0, 0), 1, &(*q_jc[k_ij])(q_ij, 0), 1);
+            }
 
             std::vector<int> m_ij_indices;
             for (const int &m : lmopair_to_lmos_[ij]) {
@@ -1104,7 +1139,13 @@ void DLPNOCCSD::compute_cc_integrals() {
         C_DGESV_wrapper(A_solve->clone(), q_jv);
         C_DGESV_wrapper(A_solve->clone(), q_oo);
         C_DGESV_wrapper(A_solve->clone(), q_ov);
-        C_DGESV_wrapper(A_solve, q_vv);
+        C_DGESV_wrapper(A_solve->clone(), q_vv);
+
+        for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
+            C_DGESV_wrapper(A_solve->clone(), q_ic[k_ij]);
+            C_DGESV_wrapper(A_solve->clone(), q_jc[k_ij]);
+            K_ij_k_[ij][k_ij] = linalg::doublet(q_ic[k_ij], q_jc[k_ij], true, false);
+        }
 
         K_mnij_[ij] = linalg::doublet(q_io, q_jo, true, false);
         K_bar_[ij] = linalg::doublet(q_io, q_jv, true, false);
@@ -2361,7 +2402,8 @@ std::vector<std::vector<SharedMatrix>> DLPNOCCSD::compute_delta() {
             delta[ij][k_ij] = linalg::doublet(delta[ij][k_ij], S_PNO(ij, jk));
 
             // Error correction Term
-            auto delta_err = linalg::triplet(S_PNO(ij, ik), K_iajb_[ik], S_PNO(ik, kj));
+            int j_ik = lmopair_to_lmos_dense_[ik][j];
+            auto delta_err = K_ij_k_[ik][j_ik]->clone();
             delta_err->scale(2.0);
             delta[ij][k_ij]->add(delta_err);
 

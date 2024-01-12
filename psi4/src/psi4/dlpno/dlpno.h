@@ -328,14 +328,11 @@ class DLPNOCCSD : public DLPNOBase {
     std::vector<SharedMatrix> K_bar_; /// (m i | b_ij j) [aka K_bar]
     std::vector<SharedMatrix> K_bar_chem_; /// (i j | m b_ij)
     std::vector<SharedMatrix> L_bar_; /// 2.0 * K_mbij - K_mbji
-    std::vector<SharedMatrix> J_ov_; /// J_ov_[ij] = (i a_{ij} | k_{ij} l_{ij})
-    std::vector<SharedMatrix> K_ov_; /// K_ov_[ij] = (i k_{ij} | l_{ij} a_{ij})
     /// (2 occupied, 2 virtual)
     std::vector<SharedMatrix> J_ijab_; /// (i j | a_ij b_ij)
     std::vector<SharedMatrix> L_iajb_; /// 2.0 * (i a_ij | j b_ij) - (i b_ij | j a_ij)
     std::vector<SharedMatrix> M_iajb_; /// 2.0 * (i a_ij | j b_ij) - (i j | b_ij a_ij)
-    std::vector<SharedMatrix> J_vv_; /// J_vv_[ij] = (i a_{ij} | k_{ij} b_{ij}) 
-    std::vector<SharedMatrix> K_vv_; /// K_vv_[ij] = (i k_{ij} | a_{ij} b_{ij})
+    std::vector<std::vector<SharedMatrix>> K_ij_k_; /// (i a_ik | j b_jk)
     /// (1 occupied, 3 virtual)
     std::vector<SharedMatrix> K_tilde_chem_; /// K_tilde_chem_[ij] = (i e_{ij} | a_{ij} f_{ij}) (stored as (e, a*f)) [Chemist's Notation]
     std::vector<SharedMatrix> K_tilde_phys_; /// K_tilde_phys_[ij] = (i e_{ij} | a_{ij} f_{ij}) (stored as (a, e*f)) [Physicist's Notation]
