@@ -332,6 +332,7 @@ class DLPNOCCSD : public DLPNOBase {
     std::vector<SharedMatrix> J_ijab_; /// (i j | a_ij b_ij)
     std::vector<SharedMatrix> L_iajb_; /// 2.0 * (i a_ij | j b_ij) - (i b_ij | j a_ij)
     std::vector<SharedMatrix> M_iajb_; /// 2.0 * (i a_ij | j b_ij) - (i j | b_ij a_ij)
+    std::vector<std::vector<SharedMatrix>> J_ij_k_; /// (i j | a_ik b_jk)
     std::vector<std::vector<SharedMatrix>> K_ij_k_; /// (i a_ik | j b_jk)
     /// (1 occupied, 3 virtual)
     std::vector<SharedMatrix> K_tilde_chem_; /// K_tilde_chem_[ij] = (i e_{ij} | a_{ij} f_{ij}) (stored as (e, a*f)) [Chemist's Notation]

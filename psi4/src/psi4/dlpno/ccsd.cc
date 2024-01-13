@@ -368,7 +368,7 @@ template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
             Vector pno_occ("eigenvalues", nvir_ij);
             D_ij->diagonalize(*X_pno_ij, pno_occ, descending);
 
-            double t_cut_scale = (i == j) ? 0.0 : 1.0;
+            double t_cut_scale = (i == j) ? T_CUT_PNO_DIAG_SCALE_ : 1.0;
 
             double occ_total = 0.0;
             for (size_t a = 0; a < nvir_ij; ++a) {
@@ -984,6 +984,7 @@ void DLPNOCCSD::compute_cc_integrals() {
     J_ijab_.resize(n_lmo_pairs);
     L_iajb_.resize(n_lmo_pairs);
     M_iajb_.resize(n_lmo_pairs);
+    J_ij_k_.resize(n_lmo_pairs);
     K_ij_k_.resize(n_lmo_pairs);
     // 3 virtual
     K_tilde_chem_.resize(n_lmo_pairs);
@@ -1039,16 +1040,19 @@ void DLPNOCCSD::compute_cc_integrals() {
         auto q_ov = std::make_shared<Matrix>(naux_ij, nlmo_ij * npno_ij);
         auto q_vv = std::make_shared<Matrix>(naux_ij, npno_ij * npno_ij);
 
+        J_ij_k_[ij].resize(nlmo_ij);
         K_ij_k_[ij].resize(nlmo_ij);
 
         std::vector<SharedMatrix> q_ic(nlmo_ij);
         std::vector<SharedMatrix> q_jc(nlmo_ij);
+        std::vector<SharedMatrix> q_cd(nlmo_ij);
 
         for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
             int k = lmopair_to_lmos_[ij][k_ij];
             int ik = i_j_to_ij_[i][k], jk = i_j_to_ij_[j][k];
             q_ic[k_ij] = std::make_shared<Matrix>(naux_ij, n_pno_[ik]);
             q_jc[k_ij] = std::make_shared<Matrix>(naux_ij, n_pno_[jk]);
+            q_cd[k_ij] = std::make_shared<Matrix>(naux_ij, n_pno_[ik] * n_pno_[jk]);
         }
 
         for (int q_ij = 0; q_ij < naux_ij; q_ij++) {
@@ -1099,6 +1103,17 @@ void DLPNOCCSD::compute_cc_integrals() {
                 }
                 q_jc_tmp = linalg::doublet(X_pno_[jk], q_jc_tmp, true, false);
                 C_DCOPY(n_pno_[jk], &(*q_jc_tmp)(0, 0), 1, &(*q_jc[k_ij])(q_ij, 0), 1);
+
+                auto q_cd_tmp = std::make_shared<Matrix>(npao_ik, npao_jk);
+                for (int a_ik = 0; a_ik < npao_ik; ++a_ik) {
+                    int a = lmopair_to_paos_[ik][a_ik];
+                    for (int b_jk = 0; b_jk < npao_jk; ++b_jk) {
+                        int b = lmopair_to_paos_[jk][b_jk];
+                        (*q_cd_tmp)(a_ik, b_jk) = qab_[q]->get(riatom_to_paos_ext_dense_[centerq][a], riatom_to_paos_ext_dense_[centerq][b]);
+                    } // end b_jk
+                } // end a_ik
+                q_cd_tmp = linalg::triplet(X_pno_[ik], q_cd_tmp, X_pno_[jk], true, false, false);
+                C_DCOPY(n_pno_[ik] * n_pno_[jk], &(*q_cd_tmp)(0, 0), 1, &(*q_cd[k_ij])(q_ij, 0), 1);
             }
 
             std::vector<int> m_ij_indices;
@@ -1142,6 +1157,12 @@ void DLPNOCCSD::compute_cc_integrals() {
         C_DGESV_wrapper(A_solve->clone(), q_vv);
 
         for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
+            int k = lmopair_to_lmos_[ij][k_ij];
+            int ik = i_j_to_ij_[i][k], jk = i_j_to_ij_[j][k];
+            C_DGESV_wrapper(A_solve->clone(), q_cd[k_ij]);
+            J_ij_k_[ij][k_ij] = linalg::doublet(q_pair, q_cd[k_ij], true, false);
+            J_ij_k_[ij][k_ij]->reshape(n_pno_[ik], n_pno_[jk]);
+
             C_DGESV_wrapper(A_solve->clone(), q_ic[k_ij]);
             C_DGESV_wrapper(A_solve->clone(), q_jc[k_ij]);
             K_ij_k_[ij][k_ij] = linalg::doublet(q_ic[k_ij], q_jc[k_ij], true, false);
@@ -2335,13 +2356,18 @@ std::vector<std::vector<SharedMatrix>> DLPNOCCSD::compute_gamma() {
         // Contract T1-dressed DF-integrals
         for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
             int k = lmopair_to_lmos_[ij][k_ij];
-            int kj = i_j_to_ij_[k][j];
+            int ik = i_j_to_ij_[i][k], kj = i_j_to_ij_[k][j];
             
             gamma[ij][k_ij] = std::make_shared<Matrix>(n_pno_[ij], n_pno_[ij]);
             for (int q_ij = 0; q_ij < naux_ij; ++q_ij) {
                 C_DAXPY(n_pno_[ij] * n_pno_[ij], (*i_Qk_t1_[ij])(q_ij, k_ij), Qab_t1_[pair_idx][q_ij]->get_pointer(), 1, gamma[ij][k_ij]->get_pointer(), 1);
+                C_DAXPY(n_pno_[ij] * n_pno_[ij], -(*i_Qk_ij_[ij])(q_ij, k_ij), Qab_ij_[pair_idx][q_ij]->get_pointer(), 1, gamma[ij][k_ij]->get_pointer(), 1);
             }
             gamma[ij][k_ij] = linalg::doublet(gamma[ij][k_ij], S_PNO(ij, kj));
+
+            // Error correction Term
+            int j_ik = lmopair_to_lmos_dense_[ik][j];
+            gamma[ij][k_ij]->add(J_ij_k_[ik][j_ik]);
 
             for (int l_ij = 0; l_ij < nlmo_ij; ++l_ij) {
                 int l = lmopair_to_lmos_[ij][l_ij];
@@ -2398,6 +2424,7 @@ std::vector<std::vector<SharedMatrix>> DLPNOCCSD::compute_delta() {
                 C_DGER(n_pno_[ij], n_pno_[ij], 2.0, &(*i_Qa_t1_[ij])(q_ij, 0), 1, &(*Qma_ij_[pair_idx][q_ij])(k_ij, 0), 1, delta[ij][k_ij]->get_pointer(), n_pno_[ij]);
                 C_DGER(n_pno_[ij], n_pno_[ij], -2.0, &(*i_Qa_ij_[ij])(q_ij, 0), 1, &(*Qma_ij_[pair_idx][q_ij])(k_ij, 0), 1, delta[ij][k_ij]->get_pointer(), n_pno_[ij]);
                 C_DAXPY(n_pno_[ij] * n_pno_[ij], -(*i_Qk_t1_[ij])(q_ij, k_ij), Qab_t1_[pair_idx][q_ij]->get_pointer(), 1, delta[ij][k_ij]->get_pointer(), 1);
+                C_DAXPY(n_pno_[ij] * n_pno_[ij], (*i_Qk_ij_[ij])(q_ij, k_ij), Qab_ij_[pair_idx][q_ij]->get_pointer(), 1, delta[ij][k_ij]->get_pointer(), 1);
             }
             delta[ij][k_ij] = linalg::doublet(delta[ij][k_ij], S_PNO(ij, jk));
 
@@ -2406,6 +2433,7 @@ std::vector<std::vector<SharedMatrix>> DLPNOCCSD::compute_delta() {
             auto delta_err = K_ij_k_[ik][j_ik]->clone();
             delta_err->scale(2.0);
             delta[ij][k_ij]->add(delta_err);
+            delta[ij][k_ij]->subtract(J_ij_k_[ik][j_ik]);
 
             for (int l_ij = 0; l_ij < nlmo_ij; ++l_ij) {
                 int l = lmopair_to_lmos_[ij][l_ij];
