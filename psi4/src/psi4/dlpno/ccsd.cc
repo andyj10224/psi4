@@ -153,6 +153,24 @@ inline std::vector<SharedMatrix> DLPNOCCSD::QAB_PNO(const int ij) {
             C_DCOPY(npno_ij * npno_ij, &(*q_vv)(q_ij, 0), 1, &(*Qab_pno[q_ij])(0, 0), 1);
         }
         return Qab_pno;
+    } else if (use_thc_) {
+        int naux_ij = lmopair_to_ribfs_[ij].size();
+        int npno_ij = n_pno_[ij];
+        int nrank_ij = xI_pno_ij_[ij]->rowspi(0);
+        std::vector<SharedMatrix> Qab_pno(naux_ij);
+
+        for (int q_ij = 0; q_ij < naux_ij; ++q_ij) {
+            Qab_pno[q_ij] = std::make_shared<Matrix>(npno_ij, npno_ij);
+
+            for (int I_ij = 0; I_ij < nrank_ij; ++I_ij) {
+                for (int a_ij = 0; a_ij < npno_ij; ++a_ij) {
+                    for (int b_ij = 0; b_ij < npno_ij; ++b_ij) {
+                        (*Qab_pno[q_ij])(a_ij, b_ij) += (*C_pno_ij_[ij])(q_ij, I_ij) * (*xI_pno_ij_[ij])(I_ij, a_ij) * (*xI_pno_ij_[ij])(I_ij, b_ij);
+                    }
+                }
+            }
+        }
+        return Qab_pno;
     } else {
         return Qab_ij_[pair_idx];
     }
@@ -1066,6 +1084,9 @@ template<bool crude> void DLPNOCCSD::pair_prescreening() {
 void DLPNOCCSD::compute_cc_integrals() {
     outfile->Printf("    Computing CC integrals...\n\n");
 
+    int nbf = basisset_->nbf();
+    int natom = molecule_->natom();
+    int naocc = i_j_to_ij_.size();
     int n_lmo_pairs = ij_to_i_j_.size();
     // 0 virtual
     K_mnij_.resize(n_lmo_pairs);
@@ -1113,6 +1134,47 @@ void DLPNOCCSD::compute_cc_integrals() {
         psio_->open(PSIF_DLPNO_QAB_PNO, PSIO_OPEN_NEW);
     }
 
+    SparseMap lmo_to_gridpoints;
+    SharedMatrix xI_lmo, xI_pao;
+
+    if (use_thc_) {
+        xI_pno_ij_.resize(n_lmo_pairs);
+        C_pno_ij_.resize(n_lmo_pairs);
+        
+        auto thc_grid = DFTGrid(molecule_, basisset_, options_);
+        size_t npoints = thc_grid.npoints();
+        auto xI = std::make_shared<Matrix>(npoints, nbf);
+
+        SparseMap atom_to_gridpoints(natom);
+
+        size_t point_idx = 0;
+        for (auto& block : thc_grid.blocks()) {
+            auto w = block->w();
+            auto x = block->x();
+            auto y = block->y();
+            auto z = block->z();
+
+#pragma omp parallel for
+            for (size_t p = 0; p < block->npoints(); ++p) {
+                basisset_->compute_phi(&(*xI)(point_idx + p, 0), x[p], y[p], z[p]);
+                xI->scale_row(0, point_idx + p, std::pow(std::abs(w[p]), 0.25));
+            }
+
+            int parent_atom = block->parent_atom();
+            for (size_t p = 0; p < block->npoints(); ++p) {
+                atom_to_gridpoints[parent_atom].push_back(point_idx + p);
+            }
+
+            point_idx += block->npoints();
+        }
+        
+        lmo_to_gridpoints = chain_maps(lmo_to_riatoms_, atom_to_gridpoints);
+
+        // Transform xI_ to PAO basis
+        xI_lmo = linalg::doublet(xI, C_lmo_);
+        xI_pao = linalg::doublet(xI, C_pao_);
+    }
+
 #pragma omp parallel for schedule(dynamic, 1) reduction(+ : qvv_memory) reduction(+ : qvv_svd_memory)
     for (int ij = 0; ij < n_lmo_pairs; ++ij) {
         int i, j;
@@ -1129,6 +1191,51 @@ void DLPNOCCSD::compute_cc_integrals() {
         const int npao_ij = lmopair_to_paos_[ij].size();
         // number of auxiliary functions in the pair domain
         const int naux_ij = lmopair_to_ribfs_[ij].size();
+
+        // The list of all grid points in the pair domain of ij
+        std::vector<int> gridpoints_ij;
+        int ngrid_ij;
+        int nrank_ij;
+        SharedMatrix S_thc_ij;
+        SharedMatrix C_thc_ij;
+
+        if (use_thc_ && i_j_to_ij_strong_[i][j] != -1) {
+            gridpoints_ij = merge_lists(lmo_to_gridpoints[i], lmo_to_gridpoints[j]);
+            ngrid_ij = gridpoints_ij.size();
+            
+            // Form initial x_pno_ij
+            xI_pno_ij_[ij] = linalg::doublet(submatrix_rows_and_cols(*xI_pao, gridpoints_ij, lmopair_to_paos_[ij]), X_pno_[ij]);
+            // Form S
+            S_thc_ij = linalg::doublet(xI_pno_ij_[ij], xI_pno_ij_[ij], false, true);
+
+            for (int g_ij = 0; g_ij < ngrid_ij; ++g_ij) {
+                for (int h_ij = 0; h_ij < ngrid_ij; ++h_ij) {
+                    (*S_thc_ij)(g_ij, h_ij) *= (*S_thc_ij)(g_ij, h_ij);
+                }
+            }
+
+            // Pivoted Cholesky Decomposition of S_thc_ij
+            std::vector<std::vector<int>> pivot;
+            S_thc_ij->pivoted_cholesky(1.0e-14, pivot);
+            nrank_ij = pivot[0].size();
+
+            // Get permutation matrix
+            auto perm_ij = std::make_shared<Matrix>(ngrid_ij, nrank_ij);
+            for (int r_ij = 0; r_ij < nrank_ij; ++r_ij) {
+                (*perm_ij)(pivot[0][r_ij], r_ij) = 1;
+            }
+
+            // Form new S_thc_ij
+            S_thc_ij = linalg::doublet(S_thc_ij, S_thc_ij, true, false);
+
+            // Form new xI_ij
+            xI_pno_ij_[ij] = linalg::doublet(perm_ij, xI_pno_ij_[ij], true, false);
+
+            // Initialize C intermediate
+            C_thc_ij = std::make_shared<Matrix>(naux_ij, nrank_ij);
+        }
+
+        // number of grid points in the pair domain
 
         auto q_pair = std::make_shared<Matrix>(naux_ij, 1);
 
@@ -1231,6 +1338,16 @@ void DLPNOCCSD::compute_cc_integrals() {
             }
             q_vv_tmp = linalg::triplet(X_pno_[ij], q_vv_tmp, X_pno_[ij], true, false, false);
             
+            if (use_thc_ && i_j_to_ij_strong_[i][j] != -1) {
+                for (int r_ij = 0; r_ij < nrank_ij; ++r_ij) {
+                    for (int a_ij = 0; a_ij < npno_ij; ++a_ij) {
+                        for (int b_ij = 0; b_ij < npno_ij; ++b_ij) {
+                            (*C_thc_ij)(q_ij, r_ij) += (*q_vv_tmp)(a_ij, b_ij) * (*xI_pno_ij_[ij])(r_ij, a_ij) * (*xI_pno_ij_[ij])(r_ij, b_ij);
+                        } // end b_ij
+                    } // end a_ij
+                } // end r_ij
+            }
+            
             C_DCOPY(npno_ij * npno_ij, &(*q_vv_tmp)(0,0), 1, &(*q_vv)(q_ij, 0), 1);
         }
 
@@ -1265,6 +1382,9 @@ void DLPNOCCSD::compute_cc_integrals() {
         C_DGESV_wrapper(A_solve->clone(), q_oo);
         C_DGESV_wrapper(A_solve->clone(), q_ov);
         C_DGESV_wrapper(A_solve->clone(), q_vv);
+        if (use_thc_ && i_j_to_ij_strong_[i][j] != -1) {
+            C_DGESV_wrapper(A_solve->clone(), C_thc_ij);
+        }
 
         if (!project_j_ && (i_j_to_ij_strong_[i][j] != -1 || disp_correct_)) {
             for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
@@ -1411,6 +1531,18 @@ void DLPNOCCSD::compute_cc_integrals() {
             }
         }
 
+        // Save THC integrals
+        if (use_thc_ && i_j_to_ij_strong_[i][j] != -1) {
+            int nremoved = 0;
+            auto S_thc_inv = S_thc_ij->pseudoinverse(1.0e-14, nremoved);
+            C_pno_ij_[ij] = linalg::doublet(C_thc_ij, S_thc_inv);
+
+            if (i != j) {
+                xI_pno_ij_[ji] = xI_pno_ij_[ij];
+                C_pno_ij_[ji] = C_pno_ij_[ij];
+            }
+        }
+
         // L_iajb
         L_iajb_[ij] = K_iajb_[ij]->clone();
         L_iajb_[ij]->scale(2.0);
@@ -1444,6 +1576,32 @@ void DLPNOCCSD::compute_cc_integrals() {
         L_bar_[ij] = K_bar_[ij]->clone();
         L_bar_[ij]->scale(2.0);
         L_bar_[ij]->subtract(K_bar_[ji]);
+    }
+
+    
+    if (use_thc_) {
+        outfile->Printf("  Used THC to reduce cost of 4-virtual integrals... \n\n");
+        size_t qvv_memory = 0L;
+        size_t thc_memory = 0L;
+        
+#pragma omp parallel for schedule(dynamic) reduction(+ : qvv_memory, thc_memory)
+        for (int ij = 0; ij < n_lmo_pairs; ij++) {
+            int i, j;
+            std::tie(i, j) = ij_to_i_j_[ij];
+
+            if (i_j_to_ij_strong_[i][j] == -1 || i > j) continue;
+
+            const int naux_ij = lmopair_to_ribfs_[ij].size();
+            const int npno_ij = n_pno_[ij];
+            const int nrank_ij = C_pno_ij_[ij]->ncol();
+            
+            qvv_memory += naux_ij * npno_ij * npno_ij;
+            thc_memory += nrank_ij * (naux_ij + npno_ij);
+        }
+
+        outfile->Printf("    DF  memory: %.3f [GiB]\n", qvv_memory * pow(2.0, -30) * sizeof(double));
+        outfile->Printf("    THC memory: %.3f [GiB]\n", thc_memory * pow(2.0, -30) * sizeof(double));
+        outfile->Printf("    %.2f %% reduction\n\n", 100.0 * ((double) qvv_memory - thc_memory) / (double) qvv_memory);
     }
 }
 
@@ -3292,6 +3450,7 @@ double DLPNOCCSD::compute_energy() {
     project_j_ = options_.get_bool("PROJECT_J");
     project_k_ = options_.get_bool("PROJECT_K");
     disp_correct_ = options_.get_bool("DISPERSION_CORRECTION");
+    use_thc_ = options_.get_bool("DLPNO_USE_THC");
 
     print_header();
 

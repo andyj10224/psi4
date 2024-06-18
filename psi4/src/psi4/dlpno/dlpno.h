@@ -310,6 +310,8 @@ class DLPNOCCSD : public DLPNOBase {
     bool project_j_;
     /// NOT [form (i a_ik | j b_jk)]
     bool project_k_;
+    /// Do use THC integrals?
+    bool use_thc_;
     /// Do weak pair dispersion correction?
     bool disp_correct_;
 
@@ -359,6 +361,10 @@ class DLPNOCCSD : public DLPNOBase {
     // DF Integrals (Used in DLPNO-T1-CCSD)
     std::vector<std::vector<SharedMatrix>> Qma_ij_; // (q_ij | m_ij a_ij)
     std::vector<std::vector<SharedMatrix>> Qab_ij_; // (q_ij | a_ij b_ij)
+
+    // THC Integral Factors (Used with THC-DLPNO-CCSD(T))
+    std::vector<SharedMatrix> xI_pno_ij_;
+    std::vector<SharedMatrix> C_pno_ij_; // B^{Q_{ij}}_{a_{ij} b_{ij}} = C^{I_{ij} Q_{ij}} * x^{I_{ij}}_{a_{ij}} * x^{I_{ij}}_{b_{ij}}
 
     std::vector<SharedMatrix> i_Qk_ij_;   // (q_ij | k_ij i)
     std::vector<SharedMatrix> i_Qa_ij_;   // (q_ij | a_ij i)

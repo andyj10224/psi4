@@ -2519,6 +2519,8 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_double("T_CUT_TRACE", 0.999);
         /*- Pair energy tolerance for removing PNOs !expert -*/
         options.add_double("T_CUT_ENERGY", 0.997);
+        /*- Use THC integral approximation to accelerate DLPNO algorithm? !expert -*/
+        options.add_bool("DLPNO_USE_THC", false);
         /*- Use projection approximation for linear (i a | j b) integrals in LCCSD? !expert -*/
         options.add_bool("PROJECT_K", false);
         /*- Use projection approximation for linear (i j | a b) integrals in LCCSD?
