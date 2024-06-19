@@ -63,6 +63,8 @@
 #include <regex>
 #include <tuple>
 #include <memory>
+#include <random>
+#include <chrono>
 
 // In molecule.cc
 namespace psi {
@@ -2123,6 +2125,115 @@ void Matrix::pivoted_cholesky(double tol, std::vector<std::vector<int>> &pivot) 
     }
     // Switch to the properly sized matrix
     *this = *U;
+}
+
+void Matrix::random_pivoted_cholesky(double tol, std::vector<std::vector<int>> &pivot) {
+    
+    // Cholesky basis size
+    Dimension nchol(rowspi_);
+
+    // Pivot indices
+    pivot.clear();
+    pivot.resize(nirrep_);
+
+    SharedMatrix F = this->clone();
+    F->zero();
+
+    for (int h = 0; h < nirrep_; ++h) {
+        if (!rowspi_[h]) continue;
+
+        // Dimension
+        int n = rowspi_[h];
+        // Pivot
+        pivot[h].resize(n);
+        // Rank
+        int rank = n;
+
+        auto D = std::make_shared<Vector>(n);
+        D->zero();
+        double sum_entries = 0.0;
+        for (int i = 0; i < n; ++i) {
+            if (matrix_[h][i][i] > 0) {
+                (*D)(i) = matrix_[h][i][i];
+                sum_entries += (*D)(i);
+            }
+        }
+        std::vector<double> S(n);
+        for (int i = 0; i < n; ++i) {
+            S[i] = (*D)(i) / sum_entries;
+        }
+
+        // Perform random pivoted Cholesky decomposition
+        for (int i = 0; i < n; ++i) {
+            // Initialize random generator
+            unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+            std::default_random_engine generator(seed);
+            // Generate random pivot based on diagonal values
+            std::discrete_distribution<int> distribution(S.begin(), S.end());
+            int s_i = distribution(generator);          
+
+            // Update g vector
+            auto g = this->get_column(h, s_i);
+            for (int j = 0; j < n; ++j) {
+                for (int k = 0; k < i; ++k) {
+                    (*g)(j) -= F->get(h, j, k) * F->get(h, s_i, k);
+                } // end k
+            } // end j
+
+            // If the g pivot value is less than tolerance, we have reached rank
+            if (std::fabs((*g)(s_i)) < tol) {
+                rank = i;
+                break;
+            }
+
+            // Set i'th F column to g / sqrt(g[s_i])
+            auto g_new = std::make_shared<Vector>(n);
+            g_new->zero();
+            g_new->axpy(std::pow((*g)(s_i), -0.5), *g);
+            F->set_column(h, i, g_new);
+
+            // Update diagonal matrix
+            sum_entries = 0.0;
+            for (int j = 0; j < n; ++j) {
+                (*D)(j) -= (*g_new)(j) * (*g_new)(j);
+                if ((*D)(j) < 0) {
+                    (*D)(j) = 0;
+                } else {
+                    sum_entries += (*D)(j);
+                }
+            }
+
+            // Update weighted probability distribution vector
+            for (int i = 0; i < n; ++i) {
+                S[i] = (*D)(i) / sum_entries;
+            }
+
+            // Set pivot
+            pivot[h][i] = s_i;
+        } // end i
+
+        nchol[h] = rank;
+        pivot[h].resize(rank);
+    }
+
+    Dimension zero(nirrep_);
+    zero.fill(0);
+    Dimension all(rowspi_);
+
+    F = F->get_block({zero, all}, {zero, nchol});
+
+    // Return properly sized matrix
+    auto L = std::make_shared<Matrix>("Cholesky decomposed matrix", nirrep_, nchol, nchol);
+    L->zero();
+    for (int h = 0; h < nirrep_; ++h) {
+        for (int m = 0; m < nchol[h]; ++m) {
+            for (int n = 0; n < std::min(m + 1, nchol[h]); ++n) {
+                L->set(h, m, n, F->get(h, pivot[h][m], n));
+            }
+        }
+    }
+    // Switch to the properly sized matrix
+    *this = *L;
 }
 
 SharedMatrix Matrix::partial_cholesky_factorize(double delta, bool throw_if_negative) {

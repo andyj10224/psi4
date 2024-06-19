@@ -2521,6 +2521,10 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_double("T_CUT_ENERGY", 0.997);
         /*- Use THC integral approximation to accelerate DLPNO algorithm? !expert -*/
         options.add_bool("DLPNO_USE_THC", false);
+        /*- Pivoted Cholesky tolerance for THC integrals !expert -*/
+        options.add_double("T_CUT_CHOLESKY", 1.0e-14);
+        /*- Use randomized Cholesky algorithm for THC grid pruning? !expert -*/
+        options.add_bool("THC_RANDOM_CHOLESKY", false);
         /*- Use projection approximation for linear (i a | j b) integrals in LCCSD? !expert -*/
         options.add_bool("PROJECT_K", false);
         /*- Use projection approximation for linear (i j | a b) integrals in LCCSD?

@@ -153,7 +153,9 @@ inline std::vector<SharedMatrix> DLPNOCCSD::QAB_PNO(const int ij) {
             C_DCOPY(npno_ij * npno_ij, &(*q_vv)(q_ij, 0), 1, &(*Qab_pno[q_ij])(0, 0), 1);
         }
         return Qab_pno;
-    } else if (use_thc_) {
+    } 
+    /*
+    else if (use_thc_) {
         int naux_ij = lmopair_to_ribfs_[ij].size();
         int npno_ij = n_pno_[ij];
         int nrank_ij = xI_pno_ij_[ij]->rowspi(0);
@@ -171,7 +173,9 @@ inline std::vector<SharedMatrix> DLPNOCCSD::QAB_PNO(const int ij) {
             }
         }
         return Qab_pno;
-    } else {
+    }
+    */
+    else {
         return Qab_ij_[pair_idx];
     }
 }
@@ -1175,6 +1179,9 @@ void DLPNOCCSD::compute_cc_integrals() {
         xI_pao = linalg::doublet(xI, C_pao_);
     }
 
+    double T_CUT_CHOLESKY = options_.get_double("T_CUT_CHOLESKY");
+    bool thc_random_cholesky = options_.get_bool("THC_RANDOM_CHOLESKY");
+
 #pragma omp parallel for schedule(dynamic, 1) reduction(+ : qvv_memory) reduction(+ : qvv_svd_memory)
     for (int ij = 0; ij < n_lmo_pairs; ++ij) {
         int i, j;
@@ -1214,22 +1221,26 @@ void DLPNOCCSD::compute_cc_integrals() {
                 }
             }
 
-            // Pivoted Cholesky Decomposition of S_thc_ij
+            // Pivoted Cholesky Decomposition and rank reduction of S_thc_ij
             std::vector<std::vector<int>> pivot;
-            S_thc_ij->pivoted_cholesky(1.0e-14, pivot);
+            if (thc_random_cholesky) {
+                S_thc_ij->random_pivoted_cholesky(T_CUT_CHOLESKY, pivot);
+                S_thc_ij = linalg::doublet(S_thc_ij, S_thc_ij, false, true);
+            } else {
+                S_thc_ij->pivoted_cholesky(T_CUT_CHOLESKY, pivot);
+                S_thc_ij = linalg::doublet(S_thc_ij, S_thc_ij, true, false);
+            }
+            
             nrank_ij = pivot[0].size();
 
-            // Get permutation matrix
-            auto perm_ij = std::make_shared<Matrix>(ngrid_ij, nrank_ij);
-            for (int r_ij = 0; r_ij < nrank_ij; ++r_ij) {
-                (*perm_ij)(pivot[0][r_ij], r_ij) = 1;
-            }
-
-            // Form new S_thc_ij
-            S_thc_ij = linalg::doublet(S_thc_ij, S_thc_ij, true, false);
-
             // Form new xI_ij
-            xI_pno_ij_[ij] = linalg::doublet(perm_ij, xI_pno_ij_[ij], true, false);
+            auto xI_pno_ij_new = std::make_shared<Matrix>(nrank_ij, npno_ij);
+            for (int r_ij = 0; r_ij < nrank_ij; ++r_ij) {
+                for (int a_ij = 0; a_ij < n_pno_[ij]; ++a_ij) {
+                    (*xI_pno_ij_new)(r_ij, a_ij) = (*xI_pno_ij_[ij])(pivot[0][r_ij], a_ij);
+                }
+            }
+            xI_pno_ij_[ij] = xI_pno_ij_new;
 
             // Initialize C intermediate
             C_thc_ij = std::make_shared<Matrix>(naux_ij, nrank_ij);

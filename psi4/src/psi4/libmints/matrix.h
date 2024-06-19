@@ -979,6 +979,15 @@ class PSI_API Matrix : public std::enable_shared_from_this<Matrix> {
      */
     void pivoted_cholesky(double tol, std::vector<std::vector<int>>& pivot);
 
+    /*! Computed the Cholesky factorization with randomized pivoting of
+     * a real symmetric positive semidefinite matrix A.
+     * 
+     * The randomized selection of the pivoting makes it more efficient
+     * than the traditional pivoted cholesky algorithm
+     * Algorithm derived from: https://arxiv.org/abs/2207.06503 
+     */
+    void random_pivoted_cholesky(double tol, std::vector<std::vector<int>>& pivot);
+
     /*! Computes the inverse of a real symmetric positive definite
      *  matrix A using the Cholesky factorization A = L*L**T
      *  computed by cholesky_factorize().
