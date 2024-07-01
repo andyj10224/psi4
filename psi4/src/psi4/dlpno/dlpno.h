@@ -308,6 +308,7 @@ class DLPNOCCSD : public DLPNOBase {
 
     /// PNO overlap integrals
     std::vector<std::vector<SharedMatrix>> S_pno_ij_kj_; ///< pno overlaps
+    std::vector<std::vector<SharedMatrix>> S_pno_ij_nn_; ///< pno overlaps
     std::vector<std::vector<SharedMatrix>> S_pno_ij_mn_; ///< pno overlaps
 
     /// Coupled-cluster amplitudes
@@ -393,7 +394,6 @@ class DLPNOCCSD : public DLPNOBase {
     std::vector<SharedMatrix> compute_B_tilde();
     std::vector<SharedMatrix> compute_C_tilde();
     std::vector<SharedMatrix> compute_D_tilde();
-    std::vector<SharedMatrix> compute_E_tilde();
     SharedMatrix compute_G_tilde();
 
     /// compute T1-dressed DF integrals
