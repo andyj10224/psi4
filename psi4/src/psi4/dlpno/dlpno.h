@@ -78,10 +78,6 @@ class DLPNOBase : public Wavefunction {
       double T_CUT_PRE_;
       /// tolerance for local density fitting (by Mulliken population)
       double T_CUT_MKN_;
-      /// tolerance for eigenvalue decomposition of (Q|u_t v_t) integrals
-      double T_CUT_EIG_;
-      /// tolerance for singular value decomposition of ERI quantities
-      double T_CUT_SVD_;
       /// T_CUT_PNO scaling factor for diagonal PNOs
       double T_CUT_PNO_DIAG_SCALE_;
       /// Tolerance for TNO truncation (by occupation number)
@@ -400,35 +396,18 @@ class DLPNOCCSD : public DLPNOBase {
 
     // => CCSD intermediates <= //
 
-    /// compute Fmi intermediate (Madriaga Eq. 40)
-    SharedMatrix compute_Fmi(const std::vector<SharedMatrix>& tau_tilde);
-    /// compute Fbe intermediate (of diagonal LMO pair ii) (Madriaga Eq. 39)
-    std::vector<SharedMatrix> compute_Fbe(const std::vector<SharedMatrix>& tau_tilde);
-    /// compute Fme intermediate (of diagonal LMO pair mm) (Madriaga Eq. 41)
-    std::vector<SharedMatrix> compute_Fme();
-    /// compute Wmnij intermediate (Madriaga Eq. 43)
-    std::vector<SharedMatrix> compute_Wmnij(const std::vector<SharedMatrix>& tau);
-    /// compute Wmbej intermediate (Madriaga Eq. 44)
-    std::vector<SharedMatrix> compute_Wmbej(const std::vector<SharedMatrix>& tau_bar);
-    /// compute Wmbje intermediate (Madriaga Eq. 45)
-    std::vector<SharedMatrix> compute_Wmbje(const std::vector<SharedMatrix>& tau_bar);
-
-    // => T1-CCSD intermediates
     std::vector<SharedMatrix> compute_B_tilde();
     std::vector<SharedMatrix> compute_C_tilde();
     std::vector<SharedMatrix> compute_D_tilde();
     std::vector<SharedMatrix> compute_E_tilde();
     SharedMatrix compute_G_tilde();
 
-    /// iteratively solve local CCSD equations
-    void lccsd_iterations();
-
     /// compute T1-dressed DF integrals
     void t1_ints();
     /// compute T1-dressed Fock matrix intermediates
     void t1_fock();
-    /// local CCSD equations (with the T1-transformation)
-    void t1_lccsd_iterations();
+    /// iteratively solve local CCSD equations
+    void lccsd_iterations();
     /// Do "dispersion correction" for weak pairs?
     void dispersion_correction();
 

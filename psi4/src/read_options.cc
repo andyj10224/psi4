@@ -2502,12 +2502,8 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_str("DLPNO_LOCAL_ORBITALS", "BOYS", "BOYS PIPEK_MEZEY NONE");
         /*- Maximum number of iterations to determine the MP2 amplitudes. -*/
         options.add_int("DLPNO_MAXITER", 50);
-        /*- Use T1-transformed Hamiltonian for DLPNO-CCSD? -*/
-        options.add_bool("DLPNO_T1_HAMILTONIAN", true);
         /*- Which DLPNO Algorithm to run !expert*/
         options.add_str("DLPNO_ALGORITHM", "CCSD", "MP2 CCSD CCSD(T)");
-        /*- Use PAO SCALE APPROXIMATION FOR PAO-LMP2 prescreening? !expert -*/
-        options.add_bool("APPROX_PAO_LMP2", false);
         /*- Use T0 approximation for DLPNO-CCSD(T)? !expert*/
         options.add_bool("T0_APPROXIMATION", false);
 
@@ -2519,11 +2515,6 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_double("T_CUT_TRACE", 0.999);
         /*- Pair energy tolerance for removing PNOs !expert -*/
         options.add_double("T_CUT_ENERGY", 0.997);
-        /*- Use projection approximation for linear (i a | j b) integrals in LCCSD? !expert -*/
-        options.add_bool("PROJECT_K", false);
-        /*- Use projection approximation for linear (i j | a b) integrals in LCCSD?
-            [This is HIGHLY not recommended] !expert -*/
-        options.add_bool("PROJECT_J", false);
         /*- Perform "dispersion correction" for neglected weak pairs? !expert -*/
         options.add_bool("DISPERSION_CORRECTION", false);
         /*- Use low memory PNO overlap algorithm? !expert -*/
@@ -2556,10 +2547,6 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_double("T_CUT_PAIRS", 1e-5);
         /*- Mulliken charge threshold for including aux BFs on atom (a) in domain of LMO (i) !expert -*/
         options.add_double("T_CUT_MKN", 1e-3);
-        /*- Eigenvalue Tolerance for factoring (Q|u_t v_t) two electron integrals */
-        options.add_double("T_CUT_EIG", 0.0);
-        /*- SVD Tolerance for factoring the PAO overlap matrix */
-        options.add_double("T_CUT_SVD", 1e-3);
         /*- Basis set coefficient threshold for including basis function (m) in domain of LMO (i) !expert -*/
         options.add_double("T_CUT_CLMO", 1e-3);
         /*- Basis set coefficient threshold for including basis function (n) in domain of PAO (u) !expert -*/
@@ -2568,8 +2555,6 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_double("S_CUT", 1e-8);
         /*- Fock matrix threshold for treating ampltudes as coupled during local MP2 iterations !expert -*/
         options.add_double("F_CUT", 1e-5);
-        /*- Use full LMP2 pre-screening for determining weak pairs and strong pairs, as well as PNO truncation error !expert -*/
-        options.add_str("PRESCREENING_ALGORITHM", "SC_LMP2", "SC_LMP2 FULL_LMP2");
         /*- Occupation number threshold for removing TNOs !expert -*/
         options.add_double("T_CUT_TNO", 1e-9);
         /*- T_CUT_TNO scaling for strong triplets in the iterative (T) algorithm !expert -*/
