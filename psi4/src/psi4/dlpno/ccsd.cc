@@ -649,8 +649,8 @@ void DLPNOCCSD::pno_lmp2_iterations() {
 
     // => Computing Truncated LMP2 energies (basically running DLPNO-MP2 here)
     outfile->Printf("\n  ==> Iterative Local MP2 with Pair Natural Orbitals (PNOs) <==\n\n");
-    outfile->Printf("    E_CONVERGENCE = %.2e\n", options_.get_double("E_CONVERGENCE"));
-    outfile->Printf("    R_CONVERGENCE = %.2e\n\n", options_.get_double("R_CONVERGENCE"));
+    outfile->Printf("    E_CONVERGENCE = %.2e\n", 0.01 * options_.get_double("E_CONVERGENCE"));
+    outfile->Printf("    R_CONVERGENCE = %.2e\n\n", 0.01 * options_.get_double("R_CONVERGENCE"));
     outfile->Printf("                         Corr. Energy    Delta E     Max R     Time (s)\n");
 
     std::vector<SharedMatrix> R_iajb(n_lmo_pairs);
@@ -760,8 +760,8 @@ void DLPNOCCSD::pno_lmp2_iterations() {
         }
         r_curr = *max_element(R_iajb_rms.begin(), R_iajb_rms.end());
 
-        r_converged = (fabs(r_curr) < options_.get_double("R_CONVERGENCE"));
-        e_converged = (fabs(e_curr - e_prev) < options_.get_double("E_CONVERGENCE"));
+        r_converged = (fabs(r_curr) < 0.01 * options_.get_double("R_CONVERGENCE"));
+        e_converged = (fabs(e_curr - e_prev) < 0.01 * options_.get_double("E_CONVERGENCE"));
 
         std::time_t time_stop = std::time(nullptr);
 

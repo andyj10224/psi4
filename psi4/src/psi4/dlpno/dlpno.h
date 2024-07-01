@@ -91,17 +91,11 @@ class DLPNOBase : public Wavefunction {
       /// localized molecular orbitals (LMOs)
       SharedMatrix C_lmo_;
       SharedMatrix F_lmo_;
-      SharedMatrix H_lmo_;
 
       /// projected atomic orbitals (PAOs)
       SharedMatrix C_pao_;
       SharedMatrix F_pao_;
       SharedMatrix S_pao_;
-      SharedMatrix H_pao_;
-
-      // LMO/PAO Hamiltonian (Used in T1-Hamiltonian CCSD)
-      SharedMatrix H_lmo_pao_;
-      SharedMatrix F_lmo_pao_;
 
       /// differential overlap integrals (EQ 4)
       SharedMatrix DOI_ij_; // LMO/LMO

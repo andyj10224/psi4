@@ -317,12 +317,7 @@ void DLPNOBase::setup_orbitals() {
     }
     timer_off("Local MOs");
 
-    auto mints = MintsHelper(basisset_, options_);
-    auto H_ao = mints.ao_potential();
-    H_ao->add(mints.ao_kinetic());
-
     F_lmo_ = linalg::triplet(C_lmo_, reference_wavefunction_->Fa(), C_lmo_, true, false, false);
-    H_lmo_ = linalg::triplet(C_lmo_, H_ao, C_lmo_, true, false, false);
 
     timer_on("Projected AOs");
 
@@ -338,10 +333,6 @@ void DLPNOBase::setup_orbitals() {
     }
     S_pao_ = linalg::triplet(C_pao_, reference_wavefunction_->S(), C_pao_, true, false, false);
     F_pao_ = linalg::triplet(C_pao_, reference_wavefunction_->Fa(), C_pao_, true, false, false);
-    H_pao_ = linalg::triplet(C_pao_, H_ao, C_pao_, true, false, false);
-
-    H_lmo_pao_ = linalg::triplet(C_lmo_, H_ao, C_pao_, true, false, false);
-    F_lmo_pao_ = linalg::triplet(C_lmo_, reference_wavefunction_->Fa(), C_pao_, true, false, false);
 
     timer_off("Projected AOs");
 
