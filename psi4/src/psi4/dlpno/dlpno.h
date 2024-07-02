@@ -453,7 +453,7 @@ class DLPNOCCSD_T : public DLPNOCCSD {
     /// Create sparsity maps for triples
     void triples_sparsity(bool prescreening);
     /// Create TNOs (Triplet Natural Orbitals) for DLPNO-(T)
-    void tno_transform(bool scale_triples, double tno_tolerance);
+    void tno_transform(double tno_tolerance);
     /// Sort triplets to split between "strong" and "weak" triplets (for (T) iterations)
     void sort_triplets(double e_total);
 

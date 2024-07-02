@@ -2573,8 +2573,6 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_double("T_CUT_MKN_TRIPLES", 1e-2);
         /*- LMO/PAO threshold for the (T) algorithm -*/
         options.add_double("T_CUT_DO_TRIPLES", 1e-2);
-        /*- Scale (T0) energy using MP2 truncation error estimate? !expert */
-        options.add_bool("SCALE_T0", false);
         /*- Fock matrix threshold for treating ampltudes as coupled during local (T) iterations !expert -*/
         options.add_double("F_CUT_T", 1e-3);
         /*- Energy difference in which to stop considering triples in iterative (T) */

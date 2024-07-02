@@ -60,9 +60,9 @@ DLPNOCCSD_T::DLPNOCCSD_T(SharedWavefunction ref_wfn, Options &options) : DLPNOCC
 DLPNOCCSD_T::~DLPNOCCSD_T() {}
 
 void DLPNOCCSD_T::print_header() {
-    std::string triples_algorithm = (options_.get_bool("T0_APPROXIMATION")) ? "SEMICANONICAL (T0)" : "ITERATIVE (T)";
-    std::string scale_t0 = (options_.get_bool("SCALE_T0") ? "TRUE" : "FALSE");
-    double t_cut_tno_pre = options_.get_double("T_CUT_TNO_PRE");
+    bool t0_only = options_.get_bool("T0_APPROXIMATION");
+    std::string triples_algorithm = (t0_only) ? "SEMICANONICAL (T0)" : "ITERATIVE (T)";
+    std::string storage = (!t0_only && options_.get_bool("WRITE_TRIPLES")) ? "DISK" : "IN CORE";
     double t_cut_tno = options_.get_double("T_CUT_TNO");
     double t_cut_tno_strong_scale = options_.get_double("T_CUT_TNO_STRONG_SCALE");
     double t_cut_tno_weak_scale = options_.get_double("T_CUT_TNO_WEAK_SCALE");
@@ -74,13 +74,21 @@ void DLPNOCCSD_T::print_header() {
     outfile->Printf("  DLPNO convergence set to %s.\n\n", options_.get_str("PNO_CONVERGENCE").c_str());
     outfile->Printf("  Detailed DLPNO thresholds and cutoffs:\n");
     outfile->Printf("    ALGORITHM    = %6s   \n", triples_algorithm.c_str());
-    outfile->Printf("    T_CUT_TNO_PRE (T0)   = %6.3e \n", t_cut_tno_pre);
-    outfile->Printf("    T_CUT_TNO (T0)       = %6.3e \n", t_cut_tno);
-    outfile->Printf("    T_CUT_TNO_STRONG (T) = %6.3e \n", t_cut_tno * t_cut_tno_strong_scale);
-    outfile->Printf("    T_CUT_TNO_WEAK (T)   = %6.3e \n", t_cut_tno * t_cut_tno_weak_scale);
-    outfile->Printf("    F_CUT_T      = %6.3e \n", options_.get_double("F_CUT_T"));
-    outfile->Printf("    T0_SCALING?  = %6s   \n\n", scale_t0.c_str());
-    outfile->Printf("\n");
+    outfile->Printf("    STORAGE      = %6s   \n", storage.c_str());
+    outfile->Printf("    T_CUT_TNO (T0)             = %6.3e \n", t_cut_tno);
+    outfile->Printf("    T_CUT_DO_TRIPLES (T0)      = %6.3e \n", options_.get_double("T_CUT_DO_TRIPLES"));
+    outfile->Printf("    T_CUT_MKN_TRIPLES (T0)     = %6.3e \n", options_.get_double("T_CUT_MKN_TRIPLES"));
+    outfile->Printf("    T_CUT_TRIPLES_WEAK (T0)    = %6.3e \n", options_.get_double("T_CUT_TRIPLES_WEAK"));
+    outfile->Printf("    T_CUT_TNO_PRE (T0)         = %6.3e \n", options_.get_double("T_CUT_TNO_PRE"));
+    outfile->Printf("    T_CUT_DO_TRIPLES_PRE (T0)  = %6.3e \n", options_.get_double("T_CUT_DO_TRIPLES_PRE"));
+    outfile->Printf("    T_CUT_MKN_TRIPLES_PRE (T0) = %6.3e \n", options_.get_double("T_CUT_MKN_TRIPLES_PRE"));
+    if (!t0_only) {
+        outfile->Printf("    T_CUT_TNO_STRONG (T)       = %6.3e \n", t_cut_tno * t_cut_tno_strong_scale);
+        outfile->Printf("    T_CUT_TNO_WEAK (T)         = %6.3e \n", t_cut_tno * t_cut_tno_weak_scale);
+        outfile->Printf("    F_CUT_T (T)                = %6.3e \n", options_.get_double("F_CUT_T"));
+        outfile->Printf("    T_CUT_ITER (T)             = %6.3e \n", options_.get_double("T_CUT_ITER"));
+    }
+    outfile->Printf("\n\n");
 }
 
 SharedMatrix matmul_3d(SharedMatrix A, SharedMatrix X, int dim_old, int dim_new) {
@@ -420,7 +428,7 @@ void DLPNOCCSD_T::sort_triplets(double e_total) {
     timer_off("Sort Triplets");
 }
 
-void DLPNOCCSD_T::tno_transform(bool scale_triples, double t_cut_tno) {
+void DLPNOCCSD_T::tno_transform(double t_cut_tno) {
     timer_on("TNO transform");
 
     int naocc = nalpha_ - nfrzc();
@@ -625,7 +633,7 @@ void DLPNOCCSD_T::tno_transform(bool scale_triples, double t_cut_tno) {
 }
 
 void DLPNOCCSD_T::estimate_memory() {
-    outfile->Printf("  ==> DLPNO-(T) Memory Estimate <== \n\n");
+    outfile->Printf("\n  ==> DLPNO-(T) Memory Estimate <== \n\n");
 
     int n_lmo_triplets = ijk_to_i_j_k_.size();
 
@@ -950,10 +958,6 @@ double DLPNOCCSD_T::compute_lccsd_t0(bool store_amplitudes) {
             T_ijk->save(psio_, PSIF_DLPNO_TRIPLES, psi::Matrix::Full);
         }
     }
-
-    outfile->Printf("\n");
-    outfile->Printf("  * DLPNO-CCSD(T0) Correlation Energy: %16.12f \n", e_lccsd_ + E_T0);
-    outfile->Printf("  * DLPNO-(T0) Contribution:           %16.12f \n\n", E_T0);
 
     timer_off("LCCSD(T0)");
 
@@ -1307,8 +1311,6 @@ double DLPNOCCSD_T::compute_energy() {
     S_pno_ij_kj_.clear();
     S_pno_ij_mn_.clear();
 
-    bool scale_triples = options_.get_bool("SCALE_T0");
-
     print_header();
 
     double t_cut_tno_pre = options_.get_double("T_CUT_TNO_PRE");
@@ -1319,19 +1321,33 @@ double DLPNOCCSD_T::compute_energy() {
 
     // Step 2: Perform the prescreening
     outfile->Printf("\n   Starting Triplet Prescreening...\n");
+    outfile->Printf("     T_CUT_TNO set to %6.3e \n", t_cut_tno_pre);
+    outfile->Printf("     T_CUT_DO  set to %6.3e \n", options_.get_double("T_CUT_DO_TRIPLES_PRE"));
+    outfile->Printf("     T_CUT_MKN set to %6.3e \n\n", options_.get_double("T_CUT_MKN_TRIPLES_PRE"));
 
     triples_sparsity(true);
-    tno_transform(scale_triples, t_cut_tno_pre);
+    tno_transform(t_cut_tno_pre);
     double E_T0_pre = compute_lccsd_t0();
 
     // Step 3: Compute DLPNO-CCSD(T0) energy with surviving triplets
     outfile->Printf("\n   Continuing computation with surviving triplets...\n");
+    outfile->Printf("     Eliminated all triples with energy less than %6.3e Eh... \n\n", options_.get_double("T_CUT_TRIPLES_WEAK"));
     triples_sparsity(false);
-    outfile->Printf("    * Energy Contribution From Screened Triplets: %.12f \n", de_lccsd_t_screened_);
+    outfile->Printf("    * Energy Contribution From Screened Triplets: %.12f \n\n", de_lccsd_t_screened_);
+
+    outfile->Printf("     T_CUT_TNO (re)set to %6.3e \n", t_cut_tno);
+    outfile->Printf("     T_CUT_DO  (re)set to %6.3e \n", options_.get_double("T_CUT_DO_TRIPLES"));
+    outfile->Printf("     T_CUT_MKN (re)set to %6.3e \n\n", options_.get_double("T_CUT_MKN_TRIPLES"));
     
-    tno_transform(scale_triples, t_cut_tno);
+    tno_transform(t_cut_tno);
     double E_T0 = compute_lccsd_t0();
     e_lccsd_t_ = e_lccsd_ + E_T0 + de_lccsd_t_screened_;
+
+    outfile->Printf("    DLPNO-CCSD(T0) Correlation Energy: %16.12f \n", e_lccsd_ + E_T0 + de_lccsd_t_screened_);
+    outfile->Printf("    * DLPNO-CCSD Contribution:         %16.12f \n", e_lccsd_);
+    outfile->Printf("    * DLPNO-(T0) Contribution:         %16.12f \n", E_T0);
+    outfile->Printf("    * Screened Triplets Contribution:  %16.12f \n\n", de_lccsd_t_screened_);
+
 
     // Step 4: Compute full DLPNO-CCSD(T) energy if NOT using T0 approximation
 
@@ -1339,14 +1355,23 @@ double DLPNOCCSD_T::compute_energy() {
         outfile->Printf("\n\n  ==> Computing Full Iterative (T) <==\n\n");
 
         sort_triplets(E_T0);
-        tno_transform(false, t_cut_tno);
+
+        double t_cut_tno_strong_scale = options_.get_double("T_CUT_TNO_STRONG_SCALE");
+        double t_cut_tno_weak_scale = options_.get_double("T_CUT_TNO_WEAK_SCALE");
+        outfile->Printf("     T_CUT_TNO (re)set to %6.3e for strong triples \n", t_cut_tno * t_cut_tno_strong_scale);
+        outfile->Printf("     T_CUT_TNO (re)set to %6.3e for weak triples   \n\n", t_cut_tno * t_cut_tno_weak_scale);
+
+        tno_transform(t_cut_tno);
         estimate_memory();
 
         double E_T0_crude = compute_lccsd_t0(true);
         double E_T_crude = lccsd_t_iterations();
         double dE_T = E_T_crude - E_T0_crude;
 
-        outfile->Printf("  * Iterative (T) Contribution: %16.12f\n\n", dE_T);
+        outfile->Printf("\n");
+        outfile->Printf("    DLPNO-CCSD(T0) energy at looser tolerance: %16.12f\n", E_T0_crude);
+        outfile->Printf("    DLPNO-CCSD(T)  energy at looser tolerance: %16.12f\n", E_T_crude);
+        outfile->Printf("    * Net Iterative (T) contribution:          %16.12f\n\n", dE_T);
 
         e_lccsd_t_ += dE_T;
     }
