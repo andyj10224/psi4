@@ -251,8 +251,8 @@ double DLPNOMP2::compute_energy() {
 
     timer_on("DF Ints");
     print_integral_sparsity();
-    compute_qia();
     compute_metric();
+    compute_qia();
     timer_off("DF Ints");
 
     timer_on("PNO Transform");

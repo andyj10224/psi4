@@ -899,7 +899,7 @@ void DLPNOCCSD::pno_lmp2_iterations() {
     // Print out PNO domain information
     int pno_count_total = 0, pno_count_min = nbf, pno_count_max = 0;
     double occ_number_total = 0.0, occ_number_min = 2.0, occ_number_max = 0.0;
-        double trace_total = 0.0, trace_min = 1.0, trace_max = 0.0;
+    double trace_total = 0.0, trace_min = 1.0, trace_max = 0.0;
     de_lmp2_weak_ = 0.0, de_pno_total_ = 0.0, de_pno_total_os_ = 0.0, de_pno_total_ss_ = 0.0;
     for (int ij = 0; ij < n_lmo_pairs; ++ij) {
         auto &[i, j] = ij_to_i_j_[ij];
@@ -1827,19 +1827,16 @@ SharedMatrix DLPNOCCSD::compute_G_tilde() {
     SharedMatrix G_tilde = Fkj_->clone();
 
 #pragma omp parallel for schedule(dynamic, 1)
-    for (int ij = 0; ij < n_lmo_pairs; ++ij) {
-        auto &[i, j] = ij_to_i_j_[ij];
-
-        int nlmo_ij = lmopair_to_lmos_[ij].size();
-
-        for (int l_ij = 0; l_ij < nlmo_ij; ++l_ij) {
-            int l = lmopair_to_lmos_[ij][l_ij];
+    for (int ij = 0; ij < naocc * naocc; ++ij) {
+        int i = ij / naocc, j = ij % naocc;
+        for (int l = 0; l < naocc; ++l) {
             int il = i_j_to_ij_[i][l], lj = i_j_to_ij_[l][j];
+            if (il == -1 || lj == -1) continue;
 
             auto U_lj = linalg::triplet(S_PNO(il, lj), Tt_iajb_[lj], S_PNO(lj, il));
             (*G_tilde)(i, j) += K_iajb_[il]->vector_dot(U_lj->transpose());
-        }
-    }
+        } // end l
+    } // end ij
 
     timer_off("DLPNO-CCSD: G tilde");
 
@@ -2197,10 +2194,9 @@ void DLPNOCCSD::lccsd_iterations() {
             auto G_ij = R_iajb[ij]->clone();
             G_ij->zero();
 
-            for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
-                int k = lmopair_to_lmos_[ij][k_ij];
-                int ik = i_j_to_ij_[i][k], kj = i_j_to_ij_[k][j];
-                if (n_pno_[ik] == 0) continue;
+            for (int k = 0; k < naocc; ++k) {
+                int ik = i_j_to_ij_[i][k];
+                if (ik == -1 || n_pno_[ik] == 0) continue;
 
                 auto T_ik = linalg::triplet(S_PNO(ij, ik), T_iajb_[ik], S_PNO(ik, ij), false, false, false);
                 T_ik->scale((*G_tilde)(k, j));
