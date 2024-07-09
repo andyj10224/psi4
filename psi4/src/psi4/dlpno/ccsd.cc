@@ -2228,8 +2228,7 @@ void DLPNOCCSD::lccsd_iterations() {
             int ii = i_j_to_ij_[i][i];
             int i_ii = lmopair_to_lmos_dense_[ii][i];
             for (int a_ii = 0; a_ii < n_pno_[ii]; ++a_ii) {
-                (*T_ia_[i])(a_ii, 0) -= (*R_ia[i])(a_ii, 0) / ((*Fab_[ii])(a_ii, a_ii) - (*Fkj_)(i,i));
-                // (e_pno_[ii]->get(a_ii) - F_lmo_->get(i,i));
+                (*T_ia_[i])(a_ii, 0) -= (*R_ia[i])(a_ii, 0) / (e_pno_[ii]->get(a_ii) - F_lmo_->get(i,i));
             }
         }
 
@@ -2246,8 +2245,7 @@ void DLPNOCCSD::lccsd_iterations() {
             for (int a_ij = 0; a_ij < n_pno_[ij]; ++a_ij) {
                 for (int b_ij = 0; b_ij < n_pno_[ij]; ++b_ij) {
                     (*T_iajb_[ij])(a_ij, b_ij) -= (*R_iajb[ij])(a_ij, b_ij) / 
-                                    ((*Fab_[pair_idx])(a_ij, a_ij) + (*Fab_[pair_idx])(b_ij, b_ij) - (*Fkj_)(i,i) - (*Fkj_)(j,j));
-                                    // (e_pno_[ij]->get(a_ij) + e_pno_[ij]->get(b_ij) - F_lmo_->get(i,i) - F_lmo_->get(j,j));
+                                    (e_pno_[ij]->get(a_ij) + e_pno_[ij]->get(b_ij) - F_lmo_->get(i,i) - F_lmo_->get(j,j));
                 }
             }
             R_iajb_rms[ij] = R_iajb[ij]->rms();
