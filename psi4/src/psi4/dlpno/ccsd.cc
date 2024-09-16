@@ -2116,8 +2116,8 @@ void DLPNOCCSD::compute_R_iajb(std::vector<SharedMatrix>& R_iajb, std::vector<Sh
 #endif
 
     auto beta = compute_beta();
-    auto gamma = compute_gamma();
-    auto delta = compute_delta();
+    // auto gamma = compute_gamma();
+    // auto delta = compute_delta();
     auto Fkj_double_tilde = compute_Fkj_double_tilde();
 
     // Zero out residuals
@@ -2219,7 +2219,41 @@ void DLPNOCCSD::compute_R_iajb(std::vector<SharedMatrix>& R_iajb, std::vector<Sh
             if (i != j) R_iajb[ji]->add(E_ij->transpose());
             
         } // end if
+
+        // => These intermediates are used for the C and D contributions <= //
         
+        // (Q|ab) intermediates
+        auto qma_ij = QIA_PNO(ij);
+        auto qab_ij = QAB_PNO(ij);
+
+        auto qma_ij_copy = std::make_shared<Matrix>(naux_ij, nlmo_ij * npno_ij);
+        auto qab_ij_copy = std::make_shared<Matrix>(naux_ij, npno_ij * npno_ij);
+        auto qab_t1 = std::make_shared<Matrix>(naux_ij, npno_ij * npno_ij);
+
+        for (int q_ij = 0; q_ij < naux_ij; ++q_ij) {
+            auto qab_t1_tmp = qab_ij[q_ij]->clone();
+            qab_t1_tmp->subtract(linalg::doublet(T_n_ij_[ij], qma_ij[q_ij], true, false));
+
+            for (int m_ij = 0; m_ij < nlmo_ij; ++m_ij) {
+                for (int a_ij = 0; a_ij < npno_ij; ++a_ij) {
+                    (*qma_ij_copy)(q_ij, m_ij * npno_ij + a_ij) = (*qma_ij[q_ij])(m_ij, a_ij);
+                }
+            }
+
+            for (int a_ij = 0; a_ij < npno_ij; ++a_ij) {
+                for (int b_ij = 0; b_ij < npno_ij; ++b_ij) {
+                    (*qab_ij_copy)(q_ij, a_ij * npno_ij + b_ij) = (*qab_ij[q_ij])(a_ij, b_ij);
+                    (*qab_t1)(q_ij, a_ij * npno_ij + b_ij) = (*qab_t1_tmp)(a_ij, b_ij);
+                }
+            }
+        }
+
+        auto dJ_kiac = linalg::doublet(i_Qk_t1_[ij], qab_t1, true, false); // dimensions a,c
+        dJ_kiac->subtract(linalg::doublet(i_Qk_ij_[ij], qab_ij_copy, true, false));
+
+        auto dK_kcai = linalg::doublet(qma_ij_copy, i_Qa_t1_[ij], true, false); // dimensions c,a
+        dK_kcai->subtract(linalg::doublet(qma_ij_copy, i_Qa_ij_[ij], true, false));
+        dK_kcai->reshape(nlmo_ij, npno_ij * npno_ij);
 
         // C_{ij}^{ab} = -t_{kj}^{bc}[B^{Q}_{ki}B^{Q}_{ac} - 0.5t_{li}^{ad}(B^{Q}_{kd}B^{Q}_{lc})] 
         // (DePrince Equation 13)
@@ -2228,10 +2262,33 @@ void DLPNOCCSD::compute_R_iajb(std::vector<SharedMatrix>& R_iajb, std::vector<Sh
             int k = lmopair_to_lmos_[ij][k_ij];
             int ik = i_j_to_ij_[i][k], ki = i_j_to_ij_[k][i], kj = i_j_to_ij_[k][j];
 
-            auto gamma_total = J_ij_kj_[ij][k_ij]->clone();
-            gamma_total->add(linalg::triplet(S_PNO(ij, ik), gamma[ki], S_PNO(ik, kj)));
-            C_ij->subtract(linalg::triplet(gamma_total, T_iajb_[kj], S_PNO(kj, ij), false, true, false));
+            // First Term (non-projected integral)
+            C_ij->subtract(linalg::triplet(J_ij_kj_[ij][k_ij], T_iajb_[kj], S_PNO(kj, ij), false, true, false));
+
+            auto dJ_kiac_temp = submatrix_rows(*dJ_kiac, std::vector<int>(1, k_ij));
+            dJ_kiac_temp->reshape(n_pno_[ij], n_pno_[ij]);
+            dJ_kiac_temp = linalg::doublet(dJ_kiac_temp, S_PNO(ij, kj));
+            C_ij->subtract(linalg::triplet(dJ_kiac_temp, T_iajb_[kj], S_PNO(kj, ij), false, true, false));
+
+            for (int l_ij = 0; l_ij < nlmo_ij; ++l_ij) {
+                int l = lmopair_to_lmos_[ij][l_ij];
+                int kl = i_j_to_ij_[k][l], li = i_j_to_ij_[l][i];
+                if (kl == -1) continue;
+
+                auto li_idx_list = index_list(lmopair_to_paos_ext_[kl], lmopair_to_paos_[li]);
+                auto kj_idx_list = index_list(lmopair_to_paos_ext_[kl], lmopair_to_paos_[kj]);
+
+                auto K_kdlc = linalg::triplet(S_PNO(li, kl), K_iajb_[kl], S_PNO(kl, kj));
+
+                auto T_li = linalg::doublet(S_PNO(ij, li), T_iajb_[li]);
+                auto T_kj = linalg::doublet(S_PNO(ij, kj), T_iajb_[kj]);
+                
+                K_kdlc = linalg::triplet(T_li, K_kdlc, T_kj, false, false, true);
+                K_kdlc->scale(0.5);
+                C_ij->add(K_kdlc);
+            }
         }
+
         // Add all the C terms to the non-symmetrized R buffer
         auto C_ij_total = C_ij->clone();
         C_ij_total->scale(0.5);
@@ -2244,10 +2301,18 @@ void DLPNOCCSD::compute_R_iajb(std::vector<SharedMatrix>& R_iajb, std::vector<Sh
         for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
             int k = lmopair_to_lmos_[ij][k_ij];
             int ik = i_j_to_ij_[i][k], jk = i_j_to_ij_[j][k];
-            int j_ik = lmopair_to_lmos_dense_[ik][j];
 
-            auto U_jk = linalg::triplet(S_PNO(ij, jk), Tt_iajb_[jk], S_PNO(jk, ik));
-            auto D_temp = linalg::triplet(S_PNO(ij, ik), delta[ik], U_jk, false, false, true);
+            auto dK_kcai_temp = submatrix_rows(*dK_kcai, std::vector<int>(1, k_ij));
+            dK_kcai_temp->reshape(n_pno_[ij], n_pno_[ij]);
+            dK_kcai_temp->transpose_this();
+            dK_kcai_temp->scale(2.0);
+
+            auto dJ_kiac_temp = submatrix_rows(*dJ_kiac, std::vector<int>(1, k_ij));
+            dJ_kiac_temp->reshape(n_pno_[ij], n_pno_[ij]);
+            dK_kcai_temp->subtract(dJ_kiac_temp);
+
+            auto U_jk = linalg::triplet(S_PNO(ij, jk), Tt_iajb_[jk], S_PNO(jk, ij));
+            auto D_temp = linalg::doublet(dK_kcai_temp, U_jk, false, true);
 
             auto L_aikc = K_ij_kj_[ij][k_ij]->clone();
             L_aikc->scale(2.0);
@@ -2256,6 +2321,27 @@ void DLPNOCCSD::compute_R_iajb(std::vector<SharedMatrix>& R_iajb, std::vector<Sh
             D_temp->add(linalg::triplet(L_aikc, Tt_iajb_[jk], S_PNO(jk, ij), false, true, false));
             D_temp->scale(0.5);
             D_ij->add(D_temp);
+
+            for (int l_ij = 0; l_ij < nlmo_ij; ++l_ij) {
+                int l = lmopair_to_lmos_[ij][l_ij];
+                int lk = i_j_to_ij_[l][k], kl = i_j_to_ij_[k][l], il = i_j_to_ij_[i][l];
+                if (lk == -1) continue;
+
+                auto il_idx_list = index_list(lmopair_to_paos_ext_[lk], lmopair_to_paos_[il]);
+                auto jk_idx_list = index_list(lmopair_to_paos_ext_[lk], lmopair_to_paos_[jk]);
+
+                
+                auto L_ldkc = linalg::triplet(S_PNO(il, lk), K_iajb_[lk], S_PNO(lk, jk));
+                L_ldkc->scale(2.0);
+                L_ldkc->subtract(linalg::triplet(S_PNO(il, kl), K_iajb_[kl], S_PNO(kl, jk)));
+
+                auto U_il = linalg::doublet(S_PNO(ij, il), Tt_iajb_[il]);
+                auto U_jk = linalg::doublet(S_PNO(ij, jk), Tt_iajb_[jk]);
+                
+                L_ldkc = linalg::triplet(U_il, L_ldkc, U_jk, false, false, true);
+                L_ldkc->scale(0.25);
+                D_ij->add(L_ldkc);
+            }
         }
         Rn_iajb[ij]->add(D_ij);
 
