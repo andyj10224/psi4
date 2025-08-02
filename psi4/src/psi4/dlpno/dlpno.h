@@ -466,12 +466,13 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     /// final energies
     double de_lccsd_t_screened_; ///< energy contribution from screened triplets
     double e_lccsd_t_; ///< local (T) correlation energy
+    double E_T0_; ///< semicanonical (T0) energy at tighter triples cutoff
     double E_T_; ///< raw iterative (T) energy at weaker triples cutoffs
 
     /// Create sparsity maps for triples
     void triples_sparsity(bool prescreening);
     /// Create TNOs (Triplet Natural Orbitals) for DLPNO-(T)
-    void tno_transform(double tno_tolerance);
+    void tno_transform(double tno_tolerance, double trace_tolerance=0.0, double energy_tolerance=0.0);
     /// Sort triplets to split between "strong" and "weak" triplets (for (T) iterations)
     void sort_triplets(double e_total);
 

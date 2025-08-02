@@ -2601,6 +2601,10 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_double("F_CUT", 1e-5);
         /*- Occupation number threshold for removing TNOs !expert -*/
         options.add_double("T_CUT_TNO", 1e-9);
+        /*- Occupation trace sum threshold for removing TNOs !expert -*/
+        options.add_double("T_CUT_TRACE_TRIPLES", 0.0);
+        /*- Energy threshold for removing TNOs !expert -*/
+        options.add_double("T_CUT_ENERGY_TRIPLES", 0.0);
         /*- Maximum number of weak pairs in (ij, jk, ik) to consider when forming triplet ijk !expert -*/
         options.add_int("TRIPLES_MAX_WEAK_PAIRS", 2);
         /*- T_CUT_TNO scaling for strong triplets in the iterative (T) algorithm !expert -*/
@@ -2609,6 +2613,8 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_double("T_CUT_TNO_WEAK_SCALE", 100.0);
         /*- Occupation number threshold used in the prescreening step !expert -*/
         options.add_double("T_CUT_TNO_PRE", 1e-7);
+        /*- Occupation trace sum threshold for removing TNOs in the prescreening step !expert -*/
+        options.add_double("T_CUT_TRACE_TRIPLES_PRE", 0.0);
         /*- Local density fitting tolerance for the prescreening portion of the (T) algorithm -*/
         options.add_double("T_CUT_MKN_TRIPLES_PRE", 0.1);
         /*- LMO/PAO threshold for the prescreening portion of the (T) algorithm -*/
@@ -2625,6 +2631,8 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_double("T_CUT_ITER", 1e-3);
         /*- Write triples amplitudes to disk? !expert -*/
         options.add_bool("WRITE_TRIPLES", false);
+        /*- Delete CCSD integrals after completion of computation? !expert -*/
+        options.add_bool("CLEAR_CCSD_INTEGRALS", false);
 
         /*- Number of spherical points in DOI grid !expert -*/
         options.add_int("DOI_SPHERICAL_POINTS", 50);

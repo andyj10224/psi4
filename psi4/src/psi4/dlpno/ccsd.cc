@@ -2856,23 +2856,16 @@ double DLPNOCCSD::compute_energy() {
     timer_off("LCCSD");
 
     if (write_qab_pao_) {
-        if (algorithm_ == CCSD) {
-            // Integrals no longer needed
-            psio_->close(PSIF_DLPNO_QAB_PAO, 0);
-        } else {
-            // Integrals may still be needed for post-CCSD calculations
-            psio_->close(PSIF_DLPNO_QAB_PAO, 1);
-        }
+        psio_->close(PSIF_DLPNO_QAB_PAO, 1);
+        
     }
 
     if (write_qia_pno_) {
-        // Bye bye (Q_ij | m_ij a_ij) integrals. You won't be missed
-        psio_->close(PSIF_DLPNO_QIA_PNO, 0);
+        psio_->close(PSIF_DLPNO_QIA_PNO, 1);
     }
 
     if (write_qab_pno_) {
-        // Bye bye (Q_ij | a_ij b_ij) integrals. You won't be missed
-        psio_->close(PSIF_DLPNO_QAB_PNO, 0);
+        psio_->close(PSIF_DLPNO_QAB_PNO, 1);
     }
 
     print_results();
