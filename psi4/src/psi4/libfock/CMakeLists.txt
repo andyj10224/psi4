@@ -6,6 +6,7 @@ list(APPEND sources
   DirectJK.cc
   DiskDFJK.cc
   DiskJK.cc
+  EinsumsDFJK.cc
   GTFockJK.cc
   LinK.cc
   MemDFJK.cc

@@ -53,6 +53,13 @@ class DFHelper;
 class DFTGrid;
 class PetiteList;
 
+template<typename T, size_t rank = 2>
+using EinsumsSharedMatrix = std::shared_ptr<einsums::Tensor<T, rank>>;
+
+using complex_t = std::complex<double>;
+
+using EinsumsComplexMatrix = std::shared_ptr<einsums::Tensor<std::complex<double>, 2>>;
+
 namespace pk {
 class PKManager;
 }
@@ -1104,7 +1111,11 @@ class PSI_API CDJK : public DiskDFJK {
  * density-fitted technology
  * under slightly different paradigm than DiskDFJK
  * wraps lib3index/DFHelper class
+ * 
+ * @tparam T = data type of MO coefficients (C) and (pseudo)-density matrices (D)
+ * float, double, std::complex
  */
+template<typename T = double>
 class PSI_API MemDFJK : public JK {
    protected:
     /// Options object
@@ -1171,9 +1182,9 @@ class PSI_API MemDFJK : public JK {
     void set_df_ints_num_threads(int val) { df_ints_num_threads_ = val; }
 
     /**
- * A set_do_wK function that affects the dfhelper object.
- * used to control wK workflow.
- */
+     * A set_do_wK function that affects the dfhelper object.
+     * used to control wK workflow.
+     */
     void set_do_wK(bool do_wK) override;
 
     // => Accessors <= //
@@ -1194,6 +1205,116 @@ class PSI_API MemDFJK : public JK {
      */
     std::shared_ptr<DFHelper> dfh() { return dfh_; }
 };
+
+/**
+ * Class EinsumsDFJK
+ * 
+ * Implementation of In-Core DFJK capable of doing Hartree-Fock computations
+ * using an arbitrary data type
+ *
+ * TODO: This is now only supports complex type, change it to make it
+ * templated in the future
+ *
+ */
+class PSI_API EinsumsDFJK : public JK {
+   protected:
+    /// Options object
+    Options& options_;
+
+    /// ERI computers for computing DF ints
+    std::vector<std::shared_ptr<TwoBodyAOInt>> eri_computers_;
+    /// Coulomb Metric (P|Q) built over auxiliary basis functions
+    SharedMatrix J_metric_;
+    /// Einsums Tensor<double, 3> object that represents the AO ERIs
+    SharedMatrix df_ao_eri_;
+
+    /// Number of shell triplets
+    size_t n_shell_triplets_;
+    /// Total number of doubles in three-center AO DF ints
+    size_t num_doubles_;
+    /// Number of significant function pairs that survive the sieve process
+    size_t n_function_pairs_ = 0;
+
+    /// Auxiliary basis set
+    std::shared_ptr<BasisSet> auxiliary_;
+    /// Number of threads
+    int num_threads_;
+    /// Condition cutoff in fitting metric, default 1.0E-12
+    double condition_ = 1.0E-12;
+
+    /// Name of class
+    std::string name() override { return "EinsumsDFJK"; }
+    /// Estimate memory required to store AO three-center ints in core
+    size_t memory_estimate() override;
+
+    /// Builds per thread AO ERI object for three center DF ints
+    void build_eri_computers();
+    /// Compute (P|Q) in auxiliary basis
+    void compute_J_metric();
+    /// Compute (P|uv) in AO basis
+    void compute_three_center_ao_eri();
+
+    // => Required Algorithm-Specific Methods <= //
+    int max_nocc() const; // Maximum number of occupied orbitals over all spin cases
+    /// Setup integrals, I/O files, etc.
+    /// calls initialize(), blocks JK
+    void preiterations() override;
+    /// Compute J/K for current C/D (coefficient and density matrices)
+    void compute_JK() override;
+    /// Delete integrals, files, etc.
+    void postiterations() override;
+
+    /// Common initialization
+    void common_init();
+
+   public:
+    // => Constructors <= //
+
+    /**
+     * @param primary primary basis set for this system
+     * @param auxiliary auxiliary basis set for this system
+     */
+    EinsumsDFJK(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> auxiliary, Options& options);
+
+    // Destructor
+    ~EinsumsDFJK() override;
+
+    // => Knobs <= //
+
+    /**
+     * Minimum relative eigenvalue to retain in fitting inverse
+     * All eigenvectors with \epsilon_i < condition * \epsilon_max
+     * will be discarded
+     * @param condition minimum relative eigenvalue allowed,
+     *        defaults to 1.0E-12
+     */
+    void set_condition(double condition) { condition_ = condition; }
+
+    /**
+     * What number of threads to compute integrals on
+     * @param val a positive integer
+     */
+    void set_df_ints_num_threads(int val) { df_ints_num_threads_ = val; }
+
+    /**
+     * A set_do_wK function that affects the dfhelper object.
+     * used to control wK workflow.
+     */
+    void set_do_wK(bool do_wK) override;
+
+    // => Accessors <= //
+
+    /**
+    * Print header information regarding JK
+    * type on output file
+    */
+    void print_header() const override;
+
+    void set_omega_alpha(double alpha) override;
+    void set_omega_beta(double beta) override;
+    void set_wcombine(bool wcombine) override;
+    void set_cutoff(double cutoff) override; 
+}
 
 /**
  * Class CompositeJK 
