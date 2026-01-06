@@ -2749,6 +2749,8 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
 
         /*- Use low memory PNO overlap algorithm? !expert -*/
         options.add_bool("LOW_MEMORY_OVERLAP", false);
+        /*- Write (Q | mu nu) integrals (PAO-PAO DF Integrals) to disk? !expert -*/
+        options.add_bool("WRITE_QAB_PAO", false);
         /*- Write (Q_{ij} | m_{ij} a_{ij}) integrals to disk? !expert -*/
         options.add_bool("WRITE_QIA_PNO", false);
         /*- Write (Q_{ij} | a_{ij} b_{ij}) integrals to disk? !expert -*/

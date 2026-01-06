@@ -649,8 +649,6 @@ double DLPNOCCSD_T::compute_lccsd_t0(bool save_memory) {
         thread = omp_get_thread_num();
 #endif
 
-        if (thread == 0) timer_on("LCCSD(T0): Setup Integrals");
-
         // => Step 1: Compute all necessary integrals
 
         // number of LMOs in the triplet domain
@@ -674,6 +672,29 @@ double DLPNOCCSD_T::compute_lccsd_t0(bool save_memory) {
         auto q_ko = std::make_shared<Matrix>(naux_ijk, nlmo_ijk); // (Q_{ijk} | m_{ijk} k)
 
         auto q_vv = std::make_shared<Matrix>(naux_ijk, ntno_ijk * ntno_ijk); // (Q_{ijk} | a_{ijk} b_{ijk})
+
+        if (thread == 0) timer_on("LCCSD(T0): Read PAO Integrals from Disk");
+
+        std::vector<SharedMatrix> qab_pao(naux_ijk);
+        
+        for (int q_ijk = 0; q_ijk < naux_ijk; q_ijk++) {
+            const int q = lmotriplet_to_ribfs_[ijk][q_ijk];
+            const int centerq = ribasis_->function_to_center(q);
+            
+            if (write_qab_pao_) {
+                std::stringstream toc_entry;
+                toc_entry << "QAB (PAO) " << (q);
+                qab_pao[q_ijk] = std::make_shared<Matrix>(toc_entry.str(), riatom_to_pao_pairs_[centerq].size(), 1);
+#pragma omp critical
+                qab_pao[q_ijk]->load(psio_, PSIF_DLPNO_QAB_PAO, psi::Matrix::SubBlocks);
+            } else {
+                qab_pao[q_ijk] = qab_[q];
+            }
+        }
+
+        if (thread == 0) timer_off("LCCSD(T0): Read PAO Integrals from Disk");
+
+        if (thread == 0) timer_on("LCCSD(T0): Setup Integrals");
 
         for (int q_ijk = 0; q_ijk < naux_ijk; q_ijk++) {
             const int q = lmotriplet_to_ribfs_[ijk][q_ijk];
@@ -702,7 +723,7 @@ double DLPNOCCSD_T::compute_lccsd_t0(bool save_memory) {
                     int v = lmotriplet_to_paos_[ijk][v_ijk];
                     int uv_idx = riatom_to_pao_pairs_dense_[centerq][u][v];
                     if (uv_idx == -1) continue;
-                    (*q_vv_tmp)(u_ijk, v_ijk) = (*qab_[q])(uv_idx, 0);
+                    (*q_vv_tmp)(u_ijk, v_ijk) = (*qab_pao[q_ijk])(uv_idx, 0);
                 } // end v_ijk
             } // end u_ijk
             

@@ -1453,6 +1453,27 @@ void DLPNOCCSD::compute_pno_integrals() {
         }
         npao_ext_ij = extended_pao_domain.size();
 
+        if (thread == 0) timer_on("DLPNO-CCSD: Read PAO Integrals from Disk");
+
+        std::vector<SharedMatrix> qab_pao(naux_ij);
+        
+        for (int q_ij = 0; q_ij < naux_ij; q_ij++) {
+            const int q = lmopair_to_ribfs_[ij][q_ij];
+            const int centerq = ribasis_->function_to_center(q);
+            
+            if (write_qab_pao_) {
+                std::stringstream toc_entry;
+                toc_entry << "QAB (PAO) " << (q);
+                qab_pao[q_ij] = std::make_shared<Matrix>(toc_entry.str(), riatom_to_pao_pairs_[centerq].size(), 1);
+#pragma omp critical
+                qab_pao[q_ij]->load(psio_, PSIF_DLPNO_QAB_PAO, psi::Matrix::SubBlocks);
+            } else {
+                qab_pao[q_ij] = qab_[q];
+            }
+        }
+
+        if (thread == 0) timer_off("DLPNO-CCSD: Read PAO Integrals from Disk");
+
         if (thread == 0) timer_on("DLPNO-CCSD: Setup Integrals");
 
         for (int q_ij = 0; q_ij < naux_ij; q_ij++) {
@@ -1495,7 +1516,7 @@ void DLPNOCCSD::compute_pno_integrals() {
                     int v = lmopair_to_paos_[ij][v_ij];
                     int uv_idx = riatom_to_pao_pairs_dense_[centerq][u][v];
                     if (uv_idx == -1) continue;
-                    q_vv_tmp->set(u_ij, v_ij, qab_[q]->get(uv_idx, 0));
+                    q_vv_tmp->set(u_ij, v_ij, qab_pao[q_ij]->get(uv_idx, 0));
                 }
             }
             
@@ -1538,7 +1559,86 @@ void DLPNOCCSD::compute_pno_integrals() {
 
         if (thread == 0) timer_off("DLPNO-CCSD: Setup Integrals");
 
+        if (thread == 0) timer_on("DLPNO-CCSD: Contract Integrals");
+        
+        K_mibj_[ij] = linalg::doublet(q_io, q_jv, true, false);
+        J_ijmb_[ij] = linalg::doublet(q_pair, q_ov, true, false);
+        J_ijmb_[ij]->reshape(nlmo_ij, npno_ij);
+        K_ivvv_[ij] = linalg::doublet(q_iv, q_vv, true, false);
+
+        L_mibj_[ij] = K_mibj_[ij]->clone();
+
+        // L_iajb
+        L_iajb_[ij] = K_iajb_[ij]->clone();
+        L_iajb_[ij]->scale(2.0);
+        L_iajb_[ij]->subtract(K_iajb_[ij]->transpose());
+
+        if (i != j) {
+            K_mibj_[ji] = linalg::doublet(q_jo, q_iv, true, false);
+            J_ijmb_[ji] = J_ijmb_[ij];
+            K_ivvv_[ji] = linalg::doublet(q_jv, q_vv, true, false);
+
+            L_mibj_[ij]->scale(2.0);
+            L_mibj_[ij]->subtract(K_mibj_[ji]);
+
+            L_mibj_[ji] = K_mibj_[ji]->clone();
+            L_mibj_[ji]->scale(2.0);
+            L_mibj_[ji]->subtract(L_mibj_[ij]);
+
+            L_iajb_[ji] = L_iajb_[ij]->transpose();
+        }
+
+        if (thread == 0) timer_off("DLPNO-CCSD: Contract Integrals");
+
+        // The remaining integrals are only computed over strong pairs
         if (is_strong_pair) {
+            // (Q_{ij} | k_{ij} i) and (Q_{ij} | a_{ij} i)
+            i_Qk_ij_[ij] = q_io;
+            i_Qa_ij_[ij] = q_iv;
+
+            // (Q_{ij} | k_{ij} j) and (Q_{ij} | a_{ij} j)
+            if (i != j) {
+                i_Qk_ij_[ji] = q_jo;
+                i_Qa_ij_[ji] = q_jv;
+            }
+
+            // (Q_{ij} | m_{ij} a_{ij})
+            if (!write_qia_pno_) {
+                Qma_ij_[ij].resize(naux_ij);
+                for (int q_ij = 0; q_ij < naux_ij; ++q_ij) {
+                    // Save transformed (Q_ij | m_ij a_ij) integrals
+                    Qma_ij_[ij][q_ij] = std::make_shared<Matrix>(nlmo_ij, npno_ij);
+                    ::memcpy(&(*Qma_ij_[ij][q_ij])(0, 0), &(*q_ov)(q_ij,0), nlmo_ij * npno_ij * sizeof(double));
+                }
+            } else {
+                std::stringstream toc_entry;
+                toc_entry << "QIA (PNO) " << ij;
+                q_ov->set_name(toc_entry.str());
+    #pragma omp critical
+                q_ov->save(psio_, PSIF_DLPNO_QIA_PNO, psi::Matrix::SubBlocks);
+            }
+
+            // Memory-saving measure
+            q_ov.reset();
+
+            // (Q_{ij} | a_{ij} b_{ij})
+            if (!write_qab_pno_) {
+                Qab_ij_[ij].resize(naux_ij);
+                for (int q_ij = 0; q_ij < naux_ij; ++q_ij) {
+                    // Save transformed (Q_ij | a_ij b_ij) integrals
+                    Qab_ij_[ij][q_ij] = std::make_shared<Matrix>(npno_ij, npno_ij);
+                    ::memcpy(&(*Qab_ij_[ij][q_ij])(0, 0), &(*q_vv)(q_ij,0), npno_ij * npno_ij * sizeof(double));
+                }
+            } else {
+                std::stringstream toc_entry;
+                toc_entry << "QAB (PNO) " << ij;
+                q_vv->set_name(toc_entry.str());
+    #pragma omp critical
+                q_vv->save(psio_, PSIF_DLPNO_QAB_PNO, psi::Matrix::ThreeIndexLowerTriangle);
+            }
+
+            // Memory-saving measure
+            q_vv.reset();
 
             if (thread == 0) timer_on("DLPNO-CCSD: J_ikac integrals");
 
@@ -1559,7 +1659,7 @@ void DLPNOCCSD::compute_pno_integrals() {
                         int v = extended_pao_domain[v_ij];
                         int uv_idx = riatom_to_pao_pairs_dense_[centerq][u][v];
                         if (uv_idx == -1) continue;
-                        q_cd_temp->set(u_ij, v_ij, qab_[q]->get(uv_idx, 0));
+                        q_cd_temp->set(u_ij, v_ij, qab_pao[q_ij]->get(uv_idx, 0));
                     }
                 }
                 q_cd_temp = linalg::doublet(X_pno_[ij], q_cd_temp, true, false);
@@ -1572,6 +1672,9 @@ void DLPNOCCSD::compute_pno_integrals() {
             if (i != j) {
                 K_jovv_partial = linalg::doublet(q_jo_clone, q_vv_partial, true, false);
             }
+
+            // This is a memory-saving measure
+            q_vv_partial.reset();
 
             for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
                 int k = lmopair_to_lmos_[ij][k_ij];
@@ -1619,6 +1722,9 @@ void DLPNOCCSD::compute_pno_integrals() {
                 K_ovjv->reshape(nlmo_ij, npao_ext_ij * npno_ij);
             }
 
+            // This is a memory-saving measure
+            q_ov_ext.reset();
+
             for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
                 int k = lmopair_to_lmos_[ij][k_ij];
                 int ik = i_j_to_ij_[i][k], kj = i_j_to_ij_[k][j];
@@ -1639,86 +1745,7 @@ void DLPNOCCSD::compute_pno_integrals() {
             }
 
             if (thread == 0) timer_off("DLPNO-CCSD: K_iakc integrals");
-
-        } // end if
-
-        if (thread == 0) timer_on("DLPNO-CCSD: Contract Integrals");
-        
-        K_mibj_[ij] = linalg::doublet(q_io, q_jv, true, false);
-        J_ijmb_[ij] = linalg::doublet(q_pair, q_ov, true, false);
-        J_ijmb_[ij]->reshape(nlmo_ij, npno_ij);
-        K_ivvv_[ij] = linalg::doublet(q_iv, q_vv, true, false);
-
-        L_mibj_[ij] = K_mibj_[ij]->clone();
-
-        if (i != j) {
-            K_mibj_[ji] = linalg::doublet(q_jo, q_iv, true, false);
-            J_ijmb_[ji] = J_ijmb_[ij];
-            K_ivvv_[ji] = linalg::doublet(q_jv, q_vv, true, false);
-
-            L_mibj_[ij]->scale(2.0);
-            L_mibj_[ij]->subtract(K_mibj_[ji]);
-
-            L_mibj_[ji] = K_mibj_[ji]->clone();
-            L_mibj_[ji]->scale(2.0);
-            L_mibj_[ji]->subtract(L_mibj_[ij]);
         }
-
-        // Save DF integrals (only for strong pairs)
-        if (is_strong_pair) {
-            i_Qk_ij_[ij] = q_io;
-            i_Qa_ij_[ij] = q_iv;
-
-            if (i != j) {
-                i_Qk_ij_[ji] = q_jo;
-                i_Qa_ij_[ji] = q_jv;
-            }
-        }
-        
-        if (is_strong_pair) {
-            if (!write_qia_pno_) {
-                Qma_ij_[ij].resize(naux_ij);
-                for (int q_ij = 0; q_ij < naux_ij; ++q_ij) {
-                    // Save transformed (Q_ij | m_ij a_ij) integrals
-                    Qma_ij_[ij][q_ij] = std::make_shared<Matrix>(nlmo_ij, npno_ij);
-                    ::memcpy(&(*Qma_ij_[ij][q_ij])(0, 0), &(*q_ov)(q_ij,0), nlmo_ij * npno_ij * sizeof(double));
-                }
-            } else {
-                std::stringstream toc_entry;
-                toc_entry << "QIA (PNO) " << ij;
-                q_ov->set_name(toc_entry.str());
-    #pragma omp critical
-                q_ov->save(psio_, PSIF_DLPNO_QIA_PNO, psi::Matrix::SubBlocks);
-            }
-        }
-
-        if (is_strong_pair) {
-            if (!write_qab_pno_) {
-                Qab_ij_[ij].resize(naux_ij);
-                for (int q_ij = 0; q_ij < naux_ij; ++q_ij) {
-                    // Save transformed (Q_ij | a_ij b_ij) integrals
-                    Qab_ij_[ij][q_ij] = std::make_shared<Matrix>(npno_ij, npno_ij);
-                    ::memcpy(&(*Qab_ij_[ij][q_ij])(0, 0), &(*q_vv)(q_ij,0), npno_ij * npno_ij * sizeof(double));
-                }
-            } else {
-                std::stringstream toc_entry;
-                toc_entry << "QAB (PNO) " << ij;
-                q_vv->set_name(toc_entry.str());
-    #pragma omp critical
-                q_vv->save(psio_, PSIF_DLPNO_QAB_PNO, psi::Matrix::ThreeIndexLowerTriangle);
-            }
-        }
-
-        // L_iajb
-        L_iajb_[ij] = K_iajb_[ij]->clone();
-        L_iajb_[ij]->scale(2.0);
-        L_iajb_[ij]->subtract(K_iajb_[ij]->transpose());
-
-        if (i != j) {
-            L_iajb_[ji] = L_iajb_[ij]->transpose();
-        }
-
-        if (thread == 0) timer_off("DLPNO-CCSD: Contract Integrals");
 
         if (thread == 0) {
             std::time_t time_curr = std::time(nullptr);
@@ -1728,7 +1755,7 @@ void DLPNOCCSD::compute_pno_integrals() {
                                     (100 * ij_idx) / n_lmo_pairs, ij_idx, n_lmo_pairs);
                 time_lap = std::time(nullptr);
             }
-        }
+        } // end if
     }
 
     std::time_t time_stop = std::time(nullptr);

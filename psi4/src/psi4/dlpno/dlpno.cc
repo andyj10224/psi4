@@ -198,6 +198,8 @@ void DLPNO::common_init() {
 
     memory_ = Process::environment.get_memory();
     toggle_memory_ = options_.get_bool("DLPNO_TOGGLE_MEMORY");
+
+    write_qab_pao_ = options_.get_bool("WRITE_QAB_PAO");
 }
 
 /* Utility function for making C_DGESV calls
@@ -1191,6 +1193,11 @@ void DLPNO::compute_qab() {
     }
 
     outfile->Printf("\n  ==> Transforming 3-Index Integrals to PAO/PAO basis <==\n\n");
+    if (write_qab_pao_) {
+        outfile->Printf("     * Writing 3-Index PAO/PAO Integrals to Disk... \n\n");
+    } else {
+        outfile->Printf("     * Storing 3-Index PAO/PAO Integrals in Core... \n\n");
+    }
 
     qab_.resize(naux);
 
@@ -1285,11 +1292,25 @@ void DLPNO::compute_qab() {
                 ++qab_doubles;
             }
             qab_[qstart + q] = qab_temp;
-        }
-    }
+
+            if (write_qab_pao_) {
+                std::stringstream toc_entry;
+                toc_entry << "QAB (PAO) " << (qstart + q);
+                qab_[qstart + q]->set_name(toc_entry.str());
+    #pragma omp critical
+                qab_[qstart + q]->save(psio_, PSIF_DLPNO_QAB_PAO, psi::Matrix::SubBlocks);
+                qab_[qstart + q] = nullptr;
+            } // end if
+
+        } // end q
+    } // end Q
 
     qab_memory_ = qab_doubles;
     outfile->Printf("    * PAO/PAO Integral Memory After Screening: %.3f [GiB]\n\n", qab_doubles * pow(2.0, -30) * sizeof(double));
+    if (write_qab_pao_) {
+        outfile->Printf("      *** PAO/PAO Integrals written to disk in PSIO block %d\n\n", PSIF_DLPNO_QAB_PAO);
+        qab_memory_ = 0L;
+    }
 
     timer_off("(mn|K)->(ab|K)");
 }

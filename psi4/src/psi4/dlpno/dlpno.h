@@ -113,6 +113,9 @@ class DLPNO : public Wavefunction {
     SharedMatrix dipole_pair_e_; ///< actual approximate pair energy (used in final energy calculation)
     SharedMatrix dipole_pair_e_bound_; ///< upper bound to approximate pair energies (used for screening)
 
+    /// Write (Q | mu nu) integrals (PAO-PAO DF Integrals) to disk?
+    bool write_qab_pao_;
+
     /// How much memory is used by storing each of the DF integral types
     size_t qij_memory_;
     size_t qia_memory_;
