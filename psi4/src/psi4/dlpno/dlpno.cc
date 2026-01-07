@@ -329,6 +329,9 @@ void DLPNO::setup_orbitals() {
 
     timer_on("Local MOs");
     // Localize active occupied orbitals
+    
+
+    // Choose algorithm based on user settings
     if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "BOYS") {
         BoysLocalizer localizer = BoysLocalizer(basisset_, reference_wavefunction_->Ca_subset("AO", "ACTIVE_OCC"));
         localizer.set_convergence(options_.get_double("LOCAL_CONVERGENCE"));
@@ -341,9 +344,16 @@ void DLPNO::setup_orbitals() {
         localizer.set_maxiter(options_.get_int("LOCAL_MAXITER"));
         localizer.localize();
         C_lmo_ = localizer.L();
+    } else if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "ER") {
+        ERLocalizer localizer = ERLocalizer(basisset_, get_basisset("DF_BASIS_SCF"), reference_wavefunction_->Ca_subset("AO", "ACTIVE_OCC"));
+        localizer.set_convergence(options_.get_double("LOCAL_CONVERGENCE"));
+        localizer.set_maxiter(options_.get_int("LOCAL_MAXITER"));
+        localizer.localize();
+        C_lmo_ = localizer.L();
     } else {
         throw PSIEXCEPTION("Invalid option for DLPNO_LOCAL_ORBITALS");
     }
+
     timer_off("Local MOs");
 
     F_lmo_ = linalg::triplet(C_lmo_, reference_wavefunction_->Fa(), C_lmo_, true, false, false);
