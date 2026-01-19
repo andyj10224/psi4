@@ -57,7 +57,6 @@ template<typename T, size_t rank = 2>
 using EinsumsSharedMatrix = std::shared_ptr<einsums::Tensor<T, rank>>;
 
 using complex_t = std::complex<double>;
-
 using EinsumsComplexMatrix = std::shared_ptr<einsums::Tensor<std::complex<double>, 2>>;
 
 namespace pk {
@@ -1225,7 +1224,7 @@ class PSI_API EinsumsDFJK : public JK {
     std::vector<std::shared_ptr<TwoBodyAOInt>> eri_computers_;
     /// Coulomb Metric (P|Q) built over auxiliary basis functions
     SharedMatrix J_metric_;
-    /// Einsums Tensor<double, 3> object that represents the AO ERIs
+    /// Psi4 Matrix object that represents (Q|uv) three-center AO integrals
     SharedMatrix df_ao_eri_;
 
     /// Number of shell triplets
@@ -1238,7 +1237,7 @@ class PSI_API EinsumsDFJK : public JK {
     /// Auxiliary basis set
     std::shared_ptr<BasisSet> auxiliary_;
     /// Number of threads
-    int num_threads_;
+    int df_ints_num_threads_;
     /// Condition cutoff in fitting metric, default 1.0E-12
     double condition_ = 1.0E-12;
 
@@ -1254,7 +1253,14 @@ class PSI_API EinsumsDFJK : public JK {
     /// Compute (P|uv) in AO basis
     void compute_three_center_ao_eri();
 
-    // => Required Algorithm-Specific Methods <= //
+    /// Allows the "feeding in" of complex matrices
+    /// TODO: Make this work with wK in the future
+    void compute_JK(std::vector<EinsumsComplexMatrix> C_left, std::vector<EinsumsComplexMatrix> C_right, 
+                    std::vector<EinsumsComplexMatrix>& D, std::vector<EinsumsComplexMatrix>& J, 
+                    std::vector<EinsumsComplexMatrix>& K, std::vector<EinsumsComplexMatrix>& wK);
+                    
+    // => Required Algorithm-Specific Methods (Many of which are taken from base JK) <= //
+
     int max_nocc() const; // Maximum number of occupied orbitals over all spin cases
     /// Setup integrals, I/O files, etc.
     /// calls initialize(), blocks JK

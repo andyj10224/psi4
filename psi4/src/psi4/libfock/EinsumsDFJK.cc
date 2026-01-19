@@ -54,10 +54,7 @@ using namespace psi;
 namespace psi {
 
 EinsumsDFJK::EinsumsDFJK(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> auxiliary,
-    Options& options) : JK(primary), auxiliary_(auxiliary), options_(options) {
-
-    common_init();
-}
+    Options& options) : JK(primary), auxiliary_(auxiliary), options_(options) { common_init(); }
 
 EinsumsDFJK::~EinsumsDFJK() {}
 
@@ -74,14 +71,29 @@ void EinsumsDFJK::build_eri_computers() {
     auto zero_ao = BasisSet::zero_ao_basis_set(); // Single AO basis set (gaussian with zeta = 0)
     auto factory = std::make_shared<IntegralFactory>(auxiliary_, zero_ao, primary_, primary_);
 
-    // Make integral objecta for every thread to parallelize computation of ints
-    eri_computers_.resize(num_threads_);
+    // Make integral objects for every thread to parallelize computation of ints
+    eri_computers_.resize(df_ints_num_threads_);
     eri_computers_[0] = std::shared_ptr<TwoBodyAOInt>(factory->eri());
 
-    for (size_t thread = 1; thread < num_threads_; ++thread) {
-        eri_computers_[thread] = std::shared_ptr<TwoBodyAOInt>(eris_computers.front()->clone());
+    for (size_t thread = 1; thread < df_ints_num_threads_; ++thread) {
+        eri_computers_[thread] = std::shared_ptr<TwoBodyAOInt>(eris_computers_[0]->clone());
     }
 
+}
+
+void EinsumsDFJK::print_header() const {
+    if (print_) {
+        outfile->Printf("  ==> EinsumsDFJK: Arbitrary Data Type Density-Fitted J/K Matrices <==\n\n");
+
+        outfile->Printf("    J tasked:          %11s\n", (do_J_ ? "Yes" : "No"));
+        outfile->Printf("    K tasked:          %11s\n", (do_K_ ? "Yes" : "No"));
+        outfile->Printf("    wK tasked:         %11s\n", (do_wK_ ? "Yes" : "No"));
+        if (do_wK_) outfile->Printf("    Omega:             %11.3E\n", omega_);
+        outfile->Printf("    Integrals threads: %11d\n", df_ints_num_threads_);
+        outfile->Printf("    Memory [MiB]:      %11ld\n", (memory_ *8L) / (1024L * 1024L));
+        outfile->Printf("    Screening Cutoff:  %11.0E\n", cutoff_);
+        outfile->Printf("\n");
+    }
 }
 
 size_t EinsumsDFJK::memory_estimate() {
@@ -162,7 +174,12 @@ void compute_three_center_ao_eri() {
     size_t nbf = primary_->nbf();
     size_t nshell = primary_->nshell();
     size_t naux_shell = auxiliary_->nshell();
-    size_t nshell_triplet = nshell_aux * nshell_pair;
+
+    // Significant number of shell pairs (that survive Schwarz/CSAM screening)
+    size_t nshell_pair = eri_computers_[0]->shell_pairs().size();
+
+    // Total number of shell triplets to compute
+    size_t nshell_triplet = naux_shell * nshell_pair;
 
     // => Make buffer for three center AO DF ints <= //
     n_function_pairs_ = num_doubles_ / naux;
@@ -175,7 +192,7 @@ void compute_three_center_ao_eri() {
 
     timer_on("Three-center AO ints");
 
-#pragma omp parallel for schedule(guided) collapse(2) num_threads(num_threads_)
+#pragma omp parallel for schedule(guided) collapse(2) num_threads(df_ints_num_threads_)
     for (size_t P = 0; P < naux_shell; ++P) {
         for (int MN = 0; MN < nshell_pair; ++MN) {
 
@@ -187,8 +204,7 @@ void compute_three_center_ao_eri() {
             auto MN_idx = eri_computers_[rank]->shell_pairs()[MN];
             size_t M = MN_idx.first, N = MN_idx.second;
 
-            // Computes the integrals (P | M N) over aux shell P,
-            // function shells M and N
+            // Computes the integrals (P | M N) over aux shell P, function shells M and N
             eri_computers_[rank]->compute_shell(P, 0, M, N);
 
             // Grabs the location in memory where the computed integrals over the triplet
@@ -219,14 +235,19 @@ void compute_three_center_ao_eri() {
                     } // end n
                 } // end m
             } // end p
+
         } // end MN
     } // end P
 
     timer_off("Three-center AO ints");
 }
 
-void EinsumsDFJK::compute_JK(std::vector<EinsumsSharedMatrix> Cleft, std::vector<EinsumsSharedMatrix> Cright, std::vector<EinsumsSharedMatrix> D, 
-                             std::vector<EinsumsSharedMatrix> J, std::vector<EinsumsSharedMatrix> K, std::vector<EinsumsSharedMatrix> wK) {
+void EinsumsDFJK::compute_JK() {
+    throw PSIEXCEPTION("EinsumsDFJK::compute_JK not implemented for Psi4Matrix types. Use compute_JK with EinsumsComplexMatrix types.");
+}
+
+void EinsumsDFJK::compute_JK(std::vector<EinsumsComplexMatrix> C_left, std::vector<EinsumsComplexMatrix> C_right, std::vector<EinsumsComplexMatrix> D, 
+                             std::vector<EinsumsComplexMatrix> J, std::vector<EinsumsComplexMatrix> K, std::vector<EinsumsComplexMatrix> wK) {
 
     // Basis set and basis function information
 
@@ -235,18 +256,23 @@ void EinsumsDFJK::compute_JK(std::vector<EinsumsSharedMatrix> Cleft, std::vector
     size_t nbf = primary_->nbf();
     size_t nshell = primary_->nshell();
     size_t naux_shell = auxiliary_->nshell();
-    size_t nshell_triplet = nshell_aux * nshell_pair;
+
+    // Significant number of shell pairs (that survive Schwarz/CSAM screening)
+    size_t nshell_pair = eri_computers_[0]->shell_pairs().size();
+
+    // Total number of shell triplets to compute
+    size_t nshell_triplet = naux_shell * nshell_pair;
 
     // zero out J, K, and wK matrices
     int njk = D.size();
 
     for (int jk = 0; jk < njk; ++jk) {
-        Cleft.zero();
-        Cright.zero();
-        D.zero();
-        J.zero();
-        K.zero();
-        wK.zero();
+        C_left[jk].zero();
+        C_right[jk].zero();
+        D[jk].zero();
+        J[jk].zero();
+        K[jk].zero();
+        wK[jk].zero();
     }
 
     // compute J contribution
@@ -265,10 +291,11 @@ void EinsumsDFJK::compute_JK(std::vector<EinsumsSharedMatrix> Cleft, std::vector
     for (int Q = 0; Q < naux; ++Q) {
         for (const auto &rs : function_pairs) { // All significant basis function pairs
             int r = rs.first, s = rs.second;
+            double Q_rs = df_ao_eri_->get(Q, rs);
 
             for (int jk = 0; jk < njk; ++jk) { // compute for all passed in matrices
-                Gamma_Q[jk](Q) += df_ao_eri_->get(Q, rs) * D[jk]->get(r, s);
-                if (r != s) Gamma_Q[jk](Q) += df_ao_eri_->get(Q, rs) * D[jk]->get(s, r);
+                Gamma_Q[jk](Q) += Q_rs * D[jk]->get(r, s);
+                if (r != s) Gamma_Q[jk](Q) += Q_rs * D[jk]->get(s, r);
             } // end jk
 
         } // end rs
@@ -289,7 +316,7 @@ void EinsumsDFJK::compute_JK(std::vector<EinsumsSharedMatrix> Cleft, std::vector
     for (int P = 0; P < naux; ++P) {
         for (int Q = 0; Q < naux; ++Q) {
             for (int jk = 0; jk < njk; ++jk) {
-                Gamma_P[jk](P) += J_PQ_clone->get(P, Q) * Gamma_Q[jk](P);
+                Gamma_P[jk](P) += J_PQ_clone->get(P, Q) * Gamma_Q[jk](Q);
             } // end jk
         } // end Q
     } // end P
@@ -302,8 +329,11 @@ void EinsumsDFJK::compute_JK(std::vector<EinsumsSharedMatrix> Cleft, std::vector
         int m = mn.first, n = mn.second;
 
         for (int P = 0; P < naux; ++P) {
+            double P_mn = df_ao_eri_->get(P, mn_idx);
+
             for (int jk = 0; jk < njk; ++jk) {
-                double J_cont = df_ao_eri_->get(P, mn) * Gamma_P[jk](P);
+                double J_cont = P_mn * Gamma_P[jk](P);
+
                 J[jk]->set(m, n, J[jk]->get(m, n) + J_cont);
                 if (m != n) J[jk]->set(n, m, J[jk]->get(n, m) + J_cont);
             } // end jk
@@ -322,7 +352,8 @@ void EinsumsDFJK::compute_JK(std::vector<EinsumsSharedMatrix> Cleft, std::vector
 
     // Assume lr_symmetric_ has already been determined/set (it might be, I'll have to check)
     // B^{P}_{ni} = \sum_{r} C^{right}_{si} (Q|ns) (non-conjugated)
-    std::vector<Tensor<complex_t, 3>> B_P_ni(njk);
+    std::vector<Tensor<complex_t, 3>> B_P_ni;
+
     if (!lr_symmetric_) {
         B_P_ni.resize(njk);
         for (int jk = 0; jk < njk; ++jk) {
@@ -335,19 +366,22 @@ void EinsumsDFJK::compute_JK(std::vector<EinsumsSharedMatrix> Cleft, std::vector
     for (int P = 0; P < naux; P++) {
         for (const auto &rs : function_pairs) { // All significant basis function pairs
             int r = rs.first, s = rs.second;
+            double P_rs = df_ao_eri_->get(P, rs);
+
             for (int jk = 0; jk < njk; ++jk) {
                 
                 for (int i = 0; i < max_nocc_; ++i) {
-
                     // C_left contributions
-                    A_P_mi[jk](P, r, i) += df_ao_eri_->get(P, rs) * (C_left[jk])(s, i);
-                    if (r != s) A_P_mi[jk](P, s, i) += df_ao_eri_->get(P, rs) * (C_left[jk])(r, i);
+                    // A^{P}_{mi} = \sum_{r} C^{left}_{ri} (mr|P)
+                    A_P_mi[jk](P, r, i) += P_rs * (C_left[jk])(s, i);
+                    if (r != s) A_P_mi[jk](P, s, i) += P_rs * (C_left[jk])(r, i);
 
                     // C_right contributions
+                    // B^{P}_{ni} = \sum_{r} C^{right}_{si} (Q|ns) (non-conjugated)
                     if (!lr_symmetric_) {
-                        B_P_ni[jk](P, r, i) += df_ao_eri_->get(P, rs) * C_right[jk];
-                        if (r != s) B_P_ni[jk](P, s, i) += df_ao_eri_->get(P, rs) * C_right[jk];
-                    }
+                        B_P_ni[jk](P, r, i) += P_rs * (C_right[jk])(s, i);
+                        if (r != s) B_P_ni[jk](P, s, i) += P_rs * (C_right[jk])(r, i);
+                    } // end if
 
                 } // end i
             } // end jk
@@ -366,8 +400,8 @@ void EinsumsDFJK::compute_JK(std::vector<EinsumsSharedMatrix> Cleft, std::vector
     }
 
     // Assume lr_symmetric_ has already been determined/set (it might be, I'll have to check)
-    // B^{Q}_{mi} = (P|Q)^{-0.5} A^{P}_{mi} (still not conjugated)
-    std::vector<Tensor<complex_t, 3>> B_Q_ni(njk);
+    // B^{Q}_{mi} = (P|Q)^{-0.5} B^{P}_{mi} (still not conjugated)
+    std::vector<Tensor<complex_t, 3>> B_Q_ni;
     if (!lr_symmetric_) {
         B_Q_ni.resize(njk);
         for (int jk = 0; jk < njk; ++jk) {
@@ -379,10 +413,14 @@ void EinsumsDFJK::compute_JK(std::vector<EinsumsSharedMatrix> Cleft, std::vector
 #pragma omp parallel for schedule(dynamic, 1)
     for (int Q = 0; Q < naux; ++Q) {
         for (int P = 0; P < naux; ++P) {
-            for (int mi = 0; mi < nbf * max_nocc; ++mi) {
-                (A_Q_mi[jk])(Q, mi) += J_PQ_half->get(Q, P) * (A_P_mi[jk])(P, mi);
-                if (!lr_symmetric_) (B_Q_mi[jk])(Q, mi) += J_PQ_half->get(Q, P) * (B_P_mi[jk])(P, mi);
-            } // end mi
+            for (int m = 0; m < nbf; ++m) {
+                for (int i = 0; i < max_nocc_; ++i) {
+                    for (int jk = 0; jk < njk; ++jk) {
+                        (A_Q_mi[jk])(Q, m, i) += J_PQ_half->get(Q, P) * (A_P_mi[jk])(P, m, i);
+                        if (!lr_symmetric_) (B_Q_ni[jk])(Q, m, i) += J_PQ_half->get(Q, P) * (B_P_ni[jk])(P, m, i);
+                    } // end jk
+                } // end i
+            } // end m
         } // end Q
     } // end P
 
@@ -397,18 +435,30 @@ void EinsumsDFJK::compute_JK(std::vector<EinsumsSharedMatrix> Cleft, std::vector
                 for (int jk = 0; jk < njk; ++jk) {
                     double K_cont = 0.0;
                     if (lr_symmetric_) {
-                        K_cont = (A_Q_mi[jk])(Q, m * max_nocc_ + i) * std::conj((A_Q_mi[jk])(Q, n * max_nocc_ + i)); // Finally
+                        K_cont = (A_Q_mi[jk])(Q, m, i) * std::conj((A_Q_mi[jk])(Q, n, i));
                     } else {
-                        K_cont = (A_Q_mi[jk])(Q, m * max_nocc_ + i) * std::conj((B_Q_mi[jk])(Q, n * max_nocc_ + i)); // Finally
+                        K_cont = (A_Q_mi[jk])(Q, m, i) * std::conj((B_Q_ni[jk])(Q, n, i));
                     }
 
                     K[jk]->set(m, n, K[jk]->get(m, n) + K_cont);
-                    if (m != n) K[jk]->set(n, m, K[jk]->get(n, m) + K_cont);
-                } // end jk
+                    
+                    // Account for m != n case
+                    if (m != n) {
+                        double K_cont = 0.0;
+                        if (lr_symmetric_) {
+                            K_cont = (A_Q_mi[jk])(Q, n, i) * std::conj((A_Q_mi[jk])(Q, m, i));
+                        } else {
+                            K_cont = (A_Q_mi[jk])(Q, n, i) * std::conj((B_Q_ni[jk])(Q, m, i));
+                        }
 
+                        K[jk]->set(n, m, K[jk]->get(n, m) + K_cont);
+                    } // end if
+                } // end jk
             } // end i
         } // end Q
     } // end mn_idx
-
 }
+
+void EinsumsDFJK::postiterations() {}
+
 }

@@ -182,6 +182,17 @@ std::shared_ptr<JK> JK::build_JK(std::shared_ptr<BasisSet> primary, std::shared_
 
         return jk;
 
+    } else if (jk_type == "EINSUMS_DF") {
+        auto jk = std::make_shared<EinsumsDFJK>(primary, auxiliary, options);
+
+        if (options["INTS_TOLERANCE"].has_changed() || options.get_str("SCREENING") == "NONE") jk->set_cutoff(cutoff);
+        if (options["PRINT"].has_changed()) jk->set_print(options.get_int("PRINT"));
+        if (options["DEBUG"].has_changed()) jk->set_debug(options.get_int("DEBUG"));
+        if (options["BENCH"].has_changed()) jk->set_bench(options.get_int("BENCH"));
+        if (options["DF_INTS_NUM_THREADS"].has_changed()) jk->set_df_ints_num_threads(options.get_int("DF_INTS_NUM_THREADS"));
+
+        return jk;
+
     /// handle composite methods
     } else if (is_composite) {
         auto jk = std::make_shared<CompositeJK>(primary, auxiliary, options);
