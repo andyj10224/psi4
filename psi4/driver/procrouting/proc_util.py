@@ -33,7 +33,7 @@ from psi4 import core
 
 from .. import p4util
 from ..constants import constants
-from ..p4util.exceptions import *
+from ..p4util.exceptions import ValidationError
 from .dft import build_superfunctional_from_dictionary, functionals
 
 
@@ -57,10 +57,8 @@ def scf_set_reference_local(name, is_dft=False):
             core.set_local_option('SCF', 'REFERENCE', 'RKS')
         elif (user_ref == 'UHF'):
             core.set_local_option('SCF', 'REFERENCE', 'UKS')
-        elif (user_ref == 'ROHF'):
-            raise ValidationError('ROHF reference for DFT is not available.')
-        elif (user_ref == 'CUHF'):
-            raise ValidationError('CUHF reference for DFT is not available.')
+        elif user_ref in ['ROHF', 'CUHF', 'CGHF']:
+            raise ValidationError(f'{user_ref} reference for DFT is not available.')
     # else we are doing HF and nothing needs to be overloaded
 
     return optstash

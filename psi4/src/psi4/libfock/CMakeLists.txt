@@ -71,3 +71,11 @@ if(TARGET BrianQC::static_wrapper)
       $<TARGET_PROPERTY:BrianQC::static_wrapper,INTERFACE_INCLUDE_DIRECTORIES>
     )
 endif()
+
+if(TARGET Einsums::Einsums)
+    target_link_libraries(
+      fock
+      PRIVATE
+        Einsums::Einsums
+      )
+endif()

@@ -30,6 +30,7 @@
 #define JK_H
 
 #include <vector>
+#include <complex>
 
 #include "psi4/pragma.h"
 PRAGMA_WARNING_PUSH
@@ -41,6 +42,12 @@ PRAGMA_WARNING_POP
 #include "psi4/libmints/dimension.h"
 
 #include "psi4/libfock/SplitJK.h"
+
+#include "Einsums/Tensor.hpp"
+#include "Einsums/LinearAlgebra.hpp"
+#include "Einsums/TensorAlgebra.hpp"
+
+using namespace einsums;
 
 namespace psi {
 class MinimalInterface;
@@ -1220,6 +1227,36 @@ class PSI_API EinsumsDFJK : public JK {
     /// Options object
     Options& options_;
 
+    /* Symmetry blocked data */
+
+    /// Pseudo-occupied C matrices, left side
+    einsums::BlockTensor<std::complex<double>, 2> C_left_;
+    /// Pseudo-occupied C matrices, right side
+    einsums::BlockTensor<std::complex<double>, 2> C_right_;
+    /// Pseudo-density matrices
+    einsums::BlockTensor<std::complex<double>, 2> D_;
+    /// J matrices: \f$J_{mn}=(mn|ls)C_{li}^{left}C_{si}^{right}\f$
+    einsums::BlockTensor<std::complex<double>, 2> J_;
+    /// K matrices: \f$K_{mn}=(ml|ns)C_{li}^{left}C_{si}^{right}\f$
+    einsums::BlockTensor<std::complex<double>, 2> K_;
+    /// wK matrices: \f$K_{mn}(\omega)=(ml|\omega|ns)C_{li}^{left}C_{si}^{right}\f$
+    einsums::BlockTensor<std::complex<double>, 2> wK_;
+
+    /* Non-symmetry blocked data */
+
+    /// Pseudo-occupied C matrices, left side
+    std::vector<EinsumsComplexMatrix> C_left_ao_;
+    /// Pseudo-occupied C matrices, right side
+    std::vector<EinsumsComplexMatrix> C_right_ao_;
+    /// Pseudo-density matrices
+    std::vector<EinsumsComplexMatrix> D_ao_;
+    /// J matrices: \f$J_{mn}=(mn|ls)C_{li}^{left}C_{si}^{right}\f$
+    std::vector<EinsumsComplexMatrix> J_ao_;
+    /// K matrices: \f$K_{mn}=(ml|ns)C_{li}^{left}C_{si}^{right}\f$
+    std::vector<EinsumsComplexMatrix> K_ao_;
+    /// wK matrices: \f$K_{mn}(\omega)=(ml|\omega|ns)C_{li}^{left}C_{si}^{right}\f$
+    std::vector<EinsumsComplexMatrix> wK_ao_;
+
     /// ERI computers for computing DF ints
     std::vector<std::shared_ptr<TwoBodyAOInt>> eri_computers_;
     /// Coulomb Metric (P|Q) built over auxiliary basis functions
@@ -1240,6 +1277,16 @@ class PSI_API EinsumsDFJK : public JK {
     int df_ints_num_threads_;
     /// Condition cutoff in fitting metric, default 1.0E-12
     double condition_ = 1.0E-12;
+
+    /// Transforms between AO to SO, since EinsumsDFJK runs in C1
+    /// need unique function from stock J/K may be complex
+    /// Transform current C_left_/C_right_/D_ to C_left_ao_/C_right_ao_/D_ao_, before compute_JK()
+    void AO2USO();
+
+    /// Transforms between SO to AO, since EinsumsDFJK runs in C1
+    /// need unique function from stock JK since J/K may be complex
+    /// Transform finished J_ao_/K_ao_ to J_/K_, after compute_JK()
+    void USO2AO();
 
     /// Name of class
     std::string name() override { return "EinsumsDFJK"; }
@@ -1308,6 +1355,19 @@ class PSI_API EinsumsDFJK : public JK {
      */
     void set_do_wK(bool do_wK) override;
 
+    // Setters for variables
+
+    void set_C_left(einsums::BlockTensor<std::complex<double>, 2> C_left) { C_left_ = C_left; }
+    void set_C_right(einsums::BlockTensor<std::complex<double>, 2> C_right) { C_right_ = C_right; }
+    void set_D(einsums::BlockTensor<std::complex<double>, 2> D) { D_ = D; }
+    void set_J(einsums::BlockTensor<std::complex<double>, 2> J) { J_ = J; }
+    void set_K(einsums::BlockTensor<std::complex<double>, 2> K) { K_ = K; }
+    void set_wK(einsums::BlockTensor<std::complex<double>, 2> wK) { wK_ = wK; }
+
+    // Getters for variables
+    einsums::BlockTensor<std::complex<double>, 2> get_J() { return J_; }
+    einsums::BlockTensor<std::complex<double>, 2> get_K() { return K_; }
+
     // => Accessors <= //
 
     /**
@@ -1320,7 +1380,10 @@ class PSI_API EinsumsDFJK : public JK {
     void set_omega_beta(double beta) override;
     void set_wcombine(bool wcombine) override;
     void set_cutoff(double cutoff) override; 
-}
+
+    // Overrides base JK
+    void compute();
+};
 
 /**
  * Class CompositeJK 

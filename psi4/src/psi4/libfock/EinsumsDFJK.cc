@@ -149,6 +149,34 @@ size_t EinsumsDFJK::memory_estimate() {
 
 }
 
+// For now, Tensor -> BlockTensor
+void EinsumsDFJK::AO2USO() {
+    // If already C1, J/K are J_ao/K_ao, pointers are already aliased
+    if (AO2USO_->nirrep() == 1) {
+        return;
+    } else {
+        throw PSIEXCEPTION("Complex DFJK does not currently support point group symmetry");
+    }
+
+}
+
+// For now, just do unblocking
+// BlockTensor -> Tensor
+void JK::USO2AO() {
+    // If C1, C_ao and D_ao are equal to C and D
+    if (AO2USO_->nirrep() == 1) {
+        C_left_ao_ = std::make_shared<Tensor<std::complex<double>, 2>>(C_left_[0]);
+        C_right_ao_ = std::make_shared<Tensor<std::complex<double>, 2>>(C_right_[0]);
+        D_ao_ = std::make_shared<Tensor<std::complex<double>, 2>>(D_[0]);
+        J_ao_ = std::make_shared<Tensor<std::complex<double>, 2>>(J_[0]);
+        K_ao_ = std::make_shared<Tensor<std::complex<double>, 2>>(K_[0]);
+        wK_ao_ = std::make_shared<Tensor<std::complex<double>, 2>>(wK_[0]);
+    } else {
+        throw PSIEXCEPTION("Complex DFJK does not currently support point group symmetry");
+    }
+
+}
+
 void EinsumsDFJK::preiterations() {}
 
 // compute 2-center DF integrals (coulomb metric)
@@ -242,8 +270,12 @@ void compute_three_center_ao_eri() {
     timer_off("Three-center AO ints");
 }
 
+void EinsumsDFJK::compute() {
+    compute_JK();
+}
+
 void EinsumsDFJK::compute_JK() {
-    throw PSIEXCEPTION("EinsumsDFJK::compute_JK not implemented for Psi4Matrix types. Use compute_JK with EinsumsComplexMatrix types.");
+    compute_JK(C_left_, C_right_, D_, J_, K_, wK_);
 }
 
 void EinsumsDFJK::compute_JK(std::vector<EinsumsComplexMatrix> C_left, std::vector<EinsumsComplexMatrix> C_right, std::vector<EinsumsComplexMatrix> D, 

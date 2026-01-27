@@ -1,5 +1,6 @@
 list(APPEND sources
   cuhf.cc
+  cghf.cc
   frac.cc
   hf.cc
   mom.cc
@@ -53,4 +54,12 @@ if(TARGET OpenOrbitalOptimizer::OpenOrbitalOptimizer)
     PUBLIC
       OpenOrbitalOptimizer::OpenOrbitalOptimizer
     )
+endif()
+
+if(TARGET Einsums::Einsums)
+    target_link_libraries(
+      scf_solver
+      PRIVATE
+        Einsums::Einsums
+      )
 endif()

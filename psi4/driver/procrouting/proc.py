@@ -1442,8 +1442,10 @@ def scf_wavefunction_factory(name, ref_wfn, reference, **kwargs):
         wfn = core.UHF(ref_wfn, superfunc)
     elif reference == "CUHF":
         wfn = core.CUHF(ref_wfn, superfunc)
+    elif reference == "CGHF":
+        wfn = core.CGHF(ref_wfn, superfunc)
     else:
-        raise ValidationError("SCF: Unknown reference (%s) when building the Wavefunction." % reference)
+        raise ValidationError(f"SCF: Unknown reference ({reference}) when building the Wavefunction.")
 
     if _disp_functor and _disp_functor.engine != 'nl':
         wfn._disp_functor = _disp_functor
