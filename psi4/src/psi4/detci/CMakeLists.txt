@@ -58,3 +58,10 @@ target_link_libraries(detci
   PRIVATE
     pybind11::module
   )
+
+if(TARGET Einsums::Einsums)
+  target_include_directories(detci
+    PUBLIC
+      $<TARGET_PROPERTY:Einsums::Einsums,INTERFACE_INCLUDE_DIRECTORIES>
+    )
+endif()

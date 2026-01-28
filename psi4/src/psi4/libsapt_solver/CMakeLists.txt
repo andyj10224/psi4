@@ -39,4 +39,9 @@ if(TARGET gauxc::gauxc)
     )
 endif()
 
-
+if(TARGET Einsums::Einsums)
+  target_include_directories(sapt_solver
+    PUBLIC
+      $<TARGET_PROPERTY:Einsums::Einsums,INTERFACE_INCLUDE_DIRECTORIES>
+    )
+endif()

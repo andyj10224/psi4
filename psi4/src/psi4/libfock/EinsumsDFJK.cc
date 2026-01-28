@@ -76,7 +76,8 @@ void EinsumsDFJK::build_eri_computers() {
     eri_computers_[0] = std::shared_ptr<TwoBodyAOInt>(factory->eri());
 
     for (size_t thread = 1; thread < df_ints_num_threads_; ++thread) {
-        eri_computers_[thread] = std::shared_ptr<TwoBodyAOInt>(eris_computers_[0]->clone());
+        // something like this instead? eri_computers_["4-Center"].front()->clone()
+        eri_computers_[thread] = std::shared_ptr<TwoBodyAOInt>(eri_computers_[0]->clone());
     }
 
 }
@@ -102,7 +103,7 @@ size_t EinsumsDFJK::memory_estimate() {
 
     // Significant number of shell pairs (that survive Schwarz/CSAM screening)
     size_t nshell_pair = eri_computers_[0]->shell_pairs().size();
-    size_t nshell_triplet = nshell_aux * nshell_pair;
+    size_t nshell_triplet = auxiliary_->nshell() * nshell_pair;
 
     size_t num_doubles = 0L;
 
@@ -110,17 +111,16 @@ size_t EinsumsDFJK::memory_estimate() {
     // The shell pairs MN are restricted indexing M <= N, so this reduces half the memory
 #pragma omp parallel for reduction(+ : num_doubles)
     for (int PMN = 0; PMN < nshell_triplet; ++PMN) {
-
-        size_t P = PMN / nshell_pair;
-        size_t MN = PMN % nshell_pair;
-        auto MN_idx = eri_computers_[rank]->shell_pairs()[MN];
-        size_t M = MN_idx.first, N = MN_idx.second;
-
         int rank = 0;
 #ifdef _OPENMP
         rank = omp_get_thread_num();
 #endif
         
+        size_t P = PMN / nshell_pair;
+        size_t MN = PMN % nshell_pair;
+        auto MN_idx = eri_computers_[rank]->shell_pairs()[MN];
+        size_t M = MN_idx.first, N = MN_idx.second;
+
         int nfunc_p = auxiliary_->shell(P).nfunction();
         int nfunc_m = primary_->shell(M).nfunction();
         int nfunc_n = primary_->shell(N).nfunction();
@@ -162,15 +162,15 @@ void EinsumsDFJK::AO2USO() {
 
 // For now, just do unblocking
 // BlockTensor -> Tensor
-void JK::USO2AO() {
+void EinsumsDFJK::USO2AO() {
     // If C1, C_ao and D_ao are equal to C and D
     if (AO2USO_->nirrep() == 1) {
-        C_left_ao_ = std::make_shared<Tensor<std::complex<double>, 2>>(C_left_[0]);
-        C_right_ao_ = std::make_shared<Tensor<std::complex<double>, 2>>(C_right_[0]);
-        D_ao_ = std::make_shared<Tensor<std::complex<double>, 2>>(D_[0]);
-        J_ao_ = std::make_shared<Tensor<std::complex<double>, 2>>(J_[0]);
-        K_ao_ = std::make_shared<Tensor<std::complex<double>, 2>>(K_[0]);
-        wK_ao_ = std::make_shared<Tensor<std::complex<double>, 2>>(wK_[0]);
+        C_left_ao_ = { std::make_shared<einsums::Tensor<std::complex<double>, 2>>(C_left_[0]) };
+        C_right_ao_ = { std::make_shared<einsums::Tensor<std::complex<double>, 2>>(C_right_[0]) };
+        D_ao_ = { std::make_shared<einsums::Tensor<std::complex<double>, 2>>(D_[0]) };
+        J_ao_ = { std::make_shared<einsums::Tensor<std::complex<double>, 2>>(J_[0]) };
+        K_ao_ = { std::make_shared<einsums::Tensor<std::complex<double>, 2>>(K_[0]) };
+        wK_ao_ = { std::make_shared<einsums::Tensor<std::complex<double>, 2>>(wK_[0]) };
     } else {
         throw PSIEXCEPTION("Complex DFJK does not currently support point group symmetry");
     }
@@ -180,7 +180,7 @@ void JK::USO2AO() {
 void EinsumsDFJK::preiterations() {}
 
 // compute 2-center DF integrals (coulomb metric)
-void compute_J_metric() {
+void EinsumsDFJK::compute_J_metric() {
     
     timer_on("Compute (P|Q)");
 
@@ -193,7 +193,7 @@ void compute_J_metric() {
 }
 
 // compute 3-center-DF integrals in AO basis (aux | ao ao)
-void compute_three_center_ao_eri() {
+void EinsumsDFJK::compute_three_center_ao_eri() {
 
     timer_on("Setup");
 
@@ -275,11 +275,19 @@ void EinsumsDFJK::compute() {
 }
 
 void EinsumsDFJK::compute_JK() {
-    compute_JK(C_left_, C_right_, D_, J_, K_, wK_);
+    //compute_JK(C_left_, C_right_, D_, J_, K_, wK_);
+    compute_JK(C_left_ao_, C_right_ao_, D_ao_, J_ao_, K_ao_, wK_ao_);
 }
 
-void EinsumsDFJK::compute_JK(std::vector<EinsumsComplexMatrix> C_left, std::vector<EinsumsComplexMatrix> C_right, std::vector<EinsumsComplexMatrix> D, 
-                             std::vector<EinsumsComplexMatrix> J, std::vector<EinsumsComplexMatrix> K, std::vector<EinsumsComplexMatrix> wK) {
+
+void EinsumsDFJK::compute_JK(
+    const std::vector<EinsumsComplexMatrix>& C_left,
+    const std::vector<EinsumsComplexMatrix>& C_right,
+    std::vector<EinsumsComplexMatrix>& D,
+    std::vector<EinsumsComplexMatrix>& J,
+    std::vector<EinsumsComplexMatrix>& K,
+    std::vector<EinsumsComplexMatrix>& wK
+) {
 
     // Basis set and basis function information
 
@@ -311,9 +319,9 @@ void EinsumsDFJK::compute_JK(std::vector<EinsumsComplexMatrix> C_left, std::vect
     // (mn|P)(P|Q)^{-1}(Q|rs)D_{sr}
 
     // Gamma_Q = \sum_{rs} (Q|rs) D_{sr}
-    std::vector<Tensor<complex_t, 1>> Gamma_Q(njk);
+    std::vector<einsums::Tensor<complex_t, 1>> Gamma_Q(njk);
     for (int jk = 0; jk < njk; ++jk) {
-        Gamma_Q[jk] = Tensor<complex_t, 1>("Gamma_Q", naux);
+        Gamma_Q[jk] = einsums::Tensor<complex_t, 1>("Gamma_Q", naux);
         Gamma_Q[jk].zero();
     }
 
@@ -335,9 +343,9 @@ void EinsumsDFJK::compute_JK(std::vector<EinsumsComplexMatrix> C_left, std::vect
 
     // TODO: make more efficient
     // Gamma_{P} = (P|Q)^{-1}\Gamma_{Q}
-    std::vector<Tensor<complex_t, 1>> Gamma_P;
+    std::vector<einsums::Tensor<complex_t, 1>> Gamma_P;
     for (int jk = 0; jk < njk; ++jk) {
-        Gamma_P[jk] = Tensor<complex_t, 1>("Gamma_P", naux);
+        Gamma_P[jk] = einsums::Tensor<complex_t, 1>("Gamma_P", naux);
         Gamma_P[jk].zero();
     }
 
@@ -376,20 +384,20 @@ void EinsumsDFJK::compute_JK(std::vector<EinsumsComplexMatrix> C_left, std::vect
     // K_{mn} += C^{left}_{ri} (mr|P)(P|Q)^{-1}(Q|ns) (C^{right}_{si})^{*}
 
     // A^{P}_{mi} = \sum_{r} C^{left}_{ri} (mr|P)
-    std::vector<Tensor<complex_t, 3>> A_P_mi(njk);
+    std::vector<einsums::Tensor<complex_t, 3>> A_P_mi(njk);
     for (int jk = 0; jk < njk; ++jk) {
-        A_P_mi[jk] = Tensor<complex_t, 3>("A^{P}_{mi}", naux, nbf, max_nocc_); // The evil max nocc
+        A_P_mi[jk] = einsums::Tensor<complex_t, 3>("A^{P}_{mi}", naux, nbf, max_nocc_); // The evil max nocc
         A_P_mi[jk].zero();
     }
 
     // Assume lr_symmetric_ has already been determined/set (it might be, I'll have to check)
     // B^{P}_{ni} = \sum_{r} C^{right}_{si} (Q|ns) (non-conjugated)
-    std::vector<Tensor<complex_t, 3>> B_P_ni;
+    std::vector<einsums::Tensor<complex_t, 3>> B_P_ni;
 
     if (!lr_symmetric_) {
         B_P_ni.resize(njk);
         for (int jk = 0; jk < njk; ++jk) {
-            B_P_ni[jk] = Tensor<complex_t, 3>("B^{P}_{ni}", naux, nbf, max_nocc_); // The evil max nocc
+            B_P_ni[jk] = einsums::Tensor<complex_t, 3>("B^{P}_{ni}", naux, nbf, max_nocc_); // The evil max nocc
             B_P_ni[jk].zero();
         } // end jk
     } // end
@@ -425,19 +433,19 @@ void EinsumsDFJK::compute_JK(std::vector<EinsumsComplexMatrix> C_left, std::vect
     J_PQ_half->power(-0.5, condition_); // invert Coulomb metric
 
     // A^{Q}_{mi} = (P|Q)^{-0.5} A^{P}_{mi}
-    std::vector<Tensor<complex_t, 3>> A_Q_mi(njk);
+    std::vector<einsums::Tensor<complex_t, 3>> A_Q_mi(njk);
     for (int jk = 0; jk < njk; ++jk) {
-        A_Q_mi[jk] = Tensor<complex_t, 3>("A^{Q}_{mi}", naux, nbf, max_nocc_); // The evil max nocc
+        A_Q_mi[jk] = einsums::Tensor<complex_t, 3>("A^{Q}_{mi}", naux, nbf, max_nocc_); // The evil max nocc
         A_Q_mi[jk].zero();
     }
 
     // Assume lr_symmetric_ has already been determined/set (it might be, I'll have to check)
     // B^{Q}_{mi} = (P|Q)^{-0.5} B^{P}_{mi} (still not conjugated)
-    std::vector<Tensor<complex_t, 3>> B_Q_ni;
+    std::vector<einsums::Tensor<complex_t, 3>> B_Q_ni;
     if (!lr_symmetric_) {
         B_Q_ni.resize(njk);
         for (int jk = 0; jk < njk; ++jk) {
-            B_Q_ni[jk] = Tensor<complex_t, 3>("B^{Q}_{ni}", naux, nbf, max_nocc_); // The evil max nocc
+            B_Q_ni[jk] = einsums::Tensor<complex_t, 3>("B^{Q}_{ni}", naux, nbf, max_nocc_); // The evil max nocc
             B_Q_ni[jk].zero();
         } // end jk
     } // end
@@ -493,4 +501,11 @@ void EinsumsDFJK::compute_JK(std::vector<EinsumsComplexMatrix> C_left, std::vect
 
 void EinsumsDFJK::postiterations() {}
 
+bool EinsumsDFJK::C1() const {
+    // Choose the correct behavior for your implementation.
+    // If you don’t support symmetry (i.e., effectively C1 only), return true.
+    // If you *do* support symmetry, return false or compute it properly.
+    return true;
 }
+
+}  // namespace psi
