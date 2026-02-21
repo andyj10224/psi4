@@ -43,11 +43,9 @@ PRAGMA_WARNING_POP
 
 #include "psi4/libfock/SplitJK.h"
 
-#include "Einsums/Tensor.hpp"
-#include "Einsums/LinearAlgebra.hpp"
-#include "Einsums/TensorAlgebra.hpp"
+#include <Einsums/Tensor/BlockTensor.hpp>
+#include <Einsums/Tensor.hpp>
 
-using namespace einsums;
 
 namespace psi {
 class MinimalInterface;
@@ -1293,6 +1291,9 @@ class PSI_API EinsumsDFJK : public JK {
     /// Estimate memory required to store AO three-center ints in core
     size_t memory_estimate() override;
 
+    /// Do we need to backtransform to C1 under the hood?
+    bool C1() const override;
+
     /// Builds per thread AO ERI object for three center DF ints
     void build_eri_computers();
     /// Compute (P|Q) in auxiliary basis
@@ -1302,10 +1303,10 @@ class PSI_API EinsumsDFJK : public JK {
 
     /// Allows the "feeding in" of complex matrices
     /// TODO: Make this work with wK in the future
-    void compute_JK(std::vector<EinsumsComplexMatrix> C_left, std::vector<EinsumsComplexMatrix> C_right, 
-                    std::vector<EinsumsComplexMatrix>& D, std::vector<EinsumsComplexMatrix>& J, 
+    void compute_JK(const std::vector<EinsumsComplexMatrix>& C_left, const std::vector<EinsumsComplexMatrix>& C_right,
+                    std::vector<EinsumsComplexMatrix>& D, std::vector<EinsumsComplexMatrix>& J,
                     std::vector<EinsumsComplexMatrix>& K, std::vector<EinsumsComplexMatrix>& wK);
-                    
+
     // => Required Algorithm-Specific Methods (Many of which are taken from base JK) <= //
 
     int max_nocc() const; // Maximum number of occupied orbitals over all spin cases

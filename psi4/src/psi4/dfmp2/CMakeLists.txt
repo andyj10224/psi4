@@ -11,3 +11,10 @@ if(TARGET gauxc::gauxc)
       $<TARGET_PROPERTY:gauxc::gauxc,INTERFACE_INCLUDE_DIRECTORIES>
     )
 endif()
+
+if(TARGET Einsums::Einsums)
+  target_include_directories(dfmp2
+    PUBLIC
+      $<TARGET_PROPERTY:Einsums::Einsums,INTERFACE_INCLUDE_DIRECTORIES>
+    )
+endif()

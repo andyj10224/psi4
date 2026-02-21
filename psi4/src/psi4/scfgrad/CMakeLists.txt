@@ -25,3 +25,10 @@ if(TARGET ECPINT::ecpint)
       ECPINT::ecpint
     )
 endif()
+
+if(TARGET Einsums::Einsums)
+  target_include_directories(scfgrad
+    PUBLIC
+      $<TARGET_PROPERTY:Einsums::Einsums,INTERFACE_INCLUDE_DIRECTORIES>
+    )
+endif()

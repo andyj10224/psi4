@@ -11,4 +11,11 @@ if(TARGET gauxc::gauxc)
     )
 endif()
 
+if(TARGET Einsums::Einsums)
+  target_include_directories(fisapt
+    PUBLIC
+      $<TARGET_PROPERTY:Einsums::Einsums,INTERFACE_INCLUDE_DIRECTORIES>
+    )
+endif()
+
 target_link_libraries(fisapt PUBLIC diis)
