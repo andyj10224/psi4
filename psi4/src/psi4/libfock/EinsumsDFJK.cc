@@ -147,6 +147,7 @@ size_t EinsumsDFJK::memory_estimate() {
 
     timer_off("Memory Estimate");
 
+    return num_doubles * sizeof(double);
 }
 
 // For now, Tensor -> BlockTensor
@@ -231,6 +232,7 @@ void EinsumsDFJK::compute_three_center_ao_eri() {
 
             auto MN_idx = eri_computers_[rank]->shell_pairs()[MN];
             size_t M = MN_idx.first, N = MN_idx.second;
+            auto u_v_to_uv = eri_computers_[rank]->function_pairs_to_dense();
 
             // Computes the integrals (P | M N) over aux shell P, function shells M and N
             eri_computers_[rank]->compute_shell(P, 0, M, N);
@@ -257,7 +259,8 @@ void EinsumsDFJK::compute_three_center_ao_eri() {
             for (int p = p_start; p < p_start + nfunc_p; ++p) {
                 for (int m = m_start; m < m_start + nfunc_m; ++m) {
                     for (int n = n_start; n < n_start + nfunc_n; ++n) {
-                        int mn_idx = u_v_to_uv_[m][n];
+                        int mn = (m >= n) ? m * (m + 1) / 2 + n : n * (n + 1) / 2 + m;
+                        int mn_idx = u_v_to_uv[mn];
                         df_ao_eri_->set(p, mn_idx, buffer[index]);
                         index++;
                     } // end n
@@ -307,12 +310,12 @@ void EinsumsDFJK::compute_JK(
     int njk = D.size();
 
     for (int jk = 0; jk < njk; ++jk) {
-        C_left[jk].zero();
-        C_right[jk].zero();
-        D[jk].zero();
-        J[jk].zero();
-        K[jk].zero();
-        wK[jk].zero();
+        C_left[jk]->zero();
+        C_right[jk]->zero();
+        D[jk]->zero();
+        J[jk]->zero();
+        K[jk]->zero();
+        wK[jk]->zero();
     }
 
     // compute J contribution
@@ -329,13 +332,14 @@ void EinsumsDFJK::compute_JK(
 
 #pragma omp parallel for schedule(dynamic, 1)
     for (int Q = 0; Q < naux; ++Q) {
-        for (const auto &rs : function_pairs) { // All significant basis function pairs
+        for (int rs_idx = 0; rs_idx < function_pairs.size(); ++rs_idx) { // All significant basis function pairs
+            auto rs = function_pairs[rs_idx];
             int r = rs.first, s = rs.second;
-            double Q_rs = df_ao_eri_->get(Q, rs);
+            double Q_rs = df_ao_eri_->get(Q, rs_idx);
 
             for (int jk = 0; jk < njk; ++jk) { // compute for all passed in matrices
-                Gamma_Q[jk](Q) += Q_rs * D[jk]->get(r, s);
-                if (r != s) Gamma_Q[jk](Q) += Q_rs * D[jk]->get(s, r);
+                Gamma_Q[jk](Q) += Q_rs * (*D[jk])(r, s);
+                if (r != s) Gamma_Q[jk](Q) += Q_rs * (*D[jk])(s, r);
             } // end jk
 
         } // end rs
@@ -372,10 +376,10 @@ void EinsumsDFJK::compute_JK(
             double P_mn = df_ao_eri_->get(P, mn_idx);
 
             for (int jk = 0; jk < njk; ++jk) {
-                double J_cont = P_mn * Gamma_P[jk](P);
+                std::complex<double> J_cont = P_mn * Gamma_P[jk](P);
 
-                J[jk]->set(m, n, J[jk]->get(m, n) + J_cont);
-                if (m != n) J[jk]->set(n, m, J[jk]->get(n, m) + J_cont);
+                (*J[jk])(m, n) += J_cont;
+                if (m != n) (*J[jk])(n, m) += J_cont;
             } // end jk
         } // end P
     } // end mn_idx
@@ -404,23 +408,24 @@ void EinsumsDFJK::compute_JK(
 
     // K_buffers
     for (int P = 0; P < naux; P++) {
-        for (const auto &rs : function_pairs) { // All significant basis function pairs
+        for (int rs_idx = 0; rs_idx < function_pairs.size(); ++rs_idx) { // All significant basis function pairs
+            auto rs = function_pairs[rs_idx];
             int r = rs.first, s = rs.second;
-            double P_rs = df_ao_eri_->get(P, rs);
+            double P_rs = df_ao_eri_->get(P, rs_idx);
 
             for (int jk = 0; jk < njk; ++jk) {
                 
                 for (int i = 0; i < max_nocc_; ++i) {
                     // C_left contributions
                     // A^{P}_{mi} = \sum_{r} C^{left}_{ri} (mr|P)
-                    A_P_mi[jk](P, r, i) += P_rs * (C_left[jk])(s, i);
-                    if (r != s) A_P_mi[jk](P, s, i) += P_rs * (C_left[jk])(r, i);
+                    A_P_mi[jk](P, r, i) += P_rs * (*C_left[jk])(s, i);
+                    if (r != s) A_P_mi[jk](P, s, i) += P_rs * (*C_left[jk])(r, i);
 
                     // C_right contributions
                     // B^{P}_{ni} = \sum_{r} C^{right}_{si} (Q|ns) (non-conjugated)
                     if (!lr_symmetric_) {
-                        B_P_ni[jk](P, r, i) += P_rs * (C_right[jk])(s, i);
-                        if (r != s) B_P_ni[jk](P, s, i) += P_rs * (C_right[jk])(r, i);
+                        B_P_ni[jk](P, r, i) += P_rs * (*C_right[jk])(s, i);
+                        if (r != s) B_P_ni[jk](P, s, i) += P_rs * (*C_right[jk])(r, i);
                     } // end if
 
                 } // end i
@@ -473,25 +478,25 @@ void EinsumsDFJK::compute_JK(
         for (int Q = 0; Q < naux; ++Q) {
             for (int i = 0; i < max_nocc_; ++i) {
                 for (int jk = 0; jk < njk; ++jk) {
-                    double K_cont = 0.0;
+                    std::complex<double> K_cont = 0.0;
                     if (lr_symmetric_) {
                         K_cont = (A_Q_mi[jk])(Q, m, i) * std::conj((A_Q_mi[jk])(Q, n, i));
                     } else {
                         K_cont = (A_Q_mi[jk])(Q, m, i) * std::conj((B_Q_ni[jk])(Q, n, i));
                     }
 
-                    K[jk]->set(m, n, K[jk]->get(m, n) + K_cont);
+                    (*K[jk])(m, n) += K_cont;
                     
                     // Account for m != n case
                     if (m != n) {
-                        double K_cont = 0.0;
+                        std::complex<double> K_cont = 0.0;
                         if (lr_symmetric_) {
                             K_cont = (A_Q_mi[jk])(Q, n, i) * std::conj((A_Q_mi[jk])(Q, m, i));
                         } else {
                             K_cont = (A_Q_mi[jk])(Q, n, i) * std::conj((B_Q_ni[jk])(Q, m, i));
                         }
 
-                        K[jk]->set(n, m, K[jk]->get(n, m) + K_cont);
+                        (*K[jk])(n, m) += K_cont;
                     } // end if
                 } // end jk
             } // end i

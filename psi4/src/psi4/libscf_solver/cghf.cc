@@ -264,20 +264,22 @@ void CGHF::form_G() {
         }
     }
     */
+    // Set max_nocc
+    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_max_nocc(std::max(nalpha_, nbeta_));
 
     // Set matrices
-    std::shared_ptr<EinsumsDFJK>(jk_)->set_C_left(C_left_);
-    std::shared_ptr<EinsumsDFJK>(jk_)->set_C_right(C_right_);
-    std::shared_ptr<EinsumsDFJK>(jk_)->set_D(D_);
-    std::shared_ptr<EinsumsDFJK>(jk_)->set_J(J_);
-    std::shared_ptr<EinsumsDFJK>(jk_)->set_K(K_);
+    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_C_left(Cocc_);
+    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_C_right(Cocc_);
+    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_D(D_);
+    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_J(J_);
+    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_K(K_);
 
     // Run JK algorithm
-    std::shared_ptr<EinsumsDFJK>(jk_)->compute();
+    std::static_pointer_cast<EinsumsDFJK>(jk_)->compute();
 
     // Grab compputed J/K matrices from JK object
-    J_ = std::shared_ptr<EinsumsDFJK>(jk_)->get_J();
-    K_ = std::shared_ptr<EinsumsDFJK>(jk_)->get_K();
+    J_ = std::static_pointer_cast<EinsumsDFJK>(jk_)->get_J();
+    K_ = std::static_pointer_cast<EinsumsDFJK>(jk_)->get_K();
 }
 
 // Combines F = H + J - K

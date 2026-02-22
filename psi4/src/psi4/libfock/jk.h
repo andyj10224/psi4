@@ -1115,11 +1115,8 @@ class PSI_API CDJK : public DiskDFJK {
  * density-fitted technology
  * under slightly different paradigm than DiskDFJK
  * wraps lib3index/DFHelper class
- * 
- * @tparam T = data type of MO coefficients (C) and (pseudo)-density matrices (D)
- * float, double, std::complex
+ *
  */
-template<typename T = double>
 class PSI_API MemDFJK : public JK {
    protected:
     /// Options object
@@ -1262,6 +1259,8 @@ class PSI_API EinsumsDFJK : public JK {
     /// Psi4 Matrix object that represents (Q|uv) three-center AO integrals
     SharedMatrix df_ao_eri_;
 
+    /// Maximum number of occupied orbitals
+    size_t max_nocc_;
     /// Number of shell triplets
     size_t n_shell_triplets_;
     /// Total number of doubles in three-center AO DF ints
@@ -1309,7 +1308,6 @@ class PSI_API EinsumsDFJK : public JK {
 
     // => Required Algorithm-Specific Methods (Many of which are taken from base JK) <= //
 
-    int max_nocc() const; // Maximum number of occupied orbitals over all spin cases
     /// Setup integrals, I/O files, etc.
     /// calls initialize(), blocks JK
     void preiterations() override;
@@ -1329,6 +1327,10 @@ class PSI_API EinsumsDFJK : public JK {
      * @param auxiliary auxiliary basis set for this system
      */
     EinsumsDFJK(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> auxiliary, Options& options);
+
+    // => Getters and Setters
+    void set_max_nocc(size_t max_nocc) { max_nocc_ = max_nocc; }
+    int max_nocc() const { return max_nocc_; }; // Maximum number of occupied orbitals over all spin cases
 
     // Destructor
     ~EinsumsDFJK() override;
