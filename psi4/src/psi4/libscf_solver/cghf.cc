@@ -146,6 +146,22 @@ void CGHF::common_init() {
     K_ = std::make_shared<ComplexMatrix>("K", irrep_sizes_);
     wK_ = std::make_shared<ComplexMatrix>("wK", irrep_sizes_);
 
+    // => alpha/beta blocks of C_, D_, J_, K_, and wK_ (needed for JK build) <= //
+    Caa_ = std::make_shared<einsums::Tensor<std::complex<double>, 2>>("Alpha coefficients", nsopi_[0], nelecpi_[0]);
+    Cbb_ = std::make_shared<einsums::Tensor<std::complex<double>, 2>>("Beta coefficients", nsopi_[0], nelecpi_[0]);
+
+    Daa_ = std::make_shared<einsums::Tensor<std::complex<double>, 2>>("Alpha/Alpha D", nsopi_[0], nsopi_[0]);
+    Dbb_ = std::make_shared<einsums::Tensor<std::complex<double>, 2>>("Beta/Beta D", nsopi_[0], nsopi_[0]);
+
+    Jaa_ = std::make_shared<einsums::Tensor<std::complex<double>, 2>>("Alpha/Alpha J", nsopi_[0], nsopi_[0]);
+    Jbb_ = std::make_shared<einsums::Tensor<std::complex<double>, 2>>("Beta/Beta J", nsopi_[0], nsopi_[0]);
+
+    Kaa_ = std::make_shared<einsums::Tensor<std::complex<double>, 2>>("Alpha/Alpha K", nsopi_[0], nsopi_[0]);
+    Kbb_ = std::make_shared<einsums::Tensor<std::complex<double>, 2>>("Beta/Beta K", nsopi_[0], nsopi_[0]);
+
+    wKaa_ = std::make_shared<einsums::Tensor<std::complex<double>, 2>>("Alpha/Alpha wK", nsopi_[0], nsopi_[0]);
+    wKbb_ = std::make_shared<einsums::Tensor<std::complex<double>, 2>>("Beta/Beta wK", nsopi_[0], nsopi_[0]);
+
     // Orthogonalized gradient [F, D], gradient error at the current iteration
     ortho_error = std::make_shared<ComplexMatrix>("Orthogonalized FDSmSDF", irrep_sizes_);
     ecurr = std::make_shared<ComplexMatrix>("Current error", irrep_sizes_);
@@ -291,30 +307,51 @@ void CGHF::form_V() {}
 *
 */
 void CGHF::form_G() {
-    // Zero out J and K matrices first (einsums::BlockTensors take symmetry into account)
+    // Zero J and K matrices
     J_->zero();
     K_->zero();
-    
+
     // Set max_nocc
-    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_max_nocc(nalpha_ + nbeta_);
+    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_max_nocc(nelectron_);
+
+    // Initialize C and D matrices
+#pragma omp parallel for
+    for (int p = 0; p < nsopi_[0]; p++) {
+        for (int i = 0; i < nelecpi_[0]; i++) {
+            Caa_->subscript(p, i) = C_->block(0)(p, i);
+            Cbb_->subscript(p, i) = C_->block(0)(p + nsopi_[0], i);
+        } // end i
+    } // end p
+
+#pragma omp parallel for
+    for (int p = 0; p < nsopi_[0]; p++) {
+        for (int q = 0; q < nsopi_[0]; q++) {
+            Daa_->subscript(p, q) = D_->block(0)(p, q);
+            Dbb_->subscript(p, q) = D_->block(0)(p + nsopi_[0], q + nsopi_[0]);
+        } // end q
+    } // end p
 
     // Set matrices
-    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_C_left(*C_);
-    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_C_right(*C_);
-    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_D(*D_);
-    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_J(*J_);
-    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_K(*K_);
-    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_wK(*wK_);
+    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_C_left({ Caa_, Cbb_ });
+    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_C_right({ Caa_, Cbb_ });
+    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_D({ Daa_, Dbb_ });
+    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_J({ Jaa_, Jbb_ });
+    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_K({ Kaa_, Kbb_ });
+    std::static_pointer_cast<EinsumsDFJK>(jk_)->set_wK({ wKaa_, wKbb_ });
 
     // Run JK algorithm
     std::static_pointer_cast<EinsumsDFJK>(jk_)->compute();
 
     // Grab compputed J/K matrices from JK object (messy right now due to differences in data type)
-    J_ = std::make_shared<einsums::BlockTensor<std::complex<double>, 2>> 
-            (std::static_pointer_cast<EinsumsDFJK>(jk_)->get_J());
-        
-    K_ = std::make_shared<einsums::BlockTensor<std::complex<double>, 2>> 
-            (std::static_pointer_cast<EinsumsDFJK>(jk_)->get_K());
+#pragma omp parallel for
+    for (int p = 0; p < nsopi_[0]; p++) {
+        for (int q = 0; q < nsopi_[0]; q++) {
+            J_->block(0).subscript(p, q) = Jaa_->subscript(p, q) + Jbb_->subscript(p, q);
+            J_->block(0).subscript(p + nsopi_[0], q + nsopi_[0]) = Jaa_->subscript(p, q) + Jbb_->subscript(p, q);
+            K_->block(0).subscript(p, q) = Kaa_->subscript(p, q);
+            K_->block(0).subscript(p + nsopi_[0], q + nsopi_[0]) = Kbb_->subscript(p, q);
+        } // end q
+    } // end p
 }
 
 /* F = H + J - K */

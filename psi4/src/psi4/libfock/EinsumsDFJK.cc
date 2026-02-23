@@ -166,8 +166,7 @@ size_t EinsumsDFJK::memory_estimate() {
 void EinsumsDFJK::AO2USO() {
     // If already C1, J/K are J_ao/K_ao, pointers are already aliased
     if (AO2USO_->nirrep() == 1) {
-        J_[0] = (*J_ao_[0]);
-        K_[0] = (*K_ao_[0]);
+        return;
     } else {
         throw PSIEXCEPTION("Complex DFJK does not currently support point group symmetry");
     }
@@ -178,12 +177,7 @@ void EinsumsDFJK::AO2USO() {
 void EinsumsDFJK::USO2AO() {
     // If C1, C_ao and D_ao are equal to C and D
     if (AO2USO_->nirrep() == 1) {
-        C_left_ao_ = { std::make_shared<einsums::Tensor<std::complex<double>, 2>>(C_left_[0]) };
-        C_right_ao_ = { std::make_shared<einsums::Tensor<std::complex<double>, 2>>(C_right_[0]) };
-        D_ao_ = { std::make_shared<einsums::Tensor<std::complex<double>, 2>>(D_[0]) };
-        J_ao_ = { std::make_shared<einsums::Tensor<std::complex<double>, 2>>(J_[0]) };
-        K_ao_ = { std::make_shared<einsums::Tensor<std::complex<double>, 2>>(K_[0]) };
-        wK_ao_ = { std::make_shared<einsums::Tensor<std::complex<double>, 2>>(wK_[0]) };
+        return;
     } else {
         throw PSIEXCEPTION("Complex DFJK does not currently support point group symmetry");
     }
@@ -289,8 +283,7 @@ void EinsumsDFJK::compute() {
 }
 
 void EinsumsDFJK::compute_JK() {
-    //compute_JK(C_left_, C_right_, D_, J_, K_, wK_);
-    compute_JK(C_left_ao_, C_right_ao_, D_ao_, J_ao_, K_ao_, wK_ao_);
+    compute_JK(C_left_, C_right_, D_, J_, K_, wK_);
 }
 
 

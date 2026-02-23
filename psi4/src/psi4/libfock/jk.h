@@ -62,7 +62,10 @@ template<typename T, size_t rank = 2>
 using EinsumsSharedMatrix = std::shared_ptr<einsums::Tensor<T, rank>>;
 
 using complex_t = std::complex<double>;
-using EinsumsComplexMatrix = std::shared_ptr<einsums::Tensor<std::complex<double>, 2>>;
+
+#ifndef EinsumsComplexMatrix
+#define EinsumsComplexMatrix std::shared_ptr<einsums::Tensor<std::complex<double>, 2>>
+#endif
 
 namespace pk {
 class PKManager;
@@ -1222,23 +1225,23 @@ class PSI_API EinsumsDFJK : public JK {
     /// Options object
     Options& options_;
 
-    /* Symmetry blocked data */
+    /* Symmetry is not currently supported */
 
     /// Pseudo-occupied C matrices, left side
-    einsums::BlockTensor<std::complex<double>, 2> C_left_;
+    std::vector<EinsumsComplexMatrix> C_left_;
     /// Pseudo-occupied C matrices, right side
-    einsums::BlockTensor<std::complex<double>, 2> C_right_;
+    std::vector<EinsumsComplexMatrix> C_right_;
     /// Pseudo-density matrices
-    einsums::BlockTensor<std::complex<double>, 2> D_;
+    std::vector<EinsumsComplexMatrix> D_;
     /// J matrices: \f$J_{mn}=(mn|ls)C_{li}^{left}C_{si}^{right}\f$
-    einsums::BlockTensor<std::complex<double>, 2> J_;
+    std::vector<EinsumsComplexMatrix> J_;
     /// K matrices: \f$K_{mn}=(ml|ns)C_{li}^{left}C_{si}^{right}\f$
-    einsums::BlockTensor<std::complex<double>, 2> K_;
+    std::vector<EinsumsComplexMatrix> K_;
     /// wK matrices: \f$K_{mn}(\omega)=(ml|\omega|ns)C_{li}^{left}C_{si}^{right}\f$
-    einsums::BlockTensor<std::complex<double>, 2> wK_;
+    std::vector<EinsumsComplexMatrix> wK_;
 
     /* Non-symmetry blocked data */
-
+    /*
     /// Pseudo-occupied C matrices, left side
     std::vector<EinsumsComplexMatrix> C_left_ao_;
     /// Pseudo-occupied C matrices, right side
@@ -1251,6 +1254,7 @@ class PSI_API EinsumsDFJK : public JK {
     std::vector<EinsumsComplexMatrix> K_ao_;
     /// wK matrices: \f$K_{mn}(\omega)=(ml|\omega|ns)C_{li}^{left}C_{si}^{right}\f$
     std::vector<EinsumsComplexMatrix> wK_ao_;
+    */
 
     /// ERI computers for computing DF ints
     std::vector<std::shared_ptr<TwoBodyAOInt>> eri_computers_;
@@ -1360,16 +1364,16 @@ class PSI_API EinsumsDFJK : public JK {
 
     // Setters for variables
 
-    void set_C_left(einsums::BlockTensor<std::complex<double>, 2> C_left) { C_left_ = C_left; }
-    void set_C_right(einsums::BlockTensor<std::complex<double>, 2> C_right) { C_right_ = C_right; }
-    void set_D(einsums::BlockTensor<std::complex<double>, 2> D) { D_ = D; }
-    void set_J(einsums::BlockTensor<std::complex<double>, 2> J) { J_ = J; }
-    void set_K(einsums::BlockTensor<std::complex<double>, 2> K) { K_ = K; }
-    void set_wK(einsums::BlockTensor<std::complex<double>, 2> wK) { wK_ = wK; }
+    void set_C_left(std::vector<EinsumsComplexMatrix> C_left) { C_left_ = C_left; }
+    void set_C_right(std::vector<EinsumsComplexMatrix> C_right) { C_right_ = C_right; }
+    void set_D(std::vector<EinsumsComplexMatrix> D) { D_ = D; }
+    void set_J(std::vector<EinsumsComplexMatrix> J) { J_ = J; }
+    void set_K(std::vector<EinsumsComplexMatrix> K) { K_ = K; }
+    void set_wK(std::vector<EinsumsComplexMatrix> wK) { wK_ = wK; }
 
     // Getters for variables
-    einsums::BlockTensor<std::complex<double>, 2> get_J() { return J_; }
-    einsums::BlockTensor<std::complex<double>, 2> get_K() { return K_; }
+    std::vector<EinsumsComplexMatrix> get_J() { return J_; }
+    std::vector<EinsumsComplexMatrix> get_K() { return K_; }
 
     // => Accessors <= //
 

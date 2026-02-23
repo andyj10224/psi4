@@ -40,6 +40,10 @@
 #define SharedBlockTensor std::shared_ptr<einsums::BlockTensor<std::complex<double>, 2>>
 #endif
 
+#ifndef EinsumsComplexMatrix
+#define EinsumsComplexMatrix std::shared_ptr<einsums::Tensor<std::complex<double>, 2>>
+#endif
+
 namespace psi {
 namespace scf {
 
@@ -154,10 +158,27 @@ class CGHF : public HF {
     SharedBlockTensor Fevecs_;  // Eigenvectors of Fock matrix
     einsums::BlockTensor<double, 1> Fevals_;                // Eigenvalues of Fock matrix
 
-    SharedBlockTensor D_;       // 1-particle density matrix
-    SharedBlockTensor J_;         // Coulomb matrix
-    SharedBlockTensor K_;       // Exchange matrix
-    SharedBlockTensor wK_;     // (omega) Exchange matrix
+    SharedBlockTensor D_;        // 1-particle density matrix
+    SharedBlockTensor J_;        // Coulomb matrix
+    SharedBlockTensor K_;        // Exchange matrix
+    SharedBlockTensor wK_;       // (omega) Exchange matrix
+
+    // => alpha/beta blocks of C_, D_, J_, K_, and wK_ (needed for JK build) <= //
+
+    EinsumsComplexMatrix Caa_;
+    EinsumsComplexMatrix Cbb_;
+
+    EinsumsComplexMatrix Daa_;
+    EinsumsComplexMatrix Dbb_;
+
+    EinsumsComplexMatrix Jaa_;
+    EinsumsComplexMatrix Jbb_;
+
+    EinsumsComplexMatrix Kaa_;
+    EinsumsComplexMatrix Kbb_;
+
+    EinsumsComplexMatrix wKaa_;
+    EinsumsComplexMatrix wKbb_;
 
     // ortho_error and ecurr are specific to DIIS
     SharedBlockTensor ortho_error;    // Orthogonalized gradient error
