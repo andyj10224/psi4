@@ -1,21 +1,124 @@
-#ifndef __math_test_cghf_h__
-#define __math_test_cghf_h__
+/*
+ * @BEGIN LICENSE
+ *
+ * Psi4: an open-source quantum chemistry software package
+ *
+ * Copyright (c) 2007-2025 The Psi4 Developers.
+ *
+ * The copyrights for code used from other parties are included in
+ * the corresponding files.
+ *
+ * This file is part of Psi4.
+ *
+ * Psi4 is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, version 3.
+ *
+ * Psi4 is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License along
+ * with Psi4; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ *
+ * @END LICENSE
+ */
+
+#ifndef PSI4_LIBSCF_SOLVER_CGHF
+#define PSI4_LIBSCF_SOLVER_CGHF
 
 #include "psi4/libpsio/psio.hpp"
 #include "psi4/libfock/v.h"
 #include "hf.h"
+
 #include <Einsums/Config.hpp>
-#include "Einsums/Tensor.hpp"
+#include <Einsums/Tensor.hpp>
+
+#ifndef SharedBlockTensor
+#define SharedBlockTensor std::shared_ptr<einsums::BlockTensor<std::complex<double>, 2>>
+#endif
 
 namespace psi {
 namespace scf {
 
-/**
-    * Class CGHF
-    * Complex Generalized Hartree-Fock implementation
-    * @author Matthew Ward
- */
 class CGHF : public HF {
+   public:
+    CGHF(SharedWavefunction ref_wfn, std::shared_ptr<SuperFunctional> functional);
+    CGHF(SharedWavefunction ref_wfn, std::shared_ptr<SuperFunctional> functional, Options& options,
+         std::shared_ptr<PSIO> psio);
+    ~CGHF() override;
+
+    // Declares all BlockTensors, and some useful misc variables needed
+    void common_init();
+
+    // Constructs the spin-blocked overlap (EINS_), core Hamiltonian (F0_), and orthogonalization (EINX_) matrices
+    void preiterations();
+    void save_density_and_energy() {}
+
+    // Allow SAP and SAD initial guesses
+    void sap_guess();
+    void compute_SAD_guess(bool natorb) override;
+
+    // Empty functions for now -- seems to be resetting and saving matrices, respectively
+    void finalize() override;
+
+    // Form orbital gradient FDSmSDF_ = [F, D]
+    void form_FDSmSDF();
+
+    // Compute the norm from the orbital gradient as a second test of convergence
+    double compute_Dnorm();
+
+    void form_Shalf() override;
+
+    // Empty function for now -- needed for DFT later
+    void form_V() override;
+
+    // Computes J and K either explicitly (4-index) or with RI (3-index)
+    void form_G() override;
+
+    // Forms Fock matrix F = F0_ + J - K
+    void form_F() override;
+
+    void form_init_F();
+    // Orthogonalizes then diagonalizes the Fock matrix to form the coefficient matrix C_
+    void form_C(double shift=0.0) override;
+
+    // Form coefficient matrix from Fock guess (SAP, CORE, etc.)
+    void form_initial_C() override;
+
+    // Constructs 1-particle density matrix using the occupied coefficients Cocc_
+    // and its conjugate. Stored in temp1_.
+    void form_D() override;
+
+    // Empty function for now, but for UHF and RHF, scales the density matrix
+    void damping_update(double damping_percentage) override;
+
+    // Compute the energy based purely off F0_ = T + V, with no J and K
+    double compute_initial_E() override;
+
+    // Compute 1e and 2e energy separately, then combine with nuclear repulsion
+    // energy nuclearrep_ to return a total energy.
+    double compute_E() override;
+
+    // Empty functions for now
+    void setup_potential() override;
+    void openorbital_scf() override;
+
+    std::shared_ptr<CGHF> c1_deep_copy(std::shared_ptr<BasisSet> basis);
+
+    // Unsure of what these are, but needed otherwise seg fault
+    virtual bool same_a_b_orbs() const { return false; }
+    virtual bool same_a_b_dens() const { return false; }
+
+    // Empty functions for now -- sets up external potentials (TODO later)
+    std::shared_ptr<UV> potential_;
+    std::shared_ptr<VBase> V_potential() const override { return potential_; };
+
+    // If DIIS is enabled (which it always should be), then it will update the orthogonalized Fock matrix Fp_
+    std::complex<double> do_diis();
+
    protected:
     SharedMatrix V_mat;
     SharedMatrix S_mat;
@@ -23,90 +126,56 @@ class CGHF : public HF {
     SharedMatrix G_mat;
     SharedMatrix F_mat;
 
+    // DIIS variables
+    // All 4 of these containers have a MAX size of DIIS_MAX_VECS
+    // TODO: Determine if there's anything different between real and complex DIIS
+    // outside of the containers (e.g. error_doubles could be error_complex)
+    
+    // Holds the grabbed Fock matrices to extrapolate
     std::deque<einsums::BlockTensor<std::complex<double>, 2>> Fdiis;
+    // Holds FDSmSDF_ at each iteration (orbital gradients)
     std::deque<einsums::BlockTensor<std::complex<double>, 2>> err_vecs;
-    einsums::BlockTensor<std::complex<double>, 2> F_vecs;
-    einsums::BlockTensor<std::complex<double>, 2> e_vecs;
-    std::vector<std::complex<double>> diis_coeffs;
-    std::vector<std::complex<double>> error_doubles;
+    std::vector<std::complex<double>> diis_coeffs;    // Holds the coefficients for each Fock matrix in Fdiis
+    std::vector<std::complex<double>> error_doubles;  // RMS errors (real)
 
-    double nuclearrep_;
+    double nuclearrep_;  // Nuclear repulsion energy
 
-    einsums::BlockTensor<std::complex<double>, 2> F0_;
-    einsums::BlockTensor<std::complex<double>, 2> EINT_;
-    einsums::BlockTensor<std::complex<double>, 2> F_;
-    einsums::BlockTensor<std::complex<double>, 2> FDSmSDF_;
-    einsums::BlockTensor<std::complex<double>, 2> Fp_;
-    einsums::BlockTensor<double, 2> EINS_;
-    einsums::BlockTensor<std::complex<double>, 2> EINX_;
-    einsums::BlockTensor<std::complex<double>, 2> C_;
-    einsums::BlockTensor<std::complex<double>, 2> cCocc_;
-    einsums::BlockTensor<std::complex<double>, 2> Cocc_;
-    einsums::BlockTensor<std::complex<double>, 2> D_;
-    einsums::BlockTensor<std::complex<double>, 2> Fevecs_;
-    //einsums::BlockTensor<double, 1> Fevals_;
-    einsums::BlockTensor<std::complex<double>, 1> Fevals_;
+    // Core Hamiltonian, Fock, Orthogonalized Fock, and Coefficient Matrices
+    SharedBlockTensor F0_;     // Core Hamilton F0 = T + V
+    SharedBlockTensor F_;      // Non-orthogonal Fockl: F = T + V + J - K
+    SharedBlockTensor FDSmSDF_;// Fock gradient [F,D]
+    SharedBlockTensor Fp_;     // Orthogonalized Fock matrix
+    SharedBlockTensor C_;  // Coefficient matrix built after back-trasnformation C' = XC
 
-    einsums::BlockTensor<double, 1> RealEvals_;
-    einsums::BlockTensor<std::complex<double>, 2> J_;
-    einsums::BlockTensor<std::complex<double>, 2> K_;
-    einsums::BlockTensor<std::complex<double>, 2> temp1_;
-    einsums::BlockTensor<std::complex<double>, 2> temp2_;
+    // NOTE: EINS_ and EINX_ are spin-blocked variants of S_ and X_ from HF, respectively
+    SharedBlockTensor EINS_;   // Spin-blocked overlap matrix -- it is never complex. MATT: WE MADE THIS COMPLEX THOUGH
+    SharedBlockTensor EINX_;   // Spin-blocked orthogonalization matrix
 
-    //size_t nirrep_;
-    std::vector<int> irrep_sizes_;
-    std::vector<int> nelecpi_;
+    SharedBlockTensor Fevecs_;  // Eigenvectors of Fock matrix
+    einsums::BlockTensor<double, 1> Fevals_;                // Eigenvalues of Fock matrix
 
-   public:
-    CGHF(SharedWavefunction ref_wfn, std::shared_ptr<SuperFunctional> functional);
-    CGHF(SharedWavefunction ref_wfn, std::shared_ptr<SuperFunctional> functional, Options& options, std::shared_ptr<PSIO> psio);
-    ~CGHF() override;
+    SharedBlockTensor D_;       // 1-particle density matrix
+    SharedBlockTensor J_;         // Coulomb matrix
+    SharedBlockTensor K_;       // Exchange matrix
+    SharedBlockTensor wK_;     // (omega) Exchange matrix
 
-    void common_init();
-    void form_init_F();
-    void form_X();
-    void form_S();
-    // void sort_real_evals();
-    void sort_eigenpairs(einsums::Tensor<std::complex<double>, 1>& evals, einsums::Tensor<std::complex<double>, 2>& evecs, double tol);
-    void evals_sanity_check();
-    void preiterations();
-    void rotated_sad_guess();
-    void zero_tensors();
-    void finalize() override;
-    void save_density_and_energy() override;
-    void form_FDSmSDF();
-    double compute_Dnorm();
-    void form_V() override;
-    void form_G() override;
-    void form_F() override;
-    void form_C(double shift) override;
-    void form_D() override;
-    void set_init_D();
-    void redo_SCF();
-    std::tuple<SharedMatrix, SharedMatrix> einsums_to_numpy(std::string mat_str);
-    void form_numpy_D();
+    // ortho_error and ecurr are specific to DIIS
+    SharedBlockTensor ortho_error;    // Orthogonalized gradient error
+    SharedBlockTensor ecurr;          // Error at current iteration
 
-    void damping_update(double damping_percentage) override;
-    double compute_initial_E() override;
-    double compute_E() override;
-    void setup_potential() override;
-    void openorbital_scf() override;
-    int soscf_update(double soscf_conv, int soscf_min_iter, int soscf_max_iter, int soscf_print) override;
-    std::vector<SharedMatrix> onel_Hx(std::vector<SharedMatrix> x) override;
-    std::vector<SharedMatrix> twoel_Hx(std::vector<SharedMatrix> x, bool combine = true, std::string return_basis = "MO") override;
-    std::vector<SharedMatrix> cphf_Hx(std::vector<SharedMatrix> x) override;
-    std::vector<SharedMatrix> cphf_solve(std::vector<SharedMatrix> x_vec, double conv_tol = 1.e-4, int max_iter = 10, int print_lvl = 1) override;
 
-    std::shared_ptr<CGHF> c1_deep_copy(std::shared_ptr<BasisSet> basis);
-    virtual bool same_a_b_orbs() const { return false; }
-    virtual bool same_a_b_dens() const { return false; }
-    std::shared_ptr<UV> potential_;
-    std::shared_ptr<VBase> V_potential() const override { return potential_; };
+    // temp1_ and temp2_ are temporary storage containers for intermediate steps
+    // Cocc_ and cCocc_ are not preferred as variable names since there doesn't
+    // appear to be a reason to permanently store these (temp1_ and temp2_ are used instead)
+    SharedBlockTensor temp1_;
+    SharedBlockTensor temp2_;
 
-    std::complex<double> do_diis();
+    // Number of spin orbitals per irrep. Cannot use nsopi_ because Einsums requires a vector.
+    std::vector<int> irrep_sizes_;  // Since GHF is spin-blocked, each irrep (h) size will be 2*nsopi_[h]
+    std::vector<int> nelecpi_;      // Number of electrons per irrep
 };
 
-}
-}
+}  // namespace scf
+}  // namespace psi
 
 #endif

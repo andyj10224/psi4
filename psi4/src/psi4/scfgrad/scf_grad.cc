@@ -54,6 +54,7 @@
 #include "psi4/libscf_solver/hf.h"
 #include "psi4/libscf_solver/uhf.h"
 #include "psi4/libscf_solver/rhf.h"
+#include "psi4/libscf_solver/cghf.h"
 #include "psi4/libpsi4util/PsiOutStream.h"
 #include "psi4/libpsi4util/process.h"
 

@@ -70,6 +70,12 @@ def _UHF_orbital_gradient(self, save_fock: bool, max_diis_vectors: int) -> float
     else:
         return max(gradient_a.absmax(), gradient_b.absmax())
 
+def _CGHF_orbital_gradient(self, save_fock: bool, max_diis_vectors: int) -> float:
+    #if not self.options().get_bool("DIIS"):
+    self.form_einsums_FDSmSDF()
+
+    return self.compute_Dnorm()
+
 def _ROHF_orbital_gradient(self, save_fock: bool, max_diis_vectors: int) -> float:
     # Only the inact-act, inact-vir, and act-vir rotations are non-redundant
     dim_zero = core.Dimension(self.nirrep(), "Zero Dim")
@@ -110,11 +116,6 @@ def _ROHF_orbital_gradient(self, save_fock: bool, max_diis_vectors: int) -> floa
     else:
         return gradient.absmax()
 
-def _CGHF_orbital_gradient(self, save_fock: bool, max_diis_vectors: int) -> float:
-    # TODO fill in dummy function
-    return self.compute_Dnorm()
-
-
 core.RHF.compute_orbital_gradient = _RHF_orbital_gradient
 core.UHF.compute_orbital_gradient = core.CUHF.compute_orbital_gradient = _UHF_orbital_gradient
 core.ROHF.compute_orbital_gradient = _ROHF_orbital_gradient
@@ -130,7 +131,7 @@ def _ROHF_diis(self, Dnorm):
     return self.diis_manager_.extrapolate(self.soFeff(), Dnorm=Dnorm)
 
 def _CGHF_diis(self, Dnorm):
-    ...
+    pass
 
 core.RHF.diis = _RHF_diis
 core.UHF.diis = core.CUHF.diis = _UHF_diis

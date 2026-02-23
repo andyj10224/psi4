@@ -60,6 +60,11 @@ EinsumsDFJK::~EinsumsDFJK() {}
 
 void EinsumsDFJK::common_init() {}
 
+void EinsumsDFJK::preiterations() { 
+    compute_J_metric();
+    compute_three_center_ao_eri();
+}
+
 void EinsumsDFJK::build_eri_computers() {
 
     size_t naux = auxiliary_->nbf();
@@ -70,6 +75,11 @@ void EinsumsDFJK::build_eri_computers() {
     // => Make TwoBodyAOInt objects to compute ERIs <= //
     auto zero_ao = BasisSet::zero_ao_basis_set(); // Single AO basis set (gaussian with zeta = 0)
     auto factory = std::make_shared<IntegralFactory>(auxiliary_, zero_ao, primary_, primary_);
+
+    df_ints_num_threads_ = 1;
+#ifdef _OPENMP
+    df_ints_num_threads_ = Process::environment.get_n_threads();
+#endif
 
     // Make integral objects for every thread to parallelize computation of ints
     eri_computers_.resize(df_ints_num_threads_);
@@ -100,6 +110,8 @@ void EinsumsDFJK::print_header() const {
 size_t EinsumsDFJK::memory_estimate() {
 
     timer_on("Memory Estimate");
+
+    build_eri_computers();
 
     // Significant number of shell pairs (that survive Schwarz/CSAM screening)
     size_t nshell_pair = eri_computers_[0]->shell_pairs().size();
@@ -154,11 +166,11 @@ size_t EinsumsDFJK::memory_estimate() {
 void EinsumsDFJK::AO2USO() {
     // If already C1, J/K are J_ao/K_ao, pointers are already aliased
     if (AO2USO_->nirrep() == 1) {
-        return;
+        J_[0] = (*J_ao_[0]);
+        K_[0] = (*K_ao_[0]);
     } else {
         throw PSIEXCEPTION("Complex DFJK does not currently support point group symmetry");
     }
-
 }
 
 // For now, just do unblocking
@@ -175,10 +187,7 @@ void EinsumsDFJK::USO2AO() {
     } else {
         throw PSIEXCEPTION("Complex DFJK does not currently support point group symmetry");
     }
-
 }
-
-void EinsumsDFJK::preiterations() {}
 
 // compute 2-center DF integrals (coulomb metric)
 void EinsumsDFJK::compute_J_metric() {
@@ -211,7 +220,7 @@ void EinsumsDFJK::compute_three_center_ao_eri() {
     size_t nshell_triplet = naux_shell * nshell_pair;
 
     // => Make buffer for three center AO DF ints <= //
-    n_function_pairs_ = num_doubles_ / naux;
+    n_function_pairs_ = eri_computers_[0]->function_pairs().size();
     df_ao_eri_ = std::make_shared<Matrix>(naux, n_function_pairs_);
 
     // => Make sparsity map for function pairs (u, v) <= //
@@ -274,7 +283,9 @@ void EinsumsDFJK::compute_three_center_ao_eri() {
 }
 
 void EinsumsDFJK::compute() {
+    USO2AO();
     compute_JK();
+    AO2USO();
 }
 
 void EinsumsDFJK::compute_JK() {
@@ -310,9 +321,9 @@ void EinsumsDFJK::compute_JK(
     int njk = D.size();
 
     for (int jk = 0; jk < njk; ++jk) {
-        C_left[jk]->zero();
-        C_right[jk]->zero();
-        D[jk]->zero();
+        // C_left[jk]->zero();
+        // C_right[jk]->zero();
+        // D[jk]->zero();
         J[jk]->zero();
         K[jk]->zero();
         wK[jk]->zero();
@@ -347,7 +358,7 @@ void EinsumsDFJK::compute_JK(
 
     // TODO: make more efficient
     // Gamma_{P} = (P|Q)^{-1}\Gamma_{Q}
-    std::vector<einsums::Tensor<complex_t, 1>> Gamma_P;
+    std::vector<einsums::Tensor<complex_t, 1>> Gamma_P(njk);
     for (int jk = 0; jk < njk; ++jk) {
         Gamma_P[jk] = einsums::Tensor<complex_t, 1>("Gamma_P", naux);
         Gamma_P[jk].zero();
@@ -407,6 +418,7 @@ void EinsumsDFJK::compute_JK(
     } // end
 
     // K_buffers
+#pragma omp parallel for schedule(dynamic, 1)
     for (int P = 0; P < naux; P++) {
         for (int rs_idx = 0; rs_idx < function_pairs.size(); ++rs_idx) { // All significant basis function pairs
             auto rs = function_pairs[rs_idx];
@@ -512,5 +524,10 @@ bool EinsumsDFJK::C1() const {
     // If you *do* support symmetry, return false or compute it properly.
     return true;
 }
+void EinsumsDFJK::set_omega_alpha(double alpha) { omega_alpha_ = alpha; }
+void EinsumsDFJK::set_omega_beta(double beta){ omega_beta_ = beta; }
+void EinsumsDFJK::set_do_wK(bool tf) { do_wK_ = tf; }
+void EinsumsDFJK::set_wcombine(bool wcombine) { wcombine_ = wcombine; }
+void EinsumsDFJK::set_cutoff(double cutoff) { cutoff_ = cutoff; }
 
 }  // namespace psi
