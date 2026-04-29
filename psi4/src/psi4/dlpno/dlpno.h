@@ -48,6 +48,53 @@ namespace dlpno {
 
 enum class DLPNOMethod { MP2, CCSD, CCSD_T };
 
+/**
+ * @enum SpinCase
+ *
+ * @brief Denotes a spin case in a more readable way.
+ *
+ */
+enum class SpinCase { Alpha = 0, ///< Represents an Alpha spin.
+    Beta = 1
+};
+
+
+/**
+ * @brief Converts a spin case to a string
+ */
+constexpr char const * stringify(SpinCase &&spin_case) {
+    if(reinterpret_cast<int>(spin_case) == 0) {
+        return "Alpha";
+    } else {
+        return "Beta";
+    }
+}
+
+template<size_t spins = 1>
+requires(spins > 0)
+using SpinSharedMatrix = std::array<SharedMatrix, spins>;
+
+#ifdef EINSUMS
+template<size_t Rank>
+using SharedTensor = std::shared_ptr<einsums::Tensor<double, Rank>>;
+template<size_t Rank, size_t spins = 1>
+requires(spins > 0)
+using SpinSharedTensor = std::array<SharedTensor<Rank, spins>;
+
+template<size_t Rank, size_t spins = 1>
+requires(spins > 0)
+using SpinTensorView = std::array<einsums::TensorView<double, Rank>, spins>;
+#endif
+
+using SharedSparseMap = std::shared_ptr<SparseMap>;
+template<size_t spins = 1>
+requires(spins > 0)
+using SpinSharedSparseMap = std::array<SharedSparseMap, spins>;
+
+template<size_t Rank, size_t spins = 1>
+requires(spins > 0)
+using SpinAmplitudeType = std::array<std::vector<einsums::TensorView<double, Rank>>, spins>;
+
 // Equations refer to Pinski et al. (JCP 143, 034108, 2015; DOI: 10.1063/1.4926879)
 
 class DLPNO : public Wavefunction {
@@ -91,27 +138,37 @@ class DLPNO : public Wavefunction {
 
     /// auxiliary basis
     std::shared_ptr<BasisSet> ribasis_;
-    SharedMatrix full_metric_;
+    SharedMatrix full_metric_; // (P|Q) metric in RI basis, also known as J_{PQ}
     std::vector<double> J_metric_shell_diag_; ///< used in AO ERI screening
 
     /// localized molecular orbitals (LMOs)
-    SharedMatrix C_lmo_;
-    SharedMatrix F_lmo_;
+    SharedMatrix C_lmo_; // LMO coefficients (AO -> LMO)
+    SharedMatrix F_lmo_; // Fock matrix in LMO basis = C_lmo^T F_ao C_lmo
+    SpinSharedMatrix<2> C_lmo_spin_; // C_lmo over alpha and beta
+    SpinSharedMatrix<2> F_lmo_spin_; // F_lmo over alpha and beta
 
     /// projected atomic orbitals (PAOs)
-    SharedMatrix C_pao_;
-    SharedMatrix F_pao_;
-    SharedMatrix S_pao_;
+    SharedMatrix C_pao_; // PAO coefficients (AO -> PAO)
+    SharedMatrix F_pao_; // Fock matrix in PAO basis = C_pao^T F_ao C_pao
+    SharedMatrix S_pao_; // overlap matrix in PAO basis = C_pao^T S_ao C_pao
+    SpinSharedMatrix<2> C_pao_spin_; // C_pao over alpha and beta
+    SpinSharedMatrix<2> F_pao_spin_; // F_pao over alpha and beta 
+    SpinSharedMatrix<3> S_pao_spin_; // S_pao over spin cases (AA, AB, BB)
 
     /// differential overlap integrals (EQ 4)
     SharedMatrix DOI_ij_; // LMO/LMO
     SharedMatrix DOI_iu_; // LMO/PAO
     SharedMatrix DOI_uv_; // PAO/PAO
+    SpinSharedMatrix<3> DOI_ij_spin_; // LMO/LMO overlap over (AA, AB, BB)
+    SpinSharedMatrix<2> DOI_iu_spin_; // LMO/PAO overlap over alpha and beta
+    SpinSharedMatrix<2> DOI_uv_spin_; // PAO/PAO overlap over alpha and beta
 
     // approximate LMO/LMO pair energies from dipole integrals (EQ 17)
     // used to screen out and estimate weakly interacting LMO/LMO pairs
     SharedMatrix dipole_pair_e_; ///< actual approximate pair energy (used in final energy calculation)
     SharedMatrix dipole_pair_e_bound_; ///< upper bound to approximate pair energies (used for screening)
+    SpinSharedMatrix<3> dipole_pair_e_spin_; /// dipole_pair_e over (AA, AB, BB)
+    SpinSharedMatrix<3> dipole_pair_e_bound_spin_; /// dipole_pair_e_bound over (AA, AB, BB)
 
     /// How much memory is used by storing each of the DF integral types
     size_t qij_memory_;
@@ -124,6 +181,12 @@ class DLPNO : public Wavefunction {
     std::vector<SharedMatrix> qia_;
     /// PAO/PAO three-index integrals
     std::vector<SharedMatrix> qab_;
+    /// q_ij over alpha and beta spins
+    std::vector<SpinSharedMatrix<2>> qij_spin_;
+    /// q_ia over alpha and beta spins
+    std::vector<SpinSharedMatrix<2>> qia_spin_;
+    /// q_ab over alpha and beta spins
+    std::vector<SpinSharedMatrix<2>> qab_spin_;
 
     /// pair natural orbitals (PNOs)
     std::vector<SharedMatrix> K_iajb_;  ///< exchange operators (i.e. (ia|jb) integrals)
@@ -131,13 +194,18 @@ class DLPNO : public Wavefunction {
     std::vector<SharedMatrix> Tt_iajb_; ///< antisymmetrized amplitudes
     std::vector<SharedMatrix> X_pno_;   ///< global PAO -> canonical PNO transforms
     std::vector<SharedVector> e_pno_;   ///< PNO orbital energies
-    std::vector<int> n_pno_;       ///< number of pnos
+    std::vector<int> n_pno_;            ///< number of pnos
     std::vector<double> occ_pno_;       ///< lowest PNO occupation number per PNO
     std::vector<double> trace_pno_;     ///< total trace(Dij) recovered per PNO
     std::vector<double> e_ratio_pno_;   ///< percentage of correlation energy recovered by PNOs
-    std::vector<double> de_pno_;   ///< PNO truncation energy error
-    std::vector<double> de_pno_os_;   ///< opposite-spin contributions to de_pno_
-    std::vector<double> de_pno_ss_;   ///< same-spin contributions to de_pno_
+    std::vector<double> de_pno_;        ///< PNO truncation energy error
+    std::vector<double> de_pno_os_;     ///< opposite-spin contributions to de_pno_
+    std::vector<double> de_pno_ss_;     ///< same-spin contributions to de_pno_
+
+    /// Einsums analogues for the above matrices/vectors
+    SpinAmplitudeType<2, 3> K_iajb_spin_; /// rank 2, 3 spin cases (AA, AB, BB)
+    SpinAmplitudeType<2, 3> T_iajb_spin_; /// rank 2, 3 spin cases (AA, AB, BB)
+    SpinAmplitudeType<2, 3> Tt_iajb_spin_; /// rank 2, 3 spin cases (AA, AB, BB)
 
     /// pre-screening energies
     double de_dipole_; ///< energy correction for distant (LMO, LMO) pairs

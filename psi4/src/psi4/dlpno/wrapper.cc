@@ -30,6 +30,7 @@
 
 #include "psi4/liboptions/liboptions.h"
 #include "psi4/libpsi4util/exception.h"
+#include <format>
 
 namespace psi {
 namespace dlpno {
@@ -37,18 +38,33 @@ namespace dlpno {
 SharedWavefunction dlpno(SharedWavefunction ref_wfn, Options& options) {
 
     std::shared_ptr<Wavefunction> dlpno;
-    if (options.get_str("REFERENCE") == "RHF") {
-        if (options.get_str("DLPNO_ALGORITHM") == "MP2") {
+
+    auto reference = options.get_str("REFERENCE");
+    auto algorithm = options.get_str("DLPNO_ALGORITHM");
+    if (reference == "RHF") {
+        if (algorithm == "MP2") {
             dlpno = std::make_shared<DLPNOMP2>(ref_wfn, options);
-        } else if (options.get_str("DLPNO_ALGORITHM") == "CCSD") {
+        } else if (algorithm == "CCSD") {
             dlpno = std::make_shared<DLPNOCCSD>(ref_wfn, options);
-        } else if (options.get_str("DLPNO_ALGORITHM") == "CCSD(T)") {
+        } else if (algorithm == "CCSD(T)") {
             dlpno = std::make_shared<DLPNOCCSD_T>(ref_wfn, options);
         } else {
             throw PSIEXCEPTION("Requested DLPNO method is not yet available!");
         }
+    } else if (reference == "UHF") {
+        if (algorithm == "MP2") {
+            dlpno = std::make_shared<DLPNOUMP2>(ref_wfn, options);
+        } else if (algorithm == "CCSD") {
+            dlpno = std::make_shared<DLPNOUCCSD>(ref_wfn, options);
+        } else if (algorithm == "CCSD(T)") {
+            dlpno = std::make_shared<DLPNOUCCSD_T>(ref_wfn, options);
+        } else {
+            throw PSIEXCEPTION("Requested DLPNO method is not yet available!");
+        }
+    } else if ((reference.length() > 1 && reference[1] == 'K') || (reference.length() > 2 && reference[2] == 'K')) {
+        throw PSIEXCEPTION("DLPNO will never accept your dirty DFT reference!");
     } else {
-        throw PSIEXCEPTION("DLPNO requires closed-shell reference"); 
+        throw PSIEXCEPTION(std::format("DLPNO does not yet support {} reference!", reference));
     }
 
     return dlpno;
