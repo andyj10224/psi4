@@ -1709,8 +1709,11 @@ void DLPNOCCSD::t1_fock() {
 
         if (i > j || i_j_to_ij_strong_[i][j] == -1) continue;
 
-        // Partially dress Fia and Fab
-        Fia_bar[ij] = std::make_shared<Matrix>(nlmo_ij, npno_ij);
+        // Partially dress Fia and Fab (Jiang Eq. 99 and 101)
+        // \overline{F}_{kc} = f_{kc} + [2(kc|me) - (ke|mc)] T_{m}^{e}
+        // In closed-shell RHF reference, f_{kc} is zero
+        Fkc_bar[ij] = submatrix_rows_and_cols(*F_lmo_pao_, lmopair_to_lmos_[ij], lmopair_to_paos_[ij]);
+        Fkc_bar[ij] = linalg::doublet(Fkc_bar[ij], X_pno_[ij], false, false); // (k, c)
 
         Fab_bar[ij] = std::make_shared<Matrix>(npno_ij, npno_ij);
         Fab_bar[ij]->set_diagonal(e_pno_[ij]);
@@ -1741,7 +1744,10 @@ void DLPNOCCSD::t1_fock() {
 
         // Partially dress Fai
         if (i == j) {
-            Fai_bar[i] = std::make_shared<Matrix>(npno_ij, 1);
+            // \overline{F}_{ai} = f_{ai} + [2(ai|me) - (ae|mi)] T_{m}^{e}
+            // In closed-shell RHF reference, f_{kc} is zero
+            Fai_bar[i] = submatrix_rows_and_cols(*F_lmo_pao_, std::vector<int>(1, i), lmopair_to_paos_[ij]);
+            Fai_bar[i] = linalg::doublet(Fai_bar[i], X_pno_[ij], false, false)->transpose(); // (a, i)
 
             auto Qia = i_Qa_ij_[ij]->clone();
             auto Qik = i_Qk_ij_[ij]->clone();
@@ -1790,8 +1796,12 @@ void DLPNOCCSD::t1_fock() {
             (*Fkj_)(i, j) += (*Fia_bar[jj])(i_jj, a_jj) * (*T_ia_[j])(a_jj, 0);
         }
 
-        // Fkc matrices (built separately since Fia intermediate not built for weak pairs)
-        Fkc_[ij] = std::make_shared<Matrix>(1, npno_ij);
+        // Fkc matrices (Jiang Eq. 95)
+        // (built separately since \overline{F}_{kc} intermediate is NOT built over weak pairs)
+        // \widetilde{F}_{ia} = \overline{F}_{ia} = f_{ia} + [2(ia|kc) - (ic|ka)] T_{k}^{c}
+        // => L_{ik}^{ac} T_{k}^{c}
+        Fkc_[ij] = submatrix_rows_and_cols(*F_lmo_pao_, std::vector<int>(1, i), lmopair_to_paos_[ij]);
+        Fkc_[ij] = linalg::doublet(Fkc_[ij], X_pno_[ij], false, false);
 
         for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
             int k = lmopair_to_lmos_[ij][k_ij];
@@ -2540,8 +2550,7 @@ void DLPNOCCSD::lccsd_iterations() {
     de_weak_ = e_weak;
 }
 
-double DLPNOCCSD::compute_energy() {
-
+double DLPNOCCSD::compute_dlpno_ccsd_energy() {
     timer_on("DLPNO-CCSD");
 
     print_header();
@@ -2694,6 +2703,56 @@ double DLPNOCCSD::compute_energy() {
     set_scalar_variable("CURRENT ENERGY", e_ccsd_total);
 
     return e_ccsd_total;
+}
+
+double DLPNOCCSD::compute_energy() {
+
+    if (brueckner_orbs_) {
+        // Compute initial DLPNO-CCSD energy
+        double e_dlpno_ccsd = compute_dlpno_ccsd_energy();
+
+        // After the initial set of T1s are computed, rotate the orbitals and recompute everything until convergence
+        bool brueckner_converged = false;
+        int iteration = 1;
+        const int BRUECKNER_MAXITER = options_.get_int("BRUECKNER_MAXITER");
+        const int BRUECKNER_R_CONV = options_.get_double("BRUECKNER_R_CONV");
+
+        while (!brueckner_converged) {
+            outfile->Printf("\n  ==> Brueckner Orbital Optimization Iteration %d <==\n\n", iteration);
+
+            // Set brueckner orbitals iteration control to true
+            brueckner_iter_ = true;
+
+            // Get new set of Brueckner orbitals through T1-rotations
+            compute_brueckner_orbitals();
+
+            // recompute DLPNO-CCSD energy using new orbitals
+            e_dlpno_ccsd = compute_dlpno_ccsd_energy();
+
+            // Compute max R1 residual
+            std::vector<SharedMatrix> T1_vecs;
+            T1_vecs.reserve(T_ia_.size());
+            T1_vecs.insert(T1_vecs.end(), T_ia_.begin(), T_ia_.end());
+            auto T1_flat = flatten_mats(T1_vecs);
+            double T1_max = *max_element(T1_flat.begin(), T1_flat.end());
+
+            outfile->Printf("\n    Brueckner Iteration %d: Energy = %16.12f, Max R1 = %10.3e\n", iteration, e_dlpno_ccsd, T1_max);
+
+            if (fabs(T1_max) < BRUECKNER_R_CONV) {
+                brueckner_converged = true;
+                outfile->Printf("    Brueckner orbital optimization converged in %d iterations!\n", iteration);
+            } else if (iteration >= BRUECKNER_MAXITER) {
+                outfile->Printf("    WARNING: Brueckner orbital optimization did not converge in %d iterations! Max R1 = %10.3e\n", iteration, T1_max);
+                break;
+            }
+
+            iteration++;
+        }
+        return e_dlpno_ccsd;
+
+    } else {
+        return compute_dlpno_ccsd_energy();
+    }
 }
 
 void DLPNOCCSD::print_integral_sparsity() {
