@@ -2665,6 +2665,8 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         /*- Perform automatic memory checks to toggle between core and disk? 
             (NOT recommended to change this for average user). -*/
         options.add_bool("DLPNO_TOGGLE_MEMORY", true);
+        /*- Use Brueckner orbitals? -*/
+        options.add_bool("DLPNO_BRUECKNER_ORBS", false);
 
         /*- SUBSECTION Expert Options -*/
 
