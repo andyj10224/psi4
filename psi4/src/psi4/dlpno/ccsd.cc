@@ -1336,6 +1336,8 @@ void DLPNOCCSD::compute_pno_integrals() {
     L_mibj_.resize(n_lmo_pairs);
 
     // 2 virtual
+    K_iajb_.clear();
+    K_iajb_.resize(n_lmo_pairs);
     L_iajb_.clear();
     L_iajb_.resize(n_lmo_pairs);
 
@@ -1667,6 +1669,7 @@ void DLPNOCCSD::compute_pno_integrals() {
         K_mibj_[ij] = linalg::doublet(q_io, q_jv, true, false);
         J_ijmb_[ij] = linalg::doublet(q_pair, q_ov, true, false);
         J_ijmb_[ij]->reshape(nlmo_ij, npno_ij);
+        K_iajb_[ij] = linalg::doublet(q_iv, q_jv, true, false);
         K_ivvv_[ij] = linalg::doublet(q_iv, q_vv, true, false);
 
         L_mibj_[ij] = K_mibj_[ij]->clone();
@@ -1674,6 +1677,7 @@ void DLPNOCCSD::compute_pno_integrals() {
         if (i != j) {
             K_mibj_[ji] = linalg::doublet(q_jo, q_iv, true, false);
             J_ijmb_[ji] = J_ijmb_[ij];
+            K_iajb_[ji] = K_iajb_[ij]->transpose();
             K_ivvv_[ji] = linalg::doublet(q_jv, q_vv, true, false);
 
             L_mibj_[ij]->scale(2.0);
@@ -3199,6 +3203,535 @@ void DLPNOCCSD::print_results() {
     outfile->Printf("    PNO Truncation Correction:         %16.12f \n", de_pno_total_);
     outfile->Printf("\n\n  @Total DLPNO-CCSD Energy: %16.12f \n", variables_["SCF TOTAL ENERGY"] + e_lccsd_ + de_lmp2_eliminated_ + de_weak_ + de_pno_total_ + de_dipole_);
     outfile->Printf("    *** Wow, that was fast! A thousand hallelujahs!!! \n\n");
+}
+
+void RO_DLPNOCCSD::extend_virtual_by_somo() {
+    int n_lmo_pairs = ij_to_i_j_.size();
+    int nbf = basisset_->nbf();
+    int naocc = nalpha_ - nfrzc();
+    int nbocc = nbeta_ - nfrzc();
+    int nsomo = nalpha_ - nbeta_;
+
+    // Update PAO transformation matrix
+    auto C_aocc = reference_wavefunction_->Ca_subset("AO", "ACTIVE_OCC");
+    auto eps_aocc = reference_wavefunction_->epsilon_a_subset("AO", "ACTIVE_OCC");
+    auto C_pao_new = std::make_shared<Matrix>(nbf, nbf + nsomo);
+
+#pragma omp parallel for
+    for (int u = 0; u < nbf; ++u) {
+        // Original PAO block
+        for (int v = 0; v < nbf; ++v) {
+            C_pao_new->set(u, v, C_pao_->get(u, v));
+        } // end for
+
+        // Block with SOMOs
+        for (int v = nbf; v < nbf + nsomo; ++v) {
+            C_pao_new->set(u, v, C_aocc->get(u, nbocc + (v-nbf)));
+        } // end for
+    } // end for
+
+    // Reset PAO coefficient matrix
+    C_pao_ = C_pao_new;
+    // Recompute S_pao and F_pao
+    S_pao_ = linalg::triplet(C_pao_, reference_wavefunction_->S(), C_pao_, true, false, false);
+    F_pao_ = linalg::triplet(C_pao_, F_ao_, C_pao_, true, false, false);
+
+#pragma omp parallel for
+    for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+        auto &[i, j] = ij_to_i_j_[ij];
+        int ji = ij_to_ji_[ij];
+
+        if (i > j) continue;
+
+        int npao_ij = lmopair_to_paos_[ij].size();
+        int npno_ij = n_pno_[ij];
+
+        auto X_pno_new = std::make_shared<Matrix>(npao_ij + nsomo, npno_ij + nsomo);
+        
+        for (int u_ij = 0; u_ij < npao_ij; ++u_ij) {
+            for (int a_ij = 0; a_ij < npno_ij; ++a_ij) {
+                X_pno_new->set(u_ij, a_ij, X_pno_[ij]->get(u_ij, a_ij));
+            } // end a_ij
+        } // end u_ij
+
+        for (int t = 0; t < nsomo; ++t) {
+            X_pno_new->set(npao_ij + t, npno_ij + t, 1.0);
+        } // end t
+
+        auto e_pno_new = std::make_shared<Vector>(npno_ij + nsomo);
+
+        for (int a_ij = 0; a_ij < npno_ij; ++a_ij) {
+            e_pno_new->set(a_ij, e_pno_[ij]->get(a_ij));
+        } // end for
+
+        for (int t = 0; t < nsomo; ++t) {
+            e_pno_new->set(npno_ij + t, eps_aocc->get(t));
+        } // end for
+
+        X_pno_[ij] = X_pno_new;
+        e_pno_[ij] = e_pno_new;
+        n_pno_[ij] = n_pno_[ij] + nsomo;
+
+        if (i < j) {
+            X_pno_[ji] = X_pno_new;
+            e_pno_[ji] = e_pno_new;
+            n_pno_[ji] = n_pno_[ji] + nsomo;
+        } // end if
+    } // end for
+}
+
+void RO_DLPNOCCSD::cleanup_amplitudes() {
+    int n_lmo_pairs = ij_to_i_j_.size();
+    int naocc = nalpha_ - nfrzc();
+    int nbocc = nbeta_ - nfrzc();
+    int nsomo = naocc = nbocc;
+
+    // For the alpha case, set the last nsomo virtual elements to zero
+#pragma omp parallel for schedule(dynamic, 1)
+    for (int i = 0; i < naocc; ++i) {
+        for (int a_ii = 0; a_ii < nsomo; ++a_ii) {
+            T_ia_[static_cast<int>(SpinCase::Alpha)][i](n_pno_[ii] - a_ii - 1, 0) = 0.0;
+        } // end a_ii
+    } // end i
+
+    // For the beta case, set the last somo occupied amplitudes to zero
+#pragma omp parallel for schedule(dynamic, 1)
+    for (int i = nbocc; i < nbocc + nsomo; ++i) {
+        T_ia_[static_cast<int>(SpinCase::Beta)]->zero();
+    } // end i
+
+    // For T2 amplitudes, yikes
+#pragma omp parallel for schedule(dynamic, 1)
+    for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+        auto &[i, j] = ij_to_i_j_[ij];
+
+        // AA spin case, last nsomo virtual elements are zero
+        for (int a_ij = 0; a_ij < nsomo; ++a_ij) {
+            for (int b_ij = 0; b_ij < n_pno_[ij]; ++b_ij) {
+                T_iajb_[static_cast<int>(DoubleSpinCase::AA)][ij](n_pno_[ij] - a_ij - 1, b_ij) = 0.0;
+            } // end b_ij
+        } // end a_ij
+
+        for (int a_ij = 0; a_ij < n_pno_[ij]; ++a_ij) {
+            for (int b_ij = 0; b_ij < nsomo; ++b_ij) {
+                T_iajb_[static_cast<int>(DoubleSpinCase::AA)][ij](a_ij, n_pno_[ij] - b_ij - 1) = 0.0;
+            } // end b_ij
+        } // end a_ij
+
+        // AB spin case, for i, zero out last somo virtuals, for j... zero out occupied >= nbocc
+        for (int a_ij = 0; a_ij < nsomo; ++a_ij) {
+            for (int b_ij = 0; b_ij < n_pno_[ij]; ++b_ij) {
+                T_iajb_[static_cast<int>(DoubleSpinCase::AB)][ij](n_pno_[ij] - a_ij - 1, b_ij) = 0.0;
+            } // end b_ij
+        } // end a_ij
+
+        if (j >= nbocc) T_iajb_[static_cast<int>(DoubleSpinCase::AB)][ij]->zero();
+
+        // BB spin case, zero out everything with occupied index greater or equal to nbocc
+        if (i >= nbocc || j >= nbocc) T_iajb_[static_cast<int>(DoubleSpinCase::BB)][ij]->zero();
+
+    } // end for
+}
+
+void RO_DLPNOCCSD::lccsd_iterations() {
+
+    int n_lmo_pairs = ij_to_i_j_.size();
+    int naocc = nalpha_ - nfrzc();
+    int nbocc = nbeta_ - nfrzc();
+    int nsomo = naocc = nbocc;
+
+    // Thread and OMP Parallel info
+    int nthreads = 1;
+#ifdef _OPENMP
+    nthreads = Process::environment.get_n_threads();
+#endif
+
+    outfile->Printf("\n  ==> Restricted Open Shell Local CCSD <==\n\n");
+    outfile->Printf("    E_CONVERGENCE = %.2e\n", options_.get_double("E_CONVERGENCE"));
+    outfile->Printf("    R_CONVERGENCE = %.2e\n\n", options_.get_double("R_CONVERGENCE"));
+    outfile->Printf("                      Corr. Energy    Delta E     Max R1     Max R2     Time (s)\n");
+
+    // => Initialize Residuals and Amplitudes <= //
+    std::array<std::vector<SharedMatrix>, 2>> R_ia_spin;
+    std::array<std::vector<SharedMatrix>, 3>> R_iajb_spin;
+
+    // To make the loops easier to deal with, we are letting both dimensions be equal to naocc
+    // For the Beta spin case, all occupied indices >= nbocc will be zeroed out!!!
+    // Likewise, all virtual dimensions for the Alpha spin case that is in the somo indices will be zeroed out!
+
+    constexpr std::array<SpinCase, 2> singles_spin_cases = { SpinCase::Alpha, SpinCase::Beta };
+    constexpr std::array<SpinCase, 3> doubles_spin_cases = { DoubleSpinCase::AA, DoubleSpinCase::AB, DoubleSpinCase::BB };
+
+    for (SpinCase sigma : singles_spin_cases) {
+        const int s = static_cast<int>(sigma);
+        R_ia_spin[s].clear();
+        T_ia_spin_[s].clear();
+
+        R_ia_spin[s].resize(naocc);
+        T_ia_spin_[s].resize(naocc);
+
+#pragma omp parallel for
+        for (int i = 0; i < naocc; ++i) {
+            int ii = i_j_to_ij_[i][i];
+            R_ia_spin[s][i] = std::make_shared<Matrix>(n_pno_[ii], 1);
+            T_ia_spin_[s][i] = std::make_shared<Matrix>(n_pno_[ii], 1);
+        }
+    }
+
+    for (DoubleSpinCase double_sigma : doubles_spin_cases) {
+        const int ds = static_cast<int>(double_sigma);
+        R_iajb_spin[ds].clear();
+        T_iajb_spin_[ds].clear();
+
+        R_iajb_spin[ds].resize(n_lmo_pairs);
+        T_iajb_spin_[ds].resize(n_lmo_pairs);
+
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            R_iajb_spin[ds][ij] = std::make_shared<Matrix>(n_pno_[ij], n_pno_[ij]);
+            T_iajb_spin_[ds][ij] = std::makes_shared<Matrix>(n_pno_[ij], n_pno_[ij]);
+        } // end for
+    } // end for
+
+    // => Thread buffers <= //
+
+    std::array<std::vector<std::vector<SharedMatrix>>, 3> R_ia_buffer;
+
+    for (SpinCase sigma : singles_spin_cases) {
+        const int s = static_cast<int>(sigma);
+        R_ia_buffer[s].resize(nthreads);
+
+        for (int thread = 0; thread < nthreads; ++thread) {
+            R_ia_buffer[s][thread].resize(naocc);
+            for (int i = 0; i < naocc; ++i) {
+                int ii = i_j_to_ij_[i][i];
+                R_ia_buffer[s][thread][i] = std::make_shared<Matrix>(n_pno_[ii], 1);
+            } // end for
+        } // end for
+    } // end for
+    
+    // CHECKPOINT (MAY 25, AROUND 10 pm)
+
+    int iteration = 1, max_iteration = options_.get_int("DLPNO_MAXITER");
+    double e_curr = 0.0, e_prev = 0.0, e_weak = 0.0, r1_curr = 0.0, r2_curr = 0.0;
+    bool e_converged = false, r_converged = false;
+
+    DIISManager diis(options_.get_int("DIIS_MAX_VECS"), "LCCSD DIIS", DIISManager::RemovalPolicy::LargestError, DIISManager::StoragePolicy::InCore);
+
+    double F_CUT = options_.get_double("F_CUT");
+
+    i_Qk_t1_.clear();
+    i_Qa_t1_.clear();
+
+    T_n_ij_.clear();
+
+    i_Qk_t1_.resize(n_lmo_pairs);
+    i_Qa_t1_.resize(n_lmo_pairs);
+
+    T_n_ij_.resize(n_lmo_pairs);
+
+    while (!(e_converged && r_converged)) {
+        // RMS of residual per single LMO, for assesing convergence
+        std::vector<double> R_ia_rms(naocc, 0.0);
+        // RMS of residual per LMO pair, for assessing convergence
+        std::vector<double> R_iajb_rms(n_lmo_pairs, 0.0);
+
+        std::time_t time_start = std::time(nullptr);
+
+        // Step 1: Create T_n intermediate (Jiang Eq. 70)
+        // T_{n_{ij}}^{a_{ij}} = S(a_{ij}, a_{nn}) T_{n}^{a_{nn}}
+        // n_{ij} is all n such that in and jn form valid pairs
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            auto &[i, j] = ij_to_i_j_[ij];
+
+            int nlmo_ij = lmopair_to_lmos_[ij].size();
+            int npno_ij = n_pno_[ij];
+            
+            T_n_ij_[ij] = std::make_shared<Matrix>(nlmo_ij, npno_ij);
+
+            for (int n_ij = 0; n_ij < nlmo_ij; ++n_ij) {
+                int n = lmopair_to_lmos_[ij][n_ij];
+                int nn = i_j_to_ij_[n][n];
+
+                // (a_{ij}, a_{nn}) (a_{nn}, 1) -> (a_{ij}, 1)
+                auto T_n_temp = linalg::doublet(S_PNO(ij, nn), T_ia_[n], false, false);
+                
+                for (int a_ij = 0; a_ij < npno_ij; ++a_ij) {
+                    (*T_n_ij_[ij])(n_ij, a_ij) = (*T_n_temp)(a_ij, 0);
+                } // end a_ij
+            } // end n_ij
+        } // end ij
+
+        // Step 2: T1-dress integrals and Fock matrices
+        t1_ints();
+        t1_fock();
+
+        // Step 3: Compute R1 residual
+        compute_R_ia(R_ia, R_ia_buffer);
+
+        // Get rms of R_ia
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int i = 0; i < naocc; ++i) {
+            R_ia_rms[i] = R_ia[i]->rms();
+        }
+
+        // Step 4: Compute R2 residual
+        compute_R_iajb(R_iajb, Rn_iajb);
+
+        // Get rms of R_iajb
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            R_iajb_rms[ij] = R_iajb[ij]->rms();
+        }
+
+        // Update Singles Amplitude (Jiang Eq. 103)
+#pragma omp parallel for
+        for (int i = 0; i < naocc; ++i) {
+            int ii = i_j_to_ij_[i][i];
+            for (int a_ii = 0; a_ii < n_pno_[ii]; ++a_ii) {
+                (*T_ia_[i])(a_ii, 0) -= (*R_ia[i])(a_ii, 0) / (e_pno_[ii]->get(a_ii) - F_lmo_->get(i,i));
+            } // end a_ii
+        } // end i
+
+        // Update Doubles Amplitude (Jiang Eq. 104)
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            auto &[i, j] = ij_to_i_j_[ij];
+
+            for (int a_ij = 0; a_ij < n_pno_[ij]; ++a_ij) {
+                for (int b_ij = 0; b_ij < n_pno_[ij]; ++b_ij) {
+                    (*T_iajb_[ij])(a_ij, b_ij) -= (*R_iajb[ij])(a_ij, b_ij) / 
+                                    (e_pno_[ij]->get(a_ij) + e_pno_[ij]->get(b_ij) - F_lmo_->get(i,i) - F_lmo_->get(j,j));
+                }
+            }
+            
+        }
+
+        // DIIS Extrapolation
+        std::vector<SharedMatrix> T_vecs;
+        T_vecs.reserve(T_ia_.size() + T_iajb_.size());
+        T_vecs.insert(T_vecs.end(), T_ia_.begin(), T_ia_.end());
+        T_vecs.insert(T_vecs.end(), T_iajb_.begin(), T_iajb_.end());
+
+        std::vector<SharedMatrix> R_vecs;
+        R_vecs.reserve(R_ia.size() + R_iajb.size());
+        R_vecs.insert(R_vecs.end(), R_ia.begin(), R_ia.end());
+        R_vecs.insert(R_vecs.end(), R_iajb.begin(), R_iajb.end());
+
+        auto T_vecs_flat = flatten_mats(T_vecs);
+        auto R_vecs_flat = flatten_mats(R_vecs);
+
+        if (iteration == 1) {
+            diis.set_error_vector_size(R_vecs_flat);
+            diis.set_vector_size(T_vecs_flat);
+        }
+
+        diis.add_entry(R_vecs_flat.get(), T_vecs_flat.get());
+        diis.extrapolate(T_vecs_flat.get());
+
+        copy_flat_mats(T_vecs_flat, T_vecs);
+
+        // Update symmetrized doubles amplitude
+        // Tt_iajb (or U_iajb)
+        // u_{ij}^{ab} = 2t_{ij}^{ab} - t_{ij}^{ba}
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int ij = 0; ij < n_lmo_pairs; ij++) {
+            Tt_iajb_[ij] = T_iajb_[ij]->clone();
+            Tt_iajb_[ij]->scale(2.0);
+            Tt_iajb_[ij]->subtract(T_iajb_[ij]->transpose());
+        }
+
+        // evaluate convergence using current amplitudes and residuals
+        e_prev = e_curr;
+
+        // Compute LCCSD energy (Jiang Eq. 45)
+        // E_{CCSD} = (t_{ij}^{ab} + t_{i}^{a}t_{j}^{b}) L_{ij}^{ab}
+        // Note, the singles contribution to weak pairs is still computed!!!
+        e_curr = 0.0, e_weak = 0.0;
+#pragma omp parallel for schedule(dynamic, 1) reduction(+ : e_curr, e_weak)
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            auto &[i, j] = ij_to_i_j_[ij];
+            int ii = i_j_to_ij_[i][i], jj = i_j_to_ij_[j][j];
+            
+            auto T_i = linalg::doublet(S_PNO(ij, ii), T_ia_[i]);
+            auto T_j = linalg::doublet(S_PNO(ij, jj), T_ia_[j]);
+
+            // \tau_{ij}^{ab} = (t_{ij}^{ab} + t_{i}^{a}t_{j}^{b})
+            auto tau = T_iajb_[ij]->clone();
+
+            for (int a_ij = 0; a_ij < n_pno_[ij]; ++a_ij) {
+                for (int b_ij = 0; b_ij < n_pno_[ij]; ++b_ij) {
+                    (*tau)(a_ij, b_ij) += (*T_i)(a_ij, 0) * (*T_j)(b_ij, 0);
+                } // end b_ij
+            } // end a_ij
+
+            double e_ij = tau->vector_dot(L_iajb_[ij]);
+            
+            e_curr += e_ij;
+            if (i_j_to_ij_strong_[i][j] == -1) e_weak += e_ij;
+        }
+        double r_curr1 = *max_element(R_ia_rms.begin(), R_ia_rms.end());
+        double r_curr2 = *max_element(R_iajb_rms.begin(), R_iajb_rms.end());
+        
+        r_converged = (fabs(r_curr1) < options_.get_double("R_CONVERGENCE"));
+        r_converged &= (fabs(r_curr2) < options_.get_double("R_CONVERGENCE"));
+
+        e_converged = (fabs(e_curr - e_prev) < options_.get_double("E_CONVERGENCE"));
+
+        std::time_t time_stop = std::time(nullptr);
+
+        outfile->Printf("  @LCCSD iter %3d: %16.12f %10.3e %10.3e %10.3e %8d\n", iteration, e_curr, e_curr - e_prev, r_curr1, r_curr2, (int)time_stop - (int)time_start);
+
+        iteration++;
+
+        if (iteration > max_iteration + 1) {
+            throw PSIEXCEPTION("Maximum DLPNO iterations exceeded.");
+        }
+    }
+
+    e_lccsd_ = e_curr - e_weak;
+    de_weak_ = e_weak;
+}
+
+double RO_DLPNOCCSD::compute_dlpno_ccsd_energy() {
+    timer_on("DLPNO-CCSD");
+
+    print_header();
+
+    timer_on("Setup Orbitals");
+    setup_orbitals();
+    timer_off("Setup Orbitals");
+
+    timer_on("Overlap Ints");
+    compute_overlap_ints();
+    timer_off("Overlap Ints");
+
+    /* TODO: Update this function to account for alpha and beta spin cases
+    (This function currently assumes nalpha = ndocc, but nalpha > ndocc in ROHF) */
+    timer_on("Dipole Ints");
+    compute_dipole_ints();
+    timer_off("Dipole Ints");
+
+    timer_on("Compute Metric");
+    compute_metric();
+    timer_off("Compute Metric");
+
+    // Adjust parameters for "crude" prescreening
+    T_CUT_MKN_ *= 100;
+    T_CUT_DO_ *= 2;
+
+    outfile->Printf("  ==> Crude Prescreening (Determines Semicanonical-MP2 Pairs) <==\n\n");
+    outfile->Printf("    T_CUT_MKN set to %6.3e\n", T_CUT_MKN_);
+    outfile->Printf("    T_CUT_DO  set to %6.3e\n\n", T_CUT_DO_);
+
+    timer_on("Sparsity");
+    prep_sparsity(true, false);
+    timer_off("Sparsity");
+
+    timer_on("Crude DF Ints");
+    compute_qia();
+    timer_off("Crude DF Ints");
+
+    timer_on("Initial Pair Prescreening");
+    pair_prescreening<true>();
+    timer_off("Initial Pair Prescreening");
+
+    // Reset Sparsity After
+    T_CUT_MKN_ *= 0.01;
+    T_CUT_DO_ *= 0.5;
+
+    outfile->Printf("  ==> Refined Prescreening (Determines Strong and Weak Pairs) <==\n\n");
+    outfile->Printf("    T_CUT_MKN reset to %6.3e\n", T_CUT_MKN_);
+    outfile->Printf("    T_CUT_DO  reset to %6.3e\n\n", T_CUT_DO_);
+
+    timer_on("Sparsity");
+    prep_sparsity(false, false);
+    timer_off("Sparsity");
+
+    timer_on("Refined DF Ints");
+    print_integral_sparsity();
+    compute_qia();
+    timer_off("Refined DF Ints");
+
+    timer_on("Refined Pair Prescreening");
+    pair_prescreening<false>();
+    timer_off("Refined Pair Prescreening");
+
+    // Set variables from LMP2
+    double e_scf = variables_["SCF TOTAL ENERGY"];
+    double e_lmp2_corr = e_lmp2_ + de_lmp2_eliminated_ + de_dipole_ + de_pno_total_;
+    double e_lmp2_total = e_scf + e_lmp2_corr;
+
+    set_scalar_variable("MP2 CORRELATION ENERGY", e_lmp2_corr);
+    set_scalar_variable("CURRENT CORRELATION ENERGY", e_lmp2_corr);
+    set_scalar_variable("MP2 TOTAL ENERGY", e_lmp2_total);
+    set_scalar_variable("CURRENT ENERGY", e_lmp2_total);
+
+    outfile->Printf("  \n");
+    outfile->Printf("  Total DLPNO-MP2 Correlation Energy: %16.12f \n", e_lmp2_ + de_lmp2_eliminated_ + de_pno_total_ + de_dipole_);
+    outfile->Printf("    MP2 Correlation Energy:           %16.12f \n", e_lmp2_);
+    outfile->Printf("    Semicanonical MP2 Correction:     %16.12f \n", de_lmp2_eliminated_);
+    outfile->Printf("    Dipole Correction:                %16.12f \n", de_dipole_);
+    outfile->Printf("    PNO Truncation Correction:        %16.12f \n", de_pno_total_);
+    outfile->Printf("\n\n  @Total DLPNO-MP2 Energy: %16.12f \n", variables_["SCF TOTAL ENERGY"] + e_lmp2_ + de_lmp2_eliminated_ + de_pno_total_ + de_dipole_);
+    outfile->Printf("\n   * WARNING: This answer will likely vary from one obtained by a energy('dlpno-mp2') call");
+    outfile->Printf("\n                due to lack of a semi-canonical MP2 prescreening step in DLPNO-MP2, as well");
+    outfile->Printf("\n                as slightly tighter cutoffs utilized to increase accuracy in the context of CC!!!\n\n");
+
+    // Recompute PNOs using MP2 densities
+    recompute_pnos();
+    // Add SOMOs to PAO and PNO space (for open-shell case)
+    extend_virtual_by_somo();
+
+    // Prepare Sparsity Information with augmented virtual space (after adding SOMOs)
+    timer_on("Sparsity");
+    prep_sparsity(false, true);
+    timer_off("Sparsity");
+
+    timer_on("DF Ints");
+    compute_qij();
+    compute_qia();
+    compute_qab();
+    timer_off("DF Ints");
+
+    timer_on("PNO Integrals");
+    estimate_memory();
+    compute_pno_integrals();
+    timer_off("PNO Integrals");
+
+    timer_on("PNO Overlaps");
+    compute_pno_overlaps();
+    timer_off("PNO Overlaps");
+
+    timer_on("LCCSD");
+    lccsd_iterations();
+    timer_off("LCCSD");
+
+    // Bye bye (Q_ij | m_ij a_ij) integrals. You won't be missed
+    psio_->close(PSIF_DLPNO_QIA_PNO, 0);
+    // Bye bye (Q_ij | a_ij b_ij) integrals. You won't be missed
+    psio_->close(PSIF_DLPNO_QAB_PNO, 0);
+
+    print_results();
+
+    timer_off("DLPNO-CCSD");
+    
+    double e_ccsd_corr = e_lccsd_ + de_weak_ + de_lmp2_eliminated_ + de_dipole_ + de_pno_total_;
+    double e_ccsd_total = e_scf + e_ccsd_corr;
+
+    set_scalar_variable("CCSD CORRELATION ENERGY", e_ccsd_corr);
+    set_scalar_variable("CURRENT CORRELATION ENERGY", e_ccsd_corr);
+    set_scalar_variable("CCSD TOTAL ENERGY", e_ccsd_total);
+    set_scalar_variable("CURRENT ENERGY", e_ccsd_total);
+
+    // psivars for LCCSD energy components
+    set_scalar_variable("DLPNO LMP2 WEAK PAIR ENERGY", de_weak_);
+    set_scalar_variable("DLPNO SC-LMP2 PAIR ENERGY", de_lmp2_eliminated_);
+    set_scalar_variable("DLPNO DIPOLE ENERGY", de_dipole_);
+    set_scalar_variable("DLPNO PNO TRUNCATION ERROR", de_pno_total_);
+
+    return e_ccsd_total;
 }
 
 }  // namespace dlpno

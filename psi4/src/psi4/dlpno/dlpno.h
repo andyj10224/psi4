@@ -50,6 +50,22 @@ namespace dlpno {
 enum class DLPNOMethod { MP2, CCSD, CCSD_T };
 enum class DLPNOLambdaMethod { CCSD_L };
 
+/**
+ * @enum SpinCase
+ *
+ * @brief An enum class to represent alpha and beta spin cases
+ *
+ */
+enum class SpinCase { Alpha = 0, Beta = 1 };
+
+/**
+  *
+  * @enum DoubleSpinCase
+  *
+  * @brief Denotes a doubles spin case alpha, beta, alpha/beta
+  */
+enum class DoubleSpinCase { AA = 0, AB = 1, BB = 2 };
+
 // Equations refer to Pinski et al. (JCP 143, 034108, 2015; DOI: 10.1063/1.4926879)
 
 class DLPNO : public Wavefunction {
@@ -457,6 +473,30 @@ class PSI_API DLPNOCCSD : public DLPNO {
     ~DLPNOCCSD() override;
 
     double compute_energy() override;
+};
+
+class PSI_API RO_DLPNOCCSD : public DLPNOCCSD {
+   protected:
+    // T1 amplitudes over A, B
+    std::array<std::vector<SharedMatrix>, 2> T_ia_spin_;
+    // T2 amplitudes over AA, AB, BB
+    std::array<std::vector<SharedMatrix>, 3> T_iajb_spin_;
+    
+    /// extend PAO and PNO rank for each pair by nsomo (for open-shell case)... that is, by nalpha - nbeta
+    /// see: https://doi.org/10.1063/1.4981521
+    void extend_virtual_by_somo();
+    /// A helper function to set elements to zero (since we are working with redundant somos in both occupied and virtual space)
+    void cleanup_amplitudes();
+    /// iteratively solves local CCSD equations for restricted open-shell case
+    void lccsd_iterations() override;
+    /// computes DLPNO-CCSD energy for restricted open-shell case (decoupled from compute_energy in case Brueckner orbitals are requested)
+    void compute_dlpno_ccsd_energy() override;
+
+    public:
+     RO_DLPNOCCSD(SharedWavefunction ref_wfn, Options& options);
+     ~RO_DLPNOCCSD() override;
+
+     double compute_energy() override;
 };
 
 class DLPNOCCSD_Lambda : public DLPNOCCSD {
