@@ -66,6 +66,34 @@ enum class SpinCase { Alpha = 0, Beta = 1 };
   */
 enum class DoubleSpinCase { AA = 0, AB = 1, BB = 2 };
 
+/**
+ * @brief Converts a pair of SpinCases to a DoubleSpinCase
+ */
+constexpr DoubleSpinCase to_double_spin(SpinCase spin1, SpinCase spin2) {
+   if (static_cast<int>(spin1) == 0 && static_cast<int>(spin2) == 0) {
+      return DoubleSpinCase::AA;
+   } else if (static_cast<int>(spin1) == 0 && static_cast<int>(spin2) == 1) {
+      return DoubleSpinCase::AB;
+   } else if (static_cast<int>(spin1) == 1 && static_cast<int>(spin2) == 0) { // TODO: Handle this smarter in the future
+      return DoubleSpinCase::AB;
+   } else {
+      return DoubleSpinCase::BB;
+   }
+}
+
+/**
+ * @brief Converts a DoubleSpinCase to a pair of SpinCase
+ */
+constexpr std::pair<SpinCase,SpinCase> get_spin_pair(DoubleSpinCase double_spin_case) {
+   if (static_cast<int>(double_spin_case) == 0) {
+      return std::make_pair(SpinCase::Alpha, SpinCase::Alpha);
+   } else if (static_cast<int>(double_spin_case) == 1) {
+      return std::make_pair(SpinCase::Alpha, SpinCase::Beta);
+   } else {
+      return std::make_pair(SpinCase::Beta, SpinCase::Beta);
+   }
+}
+
 // Equations refer to Pinski et al. (JCP 143, 034108, 2015; DOI: 10.1063/1.4926879)
 
 class DLPNO : public Wavefunction {
@@ -127,6 +155,8 @@ class DLPNO : public Wavefunction {
     /// localized molecular orbitals (LMOs)
     SharedMatrix C_lmo_;
     SharedMatrix F_lmo_;
+    SharedMatrix F_lmo_a_;
+    SharedMatrix F_lmo_b_;
 
     /// projected atomic orbitals (PAOs)
     SharedMatrix C_pao_;
@@ -485,12 +515,39 @@ class PSI_API RO_DLPNOCCSD : public DLPNOCCSD {
     /// extend PAO and PNO rank for each pair by nsomo (for open-shell case)... that is, by nalpha - nbeta
     /// see: https://doi.org/10.1063/1.4981521
     void extend_virtual_by_somo();
-    /// A helper function to set elements to zero (since we are working with redundant somos in both occupied and virtual space)
-    void cleanup_amplitudes();
+    /// A helper funcion to zero matrix elements by spin case for X_ia-like elements
+    void spin_enforcer(std::vector<SharedMatrix>& X_ia, const SpinCase &sigma);
+    /// A helper function to zero matrix elements by spin case for X_iajb-like elements
+    void double_spin_enforcer(std::vector<SharedMatrix>& X_iajb, const DoubleSpinCase &double_sigma, bool reverse_ab=false);
+    /// A helper function to enforce spin in matrix elements in matrix elements that look like qo
+    void matrix_spin_enforcer_qo(SharedMatrix &X, const int &ij, const SpinCase &sigma);
+    /// A helper function to enforce spin in matrix elements in matrix elements that look like qv
+    void matrix_spin_enforcer_qv(SharedMatrix &X, const SpinCase &sigma);
+    /// A helper function to enforce spin in matrix elements in the occupied-occupied block of a matrix, given pair ij
+    void matrix_spin_enforcer_oo(SharedMatrix &X, const int &ij, const SpinCase &sigma);
+    /// A helper function to enforce spin in matrix elements in the virtual-virtual block of a matrix
+    void matrix_spin_enforcer_vv(SharedMatrix &X, const SpinCase &sigma);
+    /// computes singles residuals in RO LCCSD equations
+    void compute_R_ia(std::array<std::vector<SharedMatrix>, 2>& R_ia, std::array<std::vector<std::vector<SharedMatrix>>, 3>& R_ia_buffer);
+    /// computes doubles residuals in RO LCCSD equations
+    void compute_R_iajb(std::array<std::vector<SharedMatrix>, 3>& R_iajb, std::array<std::vector<SharedMatrix>, 3>& Rn_iajb);
+
+    /// TODO: Uncomment functions as they are defined
+    /// Jiang and Toth Eq. 13
+    /// std::array<std::vector<SharedMatrix>, 3>> compute_beta();
+    /// Jiang and Toth Eq. 14
+    /// std::array<std::vector<SharedMatrix>, 3>> compute_gamma();
+    /// Jiang and Toth Eq. 16
+    /// std::array<std::vector<SharedMatrix>, 3>> compute_delta();
+    /// Jiang and Toth Eq. 17
+    std::array<std::vector<SharedMatrix>, 2> compute_Fbc_double_tilde();
+    /// Jiang and Toth Eq. 18
+    std::array<SharedMatrix, 2> compute_Fki_double_tilde();
+
     /// iteratively solves local CCSD equations for restricted open-shell case
-    void lccsd_iterations() override;
+    void lccsd_iterations();
     /// computes DLPNO-CCSD energy for restricted open-shell case (decoupled from compute_energy in case Brueckner orbitals are requested)
-    void compute_dlpno_ccsd_energy() override;
+    double compute_dlpno_ccsd_energy();
 
     public:
      RO_DLPNOCCSD(SharedWavefunction ref_wfn, Options& options);

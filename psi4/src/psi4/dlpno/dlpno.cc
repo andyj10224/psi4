@@ -374,7 +374,7 @@ void DLPNO::setup_orbitals() {
     auto C_aocc = Ca_subset("AO", "ACTIVE_OCC");
     auto C_lmo_new = std::make_shared<Matrix>(C_lmo_->rowspi(0), C_lmo_->colspi(0) + nsomo);
 
-    for (int u = 0; n < nbf; ++u) {
+    for (int u = 0; u < nbf; ++u) {
         for (int i = 0; i < nbocc; ++i) {
             C_lmo_new->set(u, i, C_lmo_->get(u, i));
         } // end i
