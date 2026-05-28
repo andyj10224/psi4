@@ -3566,32 +3566,6 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
 
         // Necessary intermediates
         auto qab_ij = QAB_PNO(ij); // naux_ij * (npno_ij, npno_ij)
-        std::vector<std::array<std::array<SharedMatrix, 2>, 2>> L_kbcj_list(nlmo_ij);
-        
-        for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
-            auto L_iakc_non_proj = K_iakc_non_proj_[ij][k_ij]->clone();
-            L_iakc_non_proj->subtract(J_ikac_non_proj_[ij][k_ij]);
-
-            auto J_iakc_non_proj = J_ikac_non_proj_[ij][k_ij]->clone();
-            J_iakc_non_proj->scale(-1.0);
-
-            for (SpinCase sigma : singles_spin_cases) {
-                const int s = static_cast<int>(sigma);
-                for (SpinCase gamma : singles_spin_cases) {
-                    const int g = static_cast<int>(gamma);
-
-                    // Per the paper: sigma will pertain to virtual, gamma will pertain to occupied spaces
-                    // The occupied zero-ing will be enforced later
-                    if (s == g) {
-                        L_kbcj_list[k_ij][s][g] = L_iakc_non_proj->clone();
-                        matrix_spin_enforcer_vv(L_kbcj_list[k_ij][s][g], sigma);
-                    } else {
-                        L_kbcj_list[k_ij][s][g] = J_iakc_non_proj->clone();
-                        matrix_spin_enforcer_vv(L_kbcj_list[k_ij][s][g], sigma);
-                    }
-                } // end gamma
-            } // end sigma
-        } // end k_ij
         
         for (DoubleSpinCase double_sigma : doubles_spin_cases) {
             auto [sigma1, sigma2] = get_spin_pair(double_sigma);
@@ -3624,8 +3598,6 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
             auto L_iajb = linalg::doublet(i_Qa_s1, j_Qb_s2, true, false);
             R_iajb[ds][ij]->add(L_iajb);
             if (s1 == s2) R_iajb[ds][ij]->subtract(L_iajb->transpose());
-
-            /*
 
             // Jiang and Toth Eq. 20
             // TODO: T1-dress Qab_ij when T1 terms are implemented
@@ -3670,7 +3642,6 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
                     R_iajb[ds][ij]->add(T_kl);
                 } // end for
             } // end for
-             */
 
             // Jiang and Toth Eq. 22
             R_iajb[ds][ij]->add(linalg::doublet(T_ij, F_bc_double_tilde[s2][ij], false, true));
@@ -3705,7 +3676,6 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
                 R_iajb[ds][ij]->subtract(T_kj);
             } // end k_ij
 
-            /*
             for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
                 int k = lmopair_to_lmos_[ij][k_ij];
                 int ik = i_j_to_ij_[i][k], kj = i_j_to_ij_[k][j];
@@ -3716,6 +3686,12 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
 
                 auto S_ij_ik_s2 = S_PNO(ij, ik)->clone();
                 matrix_spin_enforcer_vv(S_ij_ik_s2, sigma2);
+
+                auto S_ij_kj_s1 = S_PNO(ij, kj)->clone();
+                matrix_spin_enforcer_vv(S_ij_kj_s1, sigma1);
+
+                auto S_ij_kj_s2 = S_PNO(ij, kj)->clone();
+                matrix_spin_enforcer_vv(S_ij_kj_s2, sigma2);
 
                 // Same spin contributions
                 if (s1 == s2) {
@@ -3731,13 +3707,14 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
                             T_ik_s1_g = T_iajb_spin_[static_cast<int>(to_double_spin(gamma, sigma1))][ki]->transpose();
                         }
 
-                        // last somo occupied orbitals DO NOT contribute to the beta spin case
-                        auto C_iajb = linalg::triplet(S_ij_ik_s1, T_ik_s1_g, L_kbcj_list[k_ij][g][s1], false, false, true);
+                        SharedMatrix L_jbck = K_iakc_non_proj_[ji][k_ij]->clone();
+                        if (g == s2) L_jbck->subtract(J_ikac_non_proj_[ji][k_ij]);
 
-                        R_iajb[ds][ij]->add(C_iajb);
-                        R_iajb[ds][ij]->subtract(C_iajb->transpose());
-                        Rn_iajb[ds][ij]->add(C_iajb->transpose());
-                        Rn_iajb[ds][ij]->subtract(C_iajb);
+                        // last somo occupied orbitals DO NOT contribute to the beta spin case
+                        auto C_iajb = linalg::triplet(S_ij_ik_s1, T_ik_s1_g, L_jbck, false, false, true);
+
+                        Rn_iajb[ds][ij]->add(C_iajb);
+                        Rn_iajb[ds][ij]->subtract(C_iajb->transpose());
                     
                         // "D" term: Jiang and Toth Eq. 26
                         // TODO: This chud has no linear T2 terms... implement T2^2 terms when it comes time to do CCD
@@ -3745,10 +3722,19 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
                     } // end gamma
                 } else {
                     // "C" term: Jiang and Toth Eq. 25
+                    SharedMatrix J_kjac = J_ikac_non_proj_[ji][k_ij]->clone();
+                    J_kjac->scale(-1.0);
+                    matrix_spin_enforcer_vv(J_kjac, sigma1);
+
                     SharedMatrix T_ik_s1_s2 = T_iajb_spin_[static_cast<int>(to_double_spin(sigma1, sigma2))][ik]->clone();
-                    auto C_iajb = linalg::triplet(L_kbcj_list[k_ij][s2][s1], T_ik_s1_s2, S_ij_ik_s2, false, false, true);
-                    R_iajb[ds][ij]->add(C_iajb);
-                    Rn_iajb[ds][ij]->add(C_iajb->transpose());
+                    R_iajb[ds][ij]->add(linalg::triplet(J_kjac, T_ik_s1_s2, S_ij_ik_s2, false, false, true));
+                    
+                    SharedMatrix J_kibc = J_ikac_non_proj_[ij][k_ij]->clone();
+                    J_kibc->scale(-1.0);
+                    matrix_spin_enforcer_vv(J_kibc, sigma2);
+
+                    SharedMatrix T_kj_s1_s2 = T_iajb_spin_[static_cast<int>(to_double_spin(sigma1, sigma2))][kj]->clone();
+                    R_iajb[ds][ij]->add(linalg::triplet(S_ij_kj_s1, T_kj_s1_s2, J_kibc, false, false, true));
 
                     // "D" term: Jiang and Toth Eq. 27
                     for (SpinCase gamma : singles_spin_cases) {
@@ -3761,14 +3747,27 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
                             T_ik_s1_g = T_iajb_spin_[static_cast<int>(to_double_spin(gamma, sigma1))][ki]->transpose();
                         }
 
-                        // last somo occupied orbitals DO NOT contribute to the beta spin case
-                        auto D_iajb = linalg::triplet(S_ij_ik_s1, T_ik_s1_g, L_kbcj_list[k_ij][g][s2], false, false, true);
+                        SharedMatrix L_jbck = K_iakc_non_proj_[ji][k_ij]->clone();
+                        if (g == s2) L_jbck->subtract(J_ikac_non_proj_[ji][k_ij]);
 
-                        R_iajb[ds][ij]->add(D_iajb);
-                        Rn_iajb[ds][ij]->add(D_iajb->transpose());
+                        // last somo occupied orbitals DO NOT contribute to the beta spin case
+                        R_iajb[ds][ij]->add(linalg::triplet(S_ij_ik_s1, T_ik_s1_g, L_jbck, false, false, true));
+
+                        SharedMatrix T_jk_s2_g;
+                        if (s2 <= g) { // AA, AB, BB
+                            T_jk_s2_g = T_iajb_spin_[static_cast<int>(to_double_spin(sigma2, gamma))][jk]->clone();
+                        } else { // BA
+                            T_jk_s2_g = T_iajb_spin_[static_cast<int>(to_double_spin(gamma, sigma2))][kj]->transpose();
+                        }
+                        
+                        SharedMatrix L_iack = K_iakc_non_proj_[ij][k_ij]->clone();
+                        if (g == s1) L_iack->subtract(J_ikac_non_proj_[ij][k_ij]);
+
+                        R_iajb[ds][ij]->add(linalg::triplet(L_iack, T_jk_s2_g, S_ij_kj_s2, false, true, true));
+
                     } // end for
                 } // end else
-            }*/
+            }
         } // end for
     } // end for
 
@@ -3779,9 +3778,9 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
         for (DoubleSpinCase double_sigma : doubles_spin_cases) {
             auto [sigma1, sigma2] = get_spin_pair(double_sigma);
             const int ds = static_cast<int>(double_sigma);
-
-            // This allows us to "cheat" and get the two transposes for free without introducing R_{\beta\alpha} terms
-            R_iajb[ds][ij]->add(Rn_iajb[ds][ji]);
+            
+            R_iajb[ds][ij]->add(Rn_iajb[ds][ij]);
+            R_iajb[ds][ij]->add(Rn_iajb[ds][ji]->transpose());
         } // end for
     } // end for
 
