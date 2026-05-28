@@ -320,7 +320,7 @@ void DLPNO::setup_orbitals() {
     int naux = ribasis_->nbf();
     int nshellri = ribasis_->nshell();
     int naocc = nalpha_ - nfrzc();
-    int nbocc = nalpha_ - nfrzc();
+    int nbocc = nbeta_ - nfrzc();
     int nsomo = naocc - nbocc;
 
     // Compute number of core orbitals
@@ -383,6 +383,8 @@ void DLPNO::setup_orbitals() {
             C_lmo_new->set(u, nbocc + i, C_aocc->get(u, nbocc + i));
         } // end i
     } // end u
+
+    C_lmo_ = C_lmo_new;
 
     F_lmo_ = linalg::triplet(C_lmo_, F_ao_, C_lmo_, true, false, false);
 
@@ -1078,41 +1080,40 @@ void DLPNO::prep_sparsity(bool initial, bool final) {
     print_aux_pair_domains();
     print_lmo_pair_domains();
     print_pao_pair_domains();
+    
+    // => Coefficient Sparsity <= //
+    lmo_to_bfs_.clear();
+    lmo_to_atoms_.clear();
 
-    if (initial) {
-        // => Coefficient Sparsity <= //
-        lmo_to_bfs_.clear();
-        lmo_to_atoms_.clear();
+    // which basis functions (on which atoms) contribute to each local MO?
+    lmo_to_bfs_.resize(naocc);
+    lmo_to_atoms_.resize(naocc);
 
-        // which basis functions (on which atoms) contribute to each local MO?
-        lmo_to_bfs_.resize(naocc);
-        lmo_to_atoms_.resize(naocc);
-
-        for (int i = 0; i < naocc; ++i) {
-            for (int bf_ind = 0; bf_ind < nbf; ++bf_ind) {
-                if (fabs(C_lmo_->get(bf_ind, i)) > options_.get_double("T_CUT_CLMO")) {
-                    lmo_to_bfs_[i].push_back(bf_ind);
-                }
+    for (int i = 0; i < naocc; ++i) {
+        for (int bf_ind = 0; bf_ind < nbf; ++bf_ind) {
+            if (fabs(C_lmo_->get(bf_ind, i)) > options_.get_double("T_CUT_CLMO")) {
+                lmo_to_bfs_[i].push_back(bf_ind);
             }
-            lmo_to_atoms_[i] = block_list(lmo_to_bfs_[i], bf_to_atom);
         }
+        lmo_to_atoms_[i] = block_list(lmo_to_bfs_[i], bf_to_atom);
+    }
 
-        // which basis functions (on which atoms) contribute to each projected AO?
-        pao_to_bfs_.clear();
-        pao_to_atoms_.clear();
+    // which basis functions (on which atoms) contribute to each projected AO?
+    pao_to_bfs_.clear();
+    pao_to_atoms_.clear();
 
-        pao_to_bfs_.resize(npao);
-        pao_to_atoms_.resize(npao);
+    pao_to_bfs_.resize(npao);
+    pao_to_atoms_.resize(npao);
 
-        for (int u = 0; u < npao; ++u) {
-            for (int bf_ind = 0; bf_ind < nbf; ++bf_ind) {
-                if (fabs(C_pao_->get(bf_ind, u)) > options_.get_double("T_CUT_CPAO")) {
-                    pao_to_bfs_[u].push_back(bf_ind);
-                }
+    for (int u = 0; u < npao; ++u) {
+        for (int bf_ind = 0; bf_ind < nbf; ++bf_ind) {
+            if (fabs(C_pao_->get(bf_ind, u)) > options_.get_double("T_CUT_CPAO")) {
+                pao_to_bfs_[u].push_back(bf_ind);
             }
-            pao_to_atoms_[u] = block_list(pao_to_bfs_[u], bf_to_atom);
         }
-    } // end if
+        pao_to_atoms_[u] = block_list(pao_to_bfs_[u], bf_to_atom);
+    }
+    
     
     // determine maps to extended LMO domains, which are the union of an LMO's domain with domains
     //   of all interacting LMOs
