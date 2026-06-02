@@ -161,6 +161,8 @@ class DLPNO : public Wavefunction {
     /// projected atomic orbitals (PAOs)
     SharedMatrix C_pao_;
     SharedMatrix F_pao_;
+    SharedMatrix F_pao_a_;
+    SharedMatrix F_pao_b_;
     SharedMatrix F_lmo_pao_; //< needed for non-canonical Brueckner orbitals
     SharedMatrix S_pao_;
 
@@ -515,6 +517,8 @@ class PSI_API RO_DLPNOCCSD : public DLPNOCCSD {
     /// extend PAO and PNO rank for each pair by nsomo (for open-shell case)... that is, by nalpha - nbeta
     /// see: https://doi.org/10.1063/1.4981521
     void extend_virtual_by_somo();
+    /// Get the correct spin-case for doubles amplitudes
+    SharedMatrix T_iajb_spin_helper(const int ij, const SpinCase& sigma1, const SpinCase& sigma2);
     /// A helper funcion to zero matrix elements by spin case for X_ia-like elements
     void spin_enforcer(std::vector<SharedMatrix>& X_ia, const SpinCase &sigma);
     /// A helper function to zero matrix elements by spin case for X_iajb-like elements
@@ -534,11 +538,11 @@ class PSI_API RO_DLPNOCCSD : public DLPNOCCSD {
 
     /// TODO: Uncomment functions as they are defined
     /// Jiang and Toth Eq. 13
-    /// std::array<std::vector<SharedMatrix>, 3>> compute_beta();
+    std::array<std::vector<SharedMatrix>, 3> compute_beta();
     /// Jiang and Toth Eq. 14
-    /// std::array<std::vector<SharedMatrix>, 3>> compute_gamma();
+    std::array<std::array<std::vector<SharedMatrix>, 2>, 2> compute_gamma();
     /// Jiang and Toth Eq. 16
-    /// std::array<std::vector<SharedMatrix>, 3>> compute_delta();
+    std::array<std::array<std::vector<SharedMatrix>, 2>, 2> compute_delta();
     /// Jiang and Toth Eq. 17
     std::array<std::vector<SharedMatrix>, 2> compute_Fbc_double_tilde();
     /// Jiang and Toth Eq. 18
