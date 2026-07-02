@@ -2760,8 +2760,10 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         /*- Number of T1/T2 microiteration updates per Full Q iteration 
             (increase this value for highly multireference systems) !expert -*/
         options.add_double("DLPNO_QUADS_MICROITERATIONS", 3);
-        /*- Damping factor on quadruples amplitude update in CCSDTQ iterations !expert -*/
+        /*- Damping factor on R4 amplitude updates in CCSDTQ iterations !expert -*/
         options.add_double("QUADRUPLES_DAMPING_RATIO", 0.0);
+        /*- Level shift on R4 amplitude denominators in CCSDTQ iterations (for when R does not improve) !expert -*/
+        options.add_double("QUADRUPLES_LEVEL_SHIFT", 0.0);
 
         /*- SUBSECTION Memory Control Options -*/
 

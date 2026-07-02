@@ -4011,7 +4011,11 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                     Tensor<double, 4> zero_tensor("zero", n_qno_[ijkl], n_qno_[ijkl], n_qno_[ijkl], n_qno_[ijkl]);
                     zero_tensor.zero();
 
-                    double alpha = (fabs(rmsd(R_iajbkcld[ijkl], zero_tensor)) > fabs(R_iajbkcld_rms[ijkl])) ? damping_ratio_quads_ : 0.0;
+                    // double alpha = (fabs(rmsd(R_iajbkcld[ijkl], zero_tensor)) > fabs(R_iajbkcld_rms[ijkl])) ? damping_ratio_quads_ : 0.0;
+                    // double delta = (fabs(rmsd(R_iajbkcld[ijkl], zero_tensor)) > fabs(R_iajbkcld_rms[ijkl])) ? level_shift_quads_ : 0.0;
+
+                    double alpha = damping_ratio_quads_;
+                    double delta = (fabs(rmsd(R_iajbkcld[ijkl], zero_tensor)) > fabs(R_iajbkcld_rms[ijkl])) ? level_shift_quads_ : 0.0;
 
                     for (int a = 0; a < n_qno_[ijkl]; ++a) {
                         for (int b = 0; b < n_qno_[ijkl]; ++b) {
@@ -4019,7 +4023,7 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                                 for (int d = 0; d < n_qno_[ijkl]; ++d) {
                                     (T_iajbkcld_[ijkl])(a, b, c, d) -= (1.0 - alpha) * (R_iajbkcld[ijkl])(a, b, c, d) / 
                                         ((*e_qno_[ijkl])(a) + (*e_qno_[ijkl])(b) + (*e_qno_[ijkl])(c) + (*e_qno_[ijkl])(d) - (*F_lmo_)(i,i) 
-                                        - (*F_lmo_)(j,j) - (*F_lmo_)(k,k) - (*F_lmo_)(l,l));
+                                        - (*F_lmo_)(j,j) - (*F_lmo_)(k,k) - (*F_lmo_)(l,l) + delta);
                                 } // end d
                             } // end c
                         } // end b
@@ -4063,13 +4067,18 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                 for (int ijk_sorted = 0; ijk_sorted < n_lmo_triplets; ++ijk_sorted) {
                     int ijk = sorted_triplets_[ijk_sorted];
                     auto &[i, j, k] = ijk_to_i_j_k_[ijk];
-                    double alpha = (fabs(R_iajbkc[ijk]->rms()) > fabs(R_iajbkc_rms[ijk])) ? damping_ratio_quads_ : 0.0;
+                    // double alpha = (fabs(R_iajbkc[ijk]->rms()) > fabs(R_iajbkc_rms[ijk])) ? damping_ratio_quads_ : 0.0;
+                    // double delta = (fabs(R_iajbkc[ijk]->rms()) > fabs(R_iajbkc_rms[ijk])) ? level_shift_quads_ : 0.0;
+
+                    double alpha = 0.0;
+                    double delta = 0.0;
 
                     for (int a_ijk = 0; a_ijk < n_tno_[ijk]; ++a_ijk) {
                         for (int b_ijk = 0; b_ijk < n_tno_[ijk]; ++b_ijk) {
                             for (int c_ijk = 0; c_ijk < n_tno_[ijk]; ++c_ijk) {
                                 (*T_iajbkc_[ijk])(a_ijk, b_ijk * n_tno_[ijk] + c_ijk) -= (1.0 - alpha) * (*R_iajbkc[ijk])(a_ijk, b_ijk * n_tno_[ijk] + c_ijk) /
-                                                    (e_tno_[ijk]->get(a_ijk) + e_tno_[ijk]->get(b_ijk) + e_tno_[ijk]->get(c_ijk) - F_lmo_->get(i,i) - F_lmo_->get(j,j) - F_lmo_->get(k,k));
+                                                    (e_tno_[ijk]->get(a_ijk) + e_tno_[ijk]->get(b_ijk) + e_tno_[ijk]->get(c_ijk) 
+                                                    - F_lmo_->get(i,i) - F_lmo_->get(j,j) - F_lmo_->get(k,k) + delta);
                             }
                         }
                     }
@@ -4093,12 +4102,16 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
     #pragma omp parallel for schedule(dynamic, 1) reduction(+ : r_curr2)
             for (int ij = 0; ij < n_lmo_pairs; ++ij) {
                 auto &[i, j] = ij_to_i_j_[ij];
-                double alpha = (fabs(R_iajb[ij]->rms()) > fabs(R_iajb_rms[ij])) ? damping_ratio_quads_ : 0.0;
+                // double alpha = (fabs(R_iajb[ij]->rms()) > fabs(R_iajb_rms[ij])) ? damping_ratio_quads_ : 0.0;
+                // double delta = (fabs(R_iajb[ij]->rms()) > fabs(R_iajb_rms[ij])) ? level_shift_quads_ : 0.0;
+
+                double alpha = 0.0;
+                double delta = 0.0;
 
                 for (int a_ij = 0; a_ij < n_pno_[ij]; ++a_ij) {
                     for (int b_ij = 0; b_ij < n_pno_[ij]; ++b_ij) {
                         (*T_iajb_[ij])(a_ij, b_ij) -= (1.0 - alpha) * (*R_iajb[ij])(a_ij, b_ij) / 
-                                        (e_pno_[ij]->get(a_ij) + e_pno_[ij]->get(b_ij) - F_lmo_->get(i,i) - F_lmo_->get(j,j));
+                                        (e_pno_[ij]->get(a_ij) + e_pno_[ij]->get(b_ij) - F_lmo_->get(i,i) - F_lmo_->get(j,j) + delta);
                     }
                 }
                 Tt_iajb_[ij] = T_iajb_[ij]->clone();
@@ -4120,10 +4133,13 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
     #pragma omp parallel for reduction(+ : r_curr1)
             for (int i = 0; i < naocc; ++i) {
                 int ii = i_j_to_ij_[i][i];
-                double alpha = (fabs(R_ia[i]->rms()) > fabs(R_ia_rms[i])) ? damping_ratio_quads_ : 0.0;
+                // double alpha = (fabs(R_ia[i]->rms()) > fabs(R_ia_rms[i])) ? damping_ratio_quads_ : 0.0;
+                // double delta = (fabs(R_ia[i]->rms()) > fabs(R_ia_rms[i])) ? level_shift_quads_ : 0.0;
+                double alpha = 0.0;
+                double delta = 0.0;
 
                 for (int a_ii = 0; a_ii < n_pno_[ii]; ++a_ii) {
-                    (*T_ia_[i])(a_ii, 0) -= (1.0 - alpha) * (*R_ia[i])(a_ii, 0) / (e_pno_[ii]->get(a_ii) - F_lmo_->get(i,i));
+                    (*T_ia_[i])(a_ii, 0) -= (1.0 - alpha) * (*R_ia[i])(a_ii, 0) / (e_pno_[ii]->get(a_ii) - F_lmo_->get(i,i) + delta);
                 }
                 R_ia_rms[i] = R_ia[i]->rms();
                 r_curr1 += R_ia_rms[i] * R_ia_rms[i];
@@ -4132,6 +4148,30 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
             timer_off("DLPNO-CCSDTQ : R_ia");
 
         } // end miter
+
+        // Normalize error vectors before extrapolation
+        /*
+#pragma omp parallel for
+        for (int i = 0; i < naocc; ++i) {
+            int ii = i_j_to_ij_[i][i];
+            R_ia[i]->scale(1.0 / std::sqrt((double) naocc * n_pno_[ii]));
+        }
+
+#pragma omp parallel for
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            R_iajb[ij]->scale(1.0 / std::sqrt((double) n_lmo_pairs * n_pno_[ij] * n_pno_[ij]));
+        }
+
+#pragma omp parallel for
+        for (int ijk = 0; ijk < n_lmo_triplets; ++ijk) {
+            R_iajbkc[ijk]->scale(1.0 / std::sqrt((double) n_lmo_triplets * n_tno_[ijk] * n_tno_[ijk] * n_tno_[ijk]));
+        }
+
+#pragma omp parallel for
+        for (int ijkl = 0; ijkl < n_lmo_quadruplets; ++ijkl) {
+            R_iajbkcld_psi[ijkl]->scale(1.0 / std::sqrt((double) n_lmo_quadruplets * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl]));
+        }
+        */
 
         // DIIS Extrapolation
         size_t nelements = T_ia_.size() + T_iajb_.size() + T_iajbkc_.size();
@@ -4247,6 +4287,7 @@ double DLPNOCCSDTQ::compute_energy() {
     
     disk_ints_quads_ = options_.get_bool("DLPNO_CCSDTQ_DISK_INTS");
     damping_ratio_quads_ = options_.get_double("QUADRUPLES_DAMPING_RATIO");
+    level_shift_quads_ = options_.get_double("QUADRUPLES_LEVEL_SHIFT");
 
     if (disk_overlap_) {
         psio_->open(PSIF_DLPNO_S_TNO, PSIO_OPEN_OLD);

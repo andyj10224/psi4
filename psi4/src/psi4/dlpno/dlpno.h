@@ -757,6 +757,8 @@ class DLPNOCCSDTQ : public DLPNOCCSDT_Q {
     bool disk_ints_quads_;
     // How much of the original quadruples amplitude to keep
     double damping_ratio_quads_;
+    // How much level shift for amplitudes
+    double level_shift_quads_;
     // Energy expression
     double e_lccsdtq_;
 
