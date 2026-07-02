@@ -71,6 +71,8 @@ class DLPNO : public Wavefunction {
     bool brueckner_orbs_;
     /// Performing a Brueckner iteration?
     bool brueckner_iter_ = false;
+    /// Number of core orbitals
+    int ncore_;
     
     /// threshold for PAO domain size
     double T_CUT_DO_;
