@@ -2618,12 +2618,15 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_bool("DLPNO_TOGGLE_MEMORY", true);
         /*- Use Brueckner orbitals? -*/
         options.add_bool("DLPNO_BRUECKNER_ORBS", false);
+        /*- What level of BCC to use (BCCD or BCCDT)? 
+            This allows users to toggle between BCCD(T), BCCD+T, BCCD+T(Q), BCCDT(Q), BCCDT+Q, etc. !expert -*/
+        options.add_str("DLPNO_BRUECKNER_LEVEL", "DOUBLES", "DOUBLES TRIPLES");
         /*- Scaling factor for orbital rotation for DLPNO Brueckner orbitals
             Make it small for systems with a large T1 (like 0.1-0.25) -*/
-        options.add_double("DLPNO_BRUECKNER_ALPHA", 0.5);
+        options.add_double("DLPNO_BRUECKNER_ALPHA", 1.0);
         /*- When to end start applying DIIS for Brueckner optimizatons 
             (turning on DIIS after a point (not initially) is helpful for stability) -*/
-        options.add_double("BRUECKNER_DIIS_START", 20);
+        options.add_double("BRUECKNER_DIIS_START", 1000);
 
         /*- SUBSECTION Expert Options -*/
 

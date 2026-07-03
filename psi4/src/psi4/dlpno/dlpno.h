@@ -674,6 +674,8 @@ class DLPNOCCSDT : public DLPNOCCSD_T {
     void compute_R_iajbkc_cc3(std::vector<SharedMatrix>& R_iajbkc);
     /// computes triples residuals in LCCSDT equations
     void compute_R_iajbkc(std::vector<SharedMatrix>& R_iajbkc);
+    /// computes DLPNO-CCSDT energy (this function is kept separate from compute_energy function in case Brueckner orbitals are requested)
+    double compute_dlpno_ccsdt_energy();
 
     void print_header();
     void estimate_memory();

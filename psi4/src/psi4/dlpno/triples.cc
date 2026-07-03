@@ -129,6 +129,8 @@ void DLPNOCCSD_T::triples_sparsity(bool prescreening) {
     int MAX_WEAK_PAIRS = options_.get_int("TRIPLES_MAX_WEAK_PAIRS");
 
     if (prescreening) {
+        ijk_to_i_j_k_.clear();
+
         int ijk = 0;
         // Every pair contains at least two strong pairs
         for (int ij = 0; ij < n_lmo_pairs; ij++) {
@@ -257,12 +259,10 @@ void DLPNOCCSD_T::triples_sparsity(bool prescreening) {
         // if any PAO on an atom is in the list, we take all of the PAOs on that atom
         lmo_to_paos[i] = contract_lists(lmo_to_paos_temp, atom_to_bf_);
     }
-
-    if (!prescreening) {
-        lmotriplet_to_ribfs_.clear();
-        lmotriplet_to_lmos_.clear();
-        lmotriplet_to_paos_.clear();
-    }
+    
+    lmotriplet_to_ribfs_.clear();
+    lmotriplet_to_lmos_.clear();
+    lmotriplet_to_paos_.clear();
 
     lmotriplet_to_ribfs_.resize(n_lmo_triplets);
     lmotriplet_to_lmos_.resize(n_lmo_triplets);
@@ -1382,7 +1382,7 @@ double DLPNOCCSD_T::compute_energy() {
         e_lccsd_t_ += dE_T;
     }
 
-    double e_scf = reference_wavefunction_->energy();
+    double e_scf = variables_["SCF TOTAL ENERGY"];
     double e_ccsd_t_corr = e_lccsd_t_ + de_weak_ + de_lmp2_eliminated_ + de_dipole_ + de_pno_total_;
     double e_ccsd_t_total = e_scf + e_ccsd_t_corr;
 
@@ -2481,10 +2481,14 @@ void DLPNOCCSDT::compute_R_iajb_triples(std::vector<SharedMatrix>& R_iajb, std::
 
             // (T1-dressed Fock Matrix) F_kc = [2.0 * (kc|ld) - (kd|lc)] t_{ld}
             Tensor<double, 1> Fkc("Fkc", ntno_ijk);
+            auto Fkc_temp = submatrix_rows_and_cols(*F_lmo_pao_, std::vector<int>(1, k), lmotriplet_to_paos_[ijk]);
+            Fkc_temp = linalg::doublet(Fkc_temp, X_tno_[ijk]);
+            ::memcpy(Fkc.data(), Fkc_temp->get_pointer(), n_tno_[ijk] * sizeof(double));
+
             Tensor<double, 3> K_lckd = K_kvov_list[idx];
             permute(Indices{index::l, index::c, index::d}, &K_lckd, Indices{index::l, index::d, index::c}, K_kvov_list[idx]);
 
-            einsum(0.0, Indices{index::c}, &Fkc, 2.0, Indices{index::l, index::d, index::c}, K_kvov_list[idx], Indices{index::l, index::d}, T_n_ijk_[ijk]);
+            einsum(1.0, Indices{index::c}, &Fkc, 2.0, Indices{index::l, index::d, index::c}, K_kvov_list[idx], Indices{index::l, index::d}, T_n_ijk_[ijk]);
             einsum(1.0, Indices{index::c}, &Fkc, -1.0, Indices{index::l, index::d, index::c}, K_lckd, Indices{index::l, index::d}, T_n_ijk_[ijk]);
 
             auto U_ijk = U_iajbkc_[ijk];
@@ -3051,8 +3055,13 @@ void DLPNOCCSDT::compute_R_iajbkc(std::vector<SharedMatrix>& R_iajbkc) {
 
         // => F_ld (this is scoped to ensure that the intermediate tensors are not persistent in memory <= //
         Tensor<double, 2> F_ld("F_ld", nlmo_ijk, ntno_ijk); {
+            // F_ld (semicanonical in case Brueckner orbitals are used)
+            auto F_ld_temp = submatrix_rows_and_cols(*F_lmo_pao_, lmotriplet_to_lmos_[ijk], lmotriplet_to_paos_[ijk]);
+            F_ld_temp = linalg::doublet(F_ld_temp, X_tno_[ijk]);
+            ::memcpy(F_ld.data(), F_ld_temp->get_pointer(), nlmo_ijk * ntno_ijk * sizeof(double));
+
             // J contractions
-            einsum(0.0, Indices{index::l, index::d}, &F_ld, 2.0, Indices{index::Q, index::l, index::d}, q_ov_[ijk], Indices{index::Q}, gamma_Q);
+            einsum(1.0, Indices{index::l, index::d}, &F_ld, 2.0, Indices{index::Q, index::l, index::d}, q_ov_[ijk], Indices{index::Q}, gamma_Q);
             
             // K contractions
             Tensor<double, 3> F_ld_K_temp("F_ld_K_temp", naux_ijk, nlmo_ijk, nlmo_ijk);
@@ -4028,7 +4037,7 @@ void DLPNOCCSDT::lccsdt_iterations() {
     }
 }
 
-double DLPNOCCSDT::compute_energy() {
+double DLPNOCCSDT::compute_dlpno_ccsdt_energy() {
 
     // Run DLPNO-CCSD(T) as initial step
     double E_DLPNO_CCSD_T = DLPNOCCSD_T::compute_energy();
@@ -4181,6 +4190,91 @@ double DLPNOCCSDT::compute_energy() {
     print_results();
 
     return e_ccsdt_total;
+}
+
+double DLPNOCCSDT::compute_energy() {
+
+    if (brueckner_orbs_ && options_.get_str("DLPNO_BRUECKNER_LEVEL") == "TRIPLES") {
+        // Rank information
+        int nbf = basisset_->nbf();
+        int naocc = nalpha_ - nfrzc();
+        int nvirt = nbf - nalpha_;
+
+        // After the initial set of T1s are computed, rotate the orbitals and recompute everything until convergence
+        bool brueckner_converged = false;
+        int iteration = 0;
+        double T1_max = 1.0;
+        const int BRUECKNER_MAXITER = options_.get_int("BRUECKNER_MAXITER");
+        const double BRUECKNER_R_CONV = options_.get_double("BRUECKNER_ORBS_R_CONVERGENCE");
+
+        // kappa_ia used for the rotation, kappa_ao is kappa_ia in AO
+        SharedMatrix kappa_ia_old = std::make_shared<Matrix>("kappa_ia_old", naocc, nvirt);
+        SharedMatrix kappa_ia = std::make_shared<Matrix>("kappa_ia", naocc, nvirt);
+        SharedMatrix diis_error = std::make_shared<Matrix>("diis_error", naocc, nvirt);
+
+        double e_dlpno_ccsdt = 0.0;
+
+        while (!brueckner_converged) {
+            outfile->Printf("\n  ===> (Triples) Brueckner Orbital Optimization Iteration %d <===\n\n", iteration);
+
+            e_dlpno_ccsdt = compute_dlpno_ccsdt_energy();
+
+            // Canonicalize PAOs (to create T1-error matrix)
+            SharedMatrix X_pao_canon;  // canonical transformation of this domain's PAOs to
+            SharedVector e_pao_canon;  // energies of the canonical PAOs
+            std::tie(X_pao_canon, e_pao_canon) = orthocanonicalizer(S_pao_, F_pao_);
+
+            double alpha = 1.0;
+
+    #pragma omp parallel for
+            for (int i = 0; i < C_lmo_->ncol(); ++i) { // occupied MOs
+                int ii = i_j_to_ij_[i][i];
+                auto S_pao_pno = submatrix_cols(*S_pao_, lmopair_to_paos_[ii]);
+                S_pao_pno = linalg::triplet(X_pao_canon, S_pao_pno, X_pno_[ii], true, false, false);
+                auto T1_chud = linalg::doublet(S_pao_pno, T_ia_[i]);
+                for (int a = 0; a < X_pao_canon->ncol(); ++a) {
+                    (*kappa_ia)(i, a) = alpha * (*T1_chud)(a, 0) + (1 - alpha) * (*kappa_ia_old)(i, a);
+                } // end a
+            } // end i
+
+            kappa_ia_old = kappa_ia->clone();
+
+            delta_D_ao_->subtract(linalg::doublet(C_lmo_, C_lmo_, false, true));
+
+            // Compute max T1
+            T1_max = 0.0;
+            for (int i = 0; i < T_ia_.size(); ++i) {
+                T1_max = std::max(T1_max, T_ia_[i]->absmax());
+            }
+
+            outfile->Printf("\n    (Triples) Brueckner Iteration %d: Energy = %16.12f, Max R1 = %10.3e\n", iteration, e_dlpno_ccsdt, T1_max);
+
+            if (fabs(T1_max) < BRUECKNER_R_CONV) {
+                brueckner_converged = true;
+                outfile->Printf("    (Triples) Brueckner orbital optimization converged in %d iterations!\n", iteration);
+            } else if (iteration >= BRUECKNER_MAXITER) {
+                outfile->Printf("    WARNING: (Triples) Brueckner orbital optimization did not converge in %d iterations! Max R1 = %10.3e\n", iteration, T1_max);
+                break;
+            }
+
+            // > BRUECKNER OPTIMIZATION < //
+
+            // Set brueckner orbitals iteration control to true
+            brueckner_iter_ = true;
+
+            // Get new set of Brueckner orbitals through T1-rotations
+            brueckner_rotation(kappa_ia);
+
+            // Recanonicalize LMOs after rotation
+            lmo_canonicalize();
+
+            iteration++;
+        }
+        return e_dlpno_ccsdt;
+
+    } else {
+        return compute_dlpno_ccsdt_energy();
+    }
 }
 
 void DLPNOCCSDT::print_results() {

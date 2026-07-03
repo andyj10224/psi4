@@ -2726,7 +2726,7 @@ double DLPNOCCSD::compute_dlpno_ccsd_energy() {
 
 double DLPNOCCSD::compute_energy() {
 
-    if (brueckner_orbs_) {
+    if (brueckner_orbs_ && options_.get_str("DLPNO_BRUECKNER_LEVEL") == "DOUBLES") {
         // Rank information
         int nbf = basisset_->nbf();
         int naocc = nalpha_ - nfrzc();
