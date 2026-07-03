@@ -2376,8 +2376,13 @@ void DLPNOCCSDTQ::compute_R_iajbkc_quads(std::vector<SharedMatrix>& R_iajbkc) {
 
         // => F_ld (this is scoped to ensure that the intermediate tensors are not persistent in memory <= //
         Tensor<double, 2> F_ld("F_ld", nlmo_ijk, ntno_ijk); {
+            // F_ld (semicanonical in case Brueckner orbitals are used)
+            auto F_ld_temp = submatrix_rows_and_cols(*F_lmo_pao_, lmotriplet_to_lmos_[ijk], lmotriplet_to_paos_[ijk]);
+            F_ld_temp = linalg::doublet(F_ld_temp, X_tno_[ijk]);
+            ::memcpy(F_ld.data(), F_ld_temp->get_pointer(), nlmo_ijk * ntno_ijk * sizeof(double));
+
             // J contractions
-            einsum(0.0, Indices{index::l, index::d}, &F_ld, 2.0, Indices{index::Q, index::l, index::d}, q_ov_[ijk], Indices{index::Q}, gamma_Q);
+            einsum(1.0, Indices{index::l, index::d}, &F_ld, 2.0, Indices{index::Q, index::l, index::d}, q_ov_[ijk], Indices{index::Q}, gamma_Q);
             
             // K contractions
             Tensor<double, 3> F_ld_K_temp("F_ld_K_temp", naux_ijk, nlmo_ijk, nlmo_ijk);
@@ -2784,8 +2789,13 @@ void DLPNOCCSDTQ::compute_R_iajbkcld(std::vector<Tensor<double, 4>>& R_iajbkcld)
 
         // F_me (this is scoped to ensure that the intermediate tensors are not persistent in memory)
         Tensor<double, 2> F_me("F_me", nlmo_ijkl, nqno_ijkl); {
+            // F_me (semicanonical in case Brueckner orbitals are used)
+            auto F_me_temp = submatrix_rows_and_cols(*F_lmo_pao_, lmoquadruplet_to_lmos_[ijkl], lmoquadruplet_to_paos_[ijkl]);
+            F_me_temp = linalg::doublet(F_me_temp, X_qno_[ijkl]);
+            ::memcpy(F_me.data(), F_me_temp->get_pointer(), nlmo_ijkl * nqno_ijkl * sizeof(double));
+
             // J contractions
-            einsum(0.0, Indices{index::m, index::e}, &F_me, 2.0, Indices{index::Q, index::m, index::e}, q_ov, Indices{index::Q}, gamma_Q);
+            einsum(1.0, Indices{index::m, index::e}, &F_me, 2.0, Indices{index::Q, index::m, index::e}, q_ov, Indices{index::Q}, gamma_Q);
             
             // K contractions (rc|ks)t_{k}^{c} ... (mf|ne) t_{n}^{f}
             Tensor<double, 3> F_me_K_temp("F_me_K_temp", naux_ijkl, nlmo_ijkl, nlmo_ijkl);
@@ -4150,28 +4160,26 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
         } // end miter
 
         // Normalize error vectors before extrapolation
-        /*
 #pragma omp parallel for
         for (int i = 0; i < naocc; ++i) {
             int ii = i_j_to_ij_[i][i];
-            R_ia[i]->scale(1.0 / std::sqrt((double) naocc * n_pno_[ii]));
+            R_ia[i]->scale(1.0 / std::sqrt((double) n_pno_[ii]));
         }
 
 #pragma omp parallel for
         for (int ij = 0; ij < n_lmo_pairs; ++ij) {
-            R_iajb[ij]->scale(1.0 / std::sqrt((double) n_lmo_pairs * n_pno_[ij] * n_pno_[ij]));
+            R_iajb[ij]->scale(1.0 / std::sqrt((double) n_pno_[ij] * n_pno_[ij]));
         }
 
 #pragma omp parallel for
         for (int ijk = 0; ijk < n_lmo_triplets; ++ijk) {
-            R_iajbkc[ijk]->scale(1.0 / std::sqrt((double) n_lmo_triplets * n_tno_[ijk] * n_tno_[ijk] * n_tno_[ijk]));
+            R_iajbkc[ijk]->scale(1.0 / std::sqrt((double) n_tno_[ijk] * n_tno_[ijk] * n_tno_[ijk]));
         }
 
 #pragma omp parallel for
         for (int ijkl = 0; ijkl < n_lmo_quadruplets; ++ijkl) {
-            R_iajbkcld_psi[ijkl]->scale(1.0 / std::sqrt((double) n_lmo_quadruplets * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl]));
+            R_iajbkcld_psi[ijkl]->scale(1.0 / std::sqrt((double) n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl]));
         }
-        */
 
         // DIIS Extrapolation
         size_t nelements = T_ia_.size() + T_iajb_.size() + T_iajbkc_.size();
