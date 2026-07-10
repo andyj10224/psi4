@@ -3869,6 +3869,16 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
     double e_curr = 0.0, e_prev = 0.0, e_weak = 0.0, r_curr1 = 1.0, r_curr2 = 1.0, r_curr3 = 1.0, r_curr4 = 1.0;
     bool e_converged = false, r_converged = false;
     const int N_MICRO_ITER = options_.get_int("DLPNO_QUADS_MICROITERATIONS");
+
+    const bool QUADRUPLES_T1_SHIFT_CONDITIONAL = options_.get_bool("QUADRUPLES_T1_SHIFT_CONDITIONAL");
+    const bool QUADRUPLES_T2_SHIFT_CONDITIONAL = options_.get_bool("QUADRUPLES_T2_SHIFT_CONDITIONAL");
+    const bool QUADRUPLES_T3_SHIFT_CONDITIONAL = options_.get_bool("QUADRUPLES_T3_SHIFT_CONDITIONAL");
+    const bool QUADRUPLES_T4_SHIFT_CONDITIONAL = options_.get_bool("QUADRUPLES_T4_SHIFT_CONDITIONAL");
+
+    const bool QUADRUPLES_T1_DAMPING_CONDITIONAL = options_.get_bool("QUADRUPLES_T1_DAMPING_CONDITIONAL");
+    const bool QUADRUPLES_T2_DAMPING_CONDITIONAL = options_.get_bool("QUADRUPLES_T2_DAMPING_CONDITIONAL");
+    const bool QUADRUPLES_T3_DAMPING_CONDITIONAL = options_.get_bool("QUADRUPLES_T3_DAMPING_CONDITIONAL");
+    const bool QUADRUPLES_T4_DAMPING_CONDITIONAL = options_.get_bool("QUADRUPLES_T4_DAMPING_CONDITIONAL");
     
     DIISManager diis = DIISManager(options_.get_int("DIIS_MAX_VECS"), "LCCSDTQ DIIS", DIISManager::RemovalPolicy::LargestError, DIISManager::StoragePolicy::OnDisk);
 
@@ -3990,6 +4000,14 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
             // compute quadruples amplitude
             timer_on("DLPNO-CCSDTQ : R_iajbkcld");
             if (miter == 0) {
+                if (iteration == 1 && options_.get_bool("T4_PERTURBATIVE_GUESS") == false) {
+            #pragma omp parallel for schedule(dynamic, 1)
+                    for (int ijkl_sorted = 0; ijkl_sorted < n_lmo_quadruplets; ++ijkl_sorted) {
+                        int ijkl = sorted_quadruplets_[ijkl_sorted];
+                        T_iajbkcld_[ijkl].zero();
+                    } // end for
+                } // end if
+
                 form_T_mnkl();
                 compute_R_iajbkcld(R_iajbkcld);
 
@@ -4011,11 +4029,8 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                     Tensor<double, 4> zero_tensor("zero", n_qno_[ijkl], n_qno_[ijkl], n_qno_[ijkl], n_qno_[ijkl]);
                     zero_tensor.zero();
 
-                    // double alpha = (fabs(rmsd(R_iajbkcld[ijkl], zero_tensor)) > fabs(R_iajbkcld_rms[ijkl])) ? damping_ratio_quads_ : 0.0;
-                    // double delta = (fabs(rmsd(R_iajbkcld[ijkl], zero_tensor)) > fabs(R_iajbkcld_rms[ijkl])) ? level_shift_quads_ : 0.0;
-
-                    double alpha = damping_ratio_quads_;
-                    double delta = (fabs(rmsd(R_iajbkcld[ijkl], zero_tensor)) > fabs(R_iajbkcld_rms[ijkl])) ? level_shift_quads_ : 0.0;
+                    double alpha = (!QUADRUPLES_T4_DAMPING_CONDITIONAL || fabs(rmsd(R_iajbkcld[ijkl], zero_tensor)) > fabs(R_iajbkcld_rms[ijkl])) ? damping_ratio_quads_ : 0.0;
+                    double delta = (!QUADRUPLES_T4_SHIFT_CONDITIONAL || fabs(rmsd(R_iajbkcld[ijkl], zero_tensor)) > fabs(R_iajbkcld_rms[ijkl])) ? level_shift_quads_ : 0.0;
 
                     for (int a = 0; a < n_qno_[ijkl]; ++a) {
                         for (int b = 0; b < n_qno_[ijkl]; ++b) {
@@ -4067,11 +4082,9 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                 for (int ijk_sorted = 0; ijk_sorted < n_lmo_triplets; ++ijk_sorted) {
                     int ijk = sorted_triplets_[ijk_sorted];
                     auto &[i, j, k] = ijk_to_i_j_k_[ijk];
-                    // double alpha = (fabs(R_iajbkc[ijk]->rms()) > fabs(R_iajbkc_rms[ijk])) ? damping_ratio_quads_ : 0.0;
-                    // double delta = (fabs(R_iajbkc[ijk]->rms()) > fabs(R_iajbkc_rms[ijk])) ? level_shift_quads_ : 0.0;
 
-                    double alpha = 0.0;
-                    double delta = 0.0;
+                    double alpha = (!QUADRUPLES_T3_DAMPING_CONDITIONAL || fabs(R_iajbkc[ijk]->rms()) > fabs(R_iajbkc_rms[ijk])) ? damping_ratio_quads_ : 0.0;
+                    double delta = (!QUADRUPLES_T3_SHIFT_CONDITIONAL || fabs(R_iajbkc[ijk]->rms()) > fabs(R_iajbkc_rms[ijk])) ? level_shift_quads_ : 0.0;
 
                     for (int a_ijk = 0; a_ijk < n_tno_[ijk]; ++a_ijk) {
                         for (int b_ijk = 0; b_ijk < n_tno_[ijk]; ++b_ijk) {
@@ -4102,11 +4115,9 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
     #pragma omp parallel for schedule(dynamic, 1) reduction(+ : r_curr2)
             for (int ij = 0; ij < n_lmo_pairs; ++ij) {
                 auto &[i, j] = ij_to_i_j_[ij];
-                // double alpha = (fabs(R_iajb[ij]->rms()) > fabs(R_iajb_rms[ij])) ? damping_ratio_quads_ : 0.0;
-                // double delta = (fabs(R_iajb[ij]->rms()) > fabs(R_iajb_rms[ij])) ? level_shift_quads_ : 0.0;
 
-                double alpha = 0.0;
-                double delta = 0.0;
+                double alpha = (!QUADRUPLES_T2_DAMPING_CONDITIONAL || fabs(R_iajb[ij]->rms()) > fabs(R_iajb_rms[ij])) ? damping_ratio_quads_ : 0.0;
+                double delta = (!QUADRUPLES_T2_SHIFT_CONDITIONAL || fabs(R_iajb[ij]->rms()) > fabs(R_iajb_rms[ij])) ? level_shift_quads_ : 0.0;
 
                 for (int a_ij = 0; a_ij < n_pno_[ij]; ++a_ij) {
                     for (int b_ij = 0; b_ij < n_pno_[ij]; ++b_ij) {
@@ -4133,10 +4144,8 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
     #pragma omp parallel for reduction(+ : r_curr1)
             for (int i = 0; i < naocc; ++i) {
                 int ii = i_j_to_ij_[i][i];
-                // double alpha = (fabs(R_ia[i]->rms()) > fabs(R_ia_rms[i])) ? damping_ratio_quads_ : 0.0;
-                // double delta = (fabs(R_ia[i]->rms()) > fabs(R_ia_rms[i])) ? level_shift_quads_ : 0.0;
-                double alpha = 0.0;
-                double delta = 0.0;
+                double alpha = (!QUADRUPLES_T1_DAMPING_CONDITIONAL || fabs(R_ia[i]->rms()) > fabs(R_ia_rms[i])) ? damping_ratio_quads_ : 0.0;
+                double delta = (!QUADRUPLES_T1_SHIFT_CONDITIONAL || fabs(R_ia[i]->rms()) > fabs(R_ia_rms[i])) ? level_shift_quads_ : 0.0;
 
                 for (int a_ii = 0; a_ii < n_pno_[ii]; ++a_ii) {
                     (*T_ia_[i])(a_ii, 0) -= (1.0 - alpha) * (*R_ia[i])(a_ii, 0) / (e_pno_[ii]->get(a_ii) - F_lmo_->get(i,i) + delta);
@@ -4150,28 +4159,26 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
         } // end miter
 
         // Normalize error vectors before extrapolation
-        /*
 #pragma omp parallel for
         for (int i = 0; i < naocc; ++i) {
             int ii = i_j_to_ij_[i][i];
-            R_ia[i]->scale(1.0 / std::sqrt((double) naocc * n_pno_[ii]));
+            R_ia[i]->scale(1.0 / std::sqrt((double) n_pno_[ii]));
         }
 
 #pragma omp parallel for
         for (int ij = 0; ij < n_lmo_pairs; ++ij) {
-            R_iajb[ij]->scale(1.0 / std::sqrt((double) n_lmo_pairs * n_pno_[ij] * n_pno_[ij]));
+            R_iajb[ij]->scale(1.0 / std::sqrt((double) n_pno_[ij] * n_pno_[ij]));
         }
 
 #pragma omp parallel for
         for (int ijk = 0; ijk < n_lmo_triplets; ++ijk) {
-            R_iajbkc[ijk]->scale(1.0 / std::sqrt((double) n_lmo_triplets * n_tno_[ijk] * n_tno_[ijk] * n_tno_[ijk]));
+            R_iajbkc[ijk]->scale(1.0 / std::sqrt((double) n_tno_[ijk] * n_tno_[ijk] * n_tno_[ijk]));
         }
 
 #pragma omp parallel for
         for (int ijkl = 0; ijkl < n_lmo_quadruplets; ++ijkl) {
-            R_iajbkcld_psi[ijkl]->scale(1.0 / std::sqrt((double) n_lmo_quadruplets * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl]));
+            R_iajbkcld_psi[ijkl]->scale(1.0 / std::sqrt((double) n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl]));
         }
-        */
 
         // DIIS Extrapolation
         size_t nelements = T_ia_.size() + T_iajb_.size() + T_iajbkc_.size();

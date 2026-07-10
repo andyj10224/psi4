@@ -2758,11 +2758,29 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         /*- Occupation trace sum threshold for removing XPNOs !expert -*/
         options.add_double("T_CUT_TRACE_XPNO", 0.0);
         /*- Number of T1/T2 microiteration updates per Full Q iteration 
-            (increase this value for highly multireference systems) !expert -*/
+            (decrease this value for highly multireference systems) !expert -*/
         options.add_double("DLPNO_QUADS_MICROITERATIONS", 3);
-        /*- Damping factor on R4 amplitude updates in CCSDTQ iterations !expert -*/
+        /*- T1 level shift conditional for DLPNO-CCSDTQ !expert -*/
+        options.add_bool("QUADRUPLES_T1_SHIFT_CONDITIONAL", false);
+        /*- T2 level shift conditional for DLPNO-CCSDTQ !expert -*/
+        options.add_bool("QUADRUPLES_T2_SHIFT_CONDITIONAL", false);
+        /*- T3 level shift conditional for DLPNO-CCSDTQ !expert -*/
+        options.add_bool("QUADRUPLES_T3_SHIFT_CONDITIONAL", false);
+        /*- T4 level shift conditional for DLPNO-CCSDTQ !expert -*/
+        options.add_bool("QUADRUPLES_T4_SHIFT_CONDITIONAL", false);
+        /*- T1 damping conditional for DLPNO-CCSDTQ !expert -*/
+        options.add_bool("QUADRUPLES_T1_DAMPING_CONDITIONAL", true);
+        /*- T2 damping conditional for DLPNO-CCSDTQ !expert -*/
+        options.add_bool("QUADRUPLES_T2_DAMPING_CONDITIONAL", true);
+        /*- T3 damping shift conditional for DLPNO-CCSDTQ !expert -*/
+        options.add_bool("QUADRUPLES_T3_DAMPING_CONDITIONAL", true);
+        /*- T4 damping shift conditional for DLPNO-CCSDTQ !expert -*/
+        options.add_bool("QUADRUPLES_T4_DAMPING_CONDITIONAL", true);
+        /*- Use (Q) amplitudes as initial T4 guess in DLPNO-CCSDTQ? (set to false for highly MR systems) !expert -*/
+        options.add_bool("T4_PERTURBATIVE_GUESS", true);
+        /*- Damping factor on amplitude updates in CCSDTQ iterations !expert -*/
         options.add_double("QUADRUPLES_DAMPING_RATIO", 0.0);
-        /*- Level shift on R4 amplitude denominators in CCSDTQ iterations (for when R does not improve) !expert -*/
+        /*- Level shift on amplitude denominators in CCSDTQ iterations !expert -*/
         options.add_double("QUADRUPLES_LEVEL_SHIFT", 0.0);
 
         /*- SUBSECTION Memory Control Options -*/
