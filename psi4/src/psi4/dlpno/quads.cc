@@ -3876,7 +3876,18 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
     outfile->Printf("\n  ==> Local CCSDTQ <==\n\n");
     
     outfile->Printf("    E_CONVERGENCE = %.2e\n", options_.get_double("E_CONVERGENCE"));
-    outfile->Printf("    R_CONVERGENCE = %.2e\n\n", options_.get_double("R_CONVERGENCE"));
+    outfile->Printf("    R_CONVERGENCE = %.2e\n", options_.get_double("R_CONVERGENCE"));
+    if (options_.get_double("QUADRUPLES_DAMPING_RATIO") != 0.0 || options_.get_double("QUADRUPLES_LEVEL_SHIFT") != 0.0) {
+        outfile->Printf("    STABILIZER CUTOFFS (T1-T4) = %.2e %.2e %.2e %.2e\n",
+                        options_.get_double("QUADRUPLES_T1_STABILIZER_CUTOFF"),
+                        options_.get_double("QUADRUPLES_T2_STABILIZER_CUTOFF"),
+                        options_.get_double("QUADRUPLES_T3_STABILIZER_CUTOFF"),
+                        options_.get_double("QUADRUPLES_T4_STABILIZER_CUTOFF"));
+    }
+    if (options_.get_int("DLPNO_DIIS_RESET_WINDOW") > 0) {
+        outfile->Printf("    DIIS RESET WINDOW = %d\n", options_.get_int("DLPNO_DIIS_RESET_WINDOW"));
+    }
+    outfile->Printf("\n");
     outfile->Printf("                        Corr. Energy    Delta E    RMS R1     RMS R2     RMS R3     RMS R4     Time (s)\n");
 
     int iteration = 1, max_iteration = options_.get_int("DLPNO_MAXITER");
@@ -3893,6 +3904,20 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
     const bool QUADRUPLES_T2_DAMPING_CONDITIONAL = options_.get_bool("QUADRUPLES_T2_DAMPING_CONDITIONAL");
     const bool QUADRUPLES_T3_DAMPING_CONDITIONAL = options_.get_bool("QUADRUPLES_T3_DAMPING_CONDITIONAL");
     const bool QUADRUPLES_T4_DAMPING_CONDITIONAL = options_.get_bool("QUADRUPLES_T4_DAMPING_CONDITIONAL");
+
+    const double T1_STABILIZER_CUTOFF = options_.get_double("QUADRUPLES_T1_STABILIZER_CUTOFF");
+    const double T2_STABILIZER_CUTOFF = options_.get_double("QUADRUPLES_T2_STABILIZER_CUTOFF");
+    const double T3_STABILIZER_CUTOFF = options_.get_double("QUADRUPLES_T3_STABILIZER_CUTOFF");
+    const double T4_STABILIZER_CUTOFF = options_.get_double("QUADRUPLES_T4_STABILIZER_CUTOFF");
+
+    const int DIIS_RESET_WINDOW = options_.get_int("DLPNO_DIIS_RESET_WINDOW");
+
+    // Stabilizer state per amplitude class (to print notices on change only),
+    // and stall tracking for the DIIS subspace reset (stall_best_rmax < 0
+    // means "not yet initialized")
+    bool stab_prev_t1 = true, stab_prev_t2 = true, stab_prev_t3 = true, stab_prev_t4 = true;
+    double stall_best_rmax = -1.0;
+    int stall_count = 0;
     
     DIISManager diis = DIISManager(options_.get_int("DIIS_MAX_VECS"), "LCCSDTQ DIIS", DIISManager::RemovalPolicy::LargestError, DIISManager::StoragePolicy::OnDisk);
 
@@ -3909,6 +3934,52 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
     }
 
     while (!(e_converged && r_converged)) {
+        // => Phase-dependent stabilizers <= //
+        // Damping (alpha) and level shifting (delta) suppress the
+        // large-amplitude transient of the early iterations, but near
+        // convergence they only slow the softest modes: a mode with Jacobi
+        // multiplier m is mapped to alpha + (1-alpha)*m, and its denominator
+        // is inflated by delta. Disable them per amplitude class once that
+        // class's RMS residual from the previous macroiteration falls below
+        // its cutoff; they re-engage if the residual rises back above it.
+        // A cutoff of 0.0 keeps the stabilizers active throughout.
+        const bool stab_t1 = fabs(r_curr1) >= T1_STABILIZER_CUTOFF;
+        const bool stab_t2 = fabs(r_curr2) >= T2_STABILIZER_CUTOFF;
+        const bool stab_t3 = fabs(r_curr3) >= T3_STABILIZER_CUTOFF;
+        const bool stab_t4 = fabs(r_curr4) >= T4_STABILIZER_CUTOFF;
+
+        const double damping_t1 = stab_t1 ? damping_ratio_quads_ : 0.0;
+        const double shift_t1 = stab_t1 ? level_shift_quads_ : 0.0;
+        const double damping_t2 = stab_t2 ? damping_ratio_quads_ : 0.0;
+        const double shift_t2 = stab_t2 ? level_shift_quads_ : 0.0;
+        const double damping_t3 = stab_t3 ? damping_ratio_quads_ : 0.0;
+        const double shift_t3 = stab_t3 ? level_shift_quads_ : 0.0;
+        const double damping_t4 = stab_t4 ? damping_ratio_quads_ : 0.0;
+        const double shift_t4 = stab_t4 ? level_shift_quads_ : 0.0;
+
+        if (damping_ratio_quads_ != 0.0 || level_shift_quads_ != 0.0) {
+            if (stab_t1 != stab_prev_t1) {
+                outfile->Printf("    Damping/level shift %s for T1 updates (RMS R1 = %.3e, cutoff = %.3e)\n",
+                                stab_t1 ? "re-enabled" : "disabled", r_curr1, T1_STABILIZER_CUTOFF);
+            }
+            if (stab_t2 != stab_prev_t2) {
+                outfile->Printf("    Damping/level shift %s for T2 updates (RMS R2 = %.3e, cutoff = %.3e)\n",
+                                stab_t2 ? "re-enabled" : "disabled", r_curr2, T2_STABILIZER_CUTOFF);
+            }
+            if (stab_t3 != stab_prev_t3) {
+                outfile->Printf("    Damping/level shift %s for T3 updates (RMS R3 = %.3e, cutoff = %.3e)\n",
+                                stab_t3 ? "re-enabled" : "disabled", r_curr3, T3_STABILIZER_CUTOFF);
+            }
+            if (stab_t4 != stab_prev_t4) {
+                outfile->Printf("    Damping/level shift %s for T4 updates (RMS R4 = %.3e, cutoff = %.3e)\n",
+                                stab_t4 ? "re-enabled" : "disabled", r_curr4, T4_STABILIZER_CUTOFF);
+            }
+        }
+        stab_prev_t1 = stab_t1;
+        stab_prev_t2 = stab_t2;
+        stab_prev_t3 = stab_t3;
+        stab_prev_t4 = stab_t4;
+
         // RMS of residual per LMO orbital, for assessing convergence
         std::vector<double> R_ia_rms(naocc, 0.0);
         // RMS of residual per LMO pair, for assessing convergence
@@ -4073,8 +4144,8 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                     Tensor<double, 4> zero_tensor("zero", n_qno_[ijkl], n_qno_[ijkl], n_qno_[ijkl], n_qno_[ijkl]);
                     zero_tensor.zero();
 
-                    double alpha = (!QUADRUPLES_T4_DAMPING_CONDITIONAL || fabs(rmsd(R_iajbkcld[ijkl], zero_tensor)) > fabs(R_iajbkcld_rms[ijkl])) ? damping_ratio_quads_ : 0.0;
-                    double delta = (!QUADRUPLES_T4_SHIFT_CONDITIONAL || fabs(rmsd(R_iajbkcld[ijkl], zero_tensor)) > fabs(R_iajbkcld_rms[ijkl])) ? level_shift_quads_ : 0.0;
+                    double alpha = (!QUADRUPLES_T4_DAMPING_CONDITIONAL || fabs(rmsd(R_iajbkcld[ijkl], zero_tensor)) > fabs(R_iajbkcld_rms[ijkl])) ? damping_t4 : 0.0;
+                    double delta = (!QUADRUPLES_T4_SHIFT_CONDITIONAL || fabs(rmsd(R_iajbkcld[ijkl], zero_tensor)) > fabs(R_iajbkcld_rms[ijkl])) ? shift_t4 : 0.0;
 
                     for (int a = 0; a < n_qno_[ijkl]; ++a) {
                         for (int b = 0; b < n_qno_[ijkl]; ++b) {
@@ -4127,8 +4198,8 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                     int ijk = sorted_triplets_[ijk_sorted];
                     auto &[i, j, k] = ijk_to_i_j_k_[ijk];
 
-                    double alpha = (!QUADRUPLES_T3_DAMPING_CONDITIONAL || fabs(R_iajbkc[ijk]->rms()) > fabs(R_iajbkc_rms[ijk])) ? damping_ratio_quads_ : 0.0;
-                    double delta = (!QUADRUPLES_T3_SHIFT_CONDITIONAL || fabs(R_iajbkc[ijk]->rms()) > fabs(R_iajbkc_rms[ijk])) ? level_shift_quads_ : 0.0;
+                    double alpha = (!QUADRUPLES_T3_DAMPING_CONDITIONAL || fabs(R_iajbkc[ijk]->rms()) > fabs(R_iajbkc_rms[ijk])) ? damping_t3 : 0.0;
+                    double delta = (!QUADRUPLES_T3_SHIFT_CONDITIONAL || fabs(R_iajbkc[ijk]->rms()) > fabs(R_iajbkc_rms[ijk])) ? shift_t3 : 0.0;
 
                     for (int a_ijk = 0; a_ijk < n_tno_[ijk]; ++a_ijk) {
                         for (int b_ijk = 0; b_ijk < n_tno_[ijk]; ++b_ijk) {
@@ -4160,8 +4231,8 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
             for (int ij = 0; ij < n_lmo_pairs; ++ij) {
                 auto &[i, j] = ij_to_i_j_[ij];
 
-                double alpha = (!QUADRUPLES_T2_DAMPING_CONDITIONAL || fabs(R_iajb[ij]->rms()) > fabs(R_iajb_rms[ij])) ? damping_ratio_quads_ : 0.0;
-                double delta = (!QUADRUPLES_T2_SHIFT_CONDITIONAL || fabs(R_iajb[ij]->rms()) > fabs(R_iajb_rms[ij])) ? level_shift_quads_ : 0.0;
+                double alpha = (!QUADRUPLES_T2_DAMPING_CONDITIONAL || fabs(R_iajb[ij]->rms()) > fabs(R_iajb_rms[ij])) ? damping_t2 : 0.0;
+                double delta = (!QUADRUPLES_T2_SHIFT_CONDITIONAL || fabs(R_iajb[ij]->rms()) > fabs(R_iajb_rms[ij])) ? shift_t2 : 0.0;
 
                 for (int a_ij = 0; a_ij < n_pno_[ij]; ++a_ij) {
                     for (int b_ij = 0; b_ij < n_pno_[ij]; ++b_ij) {
@@ -4188,8 +4259,8 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
     #pragma omp parallel for reduction(+ : r_curr1)
             for (int i = 0; i < naocc; ++i) {
                 int ii = i_j_to_ij_[i][i];
-                double alpha = (!QUADRUPLES_T1_DAMPING_CONDITIONAL || fabs(R_ia[i]->rms()) > fabs(R_ia_rms[i])) ? damping_ratio_quads_ : 0.0;
-                double delta = (!QUADRUPLES_T1_SHIFT_CONDITIONAL || fabs(R_ia[i]->rms()) > fabs(R_ia_rms[i])) ? level_shift_quads_ : 0.0;
+                double alpha = (!QUADRUPLES_T1_DAMPING_CONDITIONAL || fabs(R_ia[i]->rms()) > fabs(R_ia_rms[i])) ? damping_t1 : 0.0;
+                double delta = (!QUADRUPLES_T1_SHIFT_CONDITIONAL || fabs(R_ia[i]->rms()) > fabs(R_ia_rms[i])) ? shift_t1 : 0.0;
 
                 for (int a_ii = 0; a_ii < n_pno_[ii]; ++a_ii) {
                     (*T_ia_[i])(a_ii, 0) -= (1.0 - alpha) * (*R_ia[i])(a_ii, 0) / (e_pno_[ii]->get(a_ii) - F_lmo_->get(i,i) + delta);
@@ -4201,6 +4272,27 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
             timer_off("DLPNO-CCSDTQ : R_ia");
 
         } // end miter
+
+        // => Stall-triggered DIIS subspace reset <= //
+        // If the maximum RMS residual has not improved over the last
+        // DIIS_RESET_WINDOW macroiterations, discard the accumulated DIIS
+        // history: a stalled subspace is dominated by directions that carry
+        // no further information about the slow modes, and extrapolations
+        // built from it can pin the iterate. The current iteration's
+        // (T, e) pair, stored below, seeds the fresh subspace.
+        if (DIIS_RESET_WINDOW > 0) {
+            double r_max = std::max(std::max(fabs(r_curr1), fabs(r_curr2)), std::max(fabs(r_curr3), fabs(r_curr4)));
+            if (stall_best_rmax < 0.0 || r_max < stall_best_rmax) {
+                stall_best_rmax = r_max;
+                stall_count = 0;
+            } else if (++stall_count >= DIIS_RESET_WINDOW) {
+                outfile->Printf("    DIIS subspace reset at iteration %d (no reduction in max RMS residual over %d iterations)\n",
+                                iteration, DIIS_RESET_WINDOW);
+                diis.reset_subspace();
+                stall_best_rmax = r_max;
+                stall_count = 0;
+            }
+        }
 
         // => Build DIIS error vectors <= //
         // The raw residuals accumulated above are evaluated at different points

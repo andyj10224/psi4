@@ -2782,6 +2782,32 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_double("QUADRUPLES_DAMPING_RATIO", 0.0);
         /*- Level shift on amplitude denominators in CCSDTQ iterations !expert -*/
         options.add_double("QUADRUPLES_LEVEL_SHIFT", 0.0);
+        /*- RMS residual threshold below which damping and level shifting are
+            disabled for the T1 amplitude updates in the local CCSDTQ iterations.
+            The stabilizers suppress the large-amplitude transient of the early
+            iterations but only slow the softest modes near convergence, so they
+            are switched off per amplitude class once that class's RMS residual
+            from the previous macroiteration falls below this cutoff (and
+            re-engage if it rises back above). Set to 0.0 to keep the
+            stabilizers active throughout. !expert -*/
+        options.add_double("QUADRUPLES_T1_STABILIZER_CUTOFF", 1.0e-4);
+        /*- RMS residual threshold below which damping and level shifting are
+            disabled for the T2 amplitude updates in the local CCSDTQ
+            iterations. See |globals__quadruples_t1_stabilizer_cutoff|. !expert -*/
+        options.add_double("QUADRUPLES_T2_STABILIZER_CUTOFF", 1.0e-4);
+        /*- RMS residual threshold below which damping and level shifting are
+            disabled for the T3 amplitude updates in the local CCSDTQ
+            iterations. See |globals__quadruples_t1_stabilizer_cutoff|. !expert -*/
+        options.add_double("QUADRUPLES_T3_STABILIZER_CUTOFF", 1.0e-4);
+        /*- RMS residual threshold below which damping and level shifting are
+            disabled for the T4 amplitude updates in the local CCSDTQ
+            iterations. See |globals__quadruples_t1_stabilizer_cutoff|. !expert -*/
+        options.add_double("QUADRUPLES_T4_STABILIZER_CUTOFF", 1.0e-4);
+        /*- Number of consecutive local CCSDTQ iterations without a reduction
+            in the maximum RMS residual after which the DIIS subspace is reset
+            (a notice is printed each time). Set to 0 to disable
+            stall-triggered resets. !expert -*/
+        options.add_int("DLPNO_DIIS_RESET_WINDOW", 10);
 
         /*- SUBSECTION Memory Control Options -*/
 
