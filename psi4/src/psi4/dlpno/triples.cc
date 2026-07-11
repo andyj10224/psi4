@@ -3695,22 +3695,33 @@ void DLPNOCCSDT::lccsdt_iterations() {
     std::vector<SharedMatrix> R_iajb(n_lmo_pairs);
     std::vector<SharedMatrix> R_iajbkc(n_lmo_triplets);
 
+    // Amplitude snapshots taken at the start of each macroiteration.
+    // Used to build the DIIS error vector as the actual step of the full
+    // sweep, e_n = T_(n+1) - T_n (Pulay/Anderson pairing); see the comment
+    // above the DIIS extrapolation block below.
+    std::vector<SharedMatrix> T_ia_old(naocc);
+    std::vector<SharedMatrix> T_iajb_old(n_lmo_pairs);
+    std::vector<SharedMatrix> T_iajbkc_old(n_lmo_triplets);
+
 #pragma omp parallel for
     for (int i = 0; i < naocc; ++i) {
         int ii = i_j_to_ij_[i][i];
         R_ia[i] = std::make_shared<Matrix>(n_pno_[ii], 1);
+        T_ia_old[i] = std::make_shared<Matrix>(n_pno_[ii], 1);
     }
 
 #pragma omp parallel for
     for (int ij = 0; ij < n_lmo_pairs; ++ij) {
         R_iajb[ij] = std::make_shared<Matrix>(n_pno_[ij], n_pno_[ij]);
         Rn_iajb[ij] = std::make_shared<Matrix>(n_pno_[ij], n_pno_[ij]);
+        T_iajb_old[ij] = std::make_shared<Matrix>(n_pno_[ij], n_pno_[ij]);
     }
 
 #pragma omp parallel for
     for (int ijk_sorted = 0; ijk_sorted < n_lmo_triplets; ++ijk_sorted) {
         int ijk = sorted_triplets_[ijk_sorted];
         R_iajbkc[ijk] = std::make_shared<Matrix>(n_tno_[ijk], n_tno_[ijk] * n_tno_[ijk]);
+        T_iajbkc_old[ijk] = std::make_shared<Matrix>(n_tno_[ijk], n_tno_[ijk] * n_tno_[ijk]);
     }
 
     std::vector<std::vector<SharedMatrix>> R_ia_buffer(nthreads);
@@ -3760,6 +3771,24 @@ void DLPNOCCSDT::lccsdt_iterations() {
         std::vector<double> R_iajbkc_rms(n_lmo_triplets, 0.0);
 
         std::time_t time_start = std::time(nullptr);
+
+        // => Snapshot amplitudes at the start of the macroiteration <= //
+        // This is the input point of the sweep map; the DIIS error vector is
+        // formed below as the difference against the post-sweep amplitudes.
+#pragma omp parallel for
+        for (int i = 0; i < naocc; ++i) {
+            T_ia_old[i]->copy(T_ia_[i]);
+        }
+
+#pragma omp parallel for
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            T_iajb_old[ij]->copy(T_iajb_[ij]);
+        }
+
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int ijk = 0; ijk < n_lmo_triplets; ++ijk) {
+            T_iajbkc_old[ijk]->copy(T_iajbkc_[ijk]);
+        }
 
         for (int miter = 0; miter < N_MICRO_ITER; ++miter) {
 
@@ -3924,6 +3953,40 @@ void DLPNOCCSDT::lccsdt_iterations() {
             r_curr1 = std::sqrt(r_curr1 / naocc); 
             timer_off("DLPNO-CCSDT : R_ia");
         } // end miter
+
+        // => Build DIIS error vectors <= //
+        // The raw residuals accumulated above are evaluated at different points
+        // within the Gauss-Seidel sweep (R3 at the pre-sweep amplitudes, R2/R1
+        // after the T3 update and any microiterations), so no single amplitude
+        // vector corresponds to the composite [R1,R2,R3]. Pairing those
+        // residuals with the post-sweep amplitudes corrupts the secant
+        // (Jacobian) information DIIS extracts from the history, and can
+        // stabilize oscillatory (period-2) modes instead of extrapolating them
+        // away. Instead, use the actual step taken by the full macroiteration
+        // sweep,
+        //     e_n = T_(n+1) - T_n   (Pulay/Anderson pairing),
+        // which is exactly consistent with the stored amplitude vector by
+        // construction -- independent of update ordering, microiterations,
+        // damping, and level shifts -- and vanishes if and only if the sweep
+        // has reached its fixed point. The true residual norms (r_curr1-3) are
+        // unaffected and remain the convergence criteria.
+#pragma omp parallel for
+        for (int i = 0; i < naocc; ++i) {
+            R_ia[i]->copy(T_ia_[i]);
+            R_ia[i]->subtract(T_ia_old[i]);
+        }
+
+#pragma omp parallel for
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            R_iajb[ij]->copy(T_iajb_[ij]);
+            R_iajb[ij]->subtract(T_iajb_old[ij]);
+        }
+
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int ijk = 0; ijk < n_lmo_triplets; ++ijk) {
+            R_iajbkc[ijk]->copy(T_iajbkc_[ijk]);
+            R_iajbkc[ijk]->subtract(T_iajbkc_old[ijk]);
+        }
 
         // DIIS Extrapolation
         std::vector<SharedMatrix> T_vecs;
