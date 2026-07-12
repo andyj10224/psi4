@@ -2830,6 +2830,20 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
             basis is discarded after each correction (one-shot behavior).
             !expert -*/
         options.add_bool("DLPNO_SOFT_MODE_PERSIST", true);
+        /*- Tikhonov filter strength mu for the soft-mode Newton solves,
+            c = -Jhat^t (Jhat Jhat^t + mu^2 I)^{-1} V^t g. Directions of the
+            projected Jacobian with singular values well above mu receive the
+            full Newton step; near-singular (fold-type) directions are damped
+            by sigma^2/(sigma^2+mu^2) and therefore cannot amplify their own
+            estimation error. Set to 0.0 for the exact (unfiltered) solve.
+            !expert -*/
+        options.add_double("DLPNO_SOFT_MODE_TIKHONOV", 0.25);
+        /*- If true, the persisted projected Jacobian is refreshed every
+            iteration by a Broyden (rank-1 secant) update built from the
+            projected displacement and the projected change of the raw sweep
+            step, letting it track its drift along the solution path between
+            probe-based rebuilds. !expert -*/
+        options.add_bool("DLPNO_SOFT_MODE_BROYDEN", true);
 
         /*- SUBSECTION Memory Control Options -*/
 

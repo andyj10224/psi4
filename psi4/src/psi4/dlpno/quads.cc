@@ -3889,8 +3889,11 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
         outfile->Printf("    DIIS RESET WINDOW = %d\n", options_.get_int("DLPNO_DIIS_RESET_WINDOW"));
     }
     if (options_.get_int("DLPNO_SOFT_MODE_NEWTON") > 0) {
-        outfile->Printf("    SOFT-MODE NEWTON K = %d%s\n", options_.get_int("DLPNO_SOFT_MODE_NEWTON"),
-                        options_.get_bool("DLPNO_SOFT_MODE_PERSIST") ? " (persistent basis / RPM)" : " (one-shot)");
+        outfile->Printf("    SOFT-MODE NEWTON K = %d%s, TIKHONOV MU = %.3f%s\n",
+                        options_.get_int("DLPNO_SOFT_MODE_NEWTON"),
+                        options_.get_bool("DLPNO_SOFT_MODE_PERSIST") ? " (persistent basis / RPM)" : " (one-shot)",
+                        options_.get_double("DLPNO_SOFT_MODE_TIKHONOV"),
+                        options_.get_bool("DLPNO_SOFT_MODE_BROYDEN") ? ", Broyden refresh" : "");
     }
     outfile->Printf("\n");
     outfile->Printf("                        Corr. Energy    Delta E    RMS R1     RMS R2     RMS R3     RMS R4     Time (s)\n");
@@ -3986,8 +3989,16 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
     // converting their multipliers into contracting ones permanently instead
     // of periodically knocking the unstable components down.
     const bool NEWTON_PERSIST = options_.get_bool("DLPNO_SOFT_MODE_PERSIST");
+    const double NEWTON_MU = options_.get_double("DLPNO_SOFT_MODE_TIKHONOV");
+    const bool NEWTON_BROYDEN = options_.get_bool("DLPNO_SOFT_MODE_BROYDEN");
     bool rpm_active = false;        // a persisted basis/Jacobian is in use
     std::vector<double> newton_J;   // persisted projected Jacobian (column-major keff x keff)
+
+    // Secant (Broyden) refresh state: projected position and step of the
+    // previous normal iteration. Invalidated whenever probes intervene or the
+    // basis changes.
+    bool newton_secant_valid = false;
+    std::vector<double> newton_x_prev, newton_p_prev;
 
     // Solve the small k x k system A x = b by Gaussian elimination with
     // partial pivoting (A, b by value; A column-major). Returns false on
@@ -4016,6 +4027,46 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
             x[row] = s / A[row + row * k];
         }
         return true;
+    };
+
+    // Tikhonov-filtered projected Newton solve, c = -J^t (J J^t + mu^2 I)^{-1} p.
+    // Directions with singular values sigma >> mu receive essentially the full
+    // Newton step; near-singular directions are damped by sigma^2/(sigma^2+mu^2),
+    // so a fold-type (near-zero, possibly sign-changing) eigenvalue cannot
+    // amplify its own estimation error. mu <= 0 falls back to the exact solve
+    // (with one Levenberg-regularized retry), reproducing the previous behavior.
+    auto newton_filtered_solve = [&newton_solve](const std::vector<double>& J, const std::vector<double>& p,
+                                                 std::vector<double>& c, int k, double mu) -> bool {
+        double jnorm = 0.0;
+        for (double xx : J) jnorm = std::max(jnorm, std::fabs(xx));
+        if (mu > 0.0) {
+            std::vector<double> M((size_t)k * k, 0.0), y;
+            for (int jj = 0; jj < k; ++jj) {
+                for (int ii = 0; ii < k; ++ii) {
+                    double s = 0.0;
+                    for (int cc = 0; cc < k; ++cc) s += J[ii + cc * k] * J[jj + cc * k];
+                    M[ii + jj * k] = s;
+                }
+                M[jj + jj * k] += mu * mu;
+            }
+            double mnorm = 0.0;
+            for (double xx : M) mnorm = std::max(mnorm, std::fabs(xx));
+            if (!newton_solve(M, p, y, k, mnorm)) return false;  // cannot occur for mu > 0
+            c.assign(k, 0.0);
+            for (int ii = 0; ii < k; ++ii) {
+                double s = 0.0;
+                for (int cc = 0; cc < k; ++cc) s += J[cc + ii * k] * y[cc];
+                c[ii] = -s;  // c = -J^t y
+            }
+            return true;
+        }
+        if (jnorm <= 0.0) return false;
+        std::vector<double> rhs(k);
+        for (int ii = 0; ii < k; ++ii) rhs[ii] = -p[ii];
+        if (newton_solve(J, rhs, c, k, jnorm)) return true;
+        std::vector<double> Jreg = J;
+        for (int ii = 0; ii < k; ++ii) Jreg[ii + ii * k] += 1.0e-3 * jnorm;
+        return newton_solve(Jreg, rhs, c, k, jnorm);
     };
     int newton_keff = 0;
     double newton_eps = 0.0;
@@ -4519,7 +4570,7 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                 } else {
                     // All probes done: build and solve the projected Newton system
                     const int k = newton_keff;
-                    std::vector<double> Jhat(k * k), proj(k), rhs(k);
+                    std::vector<double> Jhat(k * k), proj(k);
                     for (int jj = 0; jj < k; ++jj) {
                         for (int ii = 0; ii < k; ++ii) {
                             double s = 0.0;
@@ -4531,7 +4582,6 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                     }
                     for (int ii = 0; ii < k; ++ii) {
                         proj[ii] = newton_dot(newton_V[ii], newton_gbase);
-                        rhs[ii] = -proj[ii];
                     }
 
                     double jnorm = 0.0;
@@ -4556,21 +4606,11 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                         }
                     }
 
-                    // Solve Jhat c = rhs; on near-singularity, retry once with a
-                    // small Levenberg regularization. Jused records the matrix
-                    // actually solved, for persistence.
+                    // Tikhonov-filtered solve of the projected Newton system on
+                    // the freshly measured Jhat (mu = 0 recovers the exact solve
+                    // with a Levenberg-regularized retry)
                     std::vector<double> c;
-                    std::vector<double> Jused = Jhat;
-                    bool solved = (jnorm > 0.0) && newton_solve(Jhat, rhs, c, k, jnorm);
-                    if (!solved && jnorm > 0.0) {
-                        std::vector<double> Jreg = Jhat;
-                        for (int ii = 0; ii < k; ++ii) Jreg[ii + ii * k] += 1.0e-3 * jnorm;
-                        solved = newton_solve(Jreg, rhs, c, k, jnorm);
-                        if (solved) {
-                            outfile->Printf("    Soft-mode Newton: projected Jacobian near-singular; Levenberg regularization applied\n");
-                            Jused = Jreg;
-                        }
-                    }
+                    bool solved = (jnorm > 0.0) && newton_filtered_solve(Jhat, proj, c, k, NEWTON_MU);
 
                     // Compose the new point: fast components take the plain sweep
                     // step, soft components take the Newton step
@@ -4612,7 +4652,7 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                     if (solved && NEWTON_PERSIST) {
                         // Persist V and Jhat: the subspace-Newton step will be
                         // substituted into every subsequent iteration (RPM)
-                        newton_J = Jused;
+                        newton_J = Jhat;  // persist the raw measured Jacobian
                         rpm_active = true;
                         outfile->Printf(
                             "    Soft-mode Newton: deflation basis (dim %d) persisted; subspace-Newton step active every iteration\n",
@@ -4626,6 +4666,7 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
 
                     newton_stage = -1;
                     newton_gate_hold = true;
+                    newton_secant_valid = false;  // basis/Jacobian replaced
                     newton_G.clear();
                     newton_hist.clear();
                     stall_best_rmax = -1.0;
@@ -4640,14 +4681,56 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                 // amplitudes picks up the substituted step automatically.
                 if (rpm_active && newton_keff > 0) {
                     const int k = newton_keff;
-                    std::vector<double> p(k), rhs(k), c;
+                    std::vector<double> p(k), c;
                     for (int ii = 0; ii < k; ++ii) {
                         p[ii] = newton_dot(newton_V[ii], gcur);
-                        rhs[ii] = -p[ii];
                     }
-                    double jnorm = 0.0;
-                    for (double x : newton_J) jnorm = std::max(jnorm, std::fabs(x));
-                    if (jnorm > 0.0 && newton_solve(newton_J, rhs, c, k, jnorm)) {
+
+                    // => Broyden secant refresh of the projected Jacobian <= //
+                    // Every substituted iteration provides a free measurement
+                    // pair: the projected displacement dx = V^t (T_pre^n -
+                    // T_pre^(n-1)) and the projected change in the raw step
+                    // dp = V^t (g^n - g^(n-1)). The rank-1 least-change update
+                    // J <- J + (dp - J dx) dx^t / |dx|^2 lets the persisted
+                    // Jacobian track its drift along the solution path (the
+                    // measured fold-type eigenvalue crossed zero between
+                    // corrections) at zero extra cost; contaminated pairs that
+                    // would inject a row larger than the Jacobian itself are
+                    // rejected. Full probe-based rebuilds remain the
+                    // stall-triggered fallback.
+                    if (NEWTON_BROYDEN) {
+                        std::vector<double> x(k);
+                        for (int ii = 0; ii < k; ++ii) x[ii] = newton_dot(newton_V[ii], newton_Tpre);
+                        if (newton_secant_valid) {
+                            std::vector<double> dx(k), dp(k), Jdx(k, 0.0);
+                            double dx2 = 0.0;
+                            for (int ii = 0; ii < k; ++ii) {
+                                dx[ii] = x[ii] - newton_x_prev[ii];
+                                dp[ii] = p[ii] - newton_p_prev[ii];
+                                dx2 += dx[ii] * dx[ii];
+                            }
+                            if (dx2 > 1.0e-20) {
+                                for (int ii = 0; ii < k; ++ii)
+                                    for (int cc = 0; cc < k; ++cc) Jdx[ii] += newton_J[ii + cc * k] * dx[cc];
+                                double rn = 0.0, jn = 0.0;
+                                for (int ii = 0; ii < k; ++ii) rn += (dp[ii] - Jdx[ii]) * (dp[ii] - Jdx[ii]);
+                                rn = std::sqrt(rn);
+                                for (double xx : newton_J) jn += xx * xx;
+                                jn = std::sqrt(jn);
+                                if (rn <= 10.0 * (jn + NEWTON_MU) * std::sqrt(dx2)) {
+                                    for (int ii = 0; ii < k; ++ii) {
+                                        double f = (dp[ii] - Jdx[ii]) / dx2;
+                                        for (int cc = 0; cc < k; ++cc) newton_J[ii + cc * k] += f * dx[cc];
+                                    }
+                                }
+                            }
+                        }
+                        newton_x_prev = x;
+                        newton_p_prev = p;
+                        newton_secant_valid = true;
+                    }
+
+                    if (newton_filtered_solve(newton_J, p, c, k, NEWTON_MU)) {
                         double cnorm = 0.0;
                         for (int ii = 0; ii < k; ++ii) cnorm += c[ii] * c[ii];
                         cnorm = std::sqrt(cnorm);
@@ -4678,6 +4761,7 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                         newton_keff = 0;
                         newton_V.clear();
                         newton_J.clear();
+                        newton_secant_valid = false;
                     }
                 }
 
@@ -4760,6 +4844,7 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                         newton_set(Tprobe);
                         newton_stage = 0;
                         newton_probe_iter = true;
+                        newton_secant_valid = false;  // probes intervene
                         launched = true;
                     }
                 }
