@@ -3941,16 +3941,39 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
         NEWTON_K = 0;
     }
 
+    // All soft-mode Newton bookkeeping is done in the block-scaled metric
+    // used by the DIIS error vectors (each block weighted by 1/sqrt(block
+    // size)); otherwise the flattened norm is dominated by the sheer element
+    // count of the T4 blocks and the soft T1/T2 physics is invisible to the
+    // basis. Per-block offsets are precomputed so the scaled scatter/gather
+    // loops parallelize over blocks.
     size_t newton_len = 0;
+    std::vector<size_t> newton_off_t1, newton_off_t2, newton_off_t3, newton_off_t4;
     if (NEWTON_K > 0) {
-        for (int i = 0; i < naocc; ++i) newton_len += (size_t)n_pno_[i_j_to_ij_[i][i]];
-        for (int ij = 0; ij < n_lmo_pairs; ++ij) newton_len += (size_t)n_pno_[ij] * n_pno_[ij];
-        for (int ijk = 0; ijk < n_lmo_triplets; ++ijk) newton_len += (size_t)n_tno_[ijk] * n_tno_[ijk] * n_tno_[ijk];
-        for (int ijkl = 0; ijkl < n_lmo_quadruplets; ++ijkl)
+        newton_off_t1.resize(naocc);
+        newton_off_t2.resize(n_lmo_pairs);
+        newton_off_t3.resize(n_lmo_triplets);
+        newton_off_t4.resize(n_lmo_quadruplets);
+        for (int i = 0; i < naocc; ++i) {
+            newton_off_t1[i] = newton_len;
+            newton_len += (size_t)n_pno_[i_j_to_ij_[i][i]];
+        }
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            newton_off_t2[ij] = newton_len;
+            newton_len += (size_t)n_pno_[ij] * n_pno_[ij];
+        }
+        for (int ijk = 0; ijk < n_lmo_triplets; ++ijk) {
+            newton_off_t3[ijk] = newton_len;
+            newton_len += (size_t)n_tno_[ijk] * n_tno_[ijk] * n_tno_[ijk];
+        }
+        for (int ijkl = 0; ijkl < n_lmo_quadruplets; ++ijkl) {
+            newton_off_t4[ijkl] = newton_len;
             newton_len += (size_t)n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl];
+        }
     }
 
     int newton_stage = -1;  // -1: inactive; j >= 0: probe j in flight
+    bool newton_gate_hold = false;  // freeze stabilizer gates for one sweep after a correction
     int newton_keff = 0;
     double newton_eps = 0.0;
     std::vector<std::vector<double>> newton_V;     // orthonormal soft-space basis
@@ -3966,55 +3989,81 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
         return s;
     };
 
-    // Flatten the live amplitudes into v (fixed layout: T1, T2, T3, T4)
+    // Flatten the live amplitudes into v in the block-scaled metric
+    // (fixed layout: T1, T2, T3, T4; block b scaled by 1/sqrt(size(b)))
     auto newton_flatten = [&](std::vector<double>& v) {
         v.resize(newton_len);
-        size_t off = 0;
+#pragma omp parallel for
         for (int i = 0; i < naocc; ++i) {
             int ii = i_j_to_ij_[i][i];
-            ::memcpy(&v[off], T_ia_[i]->get_pointer(), (size_t)n_pno_[ii] * sizeof(double));
-            off += (size_t)n_pno_[ii];
+            size_t sz = (size_t)n_pno_[ii];
+            double w = 1.0 / std::sqrt((double)sz);
+            const double* srcp = T_ia_[i]->get_pointer();
+            double* dst = &v[newton_off_t1[i]];
+            for (size_t q = 0; q < sz; ++q) dst[q] = w * srcp[q];
         }
+#pragma omp parallel for
         for (int ij = 0; ij < n_lmo_pairs; ++ij) {
             size_t sz = (size_t)n_pno_[ij] * n_pno_[ij];
-            ::memcpy(&v[off], T_iajb_[ij]->get_pointer(), sz * sizeof(double));
-            off += sz;
+            double w = 1.0 / std::sqrt((double)sz);
+            const double* srcp = T_iajb_[ij]->get_pointer();
+            double* dst = &v[newton_off_t2[ij]];
+            for (size_t q = 0; q < sz; ++q) dst[q] = w * srcp[q];
         }
+#pragma omp parallel for schedule(dynamic, 1)
         for (int ijk = 0; ijk < n_lmo_triplets; ++ijk) {
             size_t sz = (size_t)n_tno_[ijk] * n_tno_[ijk] * n_tno_[ijk];
-            ::memcpy(&v[off], T_iajbkc_[ijk]->get_pointer(), sz * sizeof(double));
-            off += sz;
+            double w = 1.0 / std::sqrt((double)sz);
+            const double* srcp = T_iajbkc_[ijk]->get_pointer();
+            double* dst = &v[newton_off_t3[ijk]];
+            for (size_t q = 0; q < sz; ++q) dst[q] = w * srcp[q];
         }
+#pragma omp parallel for schedule(dynamic, 1)
         for (int ijkl = 0; ijkl < n_lmo_quadruplets; ++ijkl) {
             size_t sz = (size_t)n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl];
-            ::memcpy(&v[off], T_iajbkcld_[ijkl].data(), sz * sizeof(double));
-            off += sz;
+            double w = 1.0 / std::sqrt((double)sz);
+            const double* srcp = T_iajbkcld_[ijkl].data();
+            double* dst = &v[newton_off_t4[ijkl]];
+            for (size_t q = 0; q < sz; ++q) dst[q] = w * srcp[q];
         }
     };
 
-    // Set the live amplitudes from v and refresh Tt = 2T - T^t. (T3/T4-derived
-    // intermediates are rebuilt at the top of the next sweep.)
+    // Set the live amplitudes from a block-scaled vector v (inverse scaling
+    // applied) and refresh Tt = 2T - T^t. (T3/T4-derived intermediates are
+    // rebuilt at the top of the next sweep.)
     auto newton_set = [&](const std::vector<double>& v) {
-        size_t off = 0;
+#pragma omp parallel for
         for (int i = 0; i < naocc; ++i) {
             int ii = i_j_to_ij_[i][i];
-            ::memcpy(T_ia_[i]->get_pointer(), &v[off], (size_t)n_pno_[ii] * sizeof(double));
-            off += (size_t)n_pno_[ii];
+            size_t sz = (size_t)n_pno_[ii];
+            double w = std::sqrt((double)sz);
+            const double* srcp = &v[newton_off_t1[i]];
+            double* dst = T_ia_[i]->get_pointer();
+            for (size_t q = 0; q < sz; ++q) dst[q] = w * srcp[q];
         }
+#pragma omp parallel for
         for (int ij = 0; ij < n_lmo_pairs; ++ij) {
             size_t sz = (size_t)n_pno_[ij] * n_pno_[ij];
-            ::memcpy(T_iajb_[ij]->get_pointer(), &v[off], sz * sizeof(double));
-            off += sz;
+            double w = std::sqrt((double)sz);
+            const double* srcp = &v[newton_off_t2[ij]];
+            double* dst = T_iajb_[ij]->get_pointer();
+            for (size_t q = 0; q < sz; ++q) dst[q] = w * srcp[q];
         }
+#pragma omp parallel for schedule(dynamic, 1)
         for (int ijk = 0; ijk < n_lmo_triplets; ++ijk) {
             size_t sz = (size_t)n_tno_[ijk] * n_tno_[ijk] * n_tno_[ijk];
-            ::memcpy(T_iajbkc_[ijk]->get_pointer(), &v[off], sz * sizeof(double));
-            off += sz;
+            double w = std::sqrt((double)sz);
+            const double* srcp = &v[newton_off_t3[ijk]];
+            double* dst = T_iajbkc_[ijk]->get_pointer();
+            for (size_t q = 0; q < sz; ++q) dst[q] = w * srcp[q];
         }
+#pragma omp parallel for schedule(dynamic, 1)
         for (int ijkl = 0; ijkl < n_lmo_quadruplets; ++ijkl) {
             size_t sz = (size_t)n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl];
-            ::memcpy(T_iajbkcld_[ijkl].data(), &v[off], sz * sizeof(double));
-            off += sz;
+            double w = std::sqrt((double)sz);
+            const double* srcp = &v[newton_off_t4[ijkl]];
+            double* dst = T_iajbkcld_[ijkl].data();
+            for (size_t q = 0; q < sz; ++q) dst[q] = w * srcp[q];
         }
 #pragma omp parallel for
         for (int ij = 0; ij < n_lmo_pairs; ++ij) {
@@ -4050,10 +4099,23 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
         // class's RMS residual from the previous macroiteration falls below
         // its cutoff; they re-engage if the residual rises back above it.
         // A cutoff of 0.0 keeps the stabilizers active throughout.
-        const bool stab_t1 = fabs(r_curr1) >= T1_STABILIZER_CUTOFF;
-        const bool stab_t2 = fabs(r_curr2) >= T2_STABILIZER_CUTOFF;
-        const bool stab_t3 = fabs(r_curr3) >= T3_STABILIZER_CUTOFF;
-        const bool stab_t4 = fabs(r_curr4) >= T4_STABILIZER_CUTOFF;
+        bool stab_t1 = fabs(r_curr1) >= T1_STABILIZER_CUTOFF;
+        bool stab_t2 = fabs(r_curr2) >= T2_STABILIZER_CUTOFF;
+        bool stab_t3 = fabs(r_curr3) >= T3_STABILIZER_CUTOFF;
+        bool stab_t4 = fabs(r_curr4) >= T4_STABILIZER_CUTOFF;
+        if (newton_stage >= 0 || newton_gate_hold) {
+            // While a soft-mode Newton correction is in flight, the base and
+            // all probe sweeps must evaluate the same map: freeze the
+            // stabilizer state (mid-correction toggles would contaminate the
+            // finite differences with O(delta/(D+delta)) map changes). The
+            // hold extends one sweep past the correction because the residuals
+            // at that point still refer to a perturbed probe point.
+            stab_t1 = stab_prev_t1;
+            stab_t2 = stab_prev_t2;
+            stab_t3 = stab_prev_t3;
+            stab_t4 = stab_prev_t4;
+            if (newton_stage < 0) newton_gate_hold = false;
+        }
 
         const double damping_t1 = stab_t1 ? damping_ratio_quads_ : 0.0;
         const double shift_t1 = stab_t1 ? level_shift_quads_ : 0.0;
@@ -4504,7 +4566,11 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                         for (int ii = 0; ii < k; ++ii) cnorm += c[ii] * c[ii];
                         cnorm = std::sqrt(cnorm);
                         double tnorm = std::sqrt(newton_dot(newton_Tbase, newton_Tbase));
-                        double cap = 0.1 * (1.0 + tnorm);
+                        double gnorm = std::sqrt(newton_dot(newton_gbase, newton_gbase));
+                        // Absolute cap, and a relative cap so that a small
+                        // (possibly noise-contaminated) projected eigenvalue can
+                        // never launch the iterate far across the flat valley
+                        double cap = std::min(0.1 * (1.0 + tnorm), 50.0 * gnorm);
                         if (cnorm > cap) {
                             outfile->Printf("    Soft-mode Newton: correction capped at trust radius (%.3e -> %.3e)\n", cnorm, cap);
                             for (int ii = 0; ii < k; ++ii) c[ii] *= cap / cnorm;
@@ -4526,6 +4592,7 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                     outfile->Printf("    DIIS subspace reset following soft-mode Newton correction\n");
 
                     newton_stage = -1;
+                    newton_gate_hold = true;
                     newton_keff = 0;
                     newton_V.clear();
                     newton_G.clear();
@@ -4583,6 +4650,10 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
 
                     if (newton_keff > 0) {
                         newton_G.assign(newton_keff, std::vector<double>());
+                        // eps in the block-scaled metric: the probe displaces
+                        // each block's RMS by at most eps, i.e. ~10x the sweep
+                        // step, large enough to dominate evaluation noise and
+                        // small enough to stay in the linear regime
                         double tnorm = std::sqrt(newton_dot(newton_Tbase, newton_Tbase));
                         double gnorm = std::sqrt(newton_dot(newton_gbase, newton_gbase));
                         newton_eps = std::max(1.0e-6 * (1.0 + tnorm), 10.0 * gnorm);
