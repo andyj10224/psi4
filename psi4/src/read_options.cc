@@ -2808,6 +2808,16 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
             (a notice is printed each time). Set to 0 to disable
             stall-triggered resets. !expert -*/
         options.add_int("DLPNO_DIIS_RESET_WINDOW", 10);
+        /*- Dimension k of the stall-triggered soft-mode Newton correction in
+            the local CCSDTQ iterations. When a stall is detected (see
+            |globals__dlpno_diis_reset_window|), the last k sweep steps are
+            orthonormalized into a basis of the slowly converging subspace, the
+            k x k projected Jacobian of the sweep step map is built from k
+            finite-difference probe sweeps, and a Newton step is taken in that
+            subspace (followed by a DIIS reset). Requires EXTRAPOLATE_T4.
+            Costs k extra sweep evaluations per correction and memory for
+            roughly 3k+2 copies of the full amplitude set. 0 disables. !expert -*/
+        options.add_int("DLPNO_SOFT_MODE_NEWTON", 0);
 
         /*- SUBSECTION Memory Control Options -*/
 

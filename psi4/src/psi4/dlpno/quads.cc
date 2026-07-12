@@ -48,6 +48,7 @@
 
 #include <ctime>
 #include <algorithm>
+#include <utility>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -3887,6 +3888,9 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
     if (options_.get_int("DLPNO_DIIS_RESET_WINDOW") > 0) {
         outfile->Printf("    DIIS RESET WINDOW = %d\n", options_.get_int("DLPNO_DIIS_RESET_WINDOW"));
     }
+    if (options_.get_int("DLPNO_SOFT_MODE_NEWTON") > 0) {
+        outfile->Printf("    SOFT-MODE NEWTON K = %d\n", options_.get_int("DLPNO_SOFT_MODE_NEWTON"));
+    }
     outfile->Printf("\n");
     outfile->Printf("                        Corr. Energy    Delta E    RMS R1     RMS R2     RMS R3     RMS R4     Time (s)\n");
 
@@ -3918,6 +3922,107 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
     bool stab_prev_t1 = true, stab_prev_t2 = true, stab_prev_t3 = true, stab_prev_t4 = true;
     double stall_best_rmax = -1.0;
     int stall_count = 0;
+
+    // ==== Soft-mode Newton machinery (stall-triggered subspace correction) ====
+    // When the stall detector fires and DLPNO_SOFT_MODE_NEWTON = k > 0, the
+    // last k sweep steps are orthonormalized into a basis V of the slowly
+    // converging (soft) subspace, the k x k projected Jacobian of the sweep
+    // step map g(T) = G(T) - T is built from k finite-difference probe
+    // sweeps, and a Newton step is taken in that subspace:
+    //     T <- T_base + (I - V V^t) g(T_base) + V c,   Jhat c = -V^t g(T_base).
+    // Fast components take the plain sweep step; the soft components -- the
+    // directions no history-based extrapolation resolves -- take the Newton
+    // step. The DIIS subspace is reset afterwards. Each probe costs one full
+    // macroiteration sweep.
+    int NEWTON_K = options_.get_int("DLPNO_SOFT_MODE_NEWTON");
+    if (NEWTON_K < 0) NEWTON_K = 0;
+    if (NEWTON_K > 0 && !EXTRAPOLATE_T4) {
+        outfile->Printf("    Warning: DLPNO_SOFT_MODE_NEWTON requires EXTRAPOLATE_T4; disabling the soft-mode Newton correction.\n");
+        NEWTON_K = 0;
+    }
+
+    size_t newton_len = 0;
+    if (NEWTON_K > 0) {
+        for (int i = 0; i < naocc; ++i) newton_len += (size_t)n_pno_[i_j_to_ij_[i][i]];
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) newton_len += (size_t)n_pno_[ij] * n_pno_[ij];
+        for (int ijk = 0; ijk < n_lmo_triplets; ++ijk) newton_len += (size_t)n_tno_[ijk] * n_tno_[ijk] * n_tno_[ijk];
+        for (int ijkl = 0; ijkl < n_lmo_quadruplets; ++ijkl)
+            newton_len += (size_t)n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl];
+    }
+
+    int newton_stage = -1;  // -1: inactive; j >= 0: probe j in flight
+    int newton_keff = 0;
+    double newton_eps = 0.0;
+    std::vector<std::vector<double>> newton_V;     // orthonormal soft-space basis
+    std::vector<std::vector<double>> newton_G;     // g(T_base + eps * v_j)
+    std::vector<std::vector<double>> newton_hist;  // recent sweep steps (normal iterations only)
+    std::vector<double> newton_Tbase, newton_gbase, newton_Tpre;
+
+    auto newton_dot = [](const std::vector<double>& a, const std::vector<double>& b) {
+        double s = 0.0;
+        long long n = (long long)a.size();
+#pragma omp parallel for reduction(+ : s)
+        for (long long q = 0; q < n; ++q) s += a[q] * b[q];
+        return s;
+    };
+
+    // Flatten the live amplitudes into v (fixed layout: T1, T2, T3, T4)
+    auto newton_flatten = [&](std::vector<double>& v) {
+        v.resize(newton_len);
+        size_t off = 0;
+        for (int i = 0; i < naocc; ++i) {
+            int ii = i_j_to_ij_[i][i];
+            ::memcpy(&v[off], T_ia_[i]->get_pointer(), (size_t)n_pno_[ii] * sizeof(double));
+            off += (size_t)n_pno_[ii];
+        }
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            size_t sz = (size_t)n_pno_[ij] * n_pno_[ij];
+            ::memcpy(&v[off], T_iajb_[ij]->get_pointer(), sz * sizeof(double));
+            off += sz;
+        }
+        for (int ijk = 0; ijk < n_lmo_triplets; ++ijk) {
+            size_t sz = (size_t)n_tno_[ijk] * n_tno_[ijk] * n_tno_[ijk];
+            ::memcpy(&v[off], T_iajbkc_[ijk]->get_pointer(), sz * sizeof(double));
+            off += sz;
+        }
+        for (int ijkl = 0; ijkl < n_lmo_quadruplets; ++ijkl) {
+            size_t sz = (size_t)n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl];
+            ::memcpy(&v[off], T_iajbkcld_[ijkl].data(), sz * sizeof(double));
+            off += sz;
+        }
+    };
+
+    // Set the live amplitudes from v and refresh Tt = 2T - T^t. (T3/T4-derived
+    // intermediates are rebuilt at the top of the next sweep.)
+    auto newton_set = [&](const std::vector<double>& v) {
+        size_t off = 0;
+        for (int i = 0; i < naocc; ++i) {
+            int ii = i_j_to_ij_[i][i];
+            ::memcpy(T_ia_[i]->get_pointer(), &v[off], (size_t)n_pno_[ii] * sizeof(double));
+            off += (size_t)n_pno_[ii];
+        }
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            size_t sz = (size_t)n_pno_[ij] * n_pno_[ij];
+            ::memcpy(T_iajb_[ij]->get_pointer(), &v[off], sz * sizeof(double));
+            off += sz;
+        }
+        for (int ijk = 0; ijk < n_lmo_triplets; ++ijk) {
+            size_t sz = (size_t)n_tno_[ijk] * n_tno_[ijk] * n_tno_[ijk];
+            ::memcpy(T_iajbkc_[ijk]->get_pointer(), &v[off], sz * sizeof(double));
+            off += sz;
+        }
+        for (int ijkl = 0; ijkl < n_lmo_quadruplets; ++ijkl) {
+            size_t sz = (size_t)n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl];
+            ::memcpy(T_iajbkcld_[ijkl].data(), &v[off], sz * sizeof(double));
+            off += sz;
+        }
+#pragma omp parallel for
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            Tt_iajb_[ij] = T_iajb_[ij]->clone();
+            Tt_iajb_[ij]->scale(2.0);
+            Tt_iajb_[ij]->subtract(T_iajb_[ij]->transpose());
+        }
+    };
     
     DIISManager diis = DIISManager(options_.get_int("DIIS_MAX_VECS"), "LCCSDTQ DIIS", DIISManager::RemovalPolicy::LargestError, DIISManager::StoragePolicy::OnDisk);
 
@@ -3934,6 +4039,8 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
     }
 
     while (!(e_converged && r_converged)) {
+        bool newton_probe_iter = false;  // true while a soft-mode Newton correction is in flight
+
         // => Phase-dependent stabilizers <= //
         // Damping (alpha) and level shifting (delta) suppress the
         // large-amplitude transient of the early iterations, but near
@@ -4015,6 +4122,12 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                 size_t nqno4 = (size_t)n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl];
                 ::memcpy(T_iajbkcld_old[ijkl]->get_pointer(), T_iajbkcld_[ijkl].data(), nqno4 * sizeof(double));
             }
+        }
+
+        if (NEWTON_K > 0) {
+            // Pre-sweep amplitudes, flattened: the sweep step g = T_post - T_pre
+            // recorded by the soft-mode Newton machinery is measured from here
+            newton_flatten(newton_Tpre);
         }
 
         for (int miter = 0; miter < N_MICRO_ITER; ++miter) {
@@ -4273,27 +4386,231 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
 
         } // end miter
 
-        // => Stall-triggered DIIS subspace reset <= //
+        // => Soft-mode Newton bookkeeping <= //
+        // Record the step of the sweep that just completed, g(T_pre) = T - T_pre,
+        // where T_pre is the loop-top amplitude vector (a normal iterate, or a
+        // probe point while a correction is in flight).
+        if (NEWTON_K > 0) {
+            std::vector<double> gcur(newton_len);
+            {
+                std::vector<double> Tcur;
+                newton_flatten(Tcur);
+#pragma omp parallel for
+                for (long long q = 0; q < (long long)newton_len; ++q) gcur[q] = Tcur[q] - newton_Tpre[q];
+            }
+
+            if (newton_stage >= 0) {
+                // A probe sweep just completed: gcur = g(T_base + eps * v_j)
+                newton_probe_iter = true;
+                newton_G[newton_stage] = std::move(gcur);
+                outfile->Printf("    Soft-mode Newton: probe %d/%d complete\n", newton_stage + 1, newton_keff);
+
+                if (newton_stage + 1 < newton_keff) {
+                    // Set up the next probe point
+                    ++newton_stage;
+                    std::vector<double> Tprobe(newton_len);
+#pragma omp parallel for
+                    for (long long q = 0; q < (long long)newton_len; ++q)
+                        Tprobe[q] = newton_Tbase[q] + newton_eps * newton_V[newton_stage][q];
+                    newton_set(Tprobe);
+                } else {
+                    // All probes done: build and solve the projected Newton system
+                    const int k = newton_keff;
+                    std::vector<double> Jhat(k * k), proj(k), rhs(k);
+                    for (int jj = 0; jj < k; ++jj) {
+                        for (int ii = 0; ii < k; ++ii) {
+                            double s = 0.0;
+#pragma omp parallel for reduction(+ : s)
+                            for (long long q = 0; q < (long long)newton_len; ++q)
+                                s += newton_V[ii][q] * (newton_G[jj][q] - newton_gbase[q]);
+                            Jhat[ii + jj * k] = s / newton_eps;  // column-major
+                        }
+                    }
+                    for (int ii = 0; ii < k; ++ii) {
+                        proj[ii] = newton_dot(newton_V[ii], newton_gbase);
+                        rhs[ii] = -proj[ii];
+                    }
+
+                    double jnorm = 0.0;
+                    for (double x : Jhat) jnorm = std::max(jnorm, std::fabs(x));
+
+                    // Diagnostic: eigenvalues of the projected Jacobian of the step
+                    // map g; the corresponding sweep-map multipliers are 1 + lambda
+                    if (jnorm > 0.0) {
+                        std::vector<double> Acopy = Jhat, wr(k), wi(k), vdum(k), work(8 * k);
+                        int info = C_DGEEV('N', 'N', k, Acopy.data(), k, wr.data(), wi.data(), vdum.data(), 1,
+                                           vdum.data(), 1, work.data(), 8 * k);
+                        if (info == 0) {
+                            for (int ii = 0; ii < k; ++ii) {
+                                if (wi[ii] != 0.0) {
+                                    outfile->Printf("    Soft-mode Newton: J_g eigenvalue %d = %.6e %+.6e i (sweep multiplier %.6e %+.6e i)\n",
+                                                    ii + 1, wr[ii], wi[ii], 1.0 + wr[ii], wi[ii]);
+                                } else {
+                                    outfile->Printf("    Soft-mode Newton: J_g eigenvalue %d = %.6e (sweep multiplier %.6e)\n",
+                                                    ii + 1, wr[ii], 1.0 + wr[ii]);
+                                }
+                            }
+                        }
+                    }
+
+                    // Solve Jhat c = rhs (k is tiny) by Gaussian elimination with
+                    // partial pivoting; on near-singularity, retry once with a
+                    // small Levenberg regularization
+                    auto solve_k = [&](std::vector<double> A, std::vector<double> b, std::vector<double>& x) -> bool {
+                        for (int col = 0; col < k; ++col) {
+                            int piv = col;
+                            for (int row = col + 1; row < k; ++row)
+                                if (std::fabs(A[row + col * k]) > std::fabs(A[piv + col * k])) piv = row;
+                            if (std::fabs(A[piv + col * k]) < 1.0e-14 * jnorm) return false;
+                            if (piv != col) {
+                                for (int cc = 0; cc < k; ++cc) std::swap(A[col + cc * k], A[piv + cc * k]);
+                                std::swap(b[col], b[piv]);
+                            }
+                            for (int row = col + 1; row < k; ++row) {
+                                double f = A[row + col * k] / A[col + col * k];
+                                for (int cc = col; cc < k; ++cc) A[row + cc * k] -= f * A[col + cc * k];
+                                b[row] -= f * b[col];
+                            }
+                        }
+                        x.assign(k, 0.0);
+                        for (int row = k - 1; row >= 0; --row) {
+                            double s = b[row];
+                            for (int cc = row + 1; cc < k; ++cc) s -= A[row + cc * k] * x[cc];
+                            x[row] = s / A[row + row * k];
+                        }
+                        return true;
+                    };
+
+                    std::vector<double> c;
+                    bool solved = (jnorm > 0.0) && solve_k(Jhat, rhs, c);
+                    if (!solved && jnorm > 0.0) {
+                        std::vector<double> Jreg = Jhat;
+                        for (int ii = 0; ii < k; ++ii) Jreg[ii + ii * k] += 1.0e-3 * jnorm;
+                        solved = solve_k(Jreg, rhs, c);
+                        if (solved) {
+                            outfile->Printf("    Soft-mode Newton: projected Jacobian near-singular; Levenberg regularization applied\n");
+                        }
+                    }
+
+                    // Compose the new point: fast components take the plain sweep
+                    // step, soft components take the Newton step
+                    std::vector<double> Tnew(newton_len);
+#pragma omp parallel for
+                    for (long long q = 0; q < (long long)newton_len; ++q)
+                        Tnew[q] = newton_Tbase[q] + newton_gbase[q];
+
+                    if (solved) {
+                        double cnorm = 0.0;
+                        for (int ii = 0; ii < k; ++ii) cnorm += c[ii] * c[ii];
+                        cnorm = std::sqrt(cnorm);
+                        double tnorm = std::sqrt(newton_dot(newton_Tbase, newton_Tbase));
+                        double cap = 0.1 * (1.0 + tnorm);
+                        if (cnorm > cap) {
+                            outfile->Printf("    Soft-mode Newton: correction capped at trust radius (%.3e -> %.3e)\n", cnorm, cap);
+                            for (int ii = 0; ii < k; ++ii) c[ii] *= cap / cnorm;
+                            cnorm = cap;
+                        }
+                        for (int ii = 0; ii < k; ++ii) {
+                            double coef = c[ii] - proj[ii];
+#pragma omp parallel for
+                            for (long long q = 0; q < (long long)newton_len; ++q) Tnew[q] += coef * newton_V[ii][q];
+                        }
+                        outfile->Printf("    Soft-mode Newton: correction applied (|correction| = %.3e, |V^t g| = %.3e)\n",
+                                        cnorm, std::sqrt(newton_dot(proj, proj)));
+                    } else {
+                        outfile->Printf("    Soft-mode Newton: correction skipped (singular projected Jacobian); plain sweep step taken\n");
+                    }
+                    newton_set(Tnew);
+
+                    diis.reset_subspace();
+                    outfile->Printf("    DIIS subspace reset following soft-mode Newton correction\n");
+
+                    newton_stage = -1;
+                    newton_keff = 0;
+                    newton_V.clear();
+                    newton_G.clear();
+                    newton_hist.clear();
+                    stall_best_rmax = -1.0;
+                    stall_count = 0;
+                }
+            } else {
+                // Normal iteration: record the step in the soft-space history
+                newton_hist.push_back(std::move(gcur));
+                if ((int)newton_hist.size() > NEWTON_K) newton_hist.erase(newton_hist.begin());
+            }
+        }
+
+        // => Stall detection: soft-mode Newton correction and/or DIIS reset <= //
         // If the maximum RMS residual has not improved over the last
         // DIIS_RESET_WINDOW macroiterations, discard the accumulated DIIS
         // history: a stalled subspace is dominated by directions that carry
         // no further information about the slow modes, and extrapolations
-        // built from it can pin the iterate. The current iteration's
-        // (T, e) pair, stored below, seeds the fresh subspace.
-        if (DIIS_RESET_WINDOW > 0) {
+        // built from it can pin the iterate. If the soft-mode Newton
+        // correction is enabled, launch it instead; the reset then follows
+        // the correction.
+        if (newton_stage < 0 && !newton_probe_iter && DIIS_RESET_WINDOW > 0) {
             double r_max = std::max(std::max(fabs(r_curr1), fabs(r_curr2)), std::max(fabs(r_curr3), fabs(r_curr4)));
             if (stall_best_rmax < 0.0 || r_max < stall_best_rmax) {
                 stall_best_rmax = r_max;
                 stall_count = 0;
             } else if (++stall_count >= DIIS_RESET_WINDOW) {
-                outfile->Printf("    DIIS subspace reset at iteration %d (no reduction in max RMS residual over %d iterations)\n",
-                                iteration, DIIS_RESET_WINDOW);
-                diis.reset_subspace();
+                bool launched = false;
+                if (NEWTON_K > 0 && !newton_hist.empty()) {
+                    // Base point: the pre-sweep iterate of this iteration, whose
+                    // step (the most recent history entry) is already known
+                    newton_Tbase = newton_Tpre;
+                    newton_gbase = newton_hist.back();
+
+                    // Orthonormal basis over the recent steps, most recent first
+                    newton_V.clear();
+                    for (int h = (int)newton_hist.size() - 1; h >= 0 && (int)newton_V.size() < NEWTON_K; --h) {
+                        std::vector<double> w = newton_hist[h];
+                        double n0 = std::sqrt(newton_dot(w, w));
+                        if (n0 <= 0.0) continue;
+                        for (auto& vprev : newton_V) {
+                            double p = newton_dot(vprev, w);
+#pragma omp parallel for
+                            for (long long q = 0; q < (long long)newton_len; ++q) w[q] -= p * vprev[q];
+                        }
+                        double n1 = std::sqrt(newton_dot(w, w));
+                        if (n1 < 1.0e-4 * n0) continue;  // (near) linearly dependent
+                        double inv = 1.0 / n1;
+#pragma omp parallel for
+                        for (long long q = 0; q < (long long)newton_len; ++q) w[q] *= inv;
+                        newton_V.push_back(std::move(w));
+                    }
+                    newton_keff = (int)newton_V.size();
+
+                    if (newton_keff > 0) {
+                        newton_G.assign(newton_keff, std::vector<double>());
+                        double tnorm = std::sqrt(newton_dot(newton_Tbase, newton_Tbase));
+                        double gnorm = std::sqrt(newton_dot(newton_gbase, newton_gbase));
+                        newton_eps = std::max(1.0e-6 * (1.0 + tnorm), 10.0 * gnorm);
+                        outfile->Printf(
+                            "    Soft-mode Newton: stall at iteration %d; launching k = %d subspace correction (eps = %.3e, |g| = %.3e)\n",
+                            iteration, newton_keff, newton_eps, gnorm);
+
+                        std::vector<double> Tprobe(newton_len);
+#pragma omp parallel for
+                        for (long long q = 0; q < (long long)newton_len; ++q)
+                            Tprobe[q] = newton_Tbase[q] + newton_eps * newton_V[0][q];
+                        newton_set(Tprobe);
+                        newton_stage = 0;
+                        newton_probe_iter = true;
+                        launched = true;
+                    }
+                }
+                if (!launched) {
+                    outfile->Printf("    DIIS subspace reset at iteration %d (no reduction in max RMS residual over %d iterations)\n",
+                                    iteration, DIIS_RESET_WINDOW);
+                    diis.reset_subspace();
+                }
                 stall_best_rmax = r_max;
                 stall_count = 0;
             }
         }
 
+        if (!newton_probe_iter) {  // DIIS is skipped while a soft-mode Newton correction is in flight
         // => Build DIIS error vectors <= //
         // The raw residuals accumulated above are evaluated at different points
         // within the Gauss-Seidel sweep (R4 at the pre-sweep amplitudes, R3 after
@@ -4382,6 +4699,7 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                 ::memcpy(T_iajbkcld_[ijkl].data(), T_iajbkcld_psi[ijkl]->get_pointer(), n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * sizeof(double));
             }
         }
+        }  // end if (!newton_probe_iter)
 
         // evaluate energy and convergence
         e_prev = e_curr;
@@ -4421,6 +4739,13 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
         r_converged &= fabs(r_curr3) < options_.get_double("R_CONVERGENCE");
         r_converged &= fabs(r_curr4) < options_.get_double("R_CONVERGENCE");
         e_converged = fabs(e_curr - e_prev) < options_.get_double("E_CONVERGENCE");
+
+        if (newton_probe_iter) {
+            // Probe sweeps evaluate the step map at perturbed points; their
+            // energies and residuals are not iterates of the solver
+            e_converged = false;
+            r_converged = false;
+        }
 
         e_lccsdtq_ = e_curr - e_weak;
         de_weak_ = e_weak;
