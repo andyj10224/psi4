@@ -2818,6 +2818,18 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
             Costs k extra sweep evaluations per correction and memory for
             roughly 3k+2 copies of the full amplitude set. 0 disables. !expert -*/
         options.add_int("DLPNO_SOFT_MODE_NEWTON", 0);
+        /*- If true, the basis V and projected Jacobian measured by each
+            soft-mode Newton correction are persisted, and the subspace-Newton
+            step T <- T + (I - V V^t) g + V c with Jhat c = -V^t g is
+            substituted into every subsequent iteration (recursive projection
+            method): the fixed-point iteration proceeds unchanged in the
+            orthogonal complement while the measured expanding directions are
+            handled by Newton at every sweep. On a subsequent stall the basis
+            is re-probed and merged with new directions (capped at twice
+            |globals__dlpno_soft_mode_newton|, oldest dropped). If false, the
+            basis is discarded after each correction (one-shot behavior).
+            !expert -*/
+        options.add_bool("DLPNO_SOFT_MODE_PERSIST", true);
 
         /*- SUBSECTION Memory Control Options -*/
 
