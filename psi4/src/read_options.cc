@@ -2844,6 +2844,30 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
             step, letting it track its drift along the solution path between
             probe-based rebuilds. !expert -*/
         options.add_bool("DLPNO_SOFT_MODE_BROYDEN", true);
+        /*- If true, a stall of the local CCSDTQ iterations triggers a
+            Jacobian-free inexact Newton (GMRES) solve of the sweep step map
+            g(T) = 0 instead of a soft-mode subspace correction or a plain
+            DIIS reset. Jacobian-vector products are formed matrix-free (one
+            sweep evaluation per Krylov vector). Designed for
+            instability-carrying references: GMRES makes no symmetry or
+            definiteness assumption, the projected system is Tikhonov
+            regularized (see |globals__dlpno_soft_mode_tikhonov|), the step is
+            gated by a backtracking line search with an explicit rejection
+            path, and the finite-difference step is clamped. Takes priority
+            over DLPNO_SOFT_MODE_NEWTON when both are enabled. !expert -*/
+        options.add_bool("DLPNO_JFNK", true);
+        /*- Maximum Krylov subspace dimension per JFNK Newton step. Memory
+            scales as this many copies of the full amplitude set. !expert -*/
+        options.add_int("DLPNO_JFNK_MAX_KRYLOV", 12);
+        /*- Relative inner (GMRES) tolerance eta for the JFNK solver: the
+            Arnoldi expansion stops once the projected residual drops below
+            eta |g|. !expert -*/
+        options.add_double("DLPNO_JFNK_TOL", 0.1);
+        /*- Maximum number of chained Newton steps per JFNK activation; the
+            chain also exits early once all RMS residuals at an accepted point
+            fall below R_CONVERGENCE, or when a line search rejects a step.
+            !expert -*/
+        options.add_int("DLPNO_JFNK_MAX_STEPS", 8);
 
         /*- SUBSECTION Memory Control Options -*/
 
