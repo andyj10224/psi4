@@ -2782,6 +2782,92 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_double("QUADRUPLES_DAMPING_RATIO", 0.0);
         /*- Level shift on amplitude denominators in CCSDTQ iterations !expert -*/
         options.add_double("QUADRUPLES_LEVEL_SHIFT", 0.0);
+        /*- RMS residual threshold below which damping and level shifting are
+            disabled for the T1 amplitude updates in the local CCSDTQ iterations.
+            The stabilizers suppress the large-amplitude transient of the early
+            iterations but only slow the softest modes near convergence, so they
+            are switched off per amplitude class once that class's RMS residual
+            from the previous macroiteration falls below this cutoff (and
+            re-engage if it rises back above). Set to 0.0 to keep the
+            stabilizers active throughout. !expert -*/
+        options.add_double("QUADRUPLES_T1_STABILIZER_CUTOFF", 1.0e-4);
+        /*- RMS residual threshold below which damping and level shifting are
+            disabled for the T2 amplitude updates in the local CCSDTQ
+            iterations. See |globals__quadruples_t1_stabilizer_cutoff|. !expert -*/
+        options.add_double("QUADRUPLES_T2_STABILIZER_CUTOFF", 1.0e-4);
+        /*- RMS residual threshold below which damping and level shifting are
+            disabled for the T3 amplitude updates in the local CCSDTQ
+            iterations. See |globals__quadruples_t1_stabilizer_cutoff|. !expert -*/
+        options.add_double("QUADRUPLES_T3_STABILIZER_CUTOFF", 1.0e-4);
+        /*- RMS residual threshold below which damping and level shifting are
+            disabled for the T4 amplitude updates in the local CCSDTQ
+            iterations. See |globals__quadruples_t1_stabilizer_cutoff|. !expert -*/
+        options.add_double("QUADRUPLES_T4_STABILIZER_CUTOFF", 1.0e-4);
+        /*- Number of consecutive local CCSDTQ iterations without a reduction
+            in the maximum RMS residual after which the DIIS subspace is reset
+            (a notice is printed each time). Set to 0 to disable
+            stall-triggered resets. !expert -*/
+        options.add_int("DLPNO_DIIS_RESET_WINDOW", 10);
+        /*- Dimension k of the stall-triggered soft-mode Newton correction in
+            the local CCSDTQ iterations. When a stall is detected (see
+            |globals__dlpno_diis_reset_window|), the last k sweep steps are
+            orthonormalized into a basis of the slowly converging subspace, the
+            k x k projected Jacobian of the sweep step map is built from k
+            finite-difference probe sweeps, and a Newton step is taken in that
+            subspace (followed by a DIIS reset). Requires EXTRAPOLATE_T4.
+            Costs k extra sweep evaluations per correction and memory for
+            roughly 3k+2 copies of the full amplitude set. 0 disables. !expert -*/
+        options.add_int("DLPNO_SOFT_MODE_NEWTON", 0);
+        /*- If true, the basis V and projected Jacobian measured by each
+            soft-mode Newton correction are persisted, and the subspace-Newton
+            step T <- T + (I - V V^t) g + V c with Jhat c = -V^t g is
+            substituted into every subsequent iteration (recursive projection
+            method): the fixed-point iteration proceeds unchanged in the
+            orthogonal complement while the measured expanding directions are
+            handled by Newton at every sweep. On a subsequent stall the basis
+            is re-probed and merged with new directions (capped at twice
+            |globals__dlpno_soft_mode_newton|, oldest dropped). If false, the
+            basis is discarded after each correction (one-shot behavior).
+            !expert -*/
+        options.add_bool("DLPNO_SOFT_MODE_PERSIST", true);
+        /*- Tikhonov filter strength mu for the soft-mode Newton solves,
+            c = -Jhat^t (Jhat Jhat^t + mu^2 I)^{-1} V^t g. Directions of the
+            projected Jacobian with singular values well above mu receive the
+            full Newton step; near-singular (fold-type) directions are damped
+            by sigma^2/(sigma^2+mu^2) and therefore cannot amplify their own
+            estimation error. Set to 0.0 for the exact (unfiltered) solve.
+            !expert -*/
+        options.add_double("DLPNO_SOFT_MODE_TIKHONOV", 0.25);
+        /*- If true, the persisted projected Jacobian is refreshed every
+            iteration by a Broyden (rank-1 secant) update built from the
+            projected displacement and the projected change of the raw sweep
+            step, letting it track its drift along the solution path between
+            probe-based rebuilds. !expert -*/
+        options.add_bool("DLPNO_SOFT_MODE_BROYDEN", true);
+        /*- If true, a stall of the local CCSDTQ iterations triggers a
+            Jacobian-free inexact Newton (GMRES) solve of the sweep step map
+            g(T) = 0 instead of a soft-mode subspace correction or a plain
+            DIIS reset. Jacobian-vector products are formed matrix-free (one
+            sweep evaluation per Krylov vector). Designed for
+            instability-carrying references: GMRES makes no symmetry or
+            definiteness assumption, the projected system is Tikhonov
+            regularized (see |globals__dlpno_soft_mode_tikhonov|), the step is
+            gated by a backtracking line search with an explicit rejection
+            path, and the finite-difference step is clamped. Takes priority
+            over DLPNO_SOFT_MODE_NEWTON when both are enabled. !expert -*/
+        options.add_bool("DLPNO_JFNK", true);
+        /*- Maximum Krylov subspace dimension per JFNK Newton step. Memory
+            scales as this many copies of the full amplitude set. !expert -*/
+        options.add_int("DLPNO_JFNK_MAX_KRYLOV", 12);
+        /*- Relative inner (GMRES) tolerance eta for the JFNK solver: the
+            Arnoldi expansion stops once the projected residual drops below
+            eta |g|. !expert -*/
+        options.add_double("DLPNO_JFNK_TOL", 0.1);
+        /*- Maximum number of chained Newton steps per JFNK activation; the
+            chain also exits early once all RMS residuals at an accepted point
+            fall below R_CONVERGENCE, or when a line search rejects a step.
+            !expert -*/
+        options.add_int("DLPNO_JFNK_MAX_STEPS", 8);
 
         /*- SUBSECTION Memory Control Options -*/
 

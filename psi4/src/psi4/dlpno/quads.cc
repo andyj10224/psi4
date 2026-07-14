@@ -48,6 +48,7 @@
 
 #include <ctime>
 #include <algorithm>
+#include <utility>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -3813,19 +3814,32 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
         T_iajbkcld_psi.resize(n_lmo_quadruplets);
     }
 
+    // Amplitude snapshots taken at the start of each macroiteration.
+    // Used to build the DIIS error vector as the actual step of the full
+    // sweep, e_n = T_(n+1) - T_n (Pulay/Anderson pairing); see the comment
+    // above the DIIS extrapolation block below.
+    std::vector<SharedMatrix> T_ia_old(naocc);
+    std::vector<SharedMatrix> T_iajb_old(n_lmo_pairs);
+    std::vector<SharedMatrix> T_iajbkc_old(n_lmo_triplets);
+    std::vector<SharedMatrix> T_iajbkcld_old;
+    if (EXTRAPOLATE_T4) T_iajbkcld_old.resize(n_lmo_quadruplets);
+
     for (int i = 0; i < naocc; ++i) {
         int ii = i_j_to_ij_[i][i];
         R_ia[i] = std::make_shared<Matrix>(n_pno_[ii], 1);
+        T_ia_old[i] = std::make_shared<Matrix>(n_pno_[ii], 1);
     }
 
     for (int ij = 0; ij < n_lmo_pairs; ++ij) {
         R_iajb[ij] = std::make_shared<Matrix>(n_pno_[ij], n_pno_[ij]);
         Rn_iajb[ij] = std::make_shared<Matrix>(n_pno_[ij], n_pno_[ij]);
+        T_iajb_old[ij] = std::make_shared<Matrix>(n_pno_[ij], n_pno_[ij]);
     }
 
     for (int ijk_sorted = 0; ijk_sorted < n_lmo_triplets; ++ijk_sorted) {
         int ijk = sorted_triplets_[ijk_sorted];
         R_iajbkc[ijk] = std::make_shared<Matrix>(n_tno_[ijk], n_tno_[ijk] * n_tno_[ijk]);
+        T_iajbkc_old[ijk] = std::make_shared<Matrix>(n_tno_[ijk], n_tno_[ijk] * n_tno_[ijk]);
     }
 
     for (int ijkl_sorted = 0; ijkl_sorted < n_lmo_quadruplets; ++ijkl_sorted) {
@@ -3834,6 +3848,7 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
         if (EXTRAPOLATE_T4) {
             R_iajbkcld_psi[ijkl] = std::make_shared<Matrix>(n_qno_[ijkl] * n_qno_[ijkl], n_qno_[ijkl] * n_qno_[ijkl]);
             T_iajbkcld_psi[ijkl] = std::make_shared<Matrix>(n_qno_[ijkl] * n_qno_[ijkl], n_qno_[ijkl] * n_qno_[ijkl]);
+            T_iajbkcld_old[ijkl] = std::make_shared<Matrix>(n_qno_[ijkl] * n_qno_[ijkl], n_qno_[ijkl] * n_qno_[ijkl]);
         }
     }
 
@@ -3862,7 +3877,30 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
     outfile->Printf("\n  ==> Local CCSDTQ <==\n\n");
     
     outfile->Printf("    E_CONVERGENCE = %.2e\n", options_.get_double("E_CONVERGENCE"));
-    outfile->Printf("    R_CONVERGENCE = %.2e\n\n", options_.get_double("R_CONVERGENCE"));
+    outfile->Printf("    R_CONVERGENCE = %.2e\n", options_.get_double("R_CONVERGENCE"));
+    if (options_.get_double("QUADRUPLES_DAMPING_RATIO") != 0.0 || options_.get_double("QUADRUPLES_LEVEL_SHIFT") != 0.0) {
+        outfile->Printf("    STABILIZER CUTOFFS (T1-T4) = %.2e %.2e %.2e %.2e\n",
+                        options_.get_double("QUADRUPLES_T1_STABILIZER_CUTOFF"),
+                        options_.get_double("QUADRUPLES_T2_STABILIZER_CUTOFF"),
+                        options_.get_double("QUADRUPLES_T3_STABILIZER_CUTOFF"),
+                        options_.get_double("QUADRUPLES_T4_STABILIZER_CUTOFF"));
+    }
+    if (options_.get_int("DLPNO_DIIS_RESET_WINDOW") > 0) {
+        outfile->Printf("    DIIS RESET WINDOW = %d\n", options_.get_int("DLPNO_DIIS_RESET_WINDOW"));
+    }
+    if (options_.get_bool("DLPNO_JFNK")) {
+        outfile->Printf("    JFNK = ON (max Krylov = %d, eta = %.2f, max Newton steps = %d, mu = %.3f)\n",
+                        options_.get_int("DLPNO_JFNK_MAX_KRYLOV"), options_.get_double("DLPNO_JFNK_TOL"),
+                        options_.get_int("DLPNO_JFNK_MAX_STEPS"), options_.get_double("DLPNO_SOFT_MODE_TIKHONOV"));
+    }
+    if (options_.get_int("DLPNO_SOFT_MODE_NEWTON") > 0) {
+        outfile->Printf("    SOFT-MODE NEWTON K = %d%s, TIKHONOV MU = %.3f%s\n",
+                        options_.get_int("DLPNO_SOFT_MODE_NEWTON"),
+                        options_.get_bool("DLPNO_SOFT_MODE_PERSIST") ? " (persistent basis / RPM)" : " (one-shot)",
+                        options_.get_double("DLPNO_SOFT_MODE_TIKHONOV"),
+                        options_.get_bool("DLPNO_SOFT_MODE_BROYDEN") ? ", Broyden refresh" : "");
+    }
+    outfile->Printf("\n");
     outfile->Printf("                        Corr. Energy    Delta E    RMS R1     RMS R2     RMS R3     RMS R4     Time (s)\n");
 
     int iteration = 1, max_iteration = options_.get_int("DLPNO_MAXITER");
@@ -3879,10 +3917,396 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
     const bool QUADRUPLES_T2_DAMPING_CONDITIONAL = options_.get_bool("QUADRUPLES_T2_DAMPING_CONDITIONAL");
     const bool QUADRUPLES_T3_DAMPING_CONDITIONAL = options_.get_bool("QUADRUPLES_T3_DAMPING_CONDITIONAL");
     const bool QUADRUPLES_T4_DAMPING_CONDITIONAL = options_.get_bool("QUADRUPLES_T4_DAMPING_CONDITIONAL");
+
+    const double T1_STABILIZER_CUTOFF = options_.get_double("QUADRUPLES_T1_STABILIZER_CUTOFF");
+    const double T2_STABILIZER_CUTOFF = options_.get_double("QUADRUPLES_T2_STABILIZER_CUTOFF");
+    const double T3_STABILIZER_CUTOFF = options_.get_double("QUADRUPLES_T3_STABILIZER_CUTOFF");
+    const double T4_STABILIZER_CUTOFF = options_.get_double("QUADRUPLES_T4_STABILIZER_CUTOFF");
+
+    const int DIIS_RESET_WINDOW = options_.get_int("DLPNO_DIIS_RESET_WINDOW");
+
+    // Stabilizer state per amplitude class (to print notices on change only),
+    // and stall tracking for the DIIS subspace reset (stall_best_rmax < 0
+    // means "not yet initialized")
+    bool stab_prev_t1 = true, stab_prev_t2 = true, stab_prev_t3 = true, stab_prev_t4 = true;
+    double stall_best_rmax = -1.0;
+    int stall_count = 0;
+
+    // ==== Soft-mode Newton machinery (stall-triggered subspace correction) ====
+    // When the stall detector fires and DLPNO_SOFT_MODE_NEWTON = k > 0, the
+    // last k sweep steps are orthonormalized into a basis V of the slowly
+    // converging (soft) subspace, the k x k projected Jacobian of the sweep
+    // step map g(T) = G(T) - T is built from k finite-difference probe
+    // sweeps, and a Newton step is taken in that subspace:
+    //     T <- T_base + (I - V V^t) g(T_base) + V c,   Jhat c = -V^t g(T_base).
+    // Fast components take the plain sweep step; the soft components -- the
+    // directions no history-based extrapolation resolves -- take the Newton
+    // step. The DIIS subspace is reset afterwards. Each probe costs one full
+    // macroiteration sweep.
+    int NEWTON_K = options_.get_int("DLPNO_SOFT_MODE_NEWTON");
+    if (NEWTON_K < 0) NEWTON_K = 0;
+    if (NEWTON_K > 0 && !EXTRAPOLATE_T4) {
+        outfile->Printf("    Warning: DLPNO_SOFT_MODE_NEWTON requires EXTRAPOLATE_T4; disabling the soft-mode Newton correction.\n");
+        NEWTON_K = 0;
+    }
+
+    // ==== JFNK: stall-triggered Jacobian-free inexact Newton (GMRES) ====
+    // Makes NO stability assumptions about the underlying HF reference: the
+    // CC Jacobian at an instability-carrying reference is indefinite (this
+    // system's measured sweep multipliers span -1.5 to +2.7 around 1), the
+    // solution may sit near a fold of the solution manifold, and the merit
+    // landscape |g|^2 is nonconvex. Accordingly: (a) the linear solver is
+    // GMRES/Arnoldi, valid for nonsymmetric indefinite operators; (b) the
+    // projected (Hessenberg) system is solved with Tikhonov regularization,
+    // so near-singular fold directions are damped rather than inverted;
+    // (c) the Newton step is accepted only through a backtracking line
+    // search on |g| with an explicit rejection path -- no step is ever
+    // forced; (d) the finite-difference step is clamped from above so
+    // probes can never escalate into the nonlinear regime; (e) the Newton
+    // direction is bounded by a trust radius. Jacobian-vector products are
+    // formed matrix-free, one frozen-gate sweep evaluation per Krylov
+    // vector, in the same block-scaled metric as the soft-mode machinery.
+    bool JFNK = options_.get_bool("DLPNO_JFNK");
+    const int JFNK_MAX_KRYLOV = std::max(1, options_.get_int("DLPNO_JFNK_MAX_KRYLOV"));
+    const double JFNK_TOL = options_.get_double("DLPNO_JFNK_TOL");
+    const int JFNK_MAX_STEPS = std::max(1, options_.get_int("DLPNO_JFNK_MAX_STEPS"));
+    const double R_CONV_JFNK = options_.get_double("R_CONVERGENCE");
+    if (JFNK && !EXTRAPOLATE_T4) {
+        outfile->Printf("    Warning: DLPNO_JFNK requires EXTRAPOLATE_T4; disabling the JFNK solver.\n");
+        JFNK = false;
+    }
+    const bool NEWTON_MACHINERY = (NEWTON_K > 0) || JFNK;
+
+    int jfnk_phase = -1;       // -1 inactive; 0 Arnoldi matvec in flight; 1 line-search trial in flight
+    int jfnk_j = 0;            // current Krylov dimension
+    int jfnk_ls = 0;           // line-search trial counter
+    int jfnk_steps_taken = 0;  // accepted Newton steps in the current chain
+    double jfnk_beta = 0.0, jfnk_eps = 0.0, jfnk_t = 1.0;
+    std::vector<std::vector<double>> jfnk_V;                    // Krylov vectors (unit, scaled metric)
+    std::vector<double> jfnk_H;                                 // Hessenberg, column-major, ld = JFNK_MAX_KRYLOV+1
+    std::vector<double> jfnk_Tbase, jfnk_gbase, jfnk_dir;
+    std::vector<double> newton_glast;                           // raw step of the last normal iteration
+    bool newton_glast_valid = false;
+    if (JFNK) jfnk_H.assign((size_t)(JFNK_MAX_KRYLOV + 1) * JFNK_MAX_KRYLOV, 0.0);
+
+    // All soft-mode Newton bookkeeping is done in the block-scaled metric
+    // used by the DIIS error vectors (each block weighted by 1/sqrt(block
+    // size)); otherwise the flattened norm is dominated by the sheer element
+    // count of the T4 blocks and the soft T1/T2 physics is invisible to the
+    // basis. Per-block offsets are precomputed so the scaled scatter/gather
+    // loops parallelize over blocks.
+    size_t newton_len = 0;
+    std::vector<size_t> newton_off_t1, newton_off_t2, newton_off_t3, newton_off_t4;
+    if (NEWTON_MACHINERY) {
+        newton_off_t1.resize(naocc);
+        newton_off_t2.resize(n_lmo_pairs);
+        newton_off_t3.resize(n_lmo_triplets);
+        newton_off_t4.resize(n_lmo_quadruplets);
+        for (int i = 0; i < naocc; ++i) {
+            newton_off_t1[i] = newton_len;
+            newton_len += (size_t)n_pno_[i_j_to_ij_[i][i]];
+        }
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            newton_off_t2[ij] = newton_len;
+            newton_len += (size_t)n_pno_[ij] * n_pno_[ij];
+        }
+        for (int ijk = 0; ijk < n_lmo_triplets; ++ijk) {
+            newton_off_t3[ijk] = newton_len;
+            newton_len += (size_t)n_tno_[ijk] * n_tno_[ijk] * n_tno_[ijk];
+        }
+        for (int ijkl = 0; ijkl < n_lmo_quadruplets; ++ijkl) {
+            newton_off_t4[ijkl] = newton_len;
+            newton_len += (size_t)n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl];
+        }
+    }
+
+    int newton_stage = -1;  // -1: inactive; j >= 0: probe j in flight
+    bool newton_gate_hold = false;  // freeze stabilizer gates for one sweep after a correction
+
+    // Recursive projection (RPM, Shroff & Keller): if enabled, the basis V and
+    // projected Jacobian Jhat measured by a correction are persisted, and the
+    // subspace-Newton step
+    //     T <- T_pre + (I - V V^t) g + V c,   Jhat c = -V^t g,
+    // is substituted into every subsequent iteration. The fixed-point
+    // iteration proceeds unchanged in the orthogonal complement while the
+    // measured expanding directions are handled by Newton at every sweep,
+    // converting their multipliers into contracting ones permanently instead
+    // of periodically knocking the unstable components down.
+    const bool NEWTON_PERSIST = options_.get_bool("DLPNO_SOFT_MODE_PERSIST");
+    const double NEWTON_MU = options_.get_double("DLPNO_SOFT_MODE_TIKHONOV");
+    const bool NEWTON_BROYDEN = options_.get_bool("DLPNO_SOFT_MODE_BROYDEN");
+    bool rpm_active = false;        // a persisted basis/Jacobian is in use
+    std::vector<double> newton_J;   // persisted projected Jacobian (column-major keff x keff)
+
+    // Secant (Broyden) refresh state: projected position and step of the
+    // previous normal iteration. Invalidated whenever probes intervene or the
+    // basis changes.
+    bool newton_secant_valid = false;
+    std::vector<double> newton_x_prev, newton_p_prev;
+
+    // Solve the small k x k system A x = b by Gaussian elimination with
+    // partial pivoting (A, b by value; A column-major). Returns false on
+    // (near-)singularity relative to jnorm.
+    auto newton_solve = [](std::vector<double> A, std::vector<double> b, std::vector<double>& x, int k,
+                           double jnorm) -> bool {
+        for (int col = 0; col < k; ++col) {
+            int piv = col;
+            for (int row = col + 1; row < k; ++row)
+                if (std::fabs(A[row + col * k]) > std::fabs(A[piv + col * k])) piv = row;
+            if (std::fabs(A[piv + col * k]) < 1.0e-14 * jnorm) return false;
+            if (piv != col) {
+                for (int cc = 0; cc < k; ++cc) std::swap(A[col + cc * k], A[piv + cc * k]);
+                std::swap(b[col], b[piv]);
+            }
+            for (int row = col + 1; row < k; ++row) {
+                double f = A[row + col * k] / A[col + col * k];
+                for (int cc = col; cc < k; ++cc) A[row + cc * k] -= f * A[col + cc * k];
+                b[row] -= f * b[col];
+            }
+        }
+        x.assign(k, 0.0);
+        for (int row = k - 1; row >= 0; --row) {
+            double s = b[row];
+            for (int cc = row + 1; cc < k; ++cc) s -= A[row + cc * k] * x[cc];
+            x[row] = s / A[row + row * k];
+        }
+        return true;
+    };
+
+    // Tikhonov-filtered projected Newton solve, c = -J^t (J J^t + mu^2 I)^{-1} p.
+    // Directions with singular values sigma >> mu receive essentially the full
+    // Newton step; near-singular directions are damped by sigma^2/(sigma^2+mu^2),
+    // so a fold-type (near-zero, possibly sign-changing) eigenvalue cannot
+    // amplify its own estimation error. mu <= 0 falls back to the exact solve
+    // (with one Levenberg-regularized retry), reproducing the previous behavior.
+    auto newton_filtered_solve = [&newton_solve](const std::vector<double>& J, const std::vector<double>& p,
+                                                 std::vector<double>& c, int k, double mu) -> bool {
+        double jnorm = 0.0;
+        for (double xx : J) jnorm = std::max(jnorm, std::fabs(xx));
+        if (mu > 0.0) {
+            std::vector<double> M((size_t)k * k, 0.0), y;
+            for (int jj = 0; jj < k; ++jj) {
+                for (int ii = 0; ii < k; ++ii) {
+                    double s = 0.0;
+                    for (int cc = 0; cc < k; ++cc) s += J[ii + cc * k] * J[jj + cc * k];
+                    M[ii + jj * k] = s;
+                }
+                M[jj + jj * k] += mu * mu;
+            }
+            double mnorm = 0.0;
+            for (double xx : M) mnorm = std::max(mnorm, std::fabs(xx));
+            if (!newton_solve(M, p, y, k, mnorm)) return false;  // cannot occur for mu > 0
+            c.assign(k, 0.0);
+            for (int ii = 0; ii < k; ++ii) {
+                double s = 0.0;
+                for (int cc = 0; cc < k; ++cc) s += J[cc + ii * k] * y[cc];
+                c[ii] = -s;  // c = -J^t y
+            }
+            return true;
+        }
+        if (jnorm <= 0.0) return false;
+        std::vector<double> rhs(k);
+        for (int ii = 0; ii < k; ++ii) rhs[ii] = -p[ii];
+        if (newton_solve(J, rhs, c, k, jnorm)) return true;
+        std::vector<double> Jreg = J;
+        for (int ii = 0; ii < k; ++ii) Jreg[ii + ii * k] += 1.0e-3 * jnorm;
+        return newton_solve(Jreg, rhs, c, k, jnorm);
+    };
+    int newton_keff = 0;
+    double newton_eps = 0.0;
+    std::vector<std::vector<double>> newton_V;     // orthonormal soft-space basis
+    std::vector<std::vector<double>> newton_G;     // g(T_base + eps * v_j)
+    std::vector<std::vector<double>> newton_hist;  // recent sweep steps (normal iterations only)
+    std::vector<double> newton_Tbase, newton_gbase, newton_Tpre;
+
+    auto newton_dot = [](const std::vector<double>& a, const std::vector<double>& b) {
+        double s = 0.0;
+        long long n = (long long)a.size();
+#pragma omp parallel for reduction(+ : s)
+        for (long long q = 0; q < n; ++q) s += a[q] * b[q];
+        return s;
+    };
+
+    // Flatten the live amplitudes into v in the block-scaled metric
+    // (fixed layout: T1, T2, T3, T4; block b scaled by 1/sqrt(size(b)))
+    auto newton_flatten = [&](std::vector<double>& v) {
+        v.resize(newton_len);
+#pragma omp parallel for
+        for (int i = 0; i < naocc; ++i) {
+            int ii = i_j_to_ij_[i][i];
+            size_t sz = (size_t)n_pno_[ii];
+            double w = 1.0 / std::sqrt((double)sz);
+            const double* srcp = T_ia_[i]->get_pointer();
+            double* dst = &v[newton_off_t1[i]];
+            for (size_t q = 0; q < sz; ++q) dst[q] = w * srcp[q];
+        }
+#pragma omp parallel for
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            size_t sz = (size_t)n_pno_[ij] * n_pno_[ij];
+            double w = 1.0 / std::sqrt((double)sz);
+            const double* srcp = T_iajb_[ij]->get_pointer();
+            double* dst = &v[newton_off_t2[ij]];
+            for (size_t q = 0; q < sz; ++q) dst[q] = w * srcp[q];
+        }
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int ijk = 0; ijk < n_lmo_triplets; ++ijk) {
+            size_t sz = (size_t)n_tno_[ijk] * n_tno_[ijk] * n_tno_[ijk];
+            double w = 1.0 / std::sqrt((double)sz);
+            const double* srcp = T_iajbkc_[ijk]->get_pointer();
+            double* dst = &v[newton_off_t3[ijk]];
+            for (size_t q = 0; q < sz; ++q) dst[q] = w * srcp[q];
+        }
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int ijkl = 0; ijkl < n_lmo_quadruplets; ++ijkl) {
+            size_t sz = (size_t)n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl];
+            double w = 1.0 / std::sqrt((double)sz);
+            const double* srcp = T_iajbkcld_[ijkl].data();
+            double* dst = &v[newton_off_t4[ijkl]];
+            for (size_t q = 0; q < sz; ++q) dst[q] = w * srcp[q];
+        }
+    };
+
+    // Set the live amplitudes from a block-scaled vector v (inverse scaling
+    // applied) and refresh Tt = 2T - T^t. (T3/T4-derived intermediates are
+    // rebuilt at the top of the next sweep.)
+    auto newton_set = [&](const std::vector<double>& v) {
+#pragma omp parallel for
+        for (int i = 0; i < naocc; ++i) {
+            int ii = i_j_to_ij_[i][i];
+            size_t sz = (size_t)n_pno_[ii];
+            double w = std::sqrt((double)sz);
+            const double* srcp = &v[newton_off_t1[i]];
+            double* dst = T_ia_[i]->get_pointer();
+            for (size_t q = 0; q < sz; ++q) dst[q] = w * srcp[q];
+        }
+#pragma omp parallel for
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            size_t sz = (size_t)n_pno_[ij] * n_pno_[ij];
+            double w = std::sqrt((double)sz);
+            const double* srcp = &v[newton_off_t2[ij]];
+            double* dst = T_iajb_[ij]->get_pointer();
+            for (size_t q = 0; q < sz; ++q) dst[q] = w * srcp[q];
+        }
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int ijk = 0; ijk < n_lmo_triplets; ++ijk) {
+            size_t sz = (size_t)n_tno_[ijk] * n_tno_[ijk] * n_tno_[ijk];
+            double w = std::sqrt((double)sz);
+            const double* srcp = &v[newton_off_t3[ijk]];
+            double* dst = T_iajbkc_[ijk]->get_pointer();
+            for (size_t q = 0; q < sz; ++q) dst[q] = w * srcp[q];
+        }
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int ijkl = 0; ijkl < n_lmo_quadruplets; ++ijkl) {
+            size_t sz = (size_t)n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl];
+            double w = std::sqrt((double)sz);
+            const double* srcp = &v[newton_off_t4[ijkl]];
+            double* dst = T_iajbkcld_[ijkl].data();
+            for (size_t q = 0; q < sz; ++q) dst[q] = w * srcp[q];
+        }
+#pragma omp parallel for
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            Tt_iajb_[ij] = T_iajb_[ij]->clone();
+            Tt_iajb_[ij]->scale(2.0);
+            Tt_iajb_[ij]->subtract(T_iajb_[ij]->transpose());
+        }
+    };
     
     DIISManager diis = DIISManager(options_.get_int("DIIS_MAX_VECS"), "LCCSDTQ DIIS", DIISManager::RemovalPolicy::LargestError, DIISManager::StoragePolicy::OnDisk);
 
+    // Wind down a JFNK chain: place the amplitudes at restore_point, reset the
+    // DIIS history, clear the Krylov state, re-arm the stall detector, and
+    // hold the stabilizer gates for one sweep (the current residuals refer to
+    // a probe/trial point).
+    auto jfnk_finish = [&](const std::vector<double>& restore_point, const char* reason) {
+        newton_set(restore_point);
+        diis.reset_subspace();
+        outfile->Printf("    JFNK: %s; DIIS subspace reset, resuming normal iterations\n", reason);
+        jfnk_phase = -1;
+        jfnk_j = 0;
+        jfnk_ls = 0;
+        jfnk_V.clear();
+        jfnk_dir.clear();
+        std::fill(jfnk_H.begin(), jfnk_H.end(), 0.0);
+        newton_gate_hold = true;
+        newton_glast_valid = false;
+        stall_best_rmax = -1.0;
+        stall_count = 0;
+    };
+
+    // If the perturbative (Q) amplitudes are not used as the initial guess,
+    // start T4 from zero. (Hoisted out of the iteration loop so that the
+    // amplitude snapshot taken at the top of each macroiteration sees the
+    // actual starting amplitudes.)
+    if (!options_.get_bool("T4_PERTURBATIVE_GUESS")) {
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int ijkl_sorted = 0; ijkl_sorted < n_lmo_quadruplets; ++ijkl_sorted) {
+            int ijkl = sorted_quadruplets_[ijkl_sorted];
+            T_iajbkcld_[ijkl].zero();
+        }
+    }
+
     while (!(e_converged && r_converged)) {
+        bool newton_probe_iter = false;  // true while a soft-mode Newton correction is in flight
+
+        // => Phase-dependent stabilizers <= //
+        // Damping (alpha) and level shifting (delta) suppress the
+        // large-amplitude transient of the early iterations, but near
+        // convergence they only slow the softest modes: a mode with Jacobi
+        // multiplier m is mapped to alpha + (1-alpha)*m, and its denominator
+        // is inflated by delta. Disable them per amplitude class once that
+        // class's RMS residual from the previous macroiteration falls below
+        // its cutoff; they re-engage if the residual rises back above it.
+        // A cutoff of 0.0 keeps the stabilizers active throughout.
+        bool stab_t1 = fabs(r_curr1) >= T1_STABILIZER_CUTOFF;
+        bool stab_t2 = fabs(r_curr2) >= T2_STABILIZER_CUTOFF;
+        bool stab_t3 = fabs(r_curr3) >= T3_STABILIZER_CUTOFF;
+        bool stab_t4 = fabs(r_curr4) >= T4_STABILIZER_CUTOFF;
+        if (newton_stage >= 0 || jfnk_phase >= 0 || newton_gate_hold) {
+            // While a soft-mode Newton correction is in flight, the base and
+            // all probe sweeps must evaluate the same map: freeze the
+            // stabilizer state (mid-correction toggles would contaminate the
+            // finite differences with O(delta/(D+delta)) map changes). The
+            // hold extends one sweep past the correction because the residuals
+            // at that point still refer to a perturbed probe point.
+            stab_t1 = stab_prev_t1;
+            stab_t2 = stab_prev_t2;
+            stab_t3 = stab_prev_t3;
+            stab_t4 = stab_prev_t4;
+            if (newton_stage < 0) newton_gate_hold = false;
+        }
+
+        const double damping_t1 = stab_t1 ? damping_ratio_quads_ : 0.0;
+        const double shift_t1 = stab_t1 ? level_shift_quads_ : 0.0;
+        const double damping_t2 = stab_t2 ? damping_ratio_quads_ : 0.0;
+        const double shift_t2 = stab_t2 ? level_shift_quads_ : 0.0;
+        const double damping_t3 = stab_t3 ? damping_ratio_quads_ : 0.0;
+        const double shift_t3 = stab_t3 ? level_shift_quads_ : 0.0;
+        const double damping_t4 = stab_t4 ? damping_ratio_quads_ : 0.0;
+        const double shift_t4 = stab_t4 ? level_shift_quads_ : 0.0;
+
+        if (damping_ratio_quads_ != 0.0 || level_shift_quads_ != 0.0) {
+            if (stab_t1 != stab_prev_t1) {
+                outfile->Printf("    Damping/level shift %s for T1 updates (RMS R1 = %.3e, cutoff = %.3e)\n",
+                                stab_t1 ? "re-enabled" : "disabled", r_curr1, T1_STABILIZER_CUTOFF);
+            }
+            if (stab_t2 != stab_prev_t2) {
+                outfile->Printf("    Damping/level shift %s for T2 updates (RMS R2 = %.3e, cutoff = %.3e)\n",
+                                stab_t2 ? "re-enabled" : "disabled", r_curr2, T2_STABILIZER_CUTOFF);
+            }
+            if (stab_t3 != stab_prev_t3) {
+                outfile->Printf("    Damping/level shift %s for T3 updates (RMS R3 = %.3e, cutoff = %.3e)\n",
+                                stab_t3 ? "re-enabled" : "disabled", r_curr3, T3_STABILIZER_CUTOFF);
+            }
+            if (stab_t4 != stab_prev_t4) {
+                outfile->Printf("    Damping/level shift %s for T4 updates (RMS R4 = %.3e, cutoff = %.3e)\n",
+                                stab_t4 ? "re-enabled" : "disabled", r_curr4, T4_STABILIZER_CUTOFF);
+            }
+        }
+        stab_prev_t1 = stab_t1;
+        stab_prev_t2 = stab_t2;
+        stab_prev_t3 = stab_t3;
+        stab_prev_t4 = stab_t4;
+
         // RMS of residual per LMO orbital, for assessing convergence
         std::vector<double> R_ia_rms(naocc, 0.0);
         // RMS of residual per LMO pair, for assessing convergence
@@ -3893,6 +4317,38 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
         std::vector<double> R_iajbkcld_rms(n_lmo_quadruplets, 0.0);
 
         std::time_t time_start = std::time(nullptr);
+
+        // => Snapshot amplitudes at the start of the macroiteration <= //
+        // This is the input point of the sweep map; the DIIS error vector is
+        // formed below as the difference against the post-sweep amplitudes.
+#pragma omp parallel for
+        for (int i = 0; i < naocc; ++i) {
+            T_ia_old[i]->copy(T_ia_[i]);
+        }
+
+#pragma omp parallel for
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            T_iajb_old[ij]->copy(T_iajb_[ij]);
+        }
+
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int ijk = 0; ijk < n_lmo_triplets; ++ijk) {
+            T_iajbkc_old[ijk]->copy(T_iajbkc_[ijk]);
+        }
+
+        if (EXTRAPOLATE_T4) {
+#pragma omp parallel for schedule(dynamic, 1)
+            for (int ijkl = 0; ijkl < n_lmo_quadruplets; ++ijkl) {
+                size_t nqno4 = (size_t)n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl];
+                ::memcpy(T_iajbkcld_old[ijkl]->get_pointer(), T_iajbkcld_[ijkl].data(), nqno4 * sizeof(double));
+            }
+        }
+
+        if (NEWTON_MACHINERY) {
+            // Pre-sweep amplitudes, flattened: the sweep step g = T_post - T_pre
+            // recorded by the Newton machinery is measured from here
+            newton_flatten(newton_Tpre);
+        }
 
         for (int miter = 0; miter < N_MICRO_ITER; ++miter) {
 
@@ -4000,14 +4456,6 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
             // compute quadruples amplitude
             timer_on("DLPNO-CCSDTQ : R_iajbkcld");
             if (miter == 0) {
-                if (iteration == 1 && options_.get_bool("T4_PERTURBATIVE_GUESS") == false) {
-            #pragma omp parallel for schedule(dynamic, 1)
-                    for (int ijkl_sorted = 0; ijkl_sorted < n_lmo_quadruplets; ++ijkl_sorted) {
-                        int ijkl = sorted_quadruplets_[ijkl_sorted];
-                        T_iajbkcld_[ijkl].zero();
-                    } // end for
-                } // end if
-
                 form_T_mnkl();
                 compute_R_iajbkcld(R_iajbkcld);
 
@@ -4029,8 +4477,8 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                     Tensor<double, 4> zero_tensor("zero", n_qno_[ijkl], n_qno_[ijkl], n_qno_[ijkl], n_qno_[ijkl]);
                     zero_tensor.zero();
 
-                    double alpha = (!QUADRUPLES_T4_DAMPING_CONDITIONAL || fabs(rmsd(R_iajbkcld[ijkl], zero_tensor)) > fabs(R_iajbkcld_rms[ijkl])) ? damping_ratio_quads_ : 0.0;
-                    double delta = (!QUADRUPLES_T4_SHIFT_CONDITIONAL || fabs(rmsd(R_iajbkcld[ijkl], zero_tensor)) > fabs(R_iajbkcld_rms[ijkl])) ? level_shift_quads_ : 0.0;
+                    double alpha = (!QUADRUPLES_T4_DAMPING_CONDITIONAL || fabs(rmsd(R_iajbkcld[ijkl], zero_tensor)) > fabs(R_iajbkcld_rms[ijkl])) ? damping_t4 : 0.0;
+                    double delta = (!QUADRUPLES_T4_SHIFT_CONDITIONAL || fabs(rmsd(R_iajbkcld[ijkl], zero_tensor)) > fabs(R_iajbkcld_rms[ijkl])) ? shift_t4 : 0.0;
 
                     for (int a = 0; a < n_qno_[ijkl]; ++a) {
                         for (int b = 0; b < n_qno_[ijkl]; ++b) {
@@ -4083,8 +4531,8 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                     int ijk = sorted_triplets_[ijk_sorted];
                     auto &[i, j, k] = ijk_to_i_j_k_[ijk];
 
-                    double alpha = (!QUADRUPLES_T3_DAMPING_CONDITIONAL || fabs(R_iajbkc[ijk]->rms()) > fabs(R_iajbkc_rms[ijk])) ? damping_ratio_quads_ : 0.0;
-                    double delta = (!QUADRUPLES_T3_SHIFT_CONDITIONAL || fabs(R_iajbkc[ijk]->rms()) > fabs(R_iajbkc_rms[ijk])) ? level_shift_quads_ : 0.0;
+                    double alpha = (!QUADRUPLES_T3_DAMPING_CONDITIONAL || fabs(R_iajbkc[ijk]->rms()) > fabs(R_iajbkc_rms[ijk])) ? damping_t3 : 0.0;
+                    double delta = (!QUADRUPLES_T3_SHIFT_CONDITIONAL || fabs(R_iajbkc[ijk]->rms()) > fabs(R_iajbkc_rms[ijk])) ? shift_t3 : 0.0;
 
                     for (int a_ijk = 0; a_ijk < n_tno_[ijk]; ++a_ijk) {
                         for (int b_ijk = 0; b_ijk < n_tno_[ijk]; ++b_ijk) {
@@ -4116,8 +4564,8 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
             for (int ij = 0; ij < n_lmo_pairs; ++ij) {
                 auto &[i, j] = ij_to_i_j_[ij];
 
-                double alpha = (!QUADRUPLES_T2_DAMPING_CONDITIONAL || fabs(R_iajb[ij]->rms()) > fabs(R_iajb_rms[ij])) ? damping_ratio_quads_ : 0.0;
-                double delta = (!QUADRUPLES_T2_SHIFT_CONDITIONAL || fabs(R_iajb[ij]->rms()) > fabs(R_iajb_rms[ij])) ? level_shift_quads_ : 0.0;
+                double alpha = (!QUADRUPLES_T2_DAMPING_CONDITIONAL || fabs(R_iajb[ij]->rms()) > fabs(R_iajb_rms[ij])) ? damping_t2 : 0.0;
+                double delta = (!QUADRUPLES_T2_SHIFT_CONDITIONAL || fabs(R_iajb[ij]->rms()) > fabs(R_iajb_rms[ij])) ? shift_t2 : 0.0;
 
                 for (int a_ij = 0; a_ij < n_pno_[ij]; ++a_ij) {
                     for (int b_ij = 0; b_ij < n_pno_[ij]; ++b_ij) {
@@ -4144,8 +4592,8 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
     #pragma omp parallel for reduction(+ : r_curr1)
             for (int i = 0; i < naocc; ++i) {
                 int ii = i_j_to_ij_[i][i];
-                double alpha = (!QUADRUPLES_T1_DAMPING_CONDITIONAL || fabs(R_ia[i]->rms()) > fabs(R_ia_rms[i])) ? damping_ratio_quads_ : 0.0;
-                double delta = (!QUADRUPLES_T1_SHIFT_CONDITIONAL || fabs(R_ia[i]->rms()) > fabs(R_ia_rms[i])) ? level_shift_quads_ : 0.0;
+                double alpha = (!QUADRUPLES_T1_DAMPING_CONDITIONAL || fabs(R_ia[i]->rms()) > fabs(R_ia_rms[i])) ? damping_t1 : 0.0;
+                double delta = (!QUADRUPLES_T1_SHIFT_CONDITIONAL || fabs(R_ia[i]->rms()) > fabs(R_ia_rms[i])) ? shift_t1 : 0.0;
 
                 for (int a_ii = 0; a_ii < n_pno_[ii]; ++a_ii) {
                     (*T_ia_[i])(a_ii, 0) -= (1.0 - alpha) * (*R_ia[i])(a_ii, 0) / (e_pno_[ii]->get(a_ii) - F_lmo_->get(i,i) + delta);
@@ -4158,26 +4606,566 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
 
         } // end miter
 
-        // Normalize error vectors before extrapolation
+        // => Soft-mode Newton bookkeeping <= //
+        // Record the step of the sweep that just completed, g(T_pre) = T - T_pre,
+        // where T_pre is the loop-top amplitude vector (a normal iterate, or a
+        // probe point while a correction is in flight).
+        if (NEWTON_MACHINERY) {
+            std::vector<double> Tcur;
+            newton_flatten(Tcur);
+            std::vector<double> gcur(newton_len);
+#pragma omp parallel for
+            for (long long q = 0; q < (long long)newton_len; ++q) gcur[q] = Tcur[q] - newton_Tpre[q];
+
+            if (jfnk_phase == 0) {
+                // ==== JFNK Arnoldi: the sweep just evaluated g(Tbase + eps v_j),
+                // so gcur furnishes the matrix-free product w ~= J_g v_j ====
+                newton_probe_iter = true;
+                const int j = jfnk_j;
+                const int ldh = JFNK_MAX_KRYLOV + 1;
+
+                std::vector<double> w(newton_len);
+#pragma omp parallel for
+                for (long long q = 0; q < (long long)newton_len; ++q) w[q] = (gcur[q] - jfnk_gbase[q]) / jfnk_eps;
+                for (int i = 0; i < j; ++i) {
+                    double h = newton_dot(jfnk_V[i], w);
+                    jfnk_H[i + (size_t)(j - 1) * ldh] = h;
+#pragma omp parallel for
+                    for (long long q = 0; q < (long long)newton_len; ++q) w[q] -= h * jfnk_V[i][q];
+                }
+                double hnew = std::sqrt(newton_dot(w, w));
+                jfnk_H[j + (size_t)(j - 1) * ldh] = hnew;
+
+                // Tikhonov-regularized least-squares solve of the Hessenberg
+                // system, min |Hbar y - beta e1|^2 + mu^2 |y|^2 (normal
+                // equations; SPD, cannot fail for mu > 0). The regularization
+                // is what keeps a fold-type near-singular direction from being
+                // inverted exactly -- essential for an instability-carrying
+                // reference.
+                std::vector<double> N((size_t)j * j, 0.0), nrhs(j, 0.0), y;
+                for (int c2 = 0; c2 < j; ++c2) {
+                    for (int c1 = 0; c1 < j; ++c1) {
+                        double s = 0.0;
+                        for (int r = 0; r <= j; ++r) s += jfnk_H[r + (size_t)c1 * ldh] * jfnk_H[r + (size_t)c2 * ldh];
+                        N[c1 + c2 * j] = s;
+                    }
+                    N[c2 + c2 * j] += NEWTON_MU * NEWTON_MU;
+                    nrhs[c2] = jfnk_beta * jfnk_H[0 + (size_t)c2 * ldh];
+                }
+                double nnorm = 0.0;
+                for (double xx : N) nnorm = std::max(nnorm, std::fabs(xx));
+                bool ls_ok = (nnorm > 0.0) && newton_solve(N, nrhs, y, j, nnorm);
+                double rho = jfnk_beta;
+                if (ls_ok) {
+                    rho = 0.0;
+                    for (int r = 0; r <= j; ++r) {
+                        double s = (r == 0) ? -jfnk_beta : 0.0;
+                        for (int c2 = 0; c2 < j; ++c2) s += jfnk_H[r + (size_t)c2 * ldh] * y[c2];
+                        rho += s * s;
+                    }
+                    rho = std::sqrt(rho);
+                }
+                outfile->Printf("    JFNK: Arnoldi %d/%d, projected residual |Hy-b|/|g| = %.3e\n", j, JFNK_MAX_KRYLOV,
+                                rho / jfnk_beta);
+
+                bool finish_gmres =
+                    !ls_ok || (rho <= JFNK_TOL * jfnk_beta) || (j >= JFNK_MAX_KRYLOV) || (hnew <= 1.0e-12 * jfnk_beta);
+                if (!finish_gmres) {
+                    double inv = 1.0 / hnew;
+#pragma omp parallel for
+                    for (long long q = 0; q < (long long)newton_len; ++q) w[q] *= inv;
+                    jfnk_V.push_back(std::move(w));
+                    ++jfnk_j;
+                    std::vector<double> Tprobe(newton_len);
+#pragma omp parallel for
+                    for (long long q = 0; q < (long long)newton_len; ++q)
+                        Tprobe[q] = jfnk_Tbase[q] + jfnk_eps * jfnk_V[jfnk_j - 1][q];
+                    newton_set(Tprobe);
+                } else if (!ls_ok) {
+                    jfnk_finish(jfnk_Tbase, "projected system unsolvable");
+                } else {
+                    // Form the Newton direction d = V y under the trust radius
+                    jfnk_dir.assign(newton_len, 0.0);
+                    for (int c2 = 0; c2 < j; ++c2) {
+                        double yc = y[c2];
+#pragma omp parallel for
+                        for (long long q = 0; q < (long long)newton_len; ++q) jfnk_dir[q] += yc * jfnk_V[c2][q];
+                    }
+                    double dnorm = std::sqrt(newton_dot(jfnk_dir, jfnk_dir));
+                    double tnorm = std::sqrt(newton_dot(jfnk_Tbase, jfnk_Tbase));
+                    double cap = 0.1 * (1.0 + tnorm);
+                    if (dnorm > cap && dnorm > 0.0) {
+                        outfile->Printf("    JFNK: Newton direction capped at trust radius (%.3e -> %.3e)\n", dnorm, cap);
+#pragma omp parallel for
+                        for (long long q = 0; q < (long long)newton_len; ++q) jfnk_dir[q] *= cap / dnorm;
+                        dnorm = cap;
+                    }
+                    if (dnorm <= 0.0) {
+                        jfnk_finish(jfnk_Tbase, "vanishing Newton direction");
+                    } else {
+                        jfnk_phase = 1;
+                        jfnk_ls = 0;
+                        jfnk_t = 1.0;
+                        std::vector<double> Ttrial(newton_len);
+#pragma omp parallel for
+                        for (long long q = 0; q < (long long)newton_len; ++q)
+                            Ttrial[q] = jfnk_Tbase[q] + jfnk_t * jfnk_dir[q];
+                        newton_set(Ttrial);
+                    }
+                }
+            } else if (jfnk_phase == 1) {
+                // ==== JFNK line search: the sweep just evaluated g at the trial
+                // point Tbase + t d (held, flattened, in newton_Tpre) ====
+                newton_probe_iter = true;
+                double gnorm = std::sqrt(newton_dot(gcur, gcur));
+                bool accept = gnorm <= (1.0 - 1.0e-4 * jfnk_t) * jfnk_beta;
+                outfile->Printf("    JFNK: line search t = %.4f, |g| = %.3e (from %.3e)%s\n", jfnk_t, gnorm, jfnk_beta,
+                                accept ? " -- accepted" : "");
+                if (accept) {
+                    ++jfnk_steps_taken;
+                    bool res_conv = fabs(r_curr1) < R_CONV_JFNK && fabs(r_curr2) < R_CONV_JFNK &&
+                                    fabs(r_curr3) < R_CONV_JFNK && fabs(r_curr4) < R_CONV_JFNK;
+                    outfile->Printf("    JFNK: Newton step %d accepted, |g| %.3e -> %.3e\n", jfnk_steps_taken, jfnk_beta,
+                                    gnorm);
+                    if (res_conv) {
+                        jfnk_finish(newton_Tpre, "residuals below R_CONVERGENCE at accepted point");
+                    } else if (jfnk_steps_taken >= JFNK_MAX_STEPS) {
+                        jfnk_finish(newton_Tpre, "Newton step budget reached");
+                    } else {
+                        // Chain the next Newton step from the accepted point; its
+                        // g is already in hand (this trial sweep), so the chain
+                        // costs nothing extra between steps
+                        jfnk_Tbase = newton_Tpre;
+                        jfnk_gbase = std::move(gcur);
+                        jfnk_beta = gnorm;
+                        double tnorm = std::sqrt(newton_dot(jfnk_Tbase, jfnk_Tbase));
+                        jfnk_eps = std::max(1.0e-6 * (1.0 + tnorm), std::min(10.0 * jfnk_beta, 1.0e-4 * (1.0 + tnorm)));
+                        jfnk_V.clear();
+                        std::fill(jfnk_H.begin(), jfnk_H.end(), 0.0);
+                        std::vector<double> v1(newton_len);
+                        double inv = -1.0 / jfnk_beta;
+#pragma omp parallel for
+                        for (long long q = 0; q < (long long)newton_len; ++q) v1[q] = inv * jfnk_gbase[q];
+                        jfnk_V.push_back(std::move(v1));
+                        jfnk_j = 1;
+                        jfnk_phase = 0;
+                        std::vector<double> Tprobe(newton_len);
+#pragma omp parallel for
+                        for (long long q = 0; q < (long long)newton_len; ++q)
+                            Tprobe[q] = jfnk_Tbase[q] + jfnk_eps * jfnk_V[0][q];
+                        newton_set(Tprobe);
+                    }
+                } else if (jfnk_ls + 1 < 5) {
+                    ++jfnk_ls;
+                    jfnk_t *= 0.5;
+                    std::vector<double> Ttrial(newton_len);
+#pragma omp parallel for
+                    for (long long q = 0; q < (long long)newton_len; ++q)
+                        Ttrial[q] = jfnk_Tbase[q] + jfnk_t * jfnk_dir[q];
+                    newton_set(Ttrial);
+                } else {
+                    // No trial reduced |g|: with an indefinite Jacobian and a
+                    // possibly wrong local model, never force a step
+                    jfnk_finish(jfnk_Tbase, "line search failed; Newton step rejected");
+                }
+            } else if (newton_stage >= 0) {
+                // A probe sweep just completed: gcur = g(T_base + eps * v_j)
+                newton_probe_iter = true;
+                newton_G[newton_stage] = std::move(gcur);
+                outfile->Printf("    Soft-mode Newton: probe %d/%d complete\n", newton_stage + 1, newton_keff);
+
+                if (newton_stage + 1 < newton_keff) {
+                    // Set up the next probe point
+                    ++newton_stage;
+                    std::vector<double> Tprobe(newton_len);
+#pragma omp parallel for
+                    for (long long q = 0; q < (long long)newton_len; ++q)
+                        Tprobe[q] = newton_Tbase[q] + newton_eps * newton_V[newton_stage][q];
+                    newton_set(Tprobe);
+                } else {
+                    // All probes done: build and solve the projected Newton system
+                    const int k = newton_keff;
+                    std::vector<double> Jhat(k * k), proj(k);
+                    for (int jj = 0; jj < k; ++jj) {
+                        for (int ii = 0; ii < k; ++ii) {
+                            double s = 0.0;
+#pragma omp parallel for reduction(+ : s)
+                            for (long long q = 0; q < (long long)newton_len; ++q)
+                                s += newton_V[ii][q] * (newton_G[jj][q] - newton_gbase[q]);
+                            Jhat[ii + jj * k] = s / newton_eps;  // column-major
+                        }
+                    }
+                    for (int ii = 0; ii < k; ++ii) {
+                        proj[ii] = newton_dot(newton_V[ii], newton_gbase);
+                    }
+
+                    double jnorm = 0.0;
+                    for (double x : Jhat) jnorm = std::max(jnorm, std::fabs(x));
+
+                    // Diagnostic: eigenvalues of the projected Jacobian of the step
+                    // map g; the corresponding sweep-map multipliers are 1 + lambda
+                    if (jnorm > 0.0) {
+                        std::vector<double> Acopy = Jhat, wr(k), wi(k), vdum(k), work(8 * k);
+                        int info = C_DGEEV('N', 'N', k, Acopy.data(), k, wr.data(), wi.data(), vdum.data(), 1,
+                                           vdum.data(), 1, work.data(), 8 * k);
+                        if (info == 0) {
+                            for (int ii = 0; ii < k; ++ii) {
+                                if (wi[ii] != 0.0) {
+                                    outfile->Printf("    Soft-mode Newton: J_g eigenvalue %d = %.6e %+.6e i (sweep multiplier %.6e %+.6e i)\n",
+                                                    ii + 1, wr[ii], wi[ii], 1.0 + wr[ii], wi[ii]);
+                                } else {
+                                    outfile->Printf("    Soft-mode Newton: J_g eigenvalue %d = %.6e (sweep multiplier %.6e)\n",
+                                                    ii + 1, wr[ii], 1.0 + wr[ii]);
+                                }
+                            }
+                        }
+                    }
+
+                    // Tikhonov-filtered solve of the projected Newton system on
+                    // the freshly measured Jhat (mu = 0 recovers the exact solve
+                    // with a Levenberg-regularized retry)
+                    std::vector<double> c;
+                    bool solved = (jnorm > 0.0) && newton_filtered_solve(Jhat, proj, c, k, NEWTON_MU);
+
+                    // Compose the new point: fast components take the plain sweep
+                    // step, soft components take the Newton step
+                    std::vector<double> Tnew(newton_len);
+#pragma omp parallel for
+                    for (long long q = 0; q < (long long)newton_len; ++q)
+                        Tnew[q] = newton_Tbase[q] + newton_gbase[q];
+
+                    if (solved) {
+                        double cnorm = 0.0;
+                        for (int ii = 0; ii < k; ++ii) cnorm += c[ii] * c[ii];
+                        cnorm = std::sqrt(cnorm);
+                        double tnorm = std::sqrt(newton_dot(newton_Tbase, newton_Tbase));
+                        double gnorm = std::sqrt(newton_dot(newton_gbase, newton_gbase));
+                        // Absolute cap, and a relative cap so that a small
+                        // (possibly noise-contaminated) projected eigenvalue can
+                        // never launch the iterate far across the flat valley
+                        double cap = std::min(0.1 * (1.0 + tnorm), 50.0 * gnorm);
+                        if (cnorm > cap) {
+                            outfile->Printf("    Soft-mode Newton: correction capped at trust radius (%.3e -> %.3e)\n", cnorm, cap);
+                            for (int ii = 0; ii < k; ++ii) c[ii] *= cap / cnorm;
+                            cnorm = cap;
+                        }
+                        for (int ii = 0; ii < k; ++ii) {
+                            double coef = c[ii] - proj[ii];
+#pragma omp parallel for
+                            for (long long q = 0; q < (long long)newton_len; ++q) Tnew[q] += coef * newton_V[ii][q];
+                        }
+                        outfile->Printf("    Soft-mode Newton: correction applied (|correction| = %.3e, |V^t g| = %.3e)\n",
+                                        cnorm, std::sqrt(newton_dot(proj, proj)));
+                    } else {
+                        outfile->Printf("    Soft-mode Newton: correction skipped (singular projected Jacobian); plain sweep step taken\n");
+                    }
+                    newton_set(Tnew);
+
+                    diis.reset_subspace();
+                    outfile->Printf("    DIIS subspace reset following soft-mode Newton correction\n");
+
+                    if (solved && NEWTON_PERSIST) {
+                        // Persist V and Jhat: the subspace-Newton step will be
+                        // substituted into every subsequent iteration (RPM)
+                        newton_J = Jhat;  // persist the raw measured Jacobian
+                        rpm_active = true;
+                        outfile->Printf(
+                            "    Soft-mode Newton: deflation basis (dim %d) persisted; subspace-Newton step active every iteration\n",
+                            k);
+                    } else {
+                        rpm_active = false;
+                        newton_keff = 0;
+                        newton_V.clear();
+                        newton_J.clear();
+                    }
+
+                    newton_stage = -1;
+                    newton_gate_hold = true;
+                    newton_secant_valid = false;  // basis/Jacobian replaced
+                    newton_G.clear();
+                    newton_hist.clear();
+                    stall_best_rmax = -1.0;
+                    stall_count = 0;
+                }
+            } else {
+                // => Recursive projection: persistent subspace-Newton step <= //
+                // The sweep left the iterate at T_pre + g; move it to
+                // T_pre + (I - V V^t) g + V c by adding V (c - p), p = V^t g.
+                // At the solution g = 0 implies c = 0, so fixed points are
+                // unchanged; the DIIS error vector built below from the live
+                // amplitudes picks up the substituted step automatically.
+                if (rpm_active && newton_keff > 0) {
+                    const int k = newton_keff;
+                    std::vector<double> p(k), c;
+                    for (int ii = 0; ii < k; ++ii) {
+                        p[ii] = newton_dot(newton_V[ii], gcur);
+                    }
+
+                    // => Broyden secant refresh of the projected Jacobian <= //
+                    // Every substituted iteration provides a free measurement
+                    // pair: the projected displacement dx = V^t (T_pre^n -
+                    // T_pre^(n-1)) and the projected change in the raw step
+                    // dp = V^t (g^n - g^(n-1)). The rank-1 least-change update
+                    // J <- J + (dp - J dx) dx^t / |dx|^2 lets the persisted
+                    // Jacobian track its drift along the solution path (the
+                    // measured fold-type eigenvalue crossed zero between
+                    // corrections) at zero extra cost; contaminated pairs that
+                    // would inject a row larger than the Jacobian itself are
+                    // rejected. Full probe-based rebuilds remain the
+                    // stall-triggered fallback.
+                    if (NEWTON_BROYDEN) {
+                        std::vector<double> x(k);
+                        for (int ii = 0; ii < k; ++ii) x[ii] = newton_dot(newton_V[ii], newton_Tpre);
+                        if (newton_secant_valid) {
+                            std::vector<double> dx(k), dp(k), Jdx(k, 0.0);
+                            double dx2 = 0.0;
+                            for (int ii = 0; ii < k; ++ii) {
+                                dx[ii] = x[ii] - newton_x_prev[ii];
+                                dp[ii] = p[ii] - newton_p_prev[ii];
+                                dx2 += dx[ii] * dx[ii];
+                            }
+                            if (dx2 > 1.0e-20) {
+                                for (int ii = 0; ii < k; ++ii)
+                                    for (int cc = 0; cc < k; ++cc) Jdx[ii] += newton_J[ii + cc * k] * dx[cc];
+                                double rn = 0.0, jn = 0.0;
+                                for (int ii = 0; ii < k; ++ii) rn += (dp[ii] - Jdx[ii]) * (dp[ii] - Jdx[ii]);
+                                rn = std::sqrt(rn);
+                                for (double xx : newton_J) jn += xx * xx;
+                                jn = std::sqrt(jn);
+                                if (rn <= 10.0 * (jn + NEWTON_MU) * std::sqrt(dx2)) {
+                                    for (int ii = 0; ii < k; ++ii) {
+                                        double f = (dp[ii] - Jdx[ii]) / dx2;
+                                        for (int cc = 0; cc < k; ++cc) newton_J[ii + cc * k] += f * dx[cc];
+                                    }
+                                }
+                            }
+                        }
+                        newton_x_prev = x;
+                        newton_p_prev = p;
+                        newton_secant_valid = true;
+                    }
+
+                    if (newton_filtered_solve(newton_J, p, c, k, NEWTON_MU)) {
+                        double cnorm = 0.0;
+                        for (int ii = 0; ii < k; ++ii) cnorm += c[ii] * c[ii];
+                        cnorm = std::sqrt(cnorm);
+                        double gnorm = std::sqrt(newton_dot(gcur, gcur));
+                        double tnorm = std::sqrt(newton_dot(newton_Tpre, newton_Tpre));
+                        double cap = std::min(0.1 * (1.0 + tnorm), 50.0 * gnorm);
+                        if (cnorm > cap && cnorm > 0.0) {
+                            for (int ii = 0; ii < k; ++ii) c[ii] *= cap / cnorm;
+                        }
+                        for (int ii = 0; ii < k; ++ii) {
+                            double coef = c[ii] - p[ii];
+#pragma omp parallel for
+                            for (long long q = 0; q < (long long)newton_len; ++q) Tcur[q] += coef * newton_V[ii][q];
+                        }
+                        newton_set(Tcur);
+                        // Keep the DIIS T4 vector in sync with the substituted
+                        // amplitudes (it was copied from the einsums tensors
+                        // mid-sweep, before the substitution)
+#pragma omp parallel for schedule(dynamic, 1)
+                        for (int ijkl = 0; ijkl < n_lmo_quadruplets; ++ijkl) {
+                            size_t nqno4 = (size_t)n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl];
+                            ::memcpy(T_iajbkcld_psi[ijkl]->get_pointer(), T_iajbkcld_[ijkl].data(),
+                                     nqno4 * sizeof(double));
+                        }
+                    } else {
+                        outfile->Printf("    Soft-mode Newton: persisted Jacobian unusable; deflation basis discarded\n");
+                        rpm_active = false;
+                        newton_keff = 0;
+                        newton_V.clear();
+                        newton_J.clear();
+                        newton_secant_valid = false;
+                    }
+                }
+
+                // Keep the raw step of the last normal iteration for a JFNK
+                // launch (it becomes g at the Newton base point, free of charge)
+                if (JFNK) {
+                    newton_glast = gcur;
+                    newton_glast_valid = true;
+                }
+
+                // Record the raw step (pre-substitution) in the soft-space
+                // history: the basis wants the directions in which the raw
+                // sweep map misbehaves
+                if (NEWTON_K > 0) {
+                    newton_hist.push_back(std::move(gcur));
+                    if ((int)newton_hist.size() > NEWTON_K) newton_hist.erase(newton_hist.begin());
+                }
+            }
+        }
+
+        // => Stall detection: soft-mode Newton correction and/or DIIS reset <= //
+        // If the maximum RMS residual has not improved over the last
+        // DIIS_RESET_WINDOW macroiterations, discard the accumulated DIIS
+        // history: a stalled subspace is dominated by directions that carry
+        // no further information about the slow modes, and extrapolations
+        // built from it can pin the iterate. If the soft-mode Newton
+        // correction is enabled, launch it instead; the reset then follows
+        // the correction.
+        if (newton_stage < 0 && jfnk_phase < 0 && !newton_probe_iter && DIIS_RESET_WINDOW > 0) {
+            double r_max = std::max(std::max(fabs(r_curr1), fabs(r_curr2)), std::max(fabs(r_curr3), fabs(r_curr4)));
+            if (stall_best_rmax < 0.0 || r_max < stall_best_rmax) {
+                stall_best_rmax = r_max;
+                stall_count = 0;
+            } else if (++stall_count >= DIIS_RESET_WINDOW) {
+                bool launched = false;
+                if (JFNK && newton_glast_valid) {
+                    // ==== Launch a JFNK chain from the pre-sweep point of this
+                    // iteration, whose raw step is already known ====
+                    jfnk_Tbase = newton_Tpre;
+                    jfnk_gbase = newton_glast;
+                    jfnk_beta = std::sqrt(newton_dot(jfnk_gbase, jfnk_gbase));
+                    if (jfnk_beta > 0.0) {
+                        double tnorm = std::sqrt(newton_dot(jfnk_Tbase, jfnk_Tbase));
+                        // FD step: large enough to dominate sweep evaluation
+                        // noise, clamped from above so probes stay in the
+                        // linear regime no matter how large |g| has grown
+                        jfnk_eps = std::max(1.0e-6 * (1.0 + tnorm), std::min(10.0 * jfnk_beta, 1.0e-4 * (1.0 + tnorm)));
+                        jfnk_V.clear();
+                        std::fill(jfnk_H.begin(), jfnk_H.end(), 0.0);
+                        std::vector<double> v1(newton_len);
+                        double inv = -1.0 / jfnk_beta;
+#pragma omp parallel for
+                        for (long long q = 0; q < (long long)newton_len; ++q) v1[q] = inv * jfnk_gbase[q];
+                        jfnk_V.push_back(std::move(v1));
+                        jfnk_j = 1;
+                        jfnk_ls = 0;
+                        jfnk_steps_taken = 0;
+                        jfnk_phase = 0;
+                        outfile->Printf(
+                            "    JFNK: stall at iteration %d; launching inexact Newton (|g| = %.3e, eps = %.3e, eta = %.2f, max Krylov = %d)\n",
+                            iteration, jfnk_beta, jfnk_eps, JFNK_TOL, JFNK_MAX_KRYLOV);
+                        std::vector<double> Tprobe(newton_len);
+#pragma omp parallel for
+                        for (long long q = 0; q < (long long)newton_len; ++q)
+                            Tprobe[q] = jfnk_Tbase[q] + jfnk_eps * jfnk_V[0][q];
+                        newton_set(Tprobe);
+                        newton_probe_iter = true;
+                        newton_secant_valid = false;
+                        launched = true;
+                    }
+                }
+                if (!launched && NEWTON_K > 0 && !newton_hist.empty()) {
+                    // Base point: the pre-sweep iterate of this iteration, whose
+                    // step (the most recent history entry) is already known
+                    newton_Tbase = newton_Tpre;
+                    newton_gbase = newton_hist.back();
+
+                    // Orthonormal basis over the recent raw steps, most recent
+                    // first. If a persisted basis is active (RPM), keep its
+                    // directions verbatim and orthogonalize the new candidates
+                    // against them: near-duplicates drop out, so a recurring
+                    // stall with no new directions is a pure Jacobian refresh.
+                    // The merged basis is capped at 2*NEWTON_K (oldest dropped);
+                    // all directions are (re)probed and Jhat rebuilt in full.
+                    if (!(rpm_active && NEWTON_PERSIST)) newton_V.clear();
+                    const int keff_old = (int)newton_V.size();
+                    for (int h = (int)newton_hist.size() - 1;
+                         h >= 0 && (int)newton_V.size() < keff_old + NEWTON_K; --h) {
+                        std::vector<double> w = newton_hist[h];
+                        double n0 = std::sqrt(newton_dot(w, w));
+                        if (n0 <= 0.0) continue;
+                        for (auto& vprev : newton_V) {
+                            double p = newton_dot(vprev, w);
+#pragma omp parallel for
+                            for (long long q = 0; q < (long long)newton_len; ++q) w[q] -= p * vprev[q];
+                        }
+                        double n1 = std::sqrt(newton_dot(w, w));
+                        if (n1 < 1.0e-4 * n0) continue;  // (near) linearly dependent
+                        double inv = 1.0 / n1;
+#pragma omp parallel for
+                        for (long long q = 0; q < (long long)newton_len; ++q) w[q] *= inv;
+                        newton_V.push_back(std::move(w));
+                    }
+                    while ((int)newton_V.size() > 2 * NEWTON_K) newton_V.erase(newton_V.begin());
+                    newton_keff = (int)newton_V.size();
+
+                    if (newton_keff > 0) {
+                        newton_G.assign(newton_keff, std::vector<double>());
+                        // eps in the block-scaled metric: the probe displaces
+                        // each block's RMS by at most eps, i.e. ~10x the sweep
+                        // step, large enough to dominate evaluation noise and
+                        // small enough to stay in the linear regime
+                        double tnorm = std::sqrt(newton_dot(newton_Tbase, newton_Tbase));
+                        double gnorm = std::sqrt(newton_dot(newton_gbase, newton_gbase));
+                        newton_eps = std::max(1.0e-6 * (1.0 + tnorm), 10.0 * gnorm);
+                        outfile->Printf(
+                            "    Soft-mode Newton: stall at iteration %d; launching k = %d subspace correction%s (eps = %.3e, |g| = %.3e)\n",
+                            iteration, newton_keff, (keff_old > 0) ? " (merged with persisted basis)" : "", newton_eps,
+                            gnorm);
+
+                        std::vector<double> Tprobe(newton_len);
+#pragma omp parallel for
+                        for (long long q = 0; q < (long long)newton_len; ++q)
+                            Tprobe[q] = newton_Tbase[q] + newton_eps * newton_V[0][q];
+                        newton_set(Tprobe);
+                        newton_stage = 0;
+                        newton_probe_iter = true;
+                        newton_secant_valid = false;  // probes intervene
+                        launched = true;
+                    }
+                }
+                if (!launched) {
+                    outfile->Printf("    DIIS subspace reset at iteration %d (no reduction in max RMS residual over %d iterations)\n",
+                                    iteration, DIIS_RESET_WINDOW);
+                    diis.reset_subspace();
+                }
+                stall_best_rmax = r_max;
+                stall_count = 0;
+            }
+        }
+
+        if (!newton_probe_iter) {  // DIIS is skipped while a soft-mode Newton correction is in flight
+        // => Build DIIS error vectors <= //
+        // The raw residuals accumulated above are evaluated at different points
+        // within the Gauss-Seidel sweep (R4 at the pre-sweep amplitudes, R3 after
+        // the T4 update, R2/R1 after the T3 update and any microiterations), so
+        // no single amplitude vector corresponds to the composite [R1,R2,R3,R4].
+        // Pairing those residuals with the post-sweep amplitudes corrupts the
+        // secant (Jacobian) information DIIS extracts from the history, and can
+        // stabilize oscillatory (period-2) modes instead of extrapolating them
+        // away. Instead, use the actual step taken by the full macroiteration
+        // sweep,
+        //     e_n = T_(n+1) - T_n   (Pulay/Anderson pairing),
+        // which is exactly consistent with the stored amplitude vector by
+        // construction -- independent of update ordering, microiterations,
+        // damping, and level shifts -- and vanishes if and only if the sweep has
+        // reached its fixed point. The per-block normalization is retained.
+        // The true residual norms (r_curr1-4) are unaffected and remain the
+        // convergence criteria.
 #pragma omp parallel for
         for (int i = 0; i < naocc; ++i) {
             int ii = i_j_to_ij_[i][i];
+            R_ia[i]->copy(T_ia_[i]);
+            R_ia[i]->subtract(T_ia_old[i]);
             R_ia[i]->scale(1.0 / std::sqrt((double) n_pno_[ii]));
         }
 
 #pragma omp parallel for
         for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            R_iajb[ij]->copy(T_iajb_[ij]);
+            R_iajb[ij]->subtract(T_iajb_old[ij]);
             R_iajb[ij]->scale(1.0 / std::sqrt((double) n_pno_[ij] * n_pno_[ij]));
         }
 
-#pragma omp parallel for
+#pragma omp parallel for schedule(dynamic, 1)
         for (int ijk = 0; ijk < n_lmo_triplets; ++ijk) {
+            R_iajbkc[ijk]->copy(T_iajbkc_[ijk]);
+            R_iajbkc[ijk]->subtract(T_iajbkc_old[ijk]);
             R_iajbkc[ijk]->scale(1.0 / std::sqrt((double) n_tno_[ijk] * n_tno_[ijk] * n_tno_[ijk]));
         }
 
-#pragma omp parallel for
-        for (int ijkl = 0; ijkl < n_lmo_quadruplets; ++ijkl) {
-            R_iajbkcld_psi[ijkl]->scale(1.0 / std::sqrt((double) n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl]));
+        if (EXTRAPOLATE_T4) {
+#pragma omp parallel for schedule(dynamic, 1)
+            for (int ijkl = 0; ijkl < n_lmo_quadruplets; ++ijkl) {
+                R_iajbkcld_psi[ijkl]->copy(T_iajbkcld_psi[ijkl]);
+                R_iajbkcld_psi[ijkl]->subtract(T_iajbkcld_old[ijkl]);
+                R_iajbkcld_psi[ijkl]->scale(
+                    1.0 / std::sqrt((double) n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl]));
+            }
         }
 
         // DIIS Extrapolation
@@ -4219,6 +5207,7 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                 ::memcpy(T_iajbkcld_[ijkl].data(), T_iajbkcld_psi[ijkl]->get_pointer(), n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * n_qno_[ijkl] * sizeof(double));
             }
         }
+        }  // end if (!newton_probe_iter)
 
         // evaluate energy and convergence
         e_prev = e_curr;
@@ -4258,6 +5247,13 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
         r_converged &= fabs(r_curr3) < options_.get_double("R_CONVERGENCE");
         r_converged &= fabs(r_curr4) < options_.get_double("R_CONVERGENCE");
         e_converged = fabs(e_curr - e_prev) < options_.get_double("E_CONVERGENCE");
+
+        if (newton_probe_iter) {
+            // Probe sweeps evaluate the step map at perturbed points; their
+            // energies and residuals are not iterates of the solver
+            e_converged = false;
+            r_converged = false;
+        }
 
         e_lccsdtq_ = e_curr - e_weak;
         de_weak_ = e_weak;
