@@ -2773,8 +2773,6 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_bool("WRITE_QAB_PNO", false);
         /*- Write triples amplitudes to disk? !expert -*/
         options.add_bool("WRITE_TRIPLES", false);
-        /*- Write expensive DLPNO-CCSDT overlap integrals to disk? !expert -*/
-        options.add_bool("DLPNO_CCSDT_DISK_OVERLAP", true);
         /*- Write expensive DLPNO-CCSDT TNO integrals to disk? !expert -*/
         options.add_bool("DLPNO_CCSDT_DISK_INTS", true);
         /*- Write expensive DLPNO-CCSDTQ QNO integrals to disk? !expert -*/

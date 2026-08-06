@@ -1476,38 +1476,6 @@ double DLPNOCCSDT_Q::compute_energy() {
         S_pno_ij_mn_.clear();
 
         // Clear CCSDT integrals
-        S_ijk_ii_.clear();
-        S_ijk_jj_.clear();
-        S_ijk_kk_.clear();
-        S_ijk_ll_.clear();
-        S_ijk_ij_.clear();
-        S_ijk_jk_.clear();
-        S_ijk_ik_.clear();
-        S_ijk_il_.clear();
-        S_ijk_jl_.clear();
-        S_ijk_kl_.clear();
-        S_ijk_lm_.clear();
-        S_ijk_ljk_.clear();
-        S_ijk_ilk_.clear();
-        S_ijk_ijl_.clear();
-        S_ijk_mli_.clear();
-        S_ijk_mlj_.clear();
-        S_ijk_mlk_.clear();
-        K_iojv_.clear();
-        K_joiv_.clear();
-        K_jokv_.clear();
-        K_kojv_.clear();
-        K_iokv_.clear();
-        K_koiv_.clear();
-        K_ivjv_.clear();
-        K_jvkv_.clear();
-        K_ivkv_.clear();
-        K_ivov_.clear();
-        K_jvov_.clear();
-        K_kvov_.clear();
-        K_ivvv_.clear();
-        K_jvvv_.clear();
-        K_kvvv_.clear();
         q_io_.clear();
         q_jo_.clear();
         q_ko_.clear();
@@ -3920,7 +3888,10 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
                     int l = lmotriplet_to_lmos_[ijk][l_ijk];
                     int ll = i_j_to_ij_[l][l];
 
-                    auto T_l_temp = linalg::doublet(S_ijk_ll_[ijk][l_ijk], T_ia_[l]);
+                    auto S_ijk_ll = submatrix_rows_and_cols(*S_pao_, lmotriplet_to_paos_[ijk], lmopair_to_paos_[ll]);
+                    S_ijk_ll = linalg::triplet(X_tno_[ijk], S_ijk_ll, X_pno_[ll], true, false, false);
+
+                    auto T_l_temp = linalg::doublet(S_ijk_ll, T_ia_[l]);
 
                     for (int a_ijk = 0; a_ijk < n_tno_[ijk]; ++a_ijk) {
                         (T_n_ijk_[ijk])(l_ijk, a_ijk) = (*T_l_temp)(a_ijk, 0);
@@ -4248,10 +4219,6 @@ double DLPNOCCSDTQ::compute_energy() {
     disk_ints_quads_ = options_.get_bool("DLPNO_CCSDTQ_DISK_INTS");
     damping_ratio_quads_ = options_.get_double("QUADRUPLES_DAMPING_RATIO");
 
-    if (disk_overlap_) {
-        psio_->open(PSIF_DLPNO_S_TNO, PSIO_OPEN_OLD);
-    }
-
     if (disk_ints_) {
         psio_->open(PSIF_DLPNO_QIA_TNO, PSIO_OPEN_OLD);
         psio_->open(PSIF_DLPNO_QAB_TNO, PSIO_OPEN_OLD);
@@ -4287,10 +4254,6 @@ double DLPNOCCSDTQ::compute_energy() {
 
     if (write_qab_pno_) {
         psio_->close(PSIF_DLPNO_QAB_PNO, 0);
-    }
-
-    if (disk_overlap_) {
-        psio_->close(PSIF_DLPNO_S_TNO, 0);
     }
 
     if (disk_ints_) {

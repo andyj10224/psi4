@@ -512,53 +512,6 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
 
 class DLPNOCCSDT : public DLPNOCCSD_T {
    protected:
-    // TNO overlap integrals
-    std::vector<SharedMatrix> S_ijk_ii_;
-    std::vector<SharedMatrix> S_ijk_jj_;
-    std::vector<SharedMatrix> S_ijk_kk_;
-
-    std::vector<std::vector<SharedMatrix>> S_ijk_ll_;
-
-    std::vector<SharedMatrix> S_ijk_ij_;
-    std::vector<SharedMatrix> S_ijk_jk_;
-    std::vector<SharedMatrix> S_ijk_ik_;
-
-    std::vector<std::vector<SharedMatrix>> S_ijk_il_;
-    std::vector<std::vector<SharedMatrix>> S_ijk_jl_;
-    std::vector<std::vector<SharedMatrix>> S_ijk_kl_;
-
-    std::vector<std::vector<SharedMatrix>> S_ijk_lm_;
-
-    std::vector<std::vector<SharedMatrix>> S_ijk_ljk_;
-    std::vector<std::vector<SharedMatrix>> S_ijk_ilk_;
-    std::vector<std::vector<SharedMatrix>> S_ijk_ijl_;
-
-    std::vector<std::vector<SharedMatrix>> S_ijk_mli_;
-    std::vector<std::vector<SharedMatrix>> S_ijk_mlj_;
-    std::vector<std::vector<SharedMatrix>> S_ijk_mlk_;
-
-    // K_ooov integrals
-    std::vector<Tensor<double, 2>> K_iojv_;
-    std::vector<Tensor<double, 2>> K_joiv_;
-    std::vector<Tensor<double, 2>> K_jokv_;
-    std::vector<Tensor<double, 2>> K_kojv_;
-    std::vector<Tensor<double, 2>> K_iokv_;
-    std::vector<Tensor<double, 2>> K_koiv_;
-
-    // K_ovov integrals
-    std::vector<Tensor<double, 2>> K_ivjv_;
-    std::vector<Tensor<double, 2>> K_jvkv_;
-    std::vector<Tensor<double, 2>> K_ivkv_;
-
-    std::vector<Tensor<double, 3>> K_ivov_;
-    std::vector<Tensor<double, 3>> K_jvov_;
-    std::vector<Tensor<double, 3>> K_kvov_;
-
-    // K_ovvv integrals
-    std::vector<Tensor<double, 3>> K_ivvv_;
-    std::vector<Tensor<double, 3>> K_jvvv_;
-    std::vector<Tensor<double, 3>> K_kvvv_;
-
     // DF integrals in the domain of triplet ijk
     std::vector<Tensor<double, 2>> q_io_;
     std::vector<Tensor<double, 2>> q_jo_;
@@ -570,12 +523,7 @@ class DLPNOCCSDT : public DLPNOCCSD_T {
 
     std::vector<Tensor<double, 3>> q_ov_;
     std::vector<Tensor<double, 3>> q_vv_;
-
-    // std::vector<DiskTensor<double, 3>> q_ov_disk_;
-    // std::vector<DiskTensor<double, 3>> q_vv_disk_;
-
-    // Write expensive overlap integrals S(a_{ijk}, a_{lm}) and S(a_{ijk}, a_{mli}) to disk?
-    bool disk_overlap_;
+    
     // Write expensive integrals (q_{ijk}| m_{ijk} a_{ijk}) and (q_{ijk} | a_{ijk} b_{ijk}) to disk?
     bool disk_ints_;
     // Damping ratio (how much of the original triples amplitude to keep)
@@ -650,7 +598,6 @@ class DLPNOCCSDT : public DLPNOCCSD_T {
     void print_header();
     void estimate_memory();
     void compute_integrals();
-    void compute_tno_overlaps();
     void lccsdt_iterations();
     void print_results();
 
