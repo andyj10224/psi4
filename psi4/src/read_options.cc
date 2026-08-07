@@ -2706,10 +2706,6 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
 
         /*- Occupation number threshold for removing TNOs with full triples !expert -*/
         options.add_double("T_CUT_TNO_FULL", 1.0e-7);
-        /*- Occupation number threshold for extended local natural orbitals (XLNOs) !expert -*/
-        options.add_double("T_CUT_XLNO", 1.0e-6);
-        /*- Occupation trace sum threshold for removing XLNOs !expert -*/
-        options.add_double("T_CUT_TRACE_XLNO", 0.95);
         /*- Number of T1/T2 microiteration updates per Full T iteration 
             (increase this value for highly multireference systems) !expert -*/
         options.add_double("DLPNO_TRIPLES_MICROITERATIONS", 3);
