@@ -56,6 +56,7 @@
 #include "psi4/libmints/petitelist.h"
 #include "psi4/libmints/multipoles.h"
 #include "psi4/libmints/dipole.h"
+#include "psi4/libdiis/diismanager.h"
 #include "psi4/libpsi4util/libpsi4util.h"
 #include "psi4/libpsi4util/PsiOutStream.h"
 #include "psi4/libpsi4util/process.h"
@@ -2034,6 +2035,32 @@ std::tuple<SharedMatrix, SharedMatrix, SharedMatrix, SharedMatrix> PopulationAna
     bool is_converged = false;
     double delta_rho_max_0;
 
+    // => MBIS DIIS Setup <= //
+    //
+    // Only active shells are included. The fixed seven-shell storage contains unused
+    // zero entries for lighter elements; including those would add null directions to
+    // the DIIS B matrix and would make relative residuals contain divisions by zero.
+    int num_mbis_shells = 0;
+    for (int atom = 0; atom < num_atoms; ++atom) {
+        num_mbis_shells += mA[atom];
+    }
+
+    // mbis_diis_denominator_floor is instantiated to avoid dividing by zero
+    const int mbis_diis_max_vecs = options.get_int("MBIS_DIIS_MAX_VECS");
+    const int mbis_diis_min_vecs = 2;
+    const double mbis_diis_denominator_floor = 1.0e-12;
+
+    DIISManager mbis_diis(mbis_diis_max_vecs, "MBIS DIIS", DIISManager::RemovalPolicy::LargestError,
+                          DIISManager::StoragePolicy::InCore);
+
+    // The first block contains all active-shell populations (Nai); the second contains
+    // the corresponding Slater widths (Sai).
+    auto mbis_diis_error = std::make_shared<Matrix>("MBIS DIIS Error", 2 * num_mbis_shells, 1);
+    auto mbis_diis_parameters = std::make_shared<Matrix>("MBIS DIIS Parameters", 2 * num_mbis_shells, 1);
+
+    mbis_diis.set_error_vector_size(mbis_diis_error);
+    mbis_diis.set_vector_size(mbis_diis_parameters);
+
     if (print_output && debug >= 1) outfile->Printf("                     Delta D\n");
     while (iter < max_iter) {
 // Self-consistent update of population and density
@@ -2053,6 +2080,115 @@ std::tuple<SharedMatrix, SharedMatrix, SharedMatrix, SharedMatrix> PopulationAna
 
                 Nai_next[atom][m] = sum_n;
                 Sai_next[atom][m] = sum_s / (3 * Nai_next[atom][m]);
+            }
+        }
+
+        // Construct the DIIS error and extrapolation vectors.
+        //
+        // Let x = {N_Ai, S_Ai} and let F(x) = {N_Ai_next, S_Ai_next} denote
+        // the self-consistent update defined by MBIS Equations 18 and 19.
+        // DIIS extrapolates F(x), while its error vector measures the fixed-point
+        // defect F(x) - x.
+        //
+        // Raw population and width differences should not be concatenated directly:
+        // they have different units and widely different numerical scales. Instead,
+        // we use dimensionless relative defects,
+        //
+        //     e_N = N_Ai_next / N_Ai - 1
+        //     e_S = S_Ai_next / S_Ai - 1.
+        //
+        // These have a direct connection to the MBIS stationarity conditions:
+        //
+        //     dL/dN_Ai = 1 - N_Ai_next / N_Ai = -e_N,
+        //
+        // while Equations 17 and 19 give
+        //
+        //     dL/dS_Ai = (3 N_Ai_next / S_Ai)
+        //                (1 - S_Ai_next / S_Ai),
+        //
+        // so e_S is a diagonally preconditioned negative Lagrangian gradient.
+        // Both residual blocks therefore vanish at the MBIS stationary point
+        // without populations numerically overwhelming widths.
+        //
+        // Error-vector and extrapolation design developed with assistance from
+        // OpenAI Codex.
+        int shell_index = 0;
+        for (int atom = 0; atom < num_atoms; ++atom) {
+            for (int m = 0; m < mA[atom]; ++m, ++shell_index) {
+                const double n_scale =
+                    std::max(std::fabs(Nai[atom][m]), mbis_diis_denominator_floor);
+                const double s_scale =
+                    std::max(std::fabs(Sai[atom][m]), mbis_diis_denominator_floor);
+
+                mbis_diis_error->set(
+                    shell_index, 0, (Nai_next[atom][m] - Nai[atom][m]) / n_scale);
+                mbis_diis_error->set(
+                    num_mbis_shells + shell_index, 0,
+                    (Sai_next[atom][m] - Sai[atom][m]) / s_scale);
+
+                // Store the raw mapped parameters F(x), rather than the input x.
+                // PyDIIS constructs coefficients from the error vectors and applies
+                // those coefficients separately to these extrapolation targets.
+                mbis_diis_parameters->set(shell_index, 0, Nai_next[atom][m]);
+                mbis_diis_parameters->set(
+                    num_mbis_shells + shell_index, 0, Sai_next[atom][m]);
+            }
+        }
+
+        mbis_diis.add_entry(mbis_diis_error.get(), mbis_diis_parameters.get());
+
+        // Now we want to test whether or not we want to use DIIS
+        bool use_diis_parameters = false;
+
+        // The first stored vector would simply extrapolate to itself. Begin actual
+        // acceleration once two independent fixed-point residuals are available.
+        if (mbis_diis.subspace_size() >= mbis_diis_min_vecs) {
+            mbis_diis.extrapolate(mbis_diis_parameters.get());
+            use_diis_parameters = true;
+
+            // The ordinary MBIS map produces positive populations and widths, but
+            // unconstrained Pulay coefficients may be negative and can therefore
+            // produce a nonphysical extrapolated parameter. Reject such a step
+            // rather than independently clipping components, which would destroy
+            // population conservation and change the DIIS direction.
+            shell_index = 0;
+            for (int atom = 0; atom < num_atoms && use_diis_parameters; ++atom) {
+                for (int m = 0; m < mA[atom]; ++m, ++shell_index) {
+                    const double n_diis = mbis_diis_parameters->get(shell_index, 0);
+                    const double s_diis =
+                        mbis_diis_parameters->get(num_mbis_shells + shell_index, 0);
+
+                    if (!std::isfinite(n_diis) || !std::isfinite(s_diis) ||
+                        n_diis <= 0.0 || s_diis <= 0.0) {
+                        use_diis_parameters = false;
+                        break;
+                    }
+                }
+            }
+
+            if (!use_diis_parameters) {
+                // Discard a subspace that generated an inadmissible combination.
+                // The current iteration will fall back to the positive raw MBIS update.
+                mbis_diis.reset_subspace();
+
+                if (print_output && debug >= 1) {
+                    outfile->Printf(
+                        "   @MBIS DIIS: rejected nonphysical extrapolation; "
+                        "using raw update\n");
+                }
+            }
+        }
+
+        if (use_diis_parameters) {
+            // Unpack the accepted DIIS parameters.
+            shell_index = 0;
+#pragma omp parallel for
+            for (int atom = 0; atom < num_atoms; ++atom) {
+                for (int m = 0; m < mA[atom]; ++m, ++shell_index) {
+                    Nai[atom][m] = mbis_diis_parameters->get(shell_index, 0);
+                    Sai[atom][m] =
+                        mbis_diis_parameters->get(num_mbis_shells + shell_index, 0);
+                }
             }
         }
 
@@ -2094,10 +2230,10 @@ std::tuple<SharedMatrix, SharedMatrix, SharedMatrix, SharedMatrix> PopulationAna
         rho_0_points = rho_0_points_next;
         rho_a_0_points = rho_a_0_points_next;
 
-        if (print_output && debug >= 1) outfile->Printf("   @MBIS iter %3d:  %.3e\n", iter, delta_rho_max_0);
+        if (print_output) outfile->Printf("   @MBIS iter %3d:  %.3e\n", iter, delta_rho_max_0);
 
         if (delta_rho_max_0 < conv) {
-            if (print_output && debug >= 1) outfile->Printf("  MBIS Atomic Density Converged\n\n");
+            if (print_output) outfile->Printf("  MBIS Atomic Density Converged\n\n");
             is_converged = true;
             break;
         }

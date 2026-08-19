@@ -84,7 +84,7 @@ target_link_libraries(l2intf
   )
 
 psi4_add_module(lib mints sources)
-target_link_libraries(mints PRIVATE l2intf)
+target_link_libraries(mints PRIVATE l2intf diis)
 add_dependencies(mints l2intf)  # impose build-order dependence allowing CMAKE_OPTIMIZE_DEPENDENCIES=ON
 
 if (psi4_ENABLE_PRECOMPILE_HEADERS)

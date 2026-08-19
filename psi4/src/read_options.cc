@@ -328,6 +328,8 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
                     "ROBUST TREUTLER NONE FLAT P_GAUSSIAN D_GAUSSIAN P_SLATER D_SLATER LOG_GAUSSIAN LOG_SLATER NONE");
     /*- Maximum Radial Moment to Calculate -*/
     options.add_int("MAX_RADIAL_MOMENT", 4);
+    /*- Number of DIIS vectors used in MBIS !expert -*/
+    options.add_int("MBIS_DIIS_MAX_VECS", 7);
 
     /*- PCM boolean for pcmsolver module -*/
     options.add_bool("PCM", false);
