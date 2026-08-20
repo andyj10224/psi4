@@ -122,8 +122,12 @@ void cuESTJK::preiterations()
     cuestDFIntPlanParameters_t dfint_params;
     CHECK_CUEST(cuestParametersCreate(CUEST_DFINTPLAN_PARAMETERS, reinterpret_cast<void**>(&dfint_params)));
 
-    double global_exchange = omega_alpha_ + omega_beta_;
-    double long_range_fraction = -1.0 * omega_beta_;
+    double global_exchange = omega_alpha_;
+    double long_range_fraction = omega_beta_ - omega_alpha_;
+
+    outfile->Printf("    PSI4 OMEGA ALPHA: $8.5f", omega_alpha_);
+    outfile->Printf("    PSI4 OMEGA BETA: $8.5f", omega_beta_);
+    outfile->Printf("    PSI4 OMEGA: ", omega_);
 
     //Set omega params if applicable 
     CHECK_CUEST(cuestParametersConfigure(
