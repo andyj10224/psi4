@@ -125,9 +125,9 @@ void cuESTJK::preiterations()
     double global_exchange = omega_alpha_;
     double long_range_fraction = omega_beta_ - omega_alpha_;
 
-    outfile->Printf("    PSI4 OMEGA ALPHA: $8.5f", omega_alpha_);
-    outfile->Printf("    PSI4 OMEGA BETA: $8.5f", omega_beta_);
-    outfile->Printf("    PSI4 OMEGA: ", omega_);
+    outfile->Printf("    PSI4 OMEGA ALPHA: %8.5f", omega_alpha_);
+    outfile->Printf("    PSI4 OMEGA BETA: %8.5f", omega_beta_);
+    outfile->Printf("    PSI4 OMEGA: %8.5f", omega_);
 
     //Set omega params if applicable 
     CHECK_CUEST(cuestParametersConfigure(
