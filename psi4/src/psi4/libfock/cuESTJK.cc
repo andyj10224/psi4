@@ -130,11 +130,20 @@ void cuESTJK::preiterations()
         &omega_alpha_,
         sizeof(double)));
 
+    /*
+    In Psi4, alpha is the amount of exchange at all ranges,
+    while beta is the difference between the amount of
+    exchange in the long range and in the short range,
+    meaning alpha+beta at the long range, and alpha only at
+    the short range.
+    */
+    double long_range_fraction = omega_alpha_ + omega_beta_;
+
     CHECK_CUEST(cuestParametersConfigure(
         CUEST_DFINTPLAN_PARAMETERS, 
         dfint_params,
         CUEST_DFINTPLAN_PARAMETERS_LRC_EXCHANGE_FRACTION,
-        &omega_beta_,
+        &long_range_fraction,
         sizeof(double)));
 
     CHECK_CUEST(cuestParametersConfigure(
