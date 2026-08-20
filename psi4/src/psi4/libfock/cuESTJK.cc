@@ -122,22 +122,16 @@ void cuESTJK::preiterations()
     cuestDFIntPlanParameters_t dfint_params;
     CHECK_CUEST(cuestParametersCreate(CUEST_DFINTPLAN_PARAMETERS, reinterpret_cast<void**>(&dfint_params)));
 
+    double global_exchange = omega_alpha_ + omega_beta_;
+    double long_range_fraction = -1.0 * omega_beta_;
+
     //Set omega params if applicable 
     CHECK_CUEST(cuestParametersConfigure(
         CUEST_DFINTPLAN_PARAMETERS, 
         dfint_params,
         CUEST_DFINTPLAN_PARAMETERS_EXCHANGE_FRACTION,
-        &omega_alpha_,
+        &global_exchange,
         sizeof(double)));
-
-    /*
-    In Psi4, alpha is the amount of exchange at all ranges,
-    while beta is the difference between the amount of
-    exchange in the long range and in the short range,
-    meaning alpha+beta at the long range, and alpha only at
-    the short range.
-    */
-    double long_range_fraction = omega_alpha_ + omega_beta_;
 
     CHECK_CUEST(cuestParametersConfigure(
         CUEST_DFINTPLAN_PARAMETERS, 
