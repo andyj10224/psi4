@@ -232,7 +232,8 @@ void RHF::form_G() {
     }
 #endif
 
-    if (functional_->is_x_hybrid() && !(functional_->is_x_lrc() && jk_->get_wcombine())) {
+    if (functional_->is_x_hybrid() || (functional_->is_x_lrc() && options_.get_bool("USE_CUEST")) 
+            && !(functional_->is_x_lrc() && jk_->get_wcombine())) {
         G_->axpy(-alpha, K_);
     } else {
         K_->zero();

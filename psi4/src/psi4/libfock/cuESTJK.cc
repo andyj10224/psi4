@@ -123,7 +123,7 @@ void cuESTJK::preiterations()
     CHECK_CUEST(cuestParametersCreate(CUEST_DFINTPLAN_PARAMETERS, reinterpret_cast<void**>(&dfint_params)));
 
     double global_exchange = omega_alpha_;
-    double long_range_fraction = -1.0 * omega_beta_;
+    double long_range_fraction = omega_beta_;
 
     outfile->Printf("   Omega Alpha: %8.5f\n", omega_alpha_);
     outfile->Printf("   Omega Beta: %8.5f\n", omega_beta_);
