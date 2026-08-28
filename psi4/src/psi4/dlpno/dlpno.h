@@ -511,8 +511,21 @@ class PSI_API RO_DLPNOCCSD : public DLPNOCCSD {
    protected:
     // T1 amplitudes over A, B
     std::array<std::vector<SharedMatrix>, 2> T_ia_spin_;
+    // T1 amplitudes projected into every pair domain, over A, B
+    std::array<std::vector<SharedMatrix>, 2> T_n_ij_spin_;
     // T2 amplitudes over AA, AB, BB
     std::array<std::vector<SharedMatrix>, 3> T_iajb_spin_;
+
+    // Spin-resolved T1-transformed DF integrals
+    std::array<std::vector<SharedMatrix>, 2> i_Qk_t1_spin_;
+    std::array<std::vector<SharedMatrix>, 2> i_Qa_t1_spin_;
+
+    // Bare and T1-transformed spin Fock blocks
+    std::array<std::vector<SharedMatrix>, 2> F_pno_spin_;
+    std::array<SharedMatrix, 2> Fki_tilde_spin_;
+    std::array<std::vector<SharedMatrix>, 2> Fkc_tilde_spin_;
+    std::array<std::vector<SharedMatrix>, 2> Fai_tilde_spin_;
+    std::array<std::vector<SharedMatrix>, 2> Fab_tilde_spin_;
     
     /// extend PAO and PNO rank for each pair by nsomo (for open-shell case)... that is, by nalpha - nbeta
     /// see: https://doi.org/10.1063/1.4981521
@@ -531,8 +544,14 @@ class PSI_API RO_DLPNOCCSD : public DLPNOCCSD {
     void matrix_spin_enforcer_oo(SharedMatrix &X, const int &ij, const SpinCase &sigma);
     /// A helper function to enforce spin in matrix elements in the virtual-virtual block of a matrix
     void matrix_spin_enforcer_vv(SharedMatrix &X, const SpinCase &sigma);
+    /// Project alpha and beta singles amplitudes into every pair domain
+    void form_projected_singles();
+    /// Form spin-resolved T1-transformed DF integrals
+    void t1_ints_spin();
+    /// Form spin-resolved T1-transformed Fock intermediates
+    void t1_fock_spin();
     /// computes singles residuals in RO LCCSD equations
-    void compute_R_ia(std::array<std::vector<SharedMatrix>, 2>& R_ia, std::array<std::vector<std::vector<SharedMatrix>>, 3>& R_ia_buffer);
+    void compute_R_ia(std::array<std::vector<SharedMatrix>, 2>& R_ia, std::array<std::vector<std::vector<SharedMatrix>>, 2>& R_ia_buffer);
     /// computes doubles residuals in RO LCCSD equations
     void compute_R_iajb(std::array<std::vector<SharedMatrix>, 3>& R_iajb, std::array<std::vector<SharedMatrix>, 3>& Rn_iajb);
 

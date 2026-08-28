@@ -3452,26 +3452,361 @@ void RO_DLPNOCCSD::matrix_spin_enforcer_vv(SharedMatrix &X, const SpinCase &sigm
     if (sigma == SpinCase::Beta) return;
 
     if (sigma == SpinCase::Alpha) {
-        // For the alpha case, set the last nsomo virtual elements to zero
+        // For alpha spin the appended SOMOs are occupied, not virtual.  Remove
+        // every matrix element carrying one of those virtual indices.
         for (int a = 0; a < nsomo; ++a) {
             int a_idx = X->rowspi(0) - a - 1;
-            for (int b = 0; b < nsomo; ++b) {
-                int b_idx = X->colspi(0) - b - 1;
-                (*X)(a_idx, b_idx) = 0.0;
-            } // end b
-        } // end a
+            for (int b = 0; b < X->colspi(0); ++b) (*X)(a_idx, b) = 0.0;
+        }
+        for (int b = 0; b < nsomo; ++b) {
+            int b_idx = X->colspi(0) - b - 1;
+            for (int a = 0; a < X->rowspi(0); ++a) (*X)(a, b_idx) = 0.0;
+        }
         
     } else {
         throw PSIEXCEPTION("Undefined spin case in function RO_DLPNOCCSD::matrix_spin_enforcer_vv");
     }
 }
 
+void RO_DLPNOCCSD::form_projected_singles() {
+    const int n_lmo_pairs = ij_to_i_j_.size();
+    const int nbocc = nbeta_ - nfrzc();
+    constexpr std::array<SpinCase, 2> spins = {SpinCase::Alpha, SpinCase::Beta};
+
+    for (SpinCase sigma : spins) {
+        const int s = static_cast<int>(sigma);
+        T_n_ij_spin_[s].resize(n_lmo_pairs);
+
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            const int nlmo_ij = lmopair_to_lmos_[ij].size();
+            const int npno_ij = n_pno_[ij];
+            T_n_ij_spin_[s][ij] = std::make_shared<Matrix>(nlmo_ij, npno_ij);
+
+            for (int n_ij = 0; n_ij < nlmo_ij; ++n_ij) {
+                const int n = lmopair_to_lmos_[ij][n_ij];
+                if (sigma == SpinCase::Beta && n >= nbocc) continue;
+
+                const int nn = i_j_to_ij_[n][n];
+                auto S_ij_nn = S_PNO(ij, nn)->clone();
+                matrix_spin_enforcer_vv(S_ij_nn, sigma);
+                auto T_n = linalg::doublet(S_ij_nn, T_ia_spin_[s][n]);
+
+                for (int a_ij = 0; a_ij < npno_ij; ++a_ij) {
+                    (*T_n_ij_spin_[s][ij])(n_ij, a_ij) = (*T_n)(a_ij, 0);
+                }
+            }
+        }
+    }
+}
+
+void RO_DLPNOCCSD::t1_ints_spin() {
+    timer_on("DLPNO-ROCCSD: T1 Ints");
+
+    const int n_lmo_pairs = ij_to_i_j_.size();
+    const int nbocc = nbeta_ - nfrzc();
+    constexpr std::array<SpinCase, 2> spins = {SpinCase::Alpha, SpinCase::Beta};
+
+    for (SpinCase sigma : spins) {
+        const int s = static_cast<int>(sigma);
+        i_Qk_t1_spin_[s].resize(n_lmo_pairs);
+        i_Qa_t1_spin_[s].resize(n_lmo_pairs);
+
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            auto &[i, j] = ij_to_i_j_[ij];
+            const int nlmo_ij = lmopair_to_lmos_[ij].size();
+            const int naux_ij = lmopair_to_ribfs_[ij].size();
+            const int npno_ij = n_pno_[ij];
+            const int i_ij = lmopair_to_lmos_dense_[ij][i];
+
+            // Always allocate these intermediates.  Invalid beta blocks and
+            // screened pairs remain exactly zero, avoiding null matrices in
+            // the spin-summed contractions downstream.
+            i_Qk_t1_spin_[s][ij] = std::make_shared<Matrix>(naux_ij, nlmo_ij);
+            i_Qa_t1_spin_[s][ij] = std::make_shared<Matrix>(naux_ij, npno_ij);
+
+            if (i_j_to_ij_strong_[i][j] == -1) continue;
+            if (sigma == SpinCase::Beta && i >= nbocc) continue;
+
+            // Eq. 1: B~(Q,ki) = B(Q,ki) + B(Q,ka) t(i,a).
+            i_Qk_t1_spin_[s][ij]->copy(i_Qk_ij_[ij]);
+            matrix_spin_enforcer_qo(i_Qk_t1_spin_[s][ij], ij, sigma);
+
+            auto qma_ij = QIA_PNO(ij);
+            for (int q_ij = 0; q_ij < naux_ij; ++q_ij) {
+                for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
+                    for (int a_ij = 0; a_ij < npno_ij; ++a_ij) {
+                        (*i_Qk_t1_spin_[s][ij])(q_ij, k_ij) +=
+                            (*qma_ij[q_ij])(k_ij, a_ij) * (*T_n_ij_spin_[s][ij])(i_ij, a_ij);
+                    }
+                }
+            }
+
+            // Eq. 3: B~(Q,ai) = B(Q,ai) - t(k,a) B~(Q,ki)
+            //                         + B(Q,ab) t(i,b).
+            i_Qa_t1_spin_[s][ij]->copy(i_Qa_ij_[ij]);
+            matrix_spin_enforcer_qv(i_Qa_t1_spin_[s][ij], sigma);
+            i_Qa_t1_spin_[s][ij]->subtract(
+                linalg::doublet(i_Qk_t1_spin_[s][ij], T_n_ij_spin_[s][ij]));
+
+            auto qab_ij = QAB_PNO(ij);
+            for (int q_ij = 0; q_ij < naux_ij; ++q_ij) {
+                auto Qab = qab_ij[q_ij]->clone();
+                matrix_spin_enforcer_vv(Qab, sigma);
+                for (int a_ij = 0; a_ij < npno_ij; ++a_ij) {
+                    for (int b_ij = 0; b_ij < npno_ij; ++b_ij) {
+                        (*i_Qa_t1_spin_[s][ij])(q_ij, a_ij) +=
+                            (*Qab)(a_ij, b_ij) * (*T_n_ij_spin_[s][ij])(i_ij, b_ij);
+                    }
+                }
+            }
+            matrix_spin_enforcer_qv(i_Qa_t1_spin_[s][ij], sigma);
+        }
+    }
+
+    timer_off("DLPNO-ROCCSD: T1 Ints");
+}
+
+void RO_DLPNOCCSD::t1_fock_spin() {
+    timer_on("DLPNO-ROCCSD: T1 Fock");
+
+    const int n_lmo_pairs = ij_to_i_j_.size();
+    const int naocc = nalpha_ - nfrzc();
+    const int nbocc = nbeta_ - nfrzc();
+    const int nsomo = naocc - nbocc;
+    constexpr std::array<SpinCase, 2> spins = {SpinCase::Alpha, SpinCase::Beta};
+
+    std::array<SharedMatrix, 2> F_lmo_pao_spin = {
+        linalg::triplet(C_lmo_, reference_wavefunction_->Fa(), C_pao_, true, false, false),
+        linalg::triplet(C_lmo_, reference_wavefunction_->Fb(), C_pao_, true, false, false)};
+
+    // The bars denote dressing over contracted indices.  The Coulomb part
+    // contains alpha + beta T1 density; exchange is same-spin only.
+    std::array<SharedMatrix, 2> Fki_bar;
+    std::array<std::vector<SharedMatrix>, 2> Fkc_bar;
+    std::array<std::vector<SharedMatrix>, 2> Fai_bar;
+    std::array<std::vector<SharedMatrix>, 2> Fab_bar;
+
+    for (SpinCase sigma : spins) {
+        const int s = static_cast<int>(sigma);
+        Fki_bar[s] = (sigma == SpinCase::Alpha) ? F_lmo_a_->clone() : F_lmo_b_->clone();
+        Fkc_bar[s].resize(n_lmo_pairs);
+        Fai_bar[s].resize(naocc);
+        Fab_bar[s].resize(n_lmo_pairs);
+        Fkc_tilde_spin_[s].resize(n_lmo_pairs);
+        Fai_tilde_spin_[s].resize(naocc);
+        Fab_tilde_spin_[s].resize(n_lmo_pairs);
+    }
+
+    // Eq. 9 occupied/occupied barred block.
+#pragma omp parallel for schedule(dynamic, 1)
+    for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+        auto &[i, j] = ij_to_i_j_[ij];
+        const int ji = ij_to_ji_[ij];
+        if (i_j_to_ij_strong_[i][j] == -1) continue;
+
+        for (SpinCase sigma : spins) {
+            const int s = static_cast<int>(sigma);
+            if (sigma == SpinCase::Beta && (i >= nbocc || j >= nbocc)) continue;
+
+            for (SpinCase tau : spins) {
+                const int t = static_cast<int>(tau);
+                (*Fki_bar[s])(i, j) += T_n_ij_spin_[t][ij]->vector_dot(J_ijmb_[ij]);
+            }
+            (*Fki_bar[s])(i, j) -= T_n_ij_spin_[s][ij]->vector_dot(K_mibj_[ji]);
+        }
+    }
+
+    // Remaining barred blocks.  The expensive DF objects exist only for
+    // strong pairs; all local CC equations below intentionally use that same
+    // strong-pair space.
+#pragma omp parallel for schedule(dynamic, 1)
+    for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+        auto &[i, j] = ij_to_i_j_[ij];
+        const int ji = ij_to_ji_[ij];
+        if (i > j) continue;
+
+        const int naux_ij = lmopair_to_ribfs_[ij].size();
+        const int nlmo_ij = lmopair_to_lmos_[ij].size();
+        const int npno_ij = n_pno_[ij];
+        const bool strong = (i_j_to_ij_strong_[i][j] != -1);
+
+        for (SpinCase sigma : spins) {
+            const int s = static_cast<int>(sigma);
+
+            Fkc_bar[s][ij] = submatrix_rows_and_cols(*F_lmo_pao_spin[s],
+                                                      lmopair_to_lmos_[ij], lmopair_to_paos_[ij]);
+            Fkc_bar[s][ij] = linalg::doublet(Fkc_bar[s][ij], X_pno_[ij]);
+            Fab_bar[s][ij] = F_pno_spin_[s][ij]->clone();
+
+            if (i == j) {
+                Fai_bar[s][i] = submatrix_rows_and_cols(*F_lmo_pao_spin[s],
+                                                        std::vector<int>(1, i), lmopair_to_paos_[ij]);
+                Fai_bar[s][i] = linalg::doublet(Fai_bar[s][i], X_pno_[ij])->transpose();
+            }
+
+            if (strong && !(sigma == SpinCase::Beta && i >= nbocc)) {
+                auto qma_ij = QIA_PNO(ij);
+                auto qab_ij = QAB_PNO(ij);
+                auto Qia = i_Qa_ij_[ij]->clone();
+                auto Qik = i_Qk_ij_[ij]->clone();
+                matrix_spin_enforcer_qv(Qia, sigma);
+                matrix_spin_enforcer_qo(Qik, ij, sigma);
+
+                for (int q_ij = 0; q_ij < naux_ij; ++q_ij) {
+                    for (SpinCase tau : spins) {
+                        const int t = static_cast<int>(tau);
+                        const double density_q = qma_ij[q_ij]->vector_dot(T_n_ij_spin_[t][ij]);
+
+                        auto Jkc = qma_ij[q_ij]->clone();
+                        Jkc->scale(density_q);
+                        Fkc_bar[s][ij]->add(Jkc);
+
+                        auto Jab = qab_ij[q_ij]->clone();
+                        Jab->scale(density_q);
+                        Fab_bar[s][ij]->add(Jab);
+
+                        if (i == j) {
+                            for (int a_ij = 0; a_ij < npno_ij; ++a_ij) {
+                                (*Fai_bar[s][i])(a_ij, 0) += density_q * (*Qia)(q_ij, a_ij);
+                            }
+                        }
+                    }
+
+                    // Same-spin exchange pieces.
+                    Fkc_bar[s][ij]->subtract(linalg::triplet(
+                        qma_ij[q_ij], T_n_ij_spin_[s][ij], qma_ij[q_ij], false, true, false));
+                    Fab_bar[s][ij]->subtract(linalg::triplet(
+                        qab_ij[q_ij], T_n_ij_spin_[s][ij], qma_ij[q_ij], false, true, false));
+
+                    if (i == j) {
+                        auto lambda = linalg::doublet(qab_ij[q_ij], T_n_ij_spin_[s][ij], false, true);
+                        for (int a_ij = 0; a_ij < npno_ij; ++a_ij) {
+                            for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
+                                (*Fai_bar[s][i])(a_ij, 0) -=
+                                    (*lambda)(a_ij, k_ij) * (*Qik)(q_ij, k_ij);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Enforce the ROHF occupied/virtual interpretation explicitly.
+            if (sigma == SpinCase::Alpha) {
+                for (int a = 0; a < nsomo; ++a) {
+                    const int av = npno_ij - a - 1;
+                    for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) (*Fkc_bar[s][ij])(k_ij, av) = 0.0;
+                    if (i == j) (*Fai_bar[s][i])(av, 0) = 0.0;
+                }
+            } else {
+                for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
+                    if (lmopair_to_lmos_[ij][k_ij] >= nbocc) {
+                        for (int a = 0; a < npno_ij; ++a) (*Fkc_bar[s][ij])(k_ij, a) = 0.0;
+                    }
+                }
+                if (i == j && i >= nbocc) Fai_bar[s][i]->zero();
+            }
+            matrix_spin_enforcer_vv(Fab_bar[s][ij], sigma);
+
+            if (i != j) {
+                Fkc_bar[s][ji] = Fkc_bar[s][ij];
+                Fab_bar[s][ji] = Fab_bar[s][ij];
+            }
+        }
+    }
+
+    // Eq. 5.  Notice the plus sign from dressing the free occupied index.
+    for (SpinCase sigma : spins) {
+        const int s = static_cast<int>(sigma);
+        Fki_tilde_spin_[s] = Fki_bar[s]->clone();
+
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+            auto &[i, j] = ij_to_i_j_[ij];
+            if (sigma == SpinCase::Beta && (i >= nbocc || j >= nbocc)) continue;
+            const int jj = i_j_to_ij_[j][j];
+            const int i_jj = lmopair_to_lmos_dense_[jj][i];
+            if (i_jj == -1 || !Fkc_bar[s][jj]) continue;
+
+            for (int a_jj = 0; a_jj < n_pno_[jj]; ++a_jj) {
+                (*Fki_tilde_spin_[s])(i, j) +=
+                    (*Fkc_bar[s][jj])(i_jj, a_jj) * (*T_ia_spin_[s][j])(a_jj, 0);
+            }
+        }
+
+        if (sigma == SpinCase::Beta) {
+            for (int k = 0; k < naocc; ++k) {
+                for (int i = 0; i < naocc; ++i) {
+                    if (k >= nbocc || i >= nbocc) (*Fki_tilde_spin_[s])(k, i) = 0.0;
+                }
+            }
+        }
+    }
+
+    // Eqs. 6--8: form the free-index transformed blocks.
+#pragma omp parallel for schedule(dynamic, 1)
+    for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+        auto &[i, j] = ij_to_i_j_[ij];
+        const int ji = ij_to_ji_[ij];
+        const int pair_idx = (i > j) ? ji : ij;
+        const int i_pair = lmopair_to_lmos_dense_[pair_idx][i];
+        const bool strong = (i_j_to_ij_strong_[i][j] != -1);
+
+        for (SpinCase sigma : spins) {
+            const int s = static_cast<int>(sigma);
+
+            Fkc_tilde_spin_[s][ij] = std::make_shared<Matrix>(n_pno_[ij], 1);
+            if (Fkc_bar[s][pair_idx] && i_pair != -1) {
+                auto row = submatrix_rows(*Fkc_bar[s][pair_idx], std::vector<int>(1, i_pair));
+                Fkc_tilde_spin_[s][ij]->copy(row->transpose());
+            }
+            if (sigma == SpinCase::Beta && i >= nbocc) Fkc_tilde_spin_[s][ij]->zero();
+
+            if (i <= j) {
+                Fab_tilde_spin_[s][ij] = Fab_bar[s][ij]->clone();
+                if (strong) {
+                    // Eq. 8 has a minus sign from e^{-T1} H e^{T1}; this
+                    // also recovers the validated closed-shell implementation.
+                    Fab_tilde_spin_[s][ij]->subtract(linalg::doublet(
+                        T_n_ij_spin_[s][ij], Fkc_bar[s][ij], true, false));
+                }
+                matrix_spin_enforcer_vv(Fab_tilde_spin_[s][ij], sigma);
+                if (i != j) Fab_tilde_spin_[s][ji] = Fab_tilde_spin_[s][ij];
+            }
+
+            if (i == j) {
+                Fai_tilde_spin_[s][i] = Fai_bar[s][i]->clone();
+                Fai_tilde_spin_[s][i]->add(linalg::doublet(
+                    Fab_bar[s][ij], T_ia_spin_[s][i]));
+                Fai_tilde_spin_[s][i]->subtract(linalg::triplet(
+                    T_n_ij_spin_[s][ij], Fkc_bar[s][ij], T_ia_spin_[s][i], true, false, false));
+
+                for (int a_i = 0; a_i < n_pno_[ij]; ++a_i) {
+                    for (int k_i = 0; k_i < static_cast<int>(lmopair_to_lmos_[ij].size()); ++k_i) {
+                        const int k = lmopair_to_lmos_[ij][k_i];
+                        (*Fai_tilde_spin_[s][i])(a_i, 0) -=
+                            (*T_n_ij_spin_[s][ij])(k_i, a_i) * (*Fki_bar[s])(k, i);
+                    }
+                }
+
+                if (sigma == SpinCase::Alpha) {
+                    for (int a = 0; a < nsomo; ++a) {
+                        (*Fai_tilde_spin_[s][i])(n_pno_[ij] - a - 1, 0) = 0.0;
+                    }
+                } else if (i >= nbocc) {
+                    Fai_tilde_spin_[s][i]->zero();
+                }
+            }
+        }
+    }
+
+    timer_off("DLPNO-ROCCSD: T1 Fock");
+}
+
 std::array<std::vector<SharedMatrix>, 3> RO_DLPNOCCSD::compute_beta() {
-    
-    int n_lmo_pairs = ij_to_i_j_.size();
-    int naocc = nalpha_ - nfrzc();
-    int nbocc = nbeta_ - nfrzc();
-    int nsomo = naocc - nbocc;
+    const int n_lmo_pairs = ij_to_i_j_.size();
+    const int nbocc = nbeta_ - nfrzc();
 
     std::array<std::vector<SharedMatrix>, 3> beta_ijkl;
     constexpr std::array<DoubleSpinCase, 3> doubles_spin_cases = { DoubleSpinCase::AA, DoubleSpinCase::AB, DoubleSpinCase::BB };
@@ -3487,34 +3822,31 @@ std::array<std::vector<SharedMatrix>, 3> RO_DLPNOCCSD::compute_beta() {
 
         const int nlmo_ij = lmopair_to_lmos_[ij].size();
         const int naux_ij = lmopair_to_ribfs_[ij].size();
-        const int npao_ij = lmopair_to_paos_[ij].size();
-        const int npno_ij = n_pno_[ij];
-
-        // Necessary intermediates
-        auto qma_ij = QIA_PNO(ij); // naux_ij * (nlmo_ij, npno_ij)
         
         for (DoubleSpinCase double_sigma : doubles_spin_cases) {
             auto [sigma1, sigma2] = get_spin_pair(double_sigma);
             const int ds = static_cast<int>(double_sigma);
             const int s1 = static_cast<int>(sigma1), s2 = static_cast<int>(sigma2);
 
-            // TODO: Update this to i_Qk_t1 when T1 terms are implemented
-            auto i_Qk_s1 = i_Qk_ij_[ij]->clone();
-            matrix_spin_enforcer_qo(i_Qk_s1, ij, sigma1);
-            auto j_Ql_s2 = i_Qk_ij_[ji]->clone();
-            matrix_spin_enforcer_qo(j_Ql_s2, ij, sigma2);
-            beta_ijkl[static_cast<int>(double_sigma)][ij] = linalg::doublet(i_Qk_s1, j_Ql_s2, true, false);
+            beta_ijkl[ds][ij] = std::make_shared<Matrix>(nlmo_ij, nlmo_ij);
+            if (i_j_to_ij_strong_[i][j] == -1) continue;
+            if (sigma1 == SpinCase::Beta && i >= nbocc) continue;
+            if (sigma2 == SpinCase::Beta && j >= nbocc) continue;
+
+            beta_ijkl[ds][ij]->add(linalg::doublet(
+                i_Qk_t1_spin_[s1][ij], i_Qk_t1_spin_[s2][ji], true, false));
 
             double prefactor = (s1 == s2) ? 0.5 : 1.0;
 
+            auto qma_ij = QIA_PNO(ij);
             for (int q_ij = 0; q_ij < naux_ij; ++q_ij) {
-                auto beta_temp = linalg::triplet(qma_ij[q_ij], T_iajb_spin_[static_cast<int>(double_sigma)][ij], qma_ij[q_ij], false, false, true); // (k, c) (c, d) (l, d)
+                auto beta_temp = linalg::triplet(qma_ij[q_ij], T_iajb_spin_[ds][ij],
+                                                 qma_ij[q_ij], false, false, true);
                 beta_temp->scale(prefactor);
-                beta_ijkl[static_cast<int>(double_sigma)][ij]->add(beta_temp);
-            } // end q_ij
-
-        } // end double_sigma
-    } // end ij
+                beta_ijkl[ds][ij]->add(beta_temp);
+            }
+        }
+    }
 
     return beta_ijkl;
 }
@@ -3522,9 +3854,7 @@ std::array<std::vector<SharedMatrix>, 3> RO_DLPNOCCSD::compute_beta() {
 std::array<std::array<std::vector<SharedMatrix>, 2>, 2> RO_DLPNOCCSD::compute_gamma() {
 
     int n_lmo_pairs = ij_to_i_j_.size();
-    int naocc = nalpha_ - nfrzc();
     int nbocc = nbeta_ - nfrzc();
-    int nsomo = naocc - nbocc;
 
     constexpr std::array<SpinCase, 2> singles_spin_cases = { SpinCase::Alpha, SpinCase::Beta };
 
@@ -3541,26 +3871,62 @@ std::array<std::array<std::vector<SharedMatrix>, 2>, 2> RO_DLPNOCCSD::compute_ga
 #pragma omp parallel for schedule(dynamic, 1)
     for (int ki = 0; ki < n_lmo_pairs; ++ki) {
         auto &[k, i] = ij_to_i_j_[ki];
-        const int ik = ij_to_ji_[ki];
+        const int ii = i_j_to_ij_[i][i];
 
         const int nlmo_ki = lmopair_to_lmos_[ki].size();
-        const int naux_ki = lmopair_to_ribfs_[ki].size();
-        const int npao_ki = lmopair_to_paos_[ki].size();
         const int npno_ki = n_pno_[ki];
 
         for (SpinCase sigma1 : singles_spin_cases) {
             const int s1 = static_cast<int>(sigma1);
-            if (sigma1 == SpinCase::Beta && (k >= nbocc || i >= nbocc)) continue;
 
             for (SpinCase sigma2 : singles_spin_cases) {
                 const int s2 = static_cast<int>(sigma2);
 
                 gamma[s1][s2][ki] = std::make_shared<Matrix>(npno_ki, npno_ki);
-                gamma[s1][s2][ki]->zero();
+                if (sigma1 == SpinCase::Beta && (k >= nbocc || i >= nbocc)) continue;
+
+                // Eq. 14a: -t_l^a(s2) (ki|lc).
+                gamma[s1][s2][ki]->subtract(linalg::doublet(
+                    T_n_ij_spin_[s2][ki], J_ijmb_[ki], true, false));
+
+                // Eq. 14b: +t_i^b(s1) (kb|ac).
+                auto S_ki_ii_s1 = S_PNO(ki, ii)->clone();
+                matrix_spin_enforcer_vv(S_ki_ii_s1, sigma1);
+                auto T_i = linalg::doublet(S_ki_ii_s1, T_ia_spin_[s1][i]);
+                auto gamma_vvv = linalg::doublet(T_i, K_ivvv_[ki], true, false);
+                gamma_vvv->reshape(npno_ki, npno_ki);
+                matrix_spin_enforcer_vv(gamma_vvv, sigma2);
+                gamma[s1][s2][ki]->add(gamma_vvv);
+
+                // Eq. 14c: -t_i^b(s1) (kb|lc) t_l^a(s2).
+                for (int l_ki = 0; l_ki < nlmo_ki; ++l_ki) {
+                    const int l = lmopair_to_lmos_[ki][l_ki];
+                    if (sigma2 == SpinCase::Beta && l >= nbocc) continue;
+                    const int kl = i_j_to_ij_[k][l];
+                    const int ll = i_j_to_ij_[l][l];
+                    if (kl == -1 || ll == -1) continue;
+
+                    auto S_ki_ll_s2 = S_PNO(ki, ll)->clone();
+                    matrix_spin_enforcer_vv(S_ki_ll_s2, sigma2);
+                    auto T_l = linalg::doublet(S_ki_ll_s2, T_ia_spin_[s2][l]);
+
+                    auto S_kl_ii_s1 = S_PNO(kl, ii)->clone();
+                    matrix_spin_enforcer_vv(S_kl_ii_s1, sigma1);
+                    auto T_i_kl = linalg::doublet(S_kl_ii_s1, T_ia_spin_[s1][i]);
+
+                    auto S_ki_kl_s2 = S_PNO(ki, kl)->clone();
+                    matrix_spin_enforcer_vv(S_ki_kl_s2, sigma2);
+                    auto K_kl = linalg::triplet(S_ki_kl_s2, K_iajb_[kl], T_i_kl,
+                                                false, true, false);
+                    C_DGER(npno_ki, npno_ki, -1.0, T_l->get_pointer(), 1,
+                           K_kl->get_pointer(), 1, gamma[s1][s2][ki]->get_pointer(), npno_ki);
+                }
 
                 for (int l_ki = 0; l_ki < nlmo_ki; ++l_ki) {
                     int l = lmopair_to_lmos_[ki][l_ki];
                     int li = i_j_to_ij_[l][i], kl = i_j_to_ij_[k][l];
+                    if (li == -1 || kl == -1) continue;
+                    if (sigma2 == SpinCase::Beta && l >= nbocc) continue;
 
                     auto T_iajb_li_s2_s1 = T_iajb_spin_helper(li, sigma2, sigma1);
                     auto S_li_kl_s1 = S_PNO(li, kl)->clone();
@@ -3578,6 +3944,8 @@ std::array<std::array<std::vector<SharedMatrix>, 2>, 2> RO_DLPNOCCSD::compute_ga
 
                     gamma[s1][s2][ki]->add(gamma_temp);
                 } // end l_ki
+
+                matrix_spin_enforcer_vv(gamma[s1][s2][ki], sigma2);
             } // end sigma2
         } // end sigma1
     } // end ki
@@ -3608,10 +3976,9 @@ std::array<std::array<std::vector<SharedMatrix>, 2>, 2> RO_DLPNOCCSD::compute_de
     for (int ik = 0; ik < n_lmo_pairs; ++ik) {
         auto &[i, k] = ij_to_i_j_[ik];
         const int ki = ij_to_ji_[ik];
+        const int ii = i_j_to_ij_[i][i];
 
         const int nlmo_ik = lmopair_to_lmos_[ik].size();
-        const int naux_ik = lmopair_to_ribfs_[ik].size();
-        const int npao_ik = lmopair_to_paos_[ik].size();
         const int npno_ik = n_pno_[ik];
 
         for (SpinCase sigma1 : singles_spin_cases) {
@@ -3625,11 +3992,62 @@ std::array<std::array<std::vector<SharedMatrix>, 2>, 2> RO_DLPNOCCSD::compute_de
                 if (sigma1 == SpinCase::Beta && i >= nbocc) continue;
                 if (sigma2 == SpinCase::Beta && k >= nbocc) continue; 
 
+                // Eq. 15a: -t_l^a(s1) [(il|kc) - delta(s1,s2)(ik|lc)].
+                auto M_iklc = K_mibj_[ik]->clone();
+                if (s1 == s2) M_iklc->subtract(J_ijmb_[ik]);
+                delta[s1][s2][ik]->subtract(linalg::doublet(
+                    T_n_ij_spin_[s1][ik], M_iklc, true, false));
+
+                // Eq. 15b: t_i^b(s1) [(kc|ab) - delta(s1,s2)(kb|ca)].
+                auto S_ik_ii_s1 = S_PNO(ik, ii)->clone();
+                matrix_spin_enforcer_vv(S_ik_ii_s1, sigma1);
+                auto T_i = linalg::doublet(S_ik_ii_s1, T_ia_spin_[s1][i]);
+
+                auto direct = K_ivvv_[ki]->clone();
+                direct->reshape(npno_ik * npno_ik, npno_ik);
+                direct = linalg::doublet(direct, T_i);
+                direct->reshape(npno_ik, npno_ik);
+                delta[s1][s2][ik]->add(direct->transpose());
+
+                if (s1 == s2) {
+                    auto exchange = linalg::doublet(T_i, K_ivvv_[ki], true, false);
+                    exchange->reshape(npno_ik, npno_ik);
+                    delta[s1][s2][ik]->subtract(exchange);
+                }
+
+                // Eq. 15c: -t_l^a(s1) [(lb|kc) - delta(s1,s2)(lc|kb)] t_i^b(s1).
+                for (int l_ik = 0; l_ik < nlmo_ik; ++l_ik) {
+                    const int l = lmopair_to_lmos_[ik][l_ik];
+                    if (sigma1 == SpinCase::Beta && l >= nbocc) continue;
+                    const int ll = i_j_to_ij_[l][l];
+                    const int lk = i_j_to_ij_[l][k];
+                    if (ll == -1 || lk == -1) continue;
+
+                    auto S_ik_ll_s1 = S_PNO(ik, ll)->clone();
+                    matrix_spin_enforcer_vv(S_ik_ll_s1, sigma1);
+                    auto T_l = linalg::doublet(S_ik_ll_s1, T_ia_spin_[s1][l]);
+
+                    auto S_lk_ii_s1 = S_PNO(lk, ii)->clone();
+                    matrix_spin_enforcer_vv(S_lk_ii_s1, sigma1);
+                    auto T_i_lk = linalg::doublet(S_lk_ii_s1, T_ia_spin_[s1][i]);
+
+                    auto L_lk = K_iajb_[lk]->clone();
+                    if (s1 == s2) L_lk->subtract(K_iajb_[lk]->transpose());
+                    auto S_lk_ik_s2 = S_PNO(lk, ik)->clone();
+                    matrix_spin_enforcer_vv(S_lk_ik_s2, sigma2);
+                    auto L_contract = linalg::triplet(T_i_lk, L_lk, S_lk_ik_s2,
+                                                      true, false, false);
+                    C_DGER(npno_ik, npno_ik, -1.0, T_l->get_pointer(), 1,
+                           L_contract->get_pointer(), 1,
+                           delta[s1][s2][ik]->get_pointer(), npno_ik);
+                }
+
                 // Jiang Eq. 84d \delta_{ik}^{ac} += 0.5 u_{il}^{ad} [2(kc|ld) - (kd|lc)]
                 // => 0.5 u_{il}^{ad} L_{kl}^{cd} or 0.5 u_{il}^{ad} L_{lk}^{dc}
                 for (int l_ik = 0; l_ik < nlmo_ik; ++l_ik) {
                     int l = lmopair_to_lmos_[ik][l_ik];
                     int il = i_j_to_ij_[i][l], lk = i_j_to_ij_[l][k];
+                    if (il == -1 || lk == -1) continue;
 
                     for (SpinCase gamma : singles_spin_cases) {
                         auto S_ik_il_s1 = S_PNO(ik, il)->clone();
@@ -3656,6 +4074,20 @@ std::array<std::array<std::vector<SharedMatrix>, 2>, 2> RO_DLPNOCCSD::compute_de
                         delta[s1][s2][ik]->add(delta_temp);
                     }
                 } // end l_ik
+
+                // Rows carry s1 virtuals; columns carry s2 virtuals.
+                if (sigma1 == SpinCase::Alpha) {
+                    for (int a = 0; a < nsomo; ++a) {
+                        const int av = npno_ik - a - 1;
+                        for (int c = 0; c < npno_ik; ++c) (*delta[s1][s2][ik])(av, c) = 0.0;
+                    }
+                }
+                if (sigma2 == SpinCase::Alpha) {
+                    for (int c = 0; c < nsomo; ++c) {
+                        const int cv = npno_ik - c - 1;
+                        for (int a = 0; a < npno_ik; ++a) (*delta[s1][s2][ik])(a, cv) = 0.0;
+                    }
+                }
             } // end sigma2
         } // end sigma1
     } // end ik
@@ -3665,10 +4097,8 @@ std::array<std::array<std::vector<SharedMatrix>, 2>, 2> RO_DLPNOCCSD::compute_de
 
 std::array<std::vector<SharedMatrix>, 2> RO_DLPNOCCSD::compute_Fbc_double_tilde() {
 
-    int n_lmo_pairs = ij_to_i_j_.size();
-    int naocc = nalpha_ - nfrzc();
-    int nbocc = nbeta_ - nfrzc();
-    int nsomo = naocc - nbocc;
+    const int n_lmo_pairs = ij_to_i_j_.size();
+    const int nbocc = nbeta_ - nfrzc();
 
     std::array<std::vector<SharedMatrix>, 2> F_bc_double_tilde;
 
@@ -3676,7 +4106,6 @@ std::array<std::vector<SharedMatrix>, 2> RO_DLPNOCCSD::compute_Fbc_double_tilde(
     F_bc_double_tilde[static_cast<int>(SpinCase::Alpha)].resize(n_lmo_pairs);
     F_bc_double_tilde[static_cast<int>(SpinCase::Beta)].resize(n_lmo_pairs);
 
-    // TODO: Add T1-dressing
 #pragma omp parallel for schedule(dynamic, 1)
     for (int ij = 0; ij < n_lmo_pairs; ++ij) {
         auto &[i, j] = ij_to_i_j_[ij];
@@ -3688,15 +4117,9 @@ std::array<std::vector<SharedMatrix>, 2> RO_DLPNOCCSD::compute_Fbc_double_tilde(
 
         for (SpinCase sigma : singles_spin_cases) {
             const int s = static_cast<int>(sigma);
-            if (sigma == SpinCase::Alpha) {
-                F_bc_double_tilde[s][ij] = linalg::triplet(X_pno_[ij], F_pao_a_, X_pno_[ij], true, false, false);
-            } else {
-                F_bc_double_tilde[s][ij] = linalg::triplet(X_pno_[ij], F_pao_b_, X_pno_[ij], true, false, false);
-            }
+            F_bc_double_tilde[s][ij] = Fab_tilde_spin_[s][ij]->clone();
 
             for (SpinCase gamma : singles_spin_cases) {
-                const int g = static_cast<int>(gamma);
-
                 for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
                     int k = lmopair_to_lmos_[ij][k_ij];
                     if (sigma == SpinCase::Beta && k >= nbocc) continue;
@@ -3733,18 +4156,16 @@ std::array<SharedMatrix, 2> RO_DLPNOCCSD::compute_Fki_double_tilde() {
     int n_lmo_pairs = ij_to_i_j_.size();
     int naocc = nalpha_ - nfrzc();
     int nbocc = nbeta_ - nfrzc();
-    int nsomo = naocc - nbocc;
 
     constexpr std::array<SpinCase, 2> singles_spin_cases = { SpinCase::Alpha, SpinCase::Beta };
     std::array<SharedMatrix, 2> F_ki_double_tilde;
 
-     // Alpha Case: All occupied orbitals are valid
-    F_ki_double_tilde[static_cast<int>(SpinCase::Alpha)] = F_lmo_a_->clone();
+    // Begin from the spin-resolved T1-transformed occupied block.
+    F_ki_double_tilde[static_cast<int>(SpinCase::Alpha)] =
+        Fki_tilde_spin_[static_cast<int>(SpinCase::Alpha)]->clone();
+    F_ki_double_tilde[static_cast<int>(SpinCase::Beta)] =
+        Fki_tilde_spin_[static_cast<int>(SpinCase::Beta)]->clone();
 
-    // Beta Case: Last nsomo occupied orbitals are zero
-    F_ki_double_tilde[static_cast<int>(SpinCase::Beta)] = F_lmo_b_->clone();
-
-    // TODO: Add T1-dressing
 #pragma omp parallel for schedule(dynamic, 1)
     for (int ij = 0; ij < n_lmo_pairs; ++ij) {
         auto &[i, j] = ij_to_i_j_[ij];
@@ -3755,8 +4176,6 @@ std::array<SharedMatrix, 2> RO_DLPNOCCSD::compute_Fki_double_tilde() {
             if (sigma == SpinCase::Beta && (i >= nbocc || j >= nbocc)) continue;
 
             for (SpinCase gamma : singles_spin_cases) {
-                const int g = static_cast<int>(gamma);
-
                 for (int l_ij = 0; l_ij < nlmo_ij; ++l_ij) {
                     int l = lmopair_to_lmos_[ij][l_ij];
                     int il = i_j_to_ij_[i][l], jl = i_j_to_ij_[j][l];
@@ -3779,29 +4198,164 @@ std::array<SharedMatrix, 2> RO_DLPNOCCSD::compute_Fki_double_tilde() {
     } // end ij
 
 #pragma omp parallel for collapse(2)
-    for (int k = nbocc; k < naocc; ++k) {
-        for (int i = nbocc; i < naocc; ++i) {
-            (*F_ki_double_tilde[static_cast<int>(SpinCase::Beta)])(k, i) = 0.0;
-        } // end for
-    } // end for
+    for (int k = 0; k < naocc; ++k) {
+        for (int i = 0; i < naocc; ++i) {
+            if (k >= nbocc || i >= nbocc) {
+                (*F_ki_double_tilde[static_cast<int>(SpinCase::Beta)])(k, i) = 0.0;
+            }
+        }
+    }
 
     return F_ki_double_tilde;
 }
 
-void RO_DLPNOCCSD::compute_R_ia(std::array<std::vector<SharedMatrix>, 2>& R_ia, std::array<std::vector<std::vector<SharedMatrix>>, 3>& R_ia_buffer) {
-    /*
-    int n_lmo_pairs = ij_to_i_j_.size();
-    int naocc = nalpha_ - nfrzc();
-    int nbocc = nbeta_ - nfrzc();
-    int nsomo = naocc - nbocc;
+void RO_DLPNOCCSD::compute_R_ia(
+    std::array<std::vector<SharedMatrix>, 2>& R_ia,
+    std::array<std::vector<std::vector<SharedMatrix>>, 2>& R_ia_buffer) {
 
-    constexpr std::array<SpinCase, 2> singles_spin_cases = { SpinCase::Alpha, SpinCase::Beta };
+    timer_on("DLPNO-ROCCSD: Compute R1");
 
-    for (SpinCase sigma : singles_spin_cases) {
+    const int n_lmo_pairs = ij_to_i_j_.size();
+    const int naocc = nalpha_ - nfrzc();
+    const int nbocc = nbeta_ - nfrzc();
+    int nthreads = 1;
+#ifdef _OPENMP
+    nthreads = Process::environment.get_n_threads();
+#endif
+
+    constexpr std::array<SpinCase, 2> spins = {SpinCase::Alpha, SpinCase::Beta};
+
+    // Eq. 12a: the one-body T1-transformed contribution.
+    for (SpinCase sigma : spins) {
         const int s = static_cast<int>(sigma);
-    } // end for
-    */
-    throw PSIEXCEPTION("This code is currently under development... current stage: DLPNO-ROCEPA0");
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int i = 0; i < naocc; ++i) {
+            R_ia[s][i]->copy(Fai_tilde_spin_[s][i]);
+            if (sigma == SpinCase::Beta && i >= nbocc) R_ia[s][i]->zero();
+        }
+        for (int thread = 0; thread < nthreads; ++thread) {
+            for (int i = 0; i < naocc; ++i) R_ia_buffer[s][thread][i]->zero();
+        }
+    }
+
+    // Three-external and F*T2 pieces of Eq. 12.
+#pragma omp parallel for schedule(dynamic, 1)
+    for (int ik = 0; ik < n_lmo_pairs; ++ik) {
+        auto &[i, k] = ij_to_i_j_[ik];
+        const int ki = ij_to_ji_[ik];
+        const int ii = i_j_to_ij_[i][i];
+        const int nlmo_ik = lmopair_to_lmos_[ik].size();
+        const int npno_ik = n_pno_[ik];
+
+        int thread = 0;
+#ifdef _OPENMP
+        thread = omp_get_thread_num();
+#endif
+
+        for (SpinCase sigma : spins) {
+            const int s = static_cast<int>(sigma);
+            if (sigma == SpinCase::Beta && i >= nbocc) continue;
+
+            for (SpinCase tau : spins) {
+                const int t = static_cast<int>(tau);
+                if (tau == SpinCase::Beta && k >= nbocc) continue;
+                const double prefactor = (s == t) ? 0.5 : 1.0;
+
+                // 1/2 t(ki,cd)<kc||da>; the explicit spin blocks turn the
+                // 1/2 into 1 for an opposite-spin partner.
+                auto T_ki = T_iajb_spin_helper(ki, tau, sigma)->clone();
+                auto K_kcad = K_ivvv_[ki]->clone();
+                K_kcad->reshape(npno_ik * npno_ik, npno_ik);
+                T_ki->reshape(npno_ik * npno_ik, 1);
+
+                auto S_ki_ii_s = S_PNO(ki, ii)->clone();
+                matrix_spin_enforcer_vv(S_ki_ii_s, sigma);
+                auto A_i = linalg::triplet(S_ki_ii_s, K_kcad, T_ki, true, true, false);
+                A_i->scale(prefactor);
+                R_ia_buffer[s][thread][i]->add(A_i);
+
+                // The T1 part of the transformed three-external integral.
+                auto T_ki_mat = T_iajb_spin_helper(ki, tau, sigma);
+                for (int l_ik = 0; l_ik < nlmo_ik; ++l_ik) {
+                    const int l = lmopair_to_lmos_[ik][l_ik];
+                    if (sigma == SpinCase::Beta && l >= nbocc) continue;
+                    const int kl = i_j_to_ij_[k][l];
+                    const int ll = i_j_to_ij_[l][l];
+                    if (kl == -1 || ll == -1) continue;
+
+                    auto S_kl_ki_t = S_PNO(kl, ki)->clone();
+                    matrix_spin_enforcer_vv(S_kl_ki_t, tau);
+                    auto S_ki_kl_s = S_PNO(ki, kl)->clone();
+                    matrix_spin_enforcer_vv(S_ki_kl_s, sigma);
+                    auto T_proj = linalg::triplet(S_kl_ki_t, T_ki_mat, S_ki_kl_s);
+
+                    auto S_ii_ll_s = S_PNO(ii, ll)->clone();
+                    matrix_spin_enforcer_vv(S_ii_ll_s, sigma);
+                    auto T_l = linalg::doublet(S_ii_ll_s, T_ia_spin_[s][l]);
+                    T_l->scale(prefactor * T_proj->vector_dot(K_iajb_[kl]));
+                    R_ia_buffer[s][thread][i]->subtract(T_l);
+                }
+
+                // F~(kc,tau) t(ik,ac;sigma,tau).
+                auto T_ik = T_iajb_spin_helper(ik, sigma, tau);
+                auto C_i = linalg::triplet(S_PNO(ik, ii), T_ik,
+                                           Fkc_tilde_spin_[t][ki], true, false, false);
+                R_ia_buffer[s][thread][i]->add(C_i);
+            }
+        }
+    }
+
+    // Negative occupied/external contraction in Eq. 12.
+#pragma omp parallel for schedule(dynamic, 1)
+    for (int kl = 0; kl < n_lmo_pairs; ++kl) {
+        auto &[k, l] = ij_to_i_j_[kl];
+        const int nlmo_kl = lmopair_to_lmos_[kl].size();
+
+        int thread = 0;
+#ifdef _OPENMP
+        thread = omp_get_thread_num();
+#endif
+
+        for (SpinCase sigma : spins) {
+            const int s = static_cast<int>(sigma);
+            if (sigma == SpinCase::Beta && k >= nbocc) continue;
+
+            for (SpinCase tau : spins) {
+                const int t = static_cast<int>(tau);
+                if (tau == SpinCase::Beta && l >= nbocc) continue;
+                const double prefactor = (s == t) ? 0.5 : 1.0;
+
+                auto K_kilc = K_mibj_[kl]->clone();
+                K_kilc->add(linalg::doublet(T_n_ij_spin_[s][kl], K_iajb_[kl]));
+                auto T_kl = T_iajb_spin_helper(kl, sigma, tau);
+                auto B_ia = linalg::doublet(K_kilc, T_kl, false, true);
+                B_ia->scale(prefactor);
+
+                for (int i_kl = 0; i_kl < nlmo_kl; ++i_kl) {
+                    const int i = lmopair_to_lmos_[kl][i_kl];
+                    if (sigma == SpinCase::Beta && i >= nbocc) continue;
+                    const int ii = i_j_to_ij_[i][i];
+                    auto S_kl_ii_s = S_PNO(kl, ii)->clone();
+                    matrix_spin_enforcer_vv(S_kl_ii_s, sigma);
+                    auto B_i = linalg::doublet(
+                        submatrix_rows(*B_ia, std::vector<int>(1, i_kl)), S_kl_ii_s);
+                    R_ia_buffer[s][thread][i]->subtract(B_i->transpose());
+                }
+            }
+        }
+    }
+
+    for (SpinCase sigma : spins) {
+        const int s = static_cast<int>(sigma);
+        for (int i = 0; i < naocc; ++i) {
+            for (int thread = 0; thread < nthreads; ++thread) {
+                R_ia[s][i]->add(R_ia_buffer[s][thread][i]);
+            }
+        }
+        spin_enforcer(R_ia[s], sigma);
+    }
+
+    timer_off("DLPNO-ROCCSD: Compute R1");
 }
 
 void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_iajb, std::array<std::vector<SharedMatrix>, 3> &Rn_iajb) {
@@ -3809,7 +4363,6 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
     int n_lmo_pairs = ij_to_i_j_.size();
     int naocc = nalpha_ - nfrzc();
     int nbocc = nbeta_ - nfrzc();
-    int nsomo = naocc - nbocc;
 
     auto beta_ijkl = compute_beta();
     auto gamma_ki = compute_gamma();
@@ -3820,6 +4373,17 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
     constexpr std::array<SpinCase, 2> singles_spin_cases = { SpinCase::Alpha, SpinCase::Beta };
     constexpr std::array<DoubleSpinCase, 3> doubles_spin_cases = { DoubleSpinCase::AA, DoubleSpinCase::AB, DoubleSpinCase::BB };
 
+    // Residual matrices persist across iterations.  Clear every spin block,
+    // including invalid beta/SOMO blocks, before any early exit below.
+#pragma omp parallel for schedule(dynamic, 1)
+    for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+        for (DoubleSpinCase double_sigma : doubles_spin_cases) {
+            const int ds = static_cast<int>(double_sigma);
+            R_iajb[ds][ij]->zero();
+            Rn_iajb[ds][ij]->zero();
+        }
+    }
+
 #pragma omp parallel for schedule(dynamic, 1)
     for (int ij = 0; ij < n_lmo_pairs; ++ij) {
         auto &[i, j] = ij_to_i_j_[ij];
@@ -3827,11 +4391,13 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
 
         const int nlmo_ij = lmopair_to_lmos_[ij].size();
         const int naux_ij = lmopair_to_ribfs_[ij].size();
-        const int npao_ij = lmopair_to_paos_[ij].size();
-        const int npno_ij = n_pno_[ij];
 
-        // Necessary intermediates
-        auto qab_ij = QAB_PNO(ij); // naux_ij * (npno_ij, npno_ij)
+        // The CC equations in this first implementation are strong-pair only.
+        // Weak/semicanonical/dipole corrections remain the existing MP2 ones.
+        if (i_j_to_ij_strong_[i][j] == -1) continue;
+
+        auto qma_ij = QIA_PNO(ij);
+        auto qab_ij = QAB_PNO(ij);
         
         for (DoubleSpinCase double_sigma : doubles_spin_cases) {
             auto [sigma1, sigma2] = get_spin_pair(double_sigma);
@@ -3846,31 +4412,24 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
             // Both i >= nbocc and j >= nbocc make invalid pairs in BB spin case
             if (double_sigma == DoubleSpinCase::BB && (i >= nbocc || j >= nbocc)) continue;
 
-            // Helpful Aliases
+            // Helpful alias
             auto T_ij = T_iajb_spin_[ds][ij];
 
-            // Zero current buffer before doing anything fancy schmancy
-            R_iajb[ds][ij]->zero();
-            // Zero out (non-symmetrized) temporary buffer
-            Rn_iajb[ds][ij]->zero();
-
             // Jiang and Toth Eq. 11a
-            // TODO: Update this to i_Qa_t1 when T1 terms are implemented
-            auto i_Qa_s1 = i_Qa_ij_[ij]->clone();
-            matrix_spin_enforcer_qv(i_Qa_s1, sigma1);
-            auto j_Qb_s2 = i_Qa_ij_[ji]->clone();
-            matrix_spin_enforcer_qv(j_Qb_s2, sigma2);
-
-            auto L_iajb = linalg::doublet(i_Qa_s1, j_Qb_s2, true, false);
+            auto L_iajb = linalg::doublet(i_Qa_t1_spin_[s1][ij],
+                                           i_Qa_t1_spin_[s2][ji], true, false);
             R_iajb[ds][ij]->add(L_iajb);
             if (s1 == s2) R_iajb[ds][ij]->subtract(L_iajb->transpose());
 
             // Jiang and Toth Eq. 20
-            // TODO: T1-dress Qab_ij when T1 terms are implemented
             for (int q_ij = 0; q_ij < naux_ij; ++q_ij) {
-                auto Qab_t1_s1 = qab_ij[q_ij]->clone(); // (a, c)
+                auto Qab_t1_s1 = qab_ij[q_ij]->clone();
+                Qab_t1_s1->subtract(linalg::doublet(
+                    T_n_ij_spin_[s1][ij], qma_ij[q_ij], true, false));
                 matrix_spin_enforcer_vv(Qab_t1_s1, sigma1);
-                auto Qab_t1_s2 = qab_ij[q_ij]->clone(); // (b, d)
+                auto Qab_t1_s2 = qab_ij[q_ij]->clone();
+                Qab_t1_s2->subtract(linalg::doublet(
+                    T_n_ij_spin_[s2][ij], qma_ij[q_ij], true, false));
                 matrix_spin_enforcer_vv(Qab_t1_s2, sigma2);
 
                 R_iajb[ds][ij]->add(linalg::triplet(Qab_t1_s1, T_ij, Qab_t1_s2, false, false, true)); // (a, c) (c, d) (b, d)
@@ -3909,6 +4468,7 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
             for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
                 const int k = lmopair_to_lmos_[ij][k_ij];
                 const int ik = i_j_to_ij_[i][k], kj = i_j_to_ij_[k][j];
+                if (ik == -1 || kj == -1) continue;
 
                 // Get necessary overlap matrices
                 auto S_ij_ik_s1 = S_PNO(ij, ik)->clone();
@@ -3937,6 +4497,7 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
             for (int k_ij = 0; k_ij < nlmo_ij; ++k_ij) {
                 int k = lmopair_to_lmos_[ij][k_ij];
                 int ik = i_j_to_ij_[i][k], kj = i_j_to_ij_[k][j];
+                if (ik == -1 || kj == -1) continue;
                 int ki = ij_to_ji_[ik], jk = ij_to_ji_[kj];
 
                 auto S_ij_ik_s1 = S_PNO(ij, ik)->clone();
@@ -4043,10 +4604,11 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
 
 #pragma omp parallel for schedule(dynamic, 1)
     for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+        auto &[i, j] = ij_to_i_j_[ij];
         const int ji = ij_to_ji_[ij];
+        if (i_j_to_ij_strong_[i][j] == -1) continue;
 
         for (DoubleSpinCase double_sigma : doubles_spin_cases) {
-            auto [sigma1, sigma2] = get_spin_pair(double_sigma);
             const int ds = static_cast<int>(double_sigma);
             
             R_iajb[ds][ij]->add(Rn_iajb[ds][ij]);
@@ -4083,6 +4645,20 @@ void RO_DLPNOCCSD::lccsd_iterations() {
 
     F_lmo_spin[static_cast<int>(SpinCase::Alpha)] = F_lmo_a_;
     F_lmo_spin[static_cast<int>(SpinCase::Beta)] = F_lmo_b_;
+
+    // The appended SOMOs make a single spin-independent e_pno denominator
+    // inappropriate.  Retain the actual alpha/beta Fock matrices in every
+    // PNO domain for the Jacobi updates.
+    for (SpinCase sigma : {SpinCase::Alpha, SpinCase::Beta}) {
+        F_pno_spin_[static_cast<int>(sigma)].resize(n_lmo_pairs);
+    }
+#pragma omp parallel for schedule(dynamic, 1)
+    for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+        F_pno_spin_[static_cast<int>(SpinCase::Alpha)][ij] =
+            linalg::triplet(X_pno_[ij], F_pao_a_, X_pno_[ij], true, false, false);
+        F_pno_spin_[static_cast<int>(SpinCase::Beta)][ij] =
+            linalg::triplet(X_pno_[ij], F_pao_b_, X_pno_[ij], true, false, false);
+    }
 
     outfile->Printf("\n  ==> Restricted Open Shell Local CCSD <==\n\n");
     outfile->Printf("    E_CONVERGENCE = %.2e\n", options_.get_double("E_CONVERGENCE"));
@@ -4137,7 +4713,7 @@ void RO_DLPNOCCSD::lccsd_iterations() {
 
     // => Thread buffers <= //
 
-    std::array<std::vector<std::vector<SharedMatrix>>, 3> R_ia_buffer;
+    std::array<std::vector<std::vector<SharedMatrix>>, 2> R_ia_buffer;
 
     for (SpinCase sigma : singles_spin_cases) {
         const int s = static_cast<int>(sigma);
@@ -4153,14 +4729,10 @@ void RO_DLPNOCCSD::lccsd_iterations() {
     } // end for
 
     int iteration = 1, max_iteration = options_.get_int("DLPNO_MAXITER");
-    double e_curr = 0.0, e_prev = 0.0, e_weak = 0.0, r1_curr = 0.0, r2_curr = 0.0;
+    double e_curr = 0.0, e_prev = 0.0, e_weak = 0.0;
     bool e_converged = false, r_converged = false;
 
     DIISManager diis(options_.get_int("DIIS_MAX_VECS"), "LCCSD DIIS", DIISManager::RemovalPolicy::LargestError, DIISManager::StoragePolicy::InCore);
-
-    double F_CUT = options_.get_double("F_CUT");
-
-    // TODO: Implement singles, the plan is currently DLPNO-ROCEPA0 -> DLPNO-ROCCD -> DLPNO-ROCCSD
 
     while (!(e_converged && r_converged)) {
         // RMS of residual per single LMO, for assesing convergence
@@ -4170,16 +4742,48 @@ void RO_DLPNOCCSD::lccsd_iterations() {
 
         std::time_t time_start = std::time(nullptr);
 
-        // Compute doubles residual
+        // Project T1 and form the similarity-transformed Hamiltonian.
+        form_projected_singles();
+        t1_ints_spin();
+        t1_fock_spin();
+
+        // Compute singles residual.
+        compute_R_ia(R_ia_spin, R_ia_buffer);
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int i = 0; i < naocc; ++i) {
+            for (SpinCase sigma : singles_spin_cases) {
+                const int s = static_cast<int>(sigma);
+                R_ia_rms[i] = std::max(R_ia_rms[i], R_ia_spin[s][i]->rms());
+            }
+        }
+
+        // Compute doubles residual.
         compute_R_iajb(R_iajb_spin, Rn_iajb_spin);
 
 #pragma omp parallel for schedule(dynamic, 1)
         for (int ij = 0; ij < n_lmo_pairs; ++ij) {
             for (DoubleSpinCase double_sigma : doubles_spin_cases) {
                 const int ds = static_cast<int>(double_sigma);
-                R_iajb_rms[ij] = R_iajb_spin[ds][ij]->rms();
+                R_iajb_rms[ij] = std::max(R_iajb_rms[ij], R_iajb_spin[ds][ij]->rms());
             } // end double_sigma
         } // end for
+
+        // Spin-resolved singles Jacobi update.
+        for (SpinCase sigma : singles_spin_cases) {
+            const int s = static_cast<int>(sigma);
+#pragma omp parallel for schedule(dynamic, 1)
+            for (int i = 0; i < naocc; ++i) {
+                if (sigma == SpinCase::Beta && i >= nbocc) continue;
+                const int ii = i_j_to_ij_[i][i];
+                const int alpha_virtual_end = n_pno_[ii] - nsomo;
+                for (int a_ii = 0; a_ii < n_pno_[ii]; ++a_ii) {
+                    if (sigma == SpinCase::Alpha && a_ii >= alpha_virtual_end) continue;
+                    const double denom = (*F_pno_spin_[s][ii])(a_ii, a_ii) - (*F_lmo_spin[s])(i, i);
+                    (*T_ia_spin_[s][i])(a_ii, 0) -= (*R_ia_spin[s][i])(a_ii, 0) / denom;
+                }
+            }
+            spin_enforcer(T_ia_spin_[s], sigma);
+        }
 
         // Update doubles amplitude
 #pragma omp parallel for schedule(dynamic, 1)
@@ -4191,20 +4795,21 @@ void RO_DLPNOCCSD::lccsd_iterations() {
                 const int ds = static_cast<int>(double_sigma);
                 const int s1 = static_cast<int>(sigma1), s2 = static_cast<int>(sigma2);
 
-                // All pairs are valid for AA case
-
-                // j >= nbocc is not valid for AB spin case
-                if (double_sigma == DoubleSpinCase::AB && j >= nbocc) continue;
-
-                // Both i >= nbocc and j >= nbocc make invalid pairs in BB spin case
-                if (double_sigma == DoubleSpinCase::BB && (i >= nbocc || j >= nbocc)) continue;
+                if (sigma1 == SpinCase::Beta && i >= nbocc) continue;
+                if (sigma2 == SpinCase::Beta && j >= nbocc) continue;
 
                 auto T_ij = T_iajb_spin_[ds][ij];
+                const int alpha_virtual_end = n_pno_[ij] - nsomo;
 
                 for (int a_ij = 0; a_ij < n_pno_[ij]; ++a_ij) {
+                    if (sigma1 == SpinCase::Alpha && a_ij >= alpha_virtual_end) continue;
                     for (int b_ij = 0; b_ij < n_pno_[ij]; ++b_ij) {
+                        if (sigma2 == SpinCase::Alpha && b_ij >= alpha_virtual_end) continue;
+                        const double denom = (*F_pno_spin_[s1][ij])(a_ij, a_ij) +
+                                             (*F_pno_spin_[s2][ij])(b_ij, b_ij) -
+                                             (*F_lmo_spin[s1])(i, i) - (*F_lmo_spin[s2])(j, j);
                         (*T_ij)(a_ij, b_ij) -= (*R_iajb_spin[ds][ij])(a_ij, b_ij) / 
-                                (e_pno_[ij]->get(a_ij) + e_pno_[ij]->get(b_ij) - F_lmo_spin[s1]->get(i,i) - F_lmo_spin[s2]->get(j,j));
+                                                       denom;
                     } // end b_ij
                 } // end a_ij
 
@@ -4219,13 +4824,19 @@ void RO_DLPNOCCSD::lccsd_iterations() {
 
         // DIIS Extrapolation
         std::vector<SharedMatrix> T_vecs;
-        T_vecs.reserve(T_iajb_spin_[0].size() + T_iajb_spin_[1].size() + T_iajb_spin_[2].size());
+        T_vecs.reserve(T_ia_spin_[0].size() + T_ia_spin_[1].size() +
+                       T_iajb_spin_[0].size() + T_iajb_spin_[1].size() + T_iajb_spin_[2].size());
+        T_vecs.insert(T_vecs.end(), T_ia_spin_[0].begin(), T_ia_spin_[0].end());
+        T_vecs.insert(T_vecs.end(), T_ia_spin_[1].begin(), T_ia_spin_[1].end());
         T_vecs.insert(T_vecs.end(), T_iajb_spin_[0].begin(), T_iajb_spin_[0].end());
         T_vecs.insert(T_vecs.end(), T_iajb_spin_[1].begin(), T_iajb_spin_[1].end());
         T_vecs.insert(T_vecs.end(), T_iajb_spin_[2].begin(), T_iajb_spin_[2].end());
 
         std::vector<SharedMatrix> R_vecs;
-        R_vecs.reserve(R_iajb_spin[0].size() + R_iajb_spin[1].size() + R_iajb_spin[2].size());
+        R_vecs.reserve(R_ia_spin[0].size() + R_ia_spin[1].size() +
+                       R_iajb_spin[0].size() + R_iajb_spin[1].size() + R_iajb_spin[2].size());
+        R_vecs.insert(R_vecs.end(), R_ia_spin[0].begin(), R_ia_spin[0].end());
+        R_vecs.insert(R_vecs.end(), R_ia_spin[1].begin(), R_ia_spin[1].end());
         R_vecs.insert(R_vecs.end(), R_iajb_spin[0].begin(), R_iajb_spin[0].end());
         R_vecs.insert(R_vecs.end(), R_iajb_spin[1].begin(), R_iajb_spin[1].end());
         R_vecs.insert(R_vecs.end(), R_iajb_spin[2].begin(), R_iajb_spin[2].end());
@@ -4242,6 +4853,15 @@ void RO_DLPNOCCSD::lccsd_iterations() {
         diis.extrapolate(T_vecs_flat.get());
 
         copy_flat_mats(T_vecs_flat, T_vecs);
+
+        // DIIS combines flattened matrices without knowing the ROHF masks.
+        // Reimpose them so invalid SOMO amplitudes cannot leak back in.
+        for (SpinCase sigma : singles_spin_cases) {
+            spin_enforcer(T_ia_spin_[static_cast<int>(sigma)], sigma);
+        }
+        for (DoubleSpinCase double_sigma : doubles_spin_cases) {
+            double_spin_enforcer(T_iajb_spin_[static_cast<int>(double_sigma)], double_sigma);
+        }
 
         // evaluate convergence using current amplitudes and residuals
         e_prev = e_curr;
@@ -4261,15 +4881,25 @@ void RO_DLPNOCCSD::lccsd_iterations() {
                 const int ds = static_cast<int>(double_sigma);
                 const int s1 = static_cast<int>(sigma1), s2 = static_cast<int>(sigma2);
 
-                double prefactor = 1.0;
-                if (s1 == s2) prefactor = 0.25;
+                auto S_ij_ii_s1 = S_PNO(ij, ii)->clone();
+                matrix_spin_enforcer_vv(S_ij_ii_s1, sigma1);
+                auto S_ij_jj_s2 = S_PNO(ij, jj)->clone();
+                matrix_spin_enforcer_vv(S_ij_jj_s2, sigma2);
+                auto T_i = linalg::doublet(S_ij_ii_s1, T_ia_spin_[s1][i]);
+                auto T_j = linalg::doublet(S_ij_jj_s2, T_ia_spin_[s2][j]);
+                auto t1t1 = std::make_shared<Matrix>(n_pno_[ij], n_pno_[ij]);
+                C_DGER(n_pno_[ij], n_pno_[ij], 1.0, T_i->get_pointer(), 1,
+                       T_j->get_pointer(), 1, t1t1->get_pointer(), n_pno_[ij]);
 
-                // The amplitudes are already spin-enforced
-                // e_ij + prefactor * (T_{ij}^{ab})_{s1 s2} (K_{ij}^{ab})_{s1 s2}
                 auto g_iajb = K_iajb_[ij]->clone();
-                // matrix_spin_enforcer_vv(g_iajb, double_sigma);
-                if (s1 == s2) g_iajb->subtract(K_iajb_[ij]->transpose());
-                e_ij += prefactor * T_iajb_spin_[ds][ij]->vector_dot(g_iajb);
+                if (s1 == s2) {
+                    g_iajb->subtract(K_iajb_[ij]->transpose());
+                    e_ij += 0.25 * T_iajb_spin_[ds][ij]->vector_dot(g_iajb);
+                    e_ij += 0.50 * t1t1->vector_dot(g_iajb);
+                } else {
+                    e_ij += T_iajb_spin_[ds][ij]->vector_dot(g_iajb);
+                    e_ij += t1t1->vector_dot(g_iajb);
+                }
             }
 
             // Update energies
