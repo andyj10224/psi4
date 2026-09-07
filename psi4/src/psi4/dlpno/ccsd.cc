@@ -511,6 +511,29 @@ void DLPNOCCSD::estimate_memory() {
     }
 }
 
+double DLPNOCCSD::compute_mp2_singles_energy(int i, const SharedMatrix& X_virtual,
+                                             const SharedVector& epsilon_virtual) const {
+    // At a non-Brillouin reference, the first-order singles amplitudes are
+    // t_i^a = F_ia / (F_ii - epsilon_a). Their contribution is therefore
+    // sum_a |F_ia|^2 / (F_ii - epsilon_a), manuscript Eq. 20. X_virtual maps
+    // the PAOs of diagonal pair ii into the orthonormal virtual subspace in
+    // which epsilon_virtual is diagonal.
+    const int ii = i_j_to_ij_[i][i];
+    auto Fia_pao =
+        submatrix_rows_and_cols(*F_lmo_pao_, std::vector<int>{i}, lmopair_to_paos_[ii]);
+    auto Fia = linalg::doublet(Fia_pao, X_virtual);
+
+    double energy = 0.0;
+    for (int a = 0; a < Fia->ncol(); ++a) {
+        const double denominator = F_lmo_->get(i, i) - epsilon_virtual->get(a);
+        if (std::fabs(denominator) > 1.0e-12) {
+            const double fia = Fia->get(0, a);
+            energy += fia * fia / denominator;
+        }
+    }
+    return energy;
+}
+
 template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
     /*
         If crude, runs semicanonical (non-iterative) MP2
@@ -524,6 +547,7 @@ template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
     const int MIN_PNOS = options_.get_int("MIN_PNOS");
 
     std::vector<double> e_ijs(n_lmo_pairs);
+    std::vector<double> de_pno_singles(n_lmo_pairs, 0.0);
 
     if constexpr (crude) {
         outfile->Printf("\n  ==> Semi-Canonical MP2 Pair Prescreening <==\n\n");
@@ -613,8 +637,13 @@ template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
         Tt_pao_ij->scale(2.0);
         Tt_pao_ij->subtract(T_pao_ij->transpose());
 
-        // MP2 energy of this LMO pair before transformation to PNOs
-        double e_ij_initial = K_pao_ij->vector_dot(Tt_pao_ij);
+        // MP2 energy of this LMO pair before transformation to PNOs. For a
+        // non-Brillouin reference, assign the F_ia term in manuscript Eq. 20
+        // to diagonal pair ii; diagonal pairs are retained unconditionally.
+        const double e_ij_doubles_initial = K_pao_ij->vector_dot(Tt_pao_ij);
+        const double e_ij_singles_initial =
+            (i == j) ? compute_mp2_singles_energy(i, X_pao_ij, e_pao_ij) : 0.0;
+        const double e_ij_initial = e_ij_doubles_initial + e_ij_singles_initial;
 
         e_ijs[ij] = e_ij_initial;
         if (i < j) {
@@ -658,7 +687,7 @@ template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
 
             for (size_t a = 0; a < nvir_ij; ++a) {
                 if (fabs(pno_occ.get(a)) >= t_cut_scale * T_CUT_PNO_MP2_ || occ_pno / occ_total < T_CUT_TRACE_MP2_ ||
-                        std::fabs(e_pno) < T_CUT_ENERGY_MP2_ * std::fabs(e_ij_initial) || a < MIN_PNOS) {
+                        std::fabs(e_pno) < T_CUT_ENERGY_MP2_ * std::fabs(e_ij_doubles_initial) || a < MIN_PNOS) {
                     // Energy criteria
                     e_pno = submatrix_rows_and_cols(*K_pno_init, a_curr, a_curr)->vector_dot(submatrix_rows_and_cols(*Tt_pno_init, a_curr, a_curr));
 
@@ -693,13 +722,20 @@ template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
             auto T_pno_ij = linalg::triplet(X_pno_ij, T_pao_ij, X_pno_ij, true, false, false);
             auto Tt_pno_ij = linalg::triplet(X_pno_ij, Tt_pao_ij, X_pno_ij, true, false, false);
 
-            // mp2 energy of this LMO pair after transformation to PNOs and truncation
-            double e_ij_trunc = K_pno_ij->vector_dot(Tt_pno_ij);
-
-            // truncation error
-            double de_pno_ij = e_ij_initial - e_ij_trunc;
-
             X_pno_ij = linalg::doublet(X_pao_ij, X_pno_ij, false, false);
+
+            // MP2 energy after PNO truncation. The singles term is recomputed
+            // in the canonical retained PNO subspace, following the same
+            // semicanonical treatment used by the ROHF implementation.
+            const double e_ij_doubles_trunc = K_pno_ij->vector_dot(Tt_pno_ij);
+            const double e_ij_singles_trunc =
+                (i == j) ? compute_mp2_singles_energy(i, X_pno_ij, e_pno_ij) : 0.0;
+            const double e_ij_trunc = e_ij_doubles_trunc + e_ij_singles_trunc;
+
+            // Manuscript Eq. 20: the lost F_ia energy contributes to the PNO
+            // truncation correction only for diagonal pairs.
+            const double de_pno_ij = e_ij_initial - e_ij_trunc;
+            de_pno_singles[ij] = e_ij_singles_initial - e_ij_singles_trunc;
 
             // Set values for relavant PNO-related quantities
             K_iajb_[ij] = K_pno_ij;
@@ -710,7 +746,8 @@ template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
             n_pno_[ij] = X_pno_ij->ncol();
             occ_pno_[ij] = pno_occ.get(n_pno_[ij] - 1);
             trace_pno_[ij] = occ_pno / occ_total;
-            e_ratio_pno_[ij] = e_ij_trunc / e_ij_initial;
+            e_ratio_pno_[ij] =
+                std::fabs(e_ij_initial) > 1.0e-16 ? e_ij_trunc / e_ij_initial : 1.0;
             de_pno_[ij] = de_pno_ij;
 
             // account for symmetry
@@ -736,6 +773,7 @@ template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
         double trace_total = 0.0, trace_min = 1.0, trace_max = 0.0;
         double energy_total = 0.0, energy_min = 1.0, energy_max = 0.0;
         de_pno_total_ = 0.0;
+        de_pno_singles_total_ = 0.0;
         for (int ij = 0; ij < n_lmo_pairs; ++ij) {
             pno_count_total += n_pno_[ij];
             pno_count_min = std::min(pno_count_min, n_pno_[ij]);
@@ -754,6 +792,7 @@ template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
             energy_max = std::max(energy_max, e_ratio_pno_[ij]);
             
             de_pno_total_ += de_pno_[ij];
+            de_pno_singles_total_ += de_pno_singles[ij];
         }
 
         outfile->Printf("  \n");
@@ -775,6 +814,7 @@ template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
         outfile->Printf("      Max Energy Ratio: %.6f \n\n", energy_max);
 
         outfile->Printf("    PNO truncation energy = %.12f\n", de_pno_total_);
+        outfile->Printf("      Singles Fock part   = %.12f\n", de_pno_singles_total_);
     }
 
     return e_ijs;
@@ -869,6 +909,22 @@ std::vector<double> DLPNOCCSD::pno_lmp2_iterations() {
 
     // Store the energy for each pair (used to filter out strong and weak pairs later)
     std::vector<double> e_ijs(n_lmo_pairs);
+
+    // The doubles amplitudes below are optimized iteratively, whereas the
+    // non-Brillouin MP2 singles amplitudes are semicanonical and independent
+    // for every occupied orbital (manuscript Eq. 20). Associate each retained
+    // singles contribution with diagonal pair ii so pair-energy bookkeeping
+    // remains unchanged elsewhere.
+    std::vector<double> e_lmp2_singles_ii(n_lmo_pairs, 0.0);
+    double e_lmp2_singles = 0.0;
+#pragma omp parallel for reduction(+ : e_lmp2_singles)
+    for (int i = 0; i < naocc; ++i) {
+        const int ii = i_j_to_ij_[i][i];
+        const double e_ia = compute_mp2_singles_energy(i, X_pno_[ii], e_pno_[ii]);
+        e_lmp2_singles_ii[ii] = e_ia;
+        e_lmp2_singles += e_ia;
+    }
+    e_lmp2_singles_ = e_lmp2_singles;
 
     // => Computing Truncated LMP2 energies (basically running DLPNO-MP2 here)
 
@@ -980,7 +1036,7 @@ std::vector<double> DLPNOCCSD::pno_lmp2_iterations() {
             int i, j;
             std::tie(i, j) = ij_to_i_j_[ij];
 
-            e_ijs[ij] = K_iajb_[ij]->vector_dot(Tt_iajb_[ij]);
+            e_ijs[ij] = K_iajb_[ij]->vector_dot(Tt_iajb_[ij]) + e_lmp2_singles_ii[ij];
             e_curr += e_ijs[ij];
         }
 
@@ -1000,7 +1056,8 @@ std::vector<double> DLPNOCCSD::pno_lmp2_iterations() {
         }
     }
 
-    // Set reference LMP2 reference energy to MP2 energy this iteration
+    // The raw PNO-LMP2 energy contains both the iterated pair-doubles energy
+    // and the retained semicanonical F_ia singles energy.
     e_lmp2_ = e_curr;
 
     return e_ijs;
@@ -1017,6 +1074,8 @@ void DLPNOCCSD::recompute_pnos() {
     const int MIN_PNOS = options_.get_int("MIN_PNOS");
 
     outfile->Printf("\n  ==> Forming Pair Natural Orbitals (for LCCSD) <==\n");
+
+    std::vector<double> de_pno_singles(n_lmo_pairs, 0.0);
 
 #pragma omp parallel for schedule(dynamic, 1)
     for (int ij = 0; ij < n_lmo_pairs; ++ij) {
@@ -1057,7 +1116,9 @@ void DLPNOCCSD::recompute_pnos() {
         }
 
         double e_pno = 0.0;
-        double e_ij_total = K_iajb_[ij]->vector_dot(Tt_iajb_[ij]);
+        const double e_ij_doubles_total = K_iajb_[ij]->vector_dot(Tt_iajb_[ij]);
+        const double e_ij_singles_total =
+            (i == j) ? compute_mp2_singles_energy(i, X_pno_[ij], e_pno_[ij]) : 0.0;
         double occ_pno = 0.0;
 
         int nvir_ij_final = 0;
@@ -1067,7 +1128,7 @@ void DLPNOCCSD::recompute_pnos() {
 
         for (size_t a = 0; a < nvir_ij; ++a) {
             if (fabs(pno_occ.get(a)) >= t_cut_scale * T_CUT_PNO_ || occ_pno / occ_total < T_CUT_TRACE_ ||
-                    std::fabs(e_pno) < T_CUT_ENERGY_ * std::fabs(e_ij_total) || a < MIN_PNOS) {
+                    std::fabs(e_pno) < T_CUT_ENERGY_ * std::fabs(e_ij_doubles_total) || a < MIN_PNOS) {
                 a_curr.push_back(a);
 
                 // Energy criteria
@@ -1102,11 +1163,18 @@ void DLPNOCCSD::recompute_pnos() {
         auto T_pno_ij = linalg::triplet(X_pno_ij, T_iajb_[ij], X_pno_ij, true, false, false);
         auto Tt_pno_ij = linalg::triplet(X_pno_ij, Tt_iajb_[ij], X_pno_ij, true, false, false);
 
-        // (additional) truncation error
-        double de_pno_ij = K_iajb_[ij]->vector_dot(Tt_iajb_[ij]) - K_pno_ij->vector_dot(Tt_pno_ij);
-
         // New PNO transformation matrix
         X_pno_ij = linalg::doublet(X_pno_[ij], X_pno_ij, false, false);
+
+        const double e_ij_doubles_trunc = K_pno_ij->vector_dot(Tt_pno_ij);
+        const double e_ij_singles_trunc =
+            (i == j) ? compute_mp2_singles_energy(i, X_pno_ij, e_pno_ij) : 0.0;
+
+        // Add the second-stage loss of both doubles and the diagonal-pair
+        // singles Fock energy to the accumulated MP2 PNO correction.
+        const double de_pno_ij = (e_ij_doubles_total - e_ij_doubles_trunc) +
+                                 (e_ij_singles_total - e_ij_singles_trunc);
+        de_pno_singles[ij] = e_ij_singles_total - e_ij_singles_trunc;
 
         K_iajb_[ij] = K_pno_ij;
         T_iajb_[ij] = T_pno_ij;
@@ -1116,7 +1184,9 @@ void DLPNOCCSD::recompute_pnos() {
         n_pno_[ij] = X_pno_ij->ncol();
         occ_pno_[ij] = pno_occ.get(n_pno_[ij] - 1);
         trace_pno_[ij] = occ_pno / occ_total;
-        e_ratio_pno_[ij] = e_pno / e_ij_total;
+        const double e_ij_total = e_ij_doubles_total + e_ij_singles_total;
+        const double e_ij_trunc = e_ij_doubles_trunc + e_ij_singles_trunc;
+        e_ratio_pno_[ij] = std::fabs(e_ij_total) > 1.0e-16 ? e_ij_trunc / e_ij_total : 1.0;
         de_pno_[ij] += de_pno_ij;
 
         // account for symmetry
@@ -1163,6 +1233,7 @@ void DLPNOCCSD::recompute_pnos() {
         energy_max = std::max(energy_max, e_ratio_pno_[ij]);
 
         de_pno_total_ += de_pno_[ij];
+        de_pno_singles_total_ += de_pno_singles[ij];
     }
 
     outfile->Printf("  \n");
@@ -1185,6 +1256,7 @@ void DLPNOCCSD::recompute_pnos() {
 
     outfile->Printf("    LMP2 Weak Pair energy = %.12f\n", de_weak_);
     outfile->Printf("    PNO truncation energy = %.12f\n", de_pno_total_);
+    outfile->Printf("      Singles Fock part   = %.12f\n", de_pno_singles_total_);
 
     timer_off("Compute PNOs (CCSD)");
 }
@@ -2927,22 +2999,28 @@ double DLPNOCCSD::compute_dlpno_ccsd_energy() {
     timer_off("Refined Pair Prescreening");
 
     // Set variables from LMP2
-    double e_scf = variables_["SCF TOTAL ENERGY"];
-    double e_lmp2_corr = e_lmp2_ + de_lmp2_eliminated_ + de_dipole_ + de_pno_total_;
-    double e_lmp2_total = e_scf + e_lmp2_corr;
+    const double e_scf = variables_["SCF TOTAL ENERGY"];
+    const double e_lmp2_corr = e_lmp2_ + de_lmp2_eliminated_ + de_dipole_ + de_pno_total_;
+    const double e_lmp2_singles_corr = e_lmp2_singles_ + de_pno_singles_total_;
+    const double e_lmp2_doubles_corr = e_lmp2_corr - e_lmp2_singles_corr;
+    const double e_lmp2_total = e_scf + e_lmp2_corr;
 
     set_scalar_variable("MP2 CORRELATION ENERGY", e_lmp2_corr);
+    set_scalar_variable("MP2 SINGLES ENERGY", e_lmp2_singles_corr);
+    set_scalar_variable("MP2 DOUBLES ENERGY", e_lmp2_doubles_corr);
     set_scalar_variable("CURRENT CORRELATION ENERGY", e_lmp2_corr);
     set_scalar_variable("MP2 TOTAL ENERGY", e_lmp2_total);
     set_scalar_variable("CURRENT ENERGY", e_lmp2_total);
 
     outfile->Printf("  \n");
-    outfile->Printf("  Total DLPNO-MP2 Correlation Energy: %16.12f \n", e_lmp2_ + de_lmp2_eliminated_ + de_pno_total_ + de_dipole_);
-    outfile->Printf("    MP2 Correlation Energy:           %16.12f \n", e_lmp2_);
+    outfile->Printf("  Total DLPNO-MP2 Correlation Energy: %16.12f \n", e_lmp2_corr);
+    outfile->Printf("    PNO-LMP2 Doubles Energy:          %16.12f \n", e_lmp2_ - e_lmp2_singles_);
+    outfile->Printf("    Singles Fock Energy:              %16.12f \n", e_lmp2_singles_corr);
     outfile->Printf("    Semicanonical MP2 Correction:     %16.12f \n", de_lmp2_eliminated_);
     outfile->Printf("    Dipole Correction:                %16.12f \n", de_dipole_);
-    outfile->Printf("    PNO Truncation Correction:        %16.12f \n", de_pno_total_);
-    outfile->Printf("\n\n  @Total DLPNO-MP2 Energy: %16.12f \n", variables_["SCF TOTAL ENERGY"] + e_lmp2_ + de_lmp2_eliminated_ + de_pno_total_ + de_dipole_);
+    outfile->Printf("    PNO Truncation Correction:        %16.12f \n",
+                    de_pno_total_ - de_pno_singles_total_);
+    outfile->Printf("\n\n  @Total DLPNO-MP2 Energy: %16.12f \n", e_lmp2_total);
     outfile->Printf("\n   * WARNING: This answer will likely vary from one obtained by a energy('dlpno-mp2') call");
     outfile->Printf("\n                due to lack of a semi-canonical MP2 prescreening step in DLPNO-MP2, as well");
     outfile->Printf("\n                as slightly tighter cutoffs utilized to increase accuracy in the context of CC!!!\n\n");

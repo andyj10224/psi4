@@ -407,6 +407,8 @@ class PSI_API DLPNOCCSD : public DLPNO {
     std::vector<SharedMatrix> Fkc_bar_; // Additional occupied-virtual Fock term used by Lambda.
 
     double e_lmp2_; ///< raw (uncorrected) local MP2 correlation energy
+    double e_lmp2_singles_ = 0.0;       ///< retained non-Brillouin F_ia contribution to PNO-LMP2
+    double de_pno_singles_total_ = 0.0; ///< singles part of the accumulated MP2 PNO correction
     double e_lccsd_; ///< raw (uncorrected) local CCSD correlation energy
 
     // => Optional Lambda-CCSD state <= //
@@ -459,6 +461,11 @@ class PSI_API DLPNOCCSD : public DLPNO {
     template<bool crude> void pair_prescreening();
     template<bool crude> std::vector<double> compute_pair_energies();
     template<bool crude> double filter_pairs(const std::vector<double>& e_ijs);
+
+    /// Semicanonical non-Brillouin MP2 singles energy in an orthonormal virtual
+    /// subspace (manuscript Eq. 20)
+    double compute_mp2_singles_energy(int i, const SharedMatrix& X_virtual,
+                                      const SharedVector& epsilon_virtual) const;
 
     /// Runs preceeding DLPNO-MP2 computation before DLPNO-CCSD iterations
     std::vector<double> pno_lmp2_iterations();

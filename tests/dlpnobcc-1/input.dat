@@ -70,6 +70,9 @@ compare_values(e_dlpno_bccd_t, variable("BCCD(T) TOTAL ENERGY"), 8, "DLPNO-BCCD(
 compare_values(e_dlpno_bccd_t, variable("CURRENT ENERGY"), 8, "DLPNO-BCCD(T) current energy")   #TEST
 compare_values(variable("CCSD(T) TOTAL ENERGY"), variable("INITIAL DLPNO-CCSD(T) TOTAL ENERGY"),
                8, "initial non-Brueckner DLPNO-CCSD(T)")                                      #TEST
+compare_values(variable("MP2 CORRELATION ENERGY"),
+               variable("MP2 SINGLES ENERGY") + variable("MP2 DOUBLES ENERGY"),
+               10, "DLPNO-BCCD MP2 singles/doubles decomposition")                            #TEST
 clean()
 
 # Both CCSD(AT) calculations use the same density-fitted SCF and CC auxiliary
