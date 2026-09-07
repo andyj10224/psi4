@@ -2685,13 +2685,13 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_int("DLPNO_BRUECKNER_N_MICRO_ITER", 10);
         /*- When to start gradient mixing for Brueckner orbital optimizations -*/
         options.add_double("BRUECKNER_GMIX_START", 1.0e-4);
-        /*- When to end start applying DIIS for Brueckner optimizatons 
-            (turning on DIIS after a point (not initially) is helpful for stability) -*/
-        options.add_int("BRUECKNER_DIIS_START", 5);
-        /*- How long to delay the start of extrapolation after error vectors are set -*/
+        /*- Macroiteration at which to begin collecting fixed-reference Brueckner DIIS vectors.
+            Delaying DIIS lets the unextrapolated T1 rotations establish a stable orbital path. -*/
+        options.add_int("BRUECKNER_DIIS_START", 3);
+        /*- Number of additional macroiterations to collect vectors before the first Brueckner DIIS extrapolation -*/
         options.add_int("BRUECKNER_DIIS_DELAY", 2);
         /*- How many DIIS vectors to use for Brueckner rotations -*/
-        options.add_int("BRUECKNER_DIIS_MAX_VECS", 3);
+        options.add_int("BRUECKNER_DIIS_MAX_VECS", 4);
 
         /*- SUBSECTION Expert Options -*/
 

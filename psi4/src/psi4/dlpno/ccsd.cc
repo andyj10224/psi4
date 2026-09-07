@@ -3105,15 +3105,40 @@ double DLPNOCCSD::compute_energy() {
         const double B_ALPHA = options_.get_double("DLPNO_BRUECKNER_ALPHA");
         const double BRUECKNER_R_CONV = options_.get_double("BRUECKNER_ORBS_R_CONVERGENCE");
         const double BRUECKNER_GMIX_START = options_.get_double("BRUECKNER_GMIX_START");
+        const int BRUECKNER_DIIS_START = options_.get_int("BRUECKNER_DIIS_START");
+        const int BRUECKNER_DIIS_DELAY = std::max(0, options_.get_int("BRUECKNER_DIIS_DELAY"));
+        const int BRUECKNER_DIIS_MAX_VECS = options_.get_int("BRUECKNER_DIIS_MAX_VECS");
+        const bool use_brueckner_diis = BRUECKNER_DIIS_START >= 0 && BRUECKNER_DIIS_MAX_VECS >= 2;
 
-        // kappa_ia is used for the occupied-virtual orbital rotation.
-        SharedMatrix kappa_ia_old = std::make_shared<Matrix>("kappa_ia_old", naocc, nvirt);
-        SharedMatrix kappa_ia = std::make_shared<Matrix>("kappa_ia", naocc, nvirt);
+        // The orbital optimization lives in one fixed macroiteration-zero MO
+        // frame.  kappa_total is an absolute anti-Hermitian coordinate in
+        // that frame; unlike the old kappa_ia_old, it is not an incremental
+        // rotation whose meaning changes when the LMOs are relocalized.
+        const int nactmo = naocc + nvirt;
+        SharedMatrix C_brueckner_ref;
+        auto kappa_total = std::make_shared<Matrix>("Accumulated fixed-reference Brueckner kappa", nactmo, nactmo);
+        SharedMatrix previous_orbital_error;
+        double previous_T1_rms = 0.0;
+        constexpr double BRUECKNER_MAX_STEP = 0.05;
+
+        DIISManager brueckner_diis(std::max(2, BRUECKNER_DIIS_MAX_VECS), "DLPNO Brueckner orbital DIIS",
+                                   DIISManager::RemovalPolicy::LargestError,
+                                   DIISManager::StoragePolicy::OnDisk);
+        bool brueckner_diis_initialized = false;
+        int brueckner_diis_vectors_since_reset = 0;
 
         double e_dlpno_ccsd = 0.0;
         double initial_ccsd_corr = 0.0;
         double initial_ccsd_total = 0.0;
         bool have_initial_ccsd = false;
+
+        if (use_brueckner_diis) {
+            outfile->Printf(
+                "\n    Fixed-reference Brueckner DIIS: collect at iteration %d, extrapolate after %d additional "
+                "iterations, max vectors %d\n",
+                BRUECKNER_DIIS_START, BRUECKNER_DIIS_DELAY, BRUECKNER_DIIS_MAX_VECS);
+            outfile->Printf("    Maximum accepted orbital-rotation step: %7.4f\n", BRUECKNER_MAX_STEP);
+        }
 
         auto publish_bccd_energy = [&]() {
             const double bccd_corr = scalar_variable("CCSD CORRELATION ENERGY");
@@ -3141,9 +3166,14 @@ double DLPNOCCSD::compute_energy() {
             // so converge its right-hand CCSD equations fully before applying
             // an initial (T) or (T)_L correction.
             const bool old_intermediate_convergence = brueckner_intermediate_converged_;
-            if (iteration == 0) brueckner_intermediate_converged_ = true;
+            // A DIIS error must describe the orbital fixed point, not residual
+            // noise from an abbreviated inner CCSD solve.  Fully converge the
+            // amplitudes once orbital-DIIS vectors begin to be collected.
+            const bool force_full_ccsd = iteration == 0 ||
+                                         (use_brueckner_diis && iteration >= BRUECKNER_DIIS_START);
+            if (force_full_ccsd) brueckner_intermediate_converged_ = true;
             e_dlpno_ccsd = compute_dlpno_ccsd_energy();
-            if (iteration == 0) brueckner_intermediate_converged_ = old_intermediate_convergence;
+            if (force_full_ccsd) brueckner_intermediate_converged_ = old_intermediate_convergence;
 
             if (iteration == 0) {
                 initial_ccsd_corr = scalar_variable("CCSD CORRELATION ENERGY");
@@ -3153,35 +3183,57 @@ double DLPNOCCSD::compute_energy() {
                 set_scalar_variable("INITIAL DLPNO-CCSD TOTAL ENERGY", initial_ccsd_total);
             }
 
-            // Canonicalize PAOs (to create T1-error matrix)
+            // Canonicalize the current PAOs only as a complete global virtual
+            // bridge out of the changing diagonal-pair PNO spaces.  Neither
+            // these orbitals nor the repeatedly localized C_lmo_ are stored in
+            // DIIS; both carry iteration-dependent gauges.
             SharedMatrix X_pao_canon;  // canonical transformation of this domain's PAOs to
             SharedVector e_pao_canon;  // energies of the canonical PAOs
             std::tie(X_pao_canon, e_pao_canon) = orthocanonicalizer(S_pao_, F_pao_);
+            auto C_pao_canon = linalg::doublet(C_pao_, X_pao_canon);
+            if (C_pao_canon->ncol() != nvirt) {
+                throw PSIEXCEPTION("The canonical PAO rank changed during the Brueckner optimization.");
+            }
 
-            double alpha = (T1_max <= BRUECKNER_GMIX_START) ? B_ALPHA : 1.0;
+            // At macroiteration zero, [C_lmo C_pao_canon] is an orthonormal
+            // active occupied/virtual reference.  Subsequent optimizer
+            // orbitals are always reconstructed from this matrix.
+            if (!C_brueckner_ref) C_brueckner_ref = linalg::horzcat({C_lmo_->clone(), C_pao_canon});
 
-#pragma omp parallel for
-            for (int i = 0; i < C_lmo_->ncol(); ++i) { // occupied MOs
+            auto orbital_rotation = kappa_total->clone();
+            orbital_rotation->expm(4, true);
+            auto C_optimizer = linalg::doublet(C_brueckner_ref, orbital_rotation, false, true);
+            auto C_optimizer_occ = std::make_shared<Matrix>("Current optimizer occupied orbitals", nbf, naocc);
+            auto C_optimizer_vir = std::make_shared<Matrix>("Current optimizer virtual orbitals", nbf, nvirt);
+            for (int mu = 0; mu < nbf; ++mu) {
+                for (int i = 0; i < naocc; ++i) (*C_optimizer_occ)(mu, i) = (*C_optimizer)(mu, i);
+                for (int a = 0; a < nvirt; ++a) (*C_optimizer_vir)(mu, a) = (*C_optimizer)(mu, naocc + a);
+            }
+
+            // Undo the occupied localization/canonicalization gauge and the
+            // global canonical-PAO gauge.  The resulting T1 matrix is in the
+            // current optimizer frame and has a fixed dimension even when
+            // individual PNO ranks change.
+            auto S_ao = reference_wavefunction_->S();
+            auto U_occ = linalg::triplet(C_optimizer_occ, S_ao, C_lmo_, true, false, false);
+            auto U_vir = linalg::triplet(C_optimizer_vir, S_ao, C_pao_canon, true, false, false);
+            auto T1_lmo = std::make_shared<Matrix>("Global T1 in LMO/current-virtual gauge", naocc, nvirt);
+
+            for (int i = 0; i < naocc; ++i) {
                 int ii = i_j_to_ij_[i][i];
                 auto S_pao_pno = submatrix_cols(*S_pao_, lmopair_to_paos_[ii]);
                 S_pao_pno = linalg::triplet(X_pao_canon, S_pao_pno, X_pno_[ii], true, false, false);
-                auto T1_chud = linalg::doublet(S_pao_pno, T_ia_[i]);
-                for (int a = 0; a < X_pao_canon->ncol(); ++a) {
-                    (*kappa_ia)(i, a) = alpha * (*T1_chud)(a, 0) + (1 - alpha) * (*kappa_ia_old)(i, a);
-                } // end a
-            } // end i
-
-            kappa_ia_old = kappa_ia->clone();
-
-            delta_D_ao_->subtract(linalg::doublet(C_lmo_, C_lmo_, false, true));
-
-            // Compute max T1
-            T1_max = 0.0;
-            for (const auto& T_i : T_ia_) {
-                T1_max = std::max(T1_max, T_i->absmax());
+                auto T1_pao_canon = linalg::doublet(S_pao_pno, T_ia_[i]);
+                auto T1_optimizer_vir = linalg::doublet(U_vir, T1_pao_canon);
+                for (int a = 0; a < nvirt; ++a) (*T1_lmo)(i, a) = (*T1_optimizer_vir)(a, 0);
             }
+            auto T1_optimizer = linalg::doublet(U_occ, T1_lmo);
 
-            outfile->Printf("\n    Brueckner Iteration %d: Energy = %16.12f, Max R1 = %10.3e\n", iteration, e_dlpno_ccsd, T1_max);
+            T1_max = T1_optimizer->absmax();
+            const double T1_rms = T1_optimizer->rms();
+
+            outfile->Printf("\n    Brueckner Iteration %d: Energy = %16.12f, Max |T1| = %10.3e, RMS T1 = %10.3e\n",
+                            iteration, e_dlpno_ccsd, T1_max, T1_rms);
 
             if (iteration == 0) post_ccsd_correction(DLPNOCCSDPhase::InitialBrueckner);
 
@@ -3212,18 +3264,122 @@ double DLPNOCCSD::compute_energy() {
                 post_ccsd_correction(DLPNOCCSDPhase::FinalBrueckner);
                 break;
             } else if (iteration >= BRUECKNER_MAXITER) {
-                outfile->Printf("    WARNING: Brueckner orbital optimization did not converge in %d iterations! Max R1 = %10.3e\n", iteration, T1_max);
+                outfile->Printf(
+                    "    WARNING: Brueckner orbital optimization did not converge in %d iterations! Max |T1| = "
+                    "%10.3e\n",
+                    iteration, T1_max);
                 throw PSIEXCEPTION(
                     "Brueckner orbital optimization did not converge; no final DLPNO-BCCD result was published.");
             }
 
             // > BRUECKNER OPTIMIZATION < //
 
+            // Build the manuscript-convention anti-Hermitian T1 generator in
+            // the current optimizer frame: kappa_ia = +t_i^a and
+            // kappa_ai = -t_i^a.
+            auto orbital_error_current =
+                std::make_shared<Matrix>("Current-frame Brueckner T1 generator", nactmo, nactmo);
+            for (int i = 0; i < naocc; ++i) {
+                for (int a = 0; a < nvirt; ++a) {
+                    (*orbital_error_current)(i, naocc + a) = (*T1_optimizer)(i, a);
+                    (*orbital_error_current)(naocc + a, i) = -(*T1_optimizer)(i, a);
+                }
+            }
+
+            // Parallel-transport the T1 generator to the fixed reference
+            // frame.  With C_optimizer = C_ref Q, Q K Q^T is invariant to the
+            // occupied and virtual gauges used to build the local equations.
+            // C_optimizer was built as C_ref exp(kappa_total)^T, so this is
+            // exactly C_ref^T S C_optimizer without another AO-basis product.
+            auto ref_to_optimizer = orbital_rotation->transpose();
+            auto orbital_error =
+                linalg::triplet(ref_to_optimizer, orbital_error_current, ref_to_optimizer, false, false, true);
+            auto orbital_error_t = orbital_error->transpose();
+            orbital_error->subtract(orbital_error_t);
+            orbital_error->scale(0.5);
+
+            // A large increase means that a local-space discontinuity or a
+            // poor extrapolation has invalidated the Pulay model.  Discard the
+            // subspace and resume from the safe fixed-point step.
+            if (brueckner_diis_initialized && previous_T1_rms > 0.0 && T1_rms > 1.5 * previous_T1_rms) {
+                outfile->Printf("    Resetting Brueckner DIIS after a T1 residual increase (%10.3e -> %10.3e).\n",
+                                previous_T1_rms, T1_rms);
+                brueckner_diis.reset_subspace();
+                brueckner_diis_vectors_since_reset = 0;
+            }
+            previous_T1_rms = T1_rms;
+
+            // The ordinary fixed-point step is the transported T1 generator.
+            // Near convergence, the legacy gradient mixing is retained, but
+            // now both vectors live in the same reference frame and the
+            // damping factor is applied exactly once.
+            auto orbital_step = orbital_error->clone();
+            orbital_step->scale(B_ALPHA);
+            if (T1_max <= BRUECKNER_GMIX_START && previous_orbital_error) {
+                auto old_error_part = previous_orbital_error->clone();
+                old_error_part->scale(1.0 - B_ALPHA);
+                orbital_step->add(old_error_part);
+            }
+            previous_orbital_error = orbital_error->clone();
+
+            // Trust-region safeguard for both ordinary and DIIS steps.
+            const double raw_step_max = orbital_step->absmax();
+            if (raw_step_max > BRUECKNER_MAX_STEP) orbital_step->scale(BRUECKNER_MAX_STEP / raw_step_max);
+
+            auto kappa_old = kappa_total->clone();
+            kappa_total->add(orbital_step);
+            auto fixed_point_candidate = kappa_total->clone();
+
+            bool diis_applied = false;
+            if (use_brueckner_diis && iteration >= BRUECKNER_DIIS_START) {
+                if (!brueckner_diis_initialized) {
+                    brueckner_diis.set_error_vector_size(orbital_error.get());
+                    brueckner_diis.set_vector_size(kappa_total.get());
+                    brueckner_diis_initialized = true;
+                }
+                if (brueckner_diis.add_entry(orbital_error.get(), kappa_total.get())) {
+                    ++brueckner_diis_vectors_since_reset;
+                }
+                if (brueckner_diis_vectors_since_reset > BRUECKNER_DIIS_DELAY &&
+                    brueckner_diis.subspace_size() >= 2) {
+                    diis_applied = brueckner_diis.extrapolate(kappa_total.get());
+                }
+            }
+
+            // A Pulay combination can leave the local trust region even when
+            // every stored fixed-point step was safe.  Limit the accepted
+            // displacement from the current orbital state.
+            auto accepted_step = kappa_total->clone();
+            accepted_step->subtract(kappa_old);
+            const double accepted_step_max = accepted_step->absmax();
+            if (diis_applied && accepted_step_max > BRUECKNER_MAX_STEP) {
+                kappa_total = fixed_point_candidate;
+                brueckner_diis.reset_subspace();
+                brueckner_diis_vectors_since_reset = 0;
+                outfile->Printf(
+                    "    Rejected Brueckner DIIS step (%7.4f); using the trust-restricted T1 step instead.\n",
+                    accepted_step_max);
+            } else if (accepted_step_max > BRUECKNER_MAX_STEP) {
+                accepted_step->scale(BRUECKNER_MAX_STEP / accepted_step_max);
+                kappa_total = kappa_old->clone();
+                kappa_total->add(accepted_step);
+                outfile->Printf("    Brueckner orbital step restricted to %7.4f.\n", BRUECKNER_MAX_STEP);
+            } else if (diis_applied) {
+                outfile->Printf("    Applied Brueckner DIIS with %d stored vectors.\n",
+                                brueckner_diis.subspace_size());
+            }
+
+            // Remove roundoff in the nominally anti-Hermitian accumulated
+            // coordinate before exponentiation.
+            auto kappa_total_t = kappa_total->transpose();
+            kappa_total->subtract(kappa_total_t);
+            kappa_total->scale(0.5);
+
             // Set brueckner orbitals iteration control to true
             brueckner_iter_ = true;
 
-            // Get new set of Brueckner orbitals through T1-rotations
-            brueckner_rotation(kappa_ia);
+            // Rebuild the optimizer occupied space from the fixed reference.
+            brueckner_rotation(C_brueckner_ref, kappa_total);
 
             // Recanonicalize LMOs after rotation
             lmo_canonicalize();

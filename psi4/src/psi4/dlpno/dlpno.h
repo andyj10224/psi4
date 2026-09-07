@@ -111,9 +111,6 @@ class DLPNO : public Wavefunction {
 
     /// AO Fock matrix (this changes with Brueckner orbitals)
     SharedMatrix F_ao_;
-    /// Change in AO Density Matrix resulting from rotation
-    SharedMatrix delta_D_ao_;
-
     /// localized molecular orbitals (LMOs)
     SharedMatrix C_lmo_;
     SharedMatrix F_lmo_;
@@ -251,8 +248,8 @@ class DLPNO : public Wavefunction {
 
     void copy_flat_mats(SharedVector flat, std::vector<SharedMatrix>& mat_list);
 
-    /// Performs a Brueckner rotation
-    void brueckner_rotation(const SharedMatrix &kappa_ia);
+    /// Rebuilds the active occupied orbitals from an accumulated rotation in a fixed reference frame
+    void brueckner_rotation(const SharedMatrix &C_brueckner_ref, const SharedMatrix &kappa_total);
 
     /// recanonicalize LMOs after Brueckner rotation
     void lmo_canonicalize();
