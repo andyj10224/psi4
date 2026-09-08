@@ -55,8 +55,20 @@ class PSI_API Localizer {
 
     /// Relative convergence criteria
     double convergence_;
+    /// Maximum orbital-gradient convergence criterion
+    double gradient_convergence_;
     /// Maximum number of iterations
     int maxiter_;
+    /// Use augmented-Hessian steps after the Jacobi startup sweeps
+    bool use_augmented_hessian_;
+    /// First iteration on which an augmented-Hessian step may be attempted
+    int augmented_hessian_start_;
+    /// Largest number of independent rotations for which the dense Hessian is formed
+    int augmented_hessian_max_rotations_;
+    /// Euclidean trust radius for an augmented-Hessian rotation step
+    double augmented_hessian_trust_radius_;
+    /// Positive-curvature threshold used to identify localization saddles
+    double saddle_tolerance_;
 
     /// Primary orbital basis set
     std::shared_ptr<BasisSet> primary_;
@@ -74,6 +86,10 @@ class PSI_API Localizer {
 
     /// Set defaults
     void common_init();
+
+    /// Maximize sum_K sum_p [(U^T A_K U)_pp]^2 for symmetric orbital-space operators A_K.
+    /// This is the common form of the Boys and generalized Pipek--Mezey objectives.
+    void localize_matrix_objective(std::vector<std::shared_ptr<Matrix>> operators, const std::string &label);
 
    public:
     // => Constructors <= //
@@ -121,7 +137,19 @@ class PSI_API Localizer {
 
     void set_convergence(double convergence) { convergence_ = convergence; }
 
+    void set_gradient_convergence(double convergence) { gradient_convergence_ = convergence; }
+
     void set_maxiter(int maxiter) { maxiter_ = maxiter; }
+
+    void set_use_augmented_hessian(bool enabled) { use_augmented_hessian_ = enabled; }
+
+    void set_augmented_hessian_start(int iteration) { augmented_hessian_start_ = iteration; }
+
+    void set_augmented_hessian_max_rotations(int rotations) { augmented_hessian_max_rotations_ = rotations; }
+
+    void set_augmented_hessian_trust_radius(double radius) { augmented_hessian_trust_radius_ = radius; }
+
+    void set_saddle_tolerance(double tolerance) { saddle_tolerance_ = tolerance; }
 };
 
 class PSI_API BoysLocalizer : public Localizer {
@@ -143,9 +171,17 @@ class PSI_API PMLocalizer : public Localizer {
    protected:
     /// Set defaults
     void common_init();
+    /// Symmetric atomic population operators in the input-orbital basis
+    std::vector<std::shared_ptr<Matrix>> population_matrices_;
+    /// Label for the population partition used by the generalized PM functional
+    std::string population_method_;
 
    public:
     PMLocalizer(std::shared_ptr<BasisSet> primary, std::shared_ptr<Matrix> C);
+
+    PMLocalizer(std::shared_ptr<BasisSet> primary, std::shared_ptr<Matrix> C,
+                const std::vector<std::shared_ptr<Matrix>> &population_matrices,
+                const std::string &population_method = "USER");
 
     ~PMLocalizer() override;
 

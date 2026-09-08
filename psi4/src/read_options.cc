@@ -1927,8 +1927,20 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_bool("DFT_VV10_POSTSCF", false);
         /*- The convergence on the orbital localization procedure -*/
         options.add_double("LOCAL_CONVERGENCE", 1E-12);
+        /*- Maximum orbital-gradient component for Boys and generalized Pipek--Mezey localization -*/
+        options.add_double("LOCAL_GRADIENT_CONVERGENCE", 1E-8);
         /*- The maxiter on the orbital localization procedure -*/
         options.add_int("LOCAL_MAXITER", 200);
+        /*- Use trust-region augmented-Hessian steps and explicit saddle checks in Boys/PM localization -*/
+        options.add_bool("LOCAL_USE_AUGMENTED_HESSIAN", true);
+        /*- First localization iteration on which the augmented Hessian is used !expert -*/
+        options.add_int("LOCAL_AH_START", 3);
+        /*- Maximum number of independent rotations for a dense localization Hessian !expert -*/
+        options.add_int("LOCAL_AH_MAX_ROTATIONS", 512);
+        /*- Initial Euclidean trust radius for augmented-Hessian localization rotations !expert -*/
+        options.add_double("LOCAL_AH_TRUST_RADIUS", 0.25);
+        /*- Positive-curvature threshold for rejecting a localization saddle !expert -*/
+        options.add_double("LOCAL_SADDLE_TOLERANCE", 1E-8);
         /*- The number of NOONs to print in a UHF calc -*/
         options.add_str("UHF_NOONS", "3");
         /*- Save the UHF NOs -*/
@@ -2655,16 +2667,28 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_str("DF_BASIS_CC", "");
         /*- General convergence criteria for DLPNO methods -*/
         options.add_str("PNO_CONVERGENCE", "NORMAL", "LOOSE NORMAL TIGHT VERY_TIGHT GLACIER");
-        /*- Convergence criteria for the Foster-Boys orbital localization -*/
+        /*- Relative objective convergence criterion for orbital localization -*/
         options.add_double("LOCAL_CONVERGENCE", 1.0E-12);
-        /*- Maximum iterations in Foster-Boys localization -*/
+        /*- Maximum orbital-gradient component for Boys and generalized Pipek--Mezey localization -*/
+        options.add_double("LOCAL_GRADIENT_CONVERGENCE", 1.0E-8);
+        /*- Maximum iterations in orbital localization -*/
         options.add_int("LOCAL_MAXITER", 1000);
+        /*- Use trust-region augmented-Hessian steps and explicit saddle checks in Boys/PM localization -*/
+        options.add_bool("LOCAL_USE_AUGMENTED_HESSIAN", true);
+        /*- First localization iteration on which the augmented Hessian is used !expert -*/
+        options.add_int("LOCAL_AH_START", 3);
+        /*- Maximum number of independent rotations for a dense localization Hessian !expert -*/
+        options.add_int("LOCAL_AH_MAX_ROTATIONS", 512);
+        /*- Initial Euclidean trust radius for augmented-Hessian localization rotations !expert -*/
+        options.add_double("LOCAL_AH_TRUST_RADIUS", 0.25);
+        /*- Positive-curvature threshold for rejecting a localization saddle !expert -*/
+        options.add_double("LOCAL_SADDLE_TOLERANCE", 1.0E-8);
         /*- Energy convergence criteria for local MP2/CCSD/CCSD(T) iterations -*/
         options.add_double("E_CONVERGENCE", 1e-6);
         /*- Residual convergence criteria for local MP2/CCSD/CCSD(T) iterations -*/
         options.add_double("R_CONVERGENCE", 1e-6);
         /*- Orbital localizer -*/
-        options.add_str("DLPNO_LOCAL_ORBITALS", "BOYS", "BOYS PIPEK_MEZEY ER");
+        options.add_str("DLPNO_LOCAL_ORBITALS", "BOYS", "BOYS PIPEK_MEZEY PIPEK_MEZEY_MBIS ER");
         /*- Maximum number of iterations to determine the MP2/CCSD/CCSD(T) amplitudes. -*/
         options.add_int("DLPNO_MAXITER", 50);
         /*- Perform automatic memory checks to toggle between core and disk? 

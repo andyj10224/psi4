@@ -93,6 +93,22 @@ keyword, which determines the accuracy of the local approximations underlying
 the DLPNO-MP2 method. Note that the water molecule in this example is not large
 enough for DLPNO-MP2 to be of any benefit relative to DF-MP2.
 
+The occupied orbitals are Foster--Boys localized by default.  The
+|dlpno__dlpno_local_orbitals| option also provides Mulliken and MBIS variants
+of generalized Pipek--Mezey localization through ``PIPEK_MEZEY`` and
+``PIPEK_MEZEY_MBIS``, respectively.  The latter fits MBIS pro-atom densities
+to the current determinant and integrates atom-resolved stockholder population
+matrices on the MBIS grid.  It is consequently more expensive than Mulliken PM,
+is currently restricted to all-electron calculations, and is experimental.
+
+Boys and generalized PM localization use exact Jacobi pair rotations followed
+by trust-region augmented-Hessian steps.  Convergence requires both a small
+orbital gradient and, when the dense Hessian is available, absence of positive
+curvature in the maximization problem.  This stability check prevents a small
+change in the localization metric from being mistaken for convergence at a
+saddle point.  The behavior is controlled by the ``LOCAL_*`` augmented-Hessian
+options in :ref:`apdx:dlpno`.
+
 The theory of the DLPNO-MP2 method and practical recommendations for using the
 code are presented below. 
 

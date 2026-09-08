@@ -40,6 +40,7 @@
 #include "psi4/libmints/mintshelper.h"
 #include "psi4/libmints/molecule.h"
 #include "psi4/libmints/orthog.h"
+#include "psi4/libmints/oeprop.h"
 #include "psi4/libmints/twobody.h"
 #include "psi4/libmints/vector.h"
 #include "psi4/libpsi4util/PsiOutStream.h"
@@ -483,17 +484,44 @@ void DLPNO::setup_orbitals() {
         }
     }
 
+    auto configure_matrix_localizer = [this](Localizer& localizer) {
+        localizer.set_print(print_);
+        localizer.set_debug(debug_);
+        localizer.set_convergence(options_.get_double("LOCAL_CONVERGENCE"));
+        localizer.set_gradient_convergence(options_.get_double("LOCAL_GRADIENT_CONVERGENCE"));
+        localizer.set_maxiter(options_.get_int("LOCAL_MAXITER"));
+        localizer.set_use_augmented_hessian(options_.get_bool("LOCAL_USE_AUGMENTED_HESSIAN"));
+        localizer.set_augmented_hessian_start(options_.get_int("LOCAL_AH_START"));
+        localizer.set_augmented_hessian_max_rotations(options_.get_int("LOCAL_AH_MAX_ROTATIONS"));
+        localizer.set_augmented_hessian_trust_radius(options_.get_double("LOCAL_AH_TRUST_RADIUS"));
+        localizer.set_saddle_tolerance(options_.get_double("LOCAL_SADDLE_TOLERANCE"));
+    };
+
     // Choose algorithm based on user settings
     if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "BOYS") {
         BoysLocalizer localizer = BoysLocalizer(basisset_, C_localizer_input);
-        localizer.set_convergence(options_.get_double("LOCAL_CONVERGENCE"));
-        localizer.set_maxiter(options_.get_int("LOCAL_MAXITER"));
+        configure_matrix_localizer(localizer);
         localizer.localize();
         C_lmo_ = localizer.L();
     } else if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "PIPEK_MEZEY") {
         PMLocalizer localizer = PMLocalizer(basisset_, C_localizer_input);
-        localizer.set_convergence(options_.get_double("LOCAL_CONVERGENCE"));
-        localizer.set_maxiter(options_.get_int("LOCAL_MAXITER"));
+        configure_matrix_localizer(localizer);
+        localizer.localize();
+        C_lmo_ = localizer.L();
+    } else if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "PIPEK_MEZEY_MBIS") {
+        // MBIS is fitted to the current determinant density, not the stale SCF
+        // density stored on the reference wavefunction.  Include frozen core
+        // orbitals in that density even though only active occupied orbitals
+        // participate in the PM rotation.
+        auto mbis_density = linalg::doublet(C_lmo_, C_lmo_, false, true);
+        auto C_core = reference_wavefunction_->Ca_subset("AO", "FROZEN_OCC");
+        if (C_core->ncol() > 0) mbis_density->add(linalg::doublet(C_core, C_core, false, true));
+
+        PopulationAnalysisCalc mbis(reference_wavefunction_);
+        mbis.set_Da_ao(mbis_density);
+        auto populations = mbis.compute_mbis_orbital_populations(C_localizer_input, print_ > 1);
+        PMLocalizer localizer = PMLocalizer(basisset_, C_localizer_input, populations, "MBIS");
+        configure_matrix_localizer(localizer);
         localizer.localize();
         C_lmo_ = localizer.L();
     } else if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "ER") {
