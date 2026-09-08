@@ -3175,6 +3175,20 @@ double DLPNOCCSD::compute_energy() {
             e_dlpno_ccsd = compute_dlpno_ccsd_energy();
             if (force_full_ccsd) brueckner_intermediate_converged_ = old_intermediate_convergence;
 
+            // A localization branch change invalidates the local linear model
+            // represented by both Pulay history and the preceding mixed T1
+            // residual.  setup_orbitals() has already aligned harmless phase
+            // and permutation changes; this flag is reserved for a genuinely
+            // poor occupied-frame transport or maximum-overlap match.
+            if (brueckner_localization_frame_discontinuous_) {
+                if (brueckner_diis_initialized) {
+                    brueckner_diis.reset_subspace();
+                    brueckner_diis_vectors_since_reset = 0;
+                }
+                previous_orbital_error.reset();
+                previous_T1_rms = 0.0;
+            }
+
             if (iteration == 0) {
                 initial_ccsd_corr = scalar_variable("CCSD CORRELATION ENERGY");
                 initial_ccsd_total = scalar_variable("CCSD TOTAL ENERGY");

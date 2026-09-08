@@ -113,6 +113,10 @@ class DLPNO : public Wavefunction {
     SharedMatrix F_ao_;
     /// localized molecular orbitals (LMOs)
     SharedMatrix C_lmo_;
+    /// accepted localized occupied frame from the preceding Brueckner macroiteration
+    SharedMatrix C_lmo_previous_;
+    /// signals that localization continuity was too poor for the current orbital-DIIS history
+    bool brueckner_localization_frame_discontinuous_ = false;
     SharedMatrix F_lmo_;
 
     /// projected atomic orbitals (PAOs)

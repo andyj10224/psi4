@@ -47,6 +47,7 @@
 #include "psi4/libqt/qt.h"
 
 #include <algorithm>
+#include <limits>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -54,6 +55,85 @@
 
 namespace psi {
 namespace dlpno {
+
+namespace {
+
+/**
+ * Find the column permutation that maximizes the sum of absolute diagonal
+ * overlaps.  This is the square Hungarian algorithm applied to
+ * max(|S_ij|) - |S_ij|, with a deterministic column-order tie break.
+ *
+ * The returned vector maps each row (an orbital in the preceding frame) to
+ * its matching column (an orbital in the newly localized frame).
+ */
+std::vector<int> maximum_overlap_assignment(const SharedMatrix& overlap) {
+    const int nrow = overlap->nrow();
+    const int ncol = overlap->ncol();
+    if (nrow != ncol) {
+        throw PSIEXCEPTION("DLPNO orbital-frame matching requires a square overlap matrix.");
+    }
+
+    double max_overlap = 0.0;
+    for (int i = 0; i < nrow; ++i) {
+        for (int j = 0; j < ncol; ++j) max_overlap = std::max(max_overlap, std::fabs((*overlap)(i, j)));
+    }
+
+    // Hungarian bookkeeping is conventionally one-indexed. p[j] is the row
+    // currently assigned to column j; way stores the augmenting path.
+    std::vector<double> row_potential(nrow + 1, 0.0);
+    std::vector<double> col_potential(ncol + 1, 0.0);
+    std::vector<int> p(ncol + 1, 0);
+    std::vector<int> way(ncol + 1, 0);
+
+    for (int i = 1; i <= nrow; ++i) {
+        p[0] = i;
+        int j0 = 0;
+        std::vector<double> min_reduced_cost(ncol + 1, std::numeric_limits<double>::infinity());
+        std::vector<bool> used(ncol + 1, false);
+
+        do {
+            used[j0] = true;
+            const int i0 = p[j0];
+            double delta = std::numeric_limits<double>::infinity();
+            int j1 = 0;
+            for (int j = 1; j <= ncol; ++j) {
+                if (used[j]) continue;
+                const double cost = max_overlap - std::fabs((*overlap)(i0 - 1, j - 1));
+                const double reduced_cost = cost - row_potential[i0] - col_potential[j];
+                if (reduced_cost < min_reduced_cost[j]) {
+                    min_reduced_cost[j] = reduced_cost;
+                    way[j] = j0;
+                }
+                if (min_reduced_cost[j] < delta) {
+                    delta = min_reduced_cost[j];
+                    j1 = j;
+                }
+            }
+
+            for (int j = 0; j <= ncol; ++j) {
+                if (used[j]) {
+                    row_potential[p[j]] += delta;
+                    col_potential[j] -= delta;
+                } else {
+                    min_reduced_cost[j] -= delta;
+                }
+            }
+            j0 = j1;
+        } while (p[j0] != 0);
+
+        do {
+            const int j1 = way[j0];
+            p[j0] = p[j1];
+            j0 = j1;
+        } while (j0 != 0);
+    }
+
+    std::vector<int> assignment(nrow, -1);
+    for (int j = 1; j <= ncol; ++j) assignment[p[j] - 1] = j - 1;
+    return assignment;
+}
+
+}  // namespace
 
 DLPNO::DLPNO(SharedWavefunction ref_wfn, Options& options) : Wavefunction(options) {
     shallow_copy(ref_wfn);
@@ -371,24 +451,53 @@ void DLPNO::setup_orbitals() {
         F_ao_ = reference_wavefunction_->Fa();
     } // end if
 
-    // Localize active occupied orbitals
-    
+    // Localize active occupied orbitals.  A Brueckner rotation changes the
+    // occupied subspace between macroiterations, so the previous localizer U
+    // cannot be reused verbatim: it is expressed in the old unlocalized
+    // basis.  Instead solve the orthogonal Procrustes transport problem
+    //
+    //   M = C_occ(k)^T S L(k-1) = X Sigma Y^T,   U_guess = X Y^T,
+    //
+    // and start the localizer from C_occ(k) U_guess.  All three localizers
+    // below initialize their internal U to the identity, making this exactly
+    // equivalent to a warm start in the transported occupied frame.
+    brueckner_localization_frame_discontinuous_ = false;
+    auto C_localizer_input = C_lmo_->clone();
+    double transport_sigma_min = 1.0;
+    const bool transport_previous_frame = brueckner_iter_ && C_lmo_->ncol() > 0 && C_lmo_previous_ &&
+                                          C_lmo_previous_->ncol() == C_lmo_->ncol();
+    if (transport_previous_frame) {
+        auto frame_overlap =
+            linalg::triplet(C_lmo_, reference_wavefunction_->S(), C_lmo_previous_, true, false, false);
+        SharedMatrix X;
+        SharedVector sigma;
+        SharedMatrix Yt;
+        std::tie(X, sigma, Yt) = frame_overlap->svd_temps();
+        frame_overlap->svd(X, sigma, Yt);
+        auto U_guess = linalg::doublet(X, Yt);
+        C_localizer_input = linalg::doublet(C_lmo_, U_guess);
+
+        transport_sigma_min = std::numeric_limits<double>::infinity();
+        for (int i = 0; i < C_lmo_->ncol(); ++i) {
+            transport_sigma_min = std::min(transport_sigma_min, sigma->get(i));
+        }
+    }
 
     // Choose algorithm based on user settings
     if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "BOYS") {
-        BoysLocalizer localizer = BoysLocalizer(basisset_, C_lmo_->clone());
+        BoysLocalizer localizer = BoysLocalizer(basisset_, C_localizer_input);
         localizer.set_convergence(options_.get_double("LOCAL_CONVERGENCE"));
         localizer.set_maxiter(options_.get_int("LOCAL_MAXITER"));
         localizer.localize();
         C_lmo_ = localizer.L();
     } else if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "PIPEK_MEZEY") {
-        PMLocalizer localizer = PMLocalizer(basisset_, C_lmo_->clone());
+        PMLocalizer localizer = PMLocalizer(basisset_, C_localizer_input);
         localizer.set_convergence(options_.get_double("LOCAL_CONVERGENCE"));
         localizer.set_maxiter(options_.get_int("LOCAL_MAXITER"));
         localizer.localize();
         C_lmo_ = localizer.L();
     } else if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "ER") {
-        ERLocalizer localizer = ERLocalizer(basisset_, get_basisset("DF_BASIS_THC"), C_lmo_->clone());
+        ERLocalizer localizer = ERLocalizer(basisset_, get_basisset("DF_BASIS_THC"), C_localizer_input);
         localizer.set_convergence(options_.get_double("LOCAL_CONVERGENCE"));
         localizer.set_maxiter(options_.get_int("LOCAL_MAXITER"));
         localizer.localize();
@@ -396,6 +505,59 @@ void DLPNO::setup_orbitals() {
     } else {
         throw PSIEXCEPTION("Invalid option for DLPNO_LOCAL_ORBITALS");
     }
+
+    if (transport_previous_frame) {
+        // Localization is invariant to occupied-orbital permutations and
+        // phases.  Restore those discrete gauges with a global (not greedy)
+        // maximum-overlap assignment so that LMO-indexed domains and local
+        // amplitudes retain the same identities from one macroiteration to
+        // the next.
+        auto localized_overlap = linalg::triplet(C_lmo_previous_, reference_wavefunction_->S(), C_lmo_, true,
+                                                 false, false);
+        const auto assignment = maximum_overlap_assignment(localized_overlap);
+        auto C_lmo_aligned =
+            std::make_shared<Matrix>("Frame-aligned localized occupied orbitals", C_lmo_->nrow(), C_lmo_->ncol());
+        double matched_overlap_min = 1.0;
+        double matched_overlap_mean = 0.0;
+        bool permutation_changed = false;
+        for (int i = 0; i < C_lmo_->ncol(); ++i) {
+            const int j = assignment[i];
+            const double signed_overlap = (*localized_overlap)(i, j);
+            const double phase = signed_overlap < 0.0 ? -1.0 : 1.0;
+            const double abs_overlap = std::fabs(signed_overlap);
+            matched_overlap_min = std::min(matched_overlap_min, abs_overlap);
+            matched_overlap_mean += abs_overlap;
+            permutation_changed = permutation_changed || i != j;
+            for (int mu = 0; mu < C_lmo_->nrow(); ++mu) {
+                (*C_lmo_aligned)(mu, i) = phase * (*C_lmo_)(mu, j);
+            }
+        }
+        matched_overlap_mean /= C_lmo_->ncol();
+        C_lmo_ = C_lmo_aligned;
+
+        outfile->Printf(
+            "    Brueckner LMO frame transport: min singular value = %9.6f, "
+            "min/mean matched overlap = %9.6f/%9.6f%s\n",
+            transport_sigma_min, matched_overlap_min, matched_overlap_mean,
+            permutation_changed ? ", labels restored" : "");
+
+        // These deliberately conservative thresholds only reject history
+        // after a genuinely large occupied-subspace motion or localization-
+        // branch change; ordinary small Brueckner steps remain continuous.
+        constexpr double FRAME_SIGMA_MIN_RESET = 0.90;
+        constexpr double FRAME_MATCH_MIN_RESET = 0.80;
+        brueckner_localization_frame_discontinuous_ =
+            transport_sigma_min < FRAME_SIGMA_MIN_RESET || matched_overlap_min < FRAME_MATCH_MIN_RESET;
+        if (brueckner_localization_frame_discontinuous_) {
+            outfile->Printf(
+                "    WARNING: The localized occupied frame changed discontinuously; "
+                "Brueckner mixing/DIIS history will be reset.\n");
+        }
+    }
+
+    // The accepted, label- and phase-aligned LMOs define the continuation
+    // target for the next Brueckner macroiteration.
+    C_lmo_previous_ = C_lmo_->clone();
 
     timer_off("Local MOs");
 
