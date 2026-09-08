@@ -84,9 +84,6 @@ void DLPNO::common_init() {
     T_CUT_PAIRS_MP2_ = options_.get_double("T_CUT_PAIRS_MP2");
     T_CUT_PRE_ = options_.get_double("T_CUT_PRE");
 
-    // TNO Truncation cutoff for (T)
-    T_CUT_TNO_ = options_.get_double("T_CUT_TNO");
-
     if (options_.get_str("DLPNO_ALGORITHM") == "MP2") {
         algorithm_ = DLPNOMethod::MP2;
     } else if (options_.get_str("DLPNO_ALGORITHM") == "CCSD") {

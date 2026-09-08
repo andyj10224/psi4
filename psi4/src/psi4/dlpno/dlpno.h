@@ -77,6 +77,14 @@ static_assert(DLPNO_DIIS_CHUNK_WORDS <= static_cast<size_t>(std::numeric_limits<
 // Equations refer to Pinski et al. (JCP 143, 034108, 2015; DOI: 10.1063/1.4926879)
 
 class DLPNO : public Wavefunction {
+   private:
+    /// Auxiliary-metric shell diagonal used in AO ERI screening.
+    std::vector<double> J_metric_shell_diag_;
+    /// Atoms carrying the auxiliary functions in each LMO-pair domain.
+    SparseMap lmopair_to_riatoms_;
+    /// Atoms carrying the PAOs in each LMO-pair domain.
+    SparseMap lmopair_to_paoatoms_;
+
    protected:
     /// what quantum chemistry module are we running
     DLPNOMethod algorithm_;
@@ -107,9 +115,6 @@ class DLPNO : public Wavefunction {
     double T_CUT_PNO_DIAG_SCALE_;
     /// T_CUT_PNO scaling for core orbitals
     double T_CUT_PNO_CORE_SCALE_;
-    /// Tolerance for TNO truncation for triples (by occupation number)
-    double T_CUT_TNO_;
-    
     /// toggle core and disk options based on available memory
     bool toggle_memory_;
     /// number of core orbitals (0 if freeze_core = True)
@@ -118,7 +123,6 @@ class DLPNO : public Wavefunction {
     /// auxiliary basis
     std::shared_ptr<BasisSet> ribasis_;
     SharedMatrix full_metric_;
-    std::vector<double> J_metric_shell_diag_; ///< used in AO ERI screening
 
     /// localized molecular orbitals (LMOs)
     SharedMatrix C_lmo_;
@@ -158,9 +162,6 @@ class DLPNO : public Wavefunction {
     std::vector<SharedMatrix> X_pno_;   ///< global PAO -> canonical PNO transforms
     std::vector<SharedVector> e_pno_;   ///< PNO orbital energies
     std::vector<int> n_pno_;       ///< number of pnos
-    std::vector<double> occ_pno_;       ///< lowest PNO occupation number per PNO
-    std::vector<double> trace_pno_;     ///< total trace(Dij) recovered per PNO
-    std::vector<double> e_ratio_pno_;   ///< percentage of correlation energy recovered by PNOs
     std::vector<double> de_pno_;   ///< PNO truncation energy error
     std::vector<double> de_pno_os_;   ///< opposite-spin contributions to de_pno_
     std::vector<double> de_pno_ss_;   ///< same-spin contributions to de_pno_
@@ -170,8 +171,6 @@ class DLPNO : public Wavefunction {
     double de_pno_total_; ///< energy correction for PNO truncation (total)
     double de_pno_total_os_; ///< energy correction for PNO truncation (opposite-spin)
     double de_pno_total_ss_; ///< energy correction for PNO truncation (same-spin)
-    double e_lmp2_non_trunc_; ///< LMP2 energy in a pure PAO basis (Strong and Weak Pairs Only)
-    double e_lmp2_trunc_; ///< LMP2 energy computed with (truncated) PNOs (Strong Pairs Only)
     double de_lmp2_eliminated_; ///< LMP2 correction for eliminated pairs (surviving pairs after dipole screening that
     // are neither weak nor strong)
     double de_weak_; ///< Energy contribution for weak pairs
@@ -201,9 +200,7 @@ class DLPNO : public Wavefunction {
 
     // LMO Pair Domains
     SparseMap lmopair_to_ribfs_; ///< which aux BFs are needed for density-fitting a pair of LMOs?
-    SparseMap lmopair_to_riatoms_; ///< aux BFs on which atoms are needed for density-fitting a pair of LMOs?
     SparseMap lmopair_to_paos_; ///< which PAOs span the virtual space of a pair of LMOs?
-    SparseMap lmopair_to_paoatoms_; ///< PAOs on which atoms span the virtual space of a pair of LMOs?
     SparseMap lmopair_to_lmos_; ///< Which LMOs "interact" with an LMO pair (determined by DOI integrals)
 
     // Extended LMO Domains 
@@ -231,9 +228,6 @@ class DLPNO : public Wavefunction {
     std::vector<std::vector<bool>> riatom_to_atoms2_dense_;
     std::vector<std::vector<int>> lmopair_to_lmos_dense_;
 
-    /// Useful for generating DF integrals (TODO: Replace this with "index_list" function)
-    std::vector<std::vector<std::vector<int>>> lmopair_lmo_to_riatom_lmo_;
-    std::vector<std::vector<std::vector<int>>> lmopair_pao_to_riatom_pao_;
     std::vector<std::vector<std::pair<int,int>>> riatom_to_pao_pairs_; ///< Which (u,v) pao pairs belong to an riatom
     std::vector<std::vector<std::vector<int>>> riatom_to_pao_pairs_dense_; ///< For each riatom, returns the index of the element in qab tensor
 
@@ -353,6 +347,11 @@ class PSI_API DLPNOCCSD : public DLPNO {
     std::vector<std::vector<SharedMatrix>> S_pno_ij_kj_; ///< pno overlaps
     std::vector<std::vector<SharedMatrix>> S_pno_ij_nn_; ///< pno overlaps
     std::vector<std::vector<SharedMatrix>> S_pno_ij_mn_; ///< pno overlaps
+
+    /// CC-specific PNO truncation diagnostics.
+    std::vector<double> occ_pno_;     ///< lowest retained PNO occupation number per pair
+    std::vector<double> trace_pno_;   ///< fraction of trace(Dij) recovered per pair
+    std::vector<double> e_ratio_pno_; ///< fraction of pair correlation energy recovered by PNOs
 
     /// Coupled-cluster amplitudes
     std::vector<SharedMatrix> T_ia_; ///< singles amplitudes [naocc x (npno_ii, 1)]
