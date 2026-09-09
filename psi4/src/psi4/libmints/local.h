@@ -65,6 +65,8 @@ class PSI_API Localizer {
     int augmented_hessian_start_;
     /// Largest number of independent rotations for which the dense Hessian is formed
     int augmented_hessian_max_rotations_;
+    /// Maximum Davidson subspace dimension for matrix-free augmented-Hessian solves
+    int augmented_hessian_max_subspace_;
     /// Euclidean trust radius for an augmented-Hessian rotation step
     double augmented_hessian_trust_radius_;
     /// Positive-curvature threshold used to identify localization saddles
@@ -147,6 +149,8 @@ class PSI_API Localizer {
 
     void set_augmented_hessian_max_rotations(int rotations) { augmented_hessian_max_rotations_ = rotations; }
 
+    void set_augmented_hessian_max_subspace(int vectors) { augmented_hessian_max_subspace_ = vectors; }
+
     void set_augmented_hessian_trust_radius(double radius) { augmented_hessian_trust_radius_ = radius; }
 
     void set_saddle_tolerance(double tolerance) { saddle_tolerance_ = tolerance; }
@@ -196,9 +200,18 @@ class PSI_API ERLocalizer : public Localizer {
     void common_init();
     /// Auxiliary basis set
     std::shared_ptr<BasisSet> auxiliary_;
+    /// Reusable AO collocation factor, x^I_mu
+    std::shared_ptr<Matrix> x_ao_;
+    /// Reusable THC coupling factor, Z^IJ
+    std::shared_ptr<Matrix> Z_;
 
    public:
     ERLocalizer(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> auxiliary, std::shared_ptr<Matrix> C);
+
+    /// Construct from a previously computed AO THC factorization.  The factors
+    /// are orbital independent and may be shared by successive localizations.
+    ERLocalizer(std::shared_ptr<BasisSet> primary, std::shared_ptr<Matrix> C, std::shared_ptr<Matrix> x_ao,
+                std::shared_ptr<Matrix> Z);
 
     ~ERLocalizer() override;
 

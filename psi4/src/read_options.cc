@@ -1931,12 +1931,14 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_double("LOCAL_GRADIENT_CONVERGENCE", 1E-8);
         /*- The maxiter on the orbital localization procedure -*/
         options.add_int("LOCAL_MAXITER", 200);
-        /*- Use trust-region augmented-Hessian steps and explicit saddle checks in Boys/PM localization -*/
+        /*- Use trust-region augmented-Hessian steps and explicit saddle checks in Boys/PM/ER localization -*/
         options.add_bool("LOCAL_USE_AUGMENTED_HESSIAN", true);
         /*- First localization iteration on which the augmented Hessian is used !expert -*/
         options.add_int("LOCAL_AH_START", 3);
         /*- Maximum number of independent rotations for a dense localization Hessian !expert -*/
         options.add_int("LOCAL_AH_MAX_ROTATIONS", 512);
+        /*- Maximum Davidson subspace dimension for a matrix-free localization augmented Hessian !expert -*/
+        options.add_int("LOCAL_AH_MAX_SUBSPACE", 20);
         /*- Initial Euclidean trust radius for augmented-Hessian localization rotations !expert -*/
         options.add_double("LOCAL_AH_TRUST_RADIUS", 0.25);
         /*- Positive-curvature threshold for rejecting a localization saddle !expert -*/
@@ -2673,12 +2675,14 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_double("LOCAL_GRADIENT_CONVERGENCE", 1.0E-8);
         /*- Maximum iterations in orbital localization -*/
         options.add_int("LOCAL_MAXITER", 1000);
-        /*- Use trust-region augmented-Hessian steps and explicit saddle checks in Boys/PM localization -*/
+        /*- Use trust-region augmented-Hessian steps and explicit saddle checks in Boys/PM/ER localization -*/
         options.add_bool("LOCAL_USE_AUGMENTED_HESSIAN", true);
         /*- First localization iteration on which the augmented Hessian is used !expert -*/
         options.add_int("LOCAL_AH_START", 3);
         /*- Maximum number of independent rotations for a dense localization Hessian !expert -*/
         options.add_int("LOCAL_AH_MAX_ROTATIONS", 512);
+        /*- Maximum Davidson subspace dimension for the matrix-free THC-ER augmented Hessian !expert -*/
+        options.add_int("LOCAL_AH_MAX_SUBSPACE", 20);
         /*- Initial Euclidean trust radius for augmented-Hessian localization rotations !expert -*/
         options.add_double("LOCAL_AH_TRUST_RADIUS", 0.25);
         /*- Positive-curvature threshold for rejecting a localization saddle !expert -*/

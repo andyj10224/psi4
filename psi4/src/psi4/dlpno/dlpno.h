@@ -109,6 +109,11 @@ class DLPNO : public Wavefunction {
     /// JK object (used to form the Fock matrix if Brueckner orbitals are requested)
     std::shared_ptr<JK> jk_;
 
+    /// Orbital-independent AO collocation factor for THC ER localization
+    SharedMatrix er_thc_x_ao_;
+    /// Orbital-independent THC coupling factor for ER localization
+    SharedMatrix er_thc_Z_;
+
     /// AO Fock matrix (this changes with Brueckner orbitals)
     SharedMatrix F_ao_;
     /// localized molecular orbitals (LMOs)

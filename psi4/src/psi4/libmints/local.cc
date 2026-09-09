@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <numeric>
 #include <random>
@@ -43,7 +44,6 @@
 #include "psi4/libmints/basisset.h"
 #include "psi4/libmints/integral.h"
 #include "psi4/libmints/thc_eri.h"
-#include "psi4/libdiis/diismanager.h"
 #include "psi4/liboptions/liboptions.h"
 #include "psi4/libpsi4util/PsiOutStream.h"
 #include "psi4/libpsi4util/process.h"
@@ -72,6 +72,7 @@ void Localizer::common_init() {
     use_augmented_hessian_ = true;
     augmented_hessian_start_ = 3;
     augmented_hessian_max_rotations_ = 512;
+    augmented_hessian_max_subspace_ = 20;
     augmented_hessian_trust_radius_ = 0.25;
     saddle_tolerance_ = 1.0E-8;
     converged_ = false;
@@ -101,6 +102,8 @@ std::shared_ptr<Localizer> Localizer::build(const std::string& type, std::shared
         local->set_augmented_hessian_start(options.get_int("LOCAL_AH_START"));
     if (options.exists("LOCAL_AH_MAX_ROTATIONS"))
         local->set_augmented_hessian_max_rotations(options.get_int("LOCAL_AH_MAX_ROTATIONS"));
+    if (options.exists("LOCAL_AH_MAX_SUBSPACE"))
+        local->set_augmented_hessian_max_subspace(options.get_int("LOCAL_AH_MAX_SUBSPACE"));
     if (options.exists("LOCAL_AH_TRUST_RADIUS"))
         local->set_augmented_hessian_trust_radius(options.get_double("LOCAL_AH_TRUST_RADIUS"));
     if (options.exists("LOCAL_SADDLE_TOLERANCE"))
@@ -294,14 +297,20 @@ std::shared_ptr<Matrix> localization_hessian(const std::vector<std::shared_ptr<M
     return H;
 }
 
-std::shared_ptr<Matrix> localization_rotation(const std::vector<LocalizationPair>& pairs,
-                                              const std::vector<double>& step, double scale, int nmo) {
-    auto R = std::make_shared<Matrix>("Localization rotation generator", nmo, nmo);
+std::shared_ptr<Matrix> localization_generator(const std::vector<LocalizationPair>& pairs,
+                                               const std::vector<double>& step, double scale, int nmo) {
+    auto K = std::make_shared<Matrix>("Localization rotation generator", nmo, nmo);
     for (size_t pq = 0; pq < pairs.size(); ++pq) {
         const double value = scale * step[pq];
-        R->set(pairs[pq].i, pairs[pq].j, -value);
-        R->set(pairs[pq].j, pairs[pq].i, value);
+        K->set(pairs[pq].i, pairs[pq].j, -value);
+        K->set(pairs[pq].j, pairs[pq].i, value);
     }
+    return K;
+}
+
+std::shared_ptr<Matrix> localization_rotation(const std::vector<LocalizationPair>& pairs,
+                                              const std::vector<double>& step, double scale, int nmo) {
+    auto R = localization_generator(pairs, step, scale, nmo);
     R->expm(6, true);
     return R;
 }
@@ -423,6 +432,250 @@ AugmentedHessianResult augmented_hessian_step(std::vector<std::shared_ptr<Matrix
                         result.largest_curvature, result.step_norm, result.accepted ? "yes" : "no");
     }
     return result;
+}
+
+double localization_vector_dot(const std::vector<double>& left, const std::vector<double>& right) {
+    return std::inner_product(left.begin(), left.end(), right.begin(), 0.0);
+}
+
+double localization_vector_norm(const std::vector<double>& vector) {
+    return std::sqrt(localization_vector_dot(vector, vector));
+}
+
+bool append_orthonormal_vector(std::vector<std::vector<double>>& basis, std::vector<double> candidate) {
+    // Two modified Gram--Schmidt passes are inexpensive for the small Davidson
+    // subspaces used here and substantially reduce loss of orthogonality.
+    for (int pass = 0; pass < 2; ++pass) {
+        for (const auto& vector : basis) {
+            const double projection = localization_vector_dot(vector, candidate);
+            for (size_t i = 0; i < candidate.size(); ++i) candidate[i] -= projection * vector[i];
+        }
+    }
+    const double norm = localization_vector_norm(candidate);
+    if (!std::isfinite(norm) || norm < 1.0E-12) return false;
+    for (double& value : candidate) value /= norm;
+    basis.push_back(std::move(candidate));
+    return true;
+}
+
+struct MatrixFreeEigenpair {
+    bool converged = false;
+    double eigenvalue = 0.0;
+    double residual_norm = std::numeric_limits<double>::infinity();
+    std::vector<double> eigenvector;
+    int subspace_dimension = 0;
+};
+
+MatrixFreeEigenpair largest_matrix_free_eigenpair(
+    int dimension, int maximum_subspace, double tolerance,
+    const std::function<std::vector<double>(const std::vector<double>&)>& apply,
+    std::vector<std::vector<double>> seeds) {
+    MatrixFreeEigenpair result;
+    if (dimension == 0) {
+        result.converged = true;
+        return result;
+    }
+
+    maximum_subspace = std::max(1, std::min(dimension, maximum_subspace));
+    std::vector<std::vector<double>> basis;
+    basis.reserve(maximum_subspace);
+    for (auto& seed : seeds) {
+        if (static_cast<int>(seed.size()) != dimension)
+            throw PSIEXCEPTION("Localizer: invalid matrix-free augmented-Hessian seed dimension");
+        if (static_cast<int>(basis.size()) == maximum_subspace) break;
+        append_orthonormal_vector(basis, std::move(seed));
+    }
+    if (basis.empty()) {
+        std::vector<double> seed(dimension, 0.0);
+        seed[0] = 1.0;
+        basis.push_back(std::move(seed));
+    }
+
+    std::vector<std::vector<double>> products;
+    products.reserve(maximum_subspace);
+    int fallback_coordinate = 0;
+    const int minimum_subspace = std::min(4, maximum_subspace);
+
+    while (true) {
+        while (products.size() < basis.size()) {
+            auto product = apply(basis[products.size()]);
+            if (static_cast<int>(product.size()) != dimension)
+                throw PSIEXCEPTION("Localizer: invalid matrix-free augmented-Hessian product dimension");
+            products.push_back(std::move(product));
+        }
+
+        const int nsub = basis.size();
+        auto projected = std::make_shared<Matrix>("Projected localization Hessian", nsub, nsub);
+        for (int i = 0; i < nsub; ++i) {
+            for (int j = 0; j <= i; ++j) {
+                // Explicit symmetrization removes roundoff-level asymmetry from
+                // the THC contractions before the small projected solve.
+                const double value =
+                    0.5 * (localization_vector_dot(basis[i], products[j]) +
+                           localization_vector_dot(basis[j], products[i]));
+                projected->set(i, j, value);
+                projected->set(j, i, value);
+            }
+        }
+        auto eigenvectors = std::make_shared<Matrix>("Projected localization eigenvectors", nsub, nsub);
+        auto eigenvalues = std::make_shared<Vector>("Projected localization eigenvalues", nsub);
+        projected->diagonalize(*eigenvectors, *eigenvalues, descending);
+
+        result.eigenvalue = eigenvalues->get(0);
+        result.eigenvector.assign(dimension, 0.0);
+        std::vector<double> sigma(dimension, 0.0);
+        for (int i = 0; i < nsub; ++i) {
+            const double coefficient = eigenvectors->get(i, 0);
+            for (int p = 0; p < dimension; ++p) {
+                result.eigenvector[p] += coefficient * basis[i][p];
+                sigma[p] += coefficient * products[i][p];
+            }
+        }
+        std::vector<double> residual(dimension, 0.0);
+        for (int p = 0; p < dimension; ++p)
+            residual[p] = sigma[p] - result.eigenvalue * result.eigenvector[p];
+        result.residual_norm = localization_vector_norm(residual);
+        result.subspace_dimension = nsub;
+        result.converged = result.residual_norm <= tolerance && nsub >= minimum_subspace;
+        if (result.converged || nsub == maximum_subspace) return result;
+
+        if (!append_orthonormal_vector(basis, std::move(residual))) {
+            // A collapsed Ritz residual can indicate an invariant subspace that
+            // does not yet contain the global largest root.  Add deterministic
+            // coordinate directions until the subspace is complete.
+            bool added = false;
+            while (fallback_coordinate < dimension && !added) {
+                std::vector<double> candidate(dimension, 0.0);
+                candidate[fallback_coordinate++] = 1.0;
+                added = append_orthonormal_vector(basis, std::move(candidate));
+            }
+            if (!added) {
+                result.converged = true;
+                return result;
+            }
+        }
+    }
+}
+
+std::vector<double> deterministic_localization_seed(int dimension, double phase) {
+    std::vector<double> seed(dimension, 0.0);
+    for (int i = 0; i < dimension; ++i)
+        seed[i] = std::sin((i + 1) * (1.0 + phase)) + std::cos((i + 1) * (0.5 + phase));
+    return seed;
+}
+
+struct ERTHCState {
+    std::shared_ptr<Matrix> x;
+    std::shared_ptr<Matrix> Z_squared_x;
+    std::shared_ptr<Matrix> weighted_x;
+    std::shared_ptr<Matrix> orbital_gradient;
+    std::vector<double> gradient;
+    double objective = 0.0;
+    double max_gradient = 0.0;
+};
+
+ERTHCState build_er_thc_state(const std::shared_ptr<Matrix>& x, const std::shared_ptr<Matrix>& Z,
+                              const std::vector<LocalizationPair>& pairs) {
+    ERTHCState state;
+    state.x = x;
+    const int nthc = x->nrow();
+    const int nmo = x->ncol();
+    auto squared_x = std::make_shared<Matrix>("THC squared collocation", nthc, nmo);
+    double** xp = x->pointer();
+    double** squared_xp = squared_x->pointer();
+#pragma omp parallel for collapse(2)
+    for (int I = 0; I < nthc; ++I) {
+        for (int p = 0; p < nmo; ++p) {
+            const double value = xp[I][p];
+            squared_xp[I][p] = value * value;
+        }
+    }
+
+    // A^I_p = sum_J Z^IJ (x^J_p)^2.  With n_THC and n_occ both
+    // proportional to system size, this is the leading O(N^3) contraction.
+    state.Z_squared_x = linalg::doublet(Z, squared_x, false, false);
+    state.weighted_x = state.Z_squared_x->clone();
+    double** Z_squared_xp = state.Z_squared_x->pointer();
+    double** weighted_xp = state.weighted_x->pointer();
+#pragma omp parallel for collapse(2)
+    for (int I = 0; I < nthc; ++I) {
+        for (int p = 0; p < nmo; ++p)
+            weighted_xp[I][p] = Z_squared_xp[I][p] * xp[I][p];
+    }
+
+    // B_pq = (pp|pq) = sum_I A^I_p x^I_p x^I_q.
+    auto pppq = linalg::doublet(state.weighted_x, x, true, false);
+    double** pppqp = pppq->pointer();
+    for (int p = 0; p < nmo; ++p) state.objective += pppqp[p][p];
+
+    state.gradient.assign(pairs.size(), 0.0);
+    state.orbital_gradient = std::make_shared<Matrix>("ER orbital gradient", nmo, nmo);
+    double** orbital_gradientp = state.orbital_gradient->pointer();
+    for (size_t pq = 0; pq < pairs.size(); ++pq) {
+        const int p = pairs[pq].i;
+        const int q = pairs[pq].j;
+        // For K_pq = -kappa_pq and K_qp = +kappa_pq,
+        // d E_ER / d kappa_pq = 4 [(pp|pq) - (qq|qp)].
+        const double value = 4.0 * (pppqp[p][q] - pppqp[q][p]);
+        state.gradient[pq] = value;
+        orbital_gradientp[p][q] = -0.5 * value;
+        orbital_gradientp[q][p] = 0.5 * value;
+        state.max_gradient = std::max(state.max_gradient, std::fabs(value));
+    }
+    return state;
+}
+
+std::vector<double> er_thc_hessian_product(const ERTHCState& state, const std::shared_ptr<Matrix>& Z,
+                                           const std::vector<LocalizationPair>& pairs,
+                                           const std::vector<double>& direction) {
+    const int nthc = state.x->nrow();
+    const int nmo = state.x->ncol();
+    auto K = localization_generator(pairs, direction, 1.0, nmo);
+    auto dx = linalg::doublet(state.x, K, false, false);
+    double** xp = state.x->pointer();
+    double** dxp = dx->pointer();
+
+    auto d_squared_x = std::make_shared<Matrix>("THC squared-collocation response", nthc, nmo);
+    double** d_squared_xp = d_squared_x->pointer();
+#pragma omp parallel for collapse(2)
+    for (int I = 0; I < nthc; ++I) {
+        for (int p = 0; p < nmo; ++p)
+            d_squared_xp[I][p] = 2.0 * xp[I][p] * dxp[I][p];
+    }
+    auto d_Z_squared_x = linalg::doublet(Z, d_squared_x, false, false);
+    auto d_weighted_x = std::make_shared<Matrix>("THC weighted-collocation response", nthc, nmo);
+    double** d_Z_squared_xp = d_Z_squared_x->pointer();
+    double** Z_squared_xp = state.Z_squared_x->pointer();
+    double** d_weighted_xp = d_weighted_x->pointer();
+#pragma omp parallel for collapse(2)
+    for (int I = 0; I < nthc; ++I) {
+        for (int p = 0; p < nmo; ++p) {
+            d_weighted_xp[I][p] = d_Z_squared_xp[I][p] * xp[I][p] + Z_squared_xp[I][p] * dxp[I][p];
+        }
+    }
+    auto d_pppq = linalg::doublet(d_weighted_x, state.x, true, false);
+    d_pppq->add(linalg::doublet(state.weighted_x, dx, true, false));
+    double** d_pppqp = d_pppq->pointer();
+
+    std::vector<double> product(pairs.size(), 0.0);
+    for (size_t pq = 0; pq < pairs.size(); ++pq) {
+        const int p = pairs[pq].i;
+        const int q = pairs[pq].j;
+        product[pq] = 4.0 * (d_pppqp[p][q] - d_pppqp[q][p]);
+    }
+
+    // The derivative above uses a moving right-invariant orbital frame and is
+    // not symmetric away from a stationary point.  Add the Levi-Civita
+    // connection term to obtain the symmetric exponential-coordinate Hessian.
+    // This is the matrix-free counterpart of the Jordan symmetrization used by
+    // the dense Boys/PM Hessian.
+    auto connection = linalg::doublet(state.orbital_gradient, K, false, false);
+    connection->subtract(linalg::doublet(K, state.orbital_gradient, false, false));
+    double** connectionp = connection->pointer();
+    for (size_t pq = 0; pq < pairs.size(); ++pq)
+        product[pq] += connectionp[pairs[pq].i][pairs[pq].j];
+
+    return product;
 }
 
 }  // namespace
@@ -663,199 +916,252 @@ void PMLocalizer::localize() {
     localize_matrix_objective(population_matrices_, "PM");
 }
 
-ERLocalizer::ERLocalizer(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> auxiliary, std::shared_ptr<Matrix> C) : Localizer(primary, C) {
-    auxiliary_ = auxiliary;
+ERLocalizer::ERLocalizer(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> auxiliary,
+                         std::shared_ptr<Matrix> C)
+    : Localizer(primary, C), auxiliary_(auxiliary) {
     common_init();
 }
+
+ERLocalizer::ERLocalizer(std::shared_ptr<BasisSet> primary, std::shared_ptr<Matrix> C,
+                         std::shared_ptr<Matrix> x_ao, std::shared_ptr<Matrix> Z)
+    : Localizer(primary, C), x_ao_(x_ao), Z_(Z) {
+    common_init();
+}
+
 ERLocalizer::~ERLocalizer() {}
 void ERLocalizer::common_init() {}
 void ERLocalizer::print_header() const {
-    outfile->Printf("  ==> Edmiston-Ruedenberg (ER) Localizer <==\n");
-    outfile->Printf("    By: Andy Jiang and Nate Kitzmiller    \n\n");
-    outfile->Printf("    Convergence = %11.3E\n", convergence_);
-    outfile->Printf("    Maxiter     = %11d\n", maxiter_);
-    outfile->Printf("\n");
+    outfile->Printf("  ==> Tensor-Hypercontracted Edmiston-Ruedenberg Localizer <==\n\n");
+    outfile->Printf("    By: Andy Jiang and Nate Kitzmiller\n\n");
+    outfile->Printf("    Objective convergence = %11.3E\n", convergence_);
+    outfile->Printf("    Gradient convergence  = %11.3E\n", gradient_convergence_);
+    outfile->Printf("    Maxiter               = %11d\n", maxiter_);
+    outfile->Printf("    Augmented Hessian     = %11s\n", use_augmented_hessian_ ? "enabled" : "disabled");
+    if (use_augmented_hessian_) {
+        outfile->Printf("    AH start iteration     = %11d\n", augmented_hessian_start_);
+        outfile->Printf("    AH maximum subspace    = %11d\n", augmented_hessian_max_subspace_);
+        outfile->Printf("    AH trust radius        = %11.3E\n", augmented_hessian_trust_radius_);
+    }
+    // ER formerly entered an unconditional cumulative-kappa DIIS path after
+    // iteration 100.  Rotations from different moving orbital frames cannot be
+    // added consistently, so the default optimizer now contains no DIIS step.
+    outfile->Printf("    ER DIIS               = %11s\n\n", "disabled");
 }
+
 void ERLocalizer::localize() {
     print_header();
 
-    // => Sizing <= //
+    const int nso = C_->nrow();
+    const int nmo = C_->ncol();
+    if (convergence_ <= 0.0 || gradient_convergence_ <= 0.0 || maxiter_ < 1 ||
+        augmented_hessian_max_subspace_ < 1 || augmented_hessian_trust_radius_ <= 0.0 || saddle_tolerance_ < 0.0)
+        throw PSIEXCEPTION("ERLocalizer: invalid convergence or augmented-Hessian control parameter");
 
-    int nso = C_->rowspi()[0];
-    int nmo = C_->colspi()[0];
-
-    // => Compute Tensor Hypercontraction form of Two-Electron Integrals (ERIs) <= //
-
-    auto thc_computer = std::make_shared<LS_THC_Computer>(primary_->molecule(), primary_, auxiliary_, Process::environment.options);
-    thc_computer->compute_thc_factorization();
-
-    auto Z_IJ = thc_computer->get_Z(); // Z^{IJ}
-    auto xI = thc_computer->get_x1();  // x^{I}_{\mu}
-    auto x_mo = linalg::doublet(xI, C_, false, false); // x^{I}_{p} = x^{I}_{\mu} C_{\mu p}
-
-    size_t nthc = x_mo->rowspi()[0];
-
-    // Compute two electron integrals of the form (pp|pq) from THC factors
-
-    // (pp|pq) = \sum_{I,J} x^{I}_{p} x^{I}_{p} Z^{IJ} x^{J}_{p} x^{J}_{q}
-    auto pppq = std::make_shared<Matrix>("(pp|pq)", nmo, nmo);
-
-    // Intermediates for computing (pp|pq)
-
-    // S^{I}_{p} = x^{I}_{p} x^{I}_{p} => O(N^{2})
-    auto SI_p = std::make_shared<Matrix>("SI_p", nthc, nmo);
-
-#pragma omp parallel for collapse(2)
-    for (size_t I = 0; I < nthc; ++I) {
-        for (size_t p = 0; p < nmo; ++p) {
-            double val = x_mo->get(I, p);
-            SI_p->set(I, p, val * val);
-        } // end p
-    } // end I
-
-    // A^{J}_{p} = Z^{JI} S^{I}_{p} => O(N^{3})
-    auto AJ_p = linalg::doublet(Z_IJ, SI_p, false, false);
-
-    // (pp|pq) = \sum_{J} A^{J}_{p} x^{J}_{p} x^{J}_{q} => O(N^{3})
-#pragma omp parallel for collapse(2)
-    for (size_t p = 0; p < nmo; ++p) {
-        for (size_t q = 0; q < nmo; ++q) {
-            double val = 0.0;
-            for (size_t J = 0; J < nthc; ++J) {
-                val += AJ_p->get(J, p) * x_mo->get(J, p) * x_mo->get(J, q);
-            } // end J
-            pppq->set(p, q, val);
-        } // end q
-    } // end p
-
-    // => Targets <= //
-
-    L_ = std::make_shared<Matrix>("L", nso, nmo);
-    U_ = std::make_shared<Matrix>("U", nmo, nmo);
-    L_->copy(C_);
+    L_ = C_->clone();
+    U_ = std::make_shared<Matrix>("MO -> ER-localized-MO transformation", nmo, nmo);
     U_->identity();
-    converged_ = false;
+    converged_ = nmo < 2;
+    if (converged_) return;
 
-    if (nmo < 1) return;
-
-    // => (Initialize) Metric and Error Vector <= //
-
-    double metric = 0.0;
-    SharedMatrix delta_pppp = std::make_shared<Matrix>("delta_pppp", nmo, 1);
-    for (size_t p = 0; p < nmo; p++) {
-        delta_pppp->set(p, 0, pppq->get(p, p));
-        metric += pppq->get(p, p);
+    // x^I_mu and Z^IJ depend on the AO basis, molecular geometry, grid, and
+    // THC thresholds, but not on the occupied-orbital rotation.  Standalone ER
+    // localizers may build them here; DLPNO supplies cached factors through the
+    // alternate constructor and only repeats x^I_p = x^I_mu C_mu_p.
+    if (!x_ao_ || !Z_) {
+        if (!auxiliary_) throw PSIEXCEPTION("ERLocalizer: no auxiliary basis or reusable THC factors supplied");
+        auto thc_computer = std::make_shared<LS_THC_Computer>(primary_->molecule(), primary_, auxiliary_,
+                                                              Process::environment.options);
+        thc_computer->compute_thc_factorization();
+        x_ao_ = thc_computer->get_x1();
+        Z_ = thc_computer->get_Z();
     }
-    double old_metric = metric;
+    if (x_ao_->nirrep() != 1 || Z_->nirrep() != 1 || x_ao_->ncol() != nso || Z_->nrow() != Z_->ncol() ||
+        Z_->nrow() != x_ao_->nrow())
+        throw PSIEXCEPTION("ERLocalizer: inconsistent AO THC factor dimensions");
 
-    // => Iteration Print <= //
+    const auto pairs = localization_pairs(nmo);
+    const int nrot = pairs.size();
+    auto x_mo = linalg::doublet(x_ao_, C_, false, false);
+    auto state = build_er_thc_state(x_mo, Z_, pairs);
+    double trust_radius = augmented_hessian_trust_radius_;
+    const bool stability_will_be_checked = use_augmented_hessian_ && augmented_hessian_start_ <= maxiter_;
+    bool hessian_stable_at_convergence = false;
 
-    outfile->Printf("    Iteration %24s %14s\n", "Metric", "Residual");
-    outfile->Printf("    @ER   %4d %24.16E %14s\n", 0, metric, "-");
+    outfile->Printf("    Iteration %24s %14s %14s %14s\n", "Metric", "Rel. change", "Max |grad|",
+                    "Max curvature");
+    outfile->Printf("    @ER   %4d %24.16E %14s %14.6E %14s\n", 0, state.objective, "-", state.max_gradient,
+                    "-");
 
-    // => DIIS Setup <= //
-    
-    size_t max_vecs = Process::environment.options.get_int("DIIS_MAX_VECS");
-    DIISManager diis(max_vecs, "ER DIIS", DIISManager::RemovalPolicy::LargestError, DIISManager::StoragePolicy::InCore);
+    for (int iter = 1; iter <= maxiter_; ++iter) {
+        const double previous_objective = state.objective;
+        const double objective_scale = std::max(1.0, std::fabs(state.objective));
+        const double eigensolver_tolerance =
+            std::max(1.0E-10, 0.1 * std::max(gradient_convergence_, saddle_tolerance_) * objective_scale);
+        const double scaled_saddle_tolerance = saddle_tolerance_ * objective_scale;
+        const bool ah_iteration = use_augmented_hessian_ && iter >= std::max(1, augmented_hessian_start_);
 
-    // Total rotation angle
-    auto Kappa = std::make_shared<Matrix>("Kappa", nmo, nmo);
-    Kappa->zero();
+        auto apply_hessian = [&state, this, &pairs](const std::vector<double>& direction) {
+            return er_thc_hessian_product(state, Z_, pairs, direction);
+        };
+        auto largest_curvature = [&]() {
+            std::vector<std::vector<double>> seeds;
+            const double gradient_norm = localization_vector_norm(state.gradient);
+            if (gradient_norm > 1.0E-14) seeds.push_back(state.gradient);
+            seeds.push_back(deterministic_localization_seed(nrot, 0.173));
+            seeds.push_back(deterministic_localization_seed(nrot, 0.719));
+            return largest_matrix_free_eigenpair(nrot, augmented_hessian_max_subspace_, eigensolver_tolerance,
+                                                 apply_hessian, std::move(seeds));
+        };
 
-    // ==> Master Loop <== //
-    
-    for (int iter = 1; iter <= maxiter_; iter++) {
-        // > Compute gradient for rotations (gradient ascent) < //
+        std::vector<double> step;
+        std::string step_label;
+        bool stability_checked = false;
+        bool stable = false;
+        double curvature = 0.0;
+        MatrixFreeEigenpair curvature_root;
 
-        // Source: https://gqcg-res.github.io/knowdes/edmiston-ruedenberg-localization.html
-        auto dKappa = pppq->transpose();
-        dKappa->subtract(pppq);
-        dKappa->scale(-4.0);
+        if (ah_iteration && state.max_gradient < gradient_convergence_) {
+            curvature_root = largest_curvature();
+            stability_checked = curvature_root.converged;
+            curvature = curvature_root.eigenvalue;
+            stable = stability_checked && curvature <= scaled_saddle_tolerance;
+            if (!stable && !curvature_root.eigenvector.empty()) {
+                // A first-order stationary point with positive curvature is a
+                // saddle/minimum of the maximization functional.  Follow its
+                // most positive mode; the exact-objective search tests its sign.
+                step = curvature_root.eigenvector;
+                step_label = "SADDLE";
+            }
+        } else if (ah_iteration) {
+            std::vector<std::vector<double>> seeds;
+            std::vector<double> reference_seed(nrot + 1, 0.0);
+            reference_seed[0] = 1.0;
+            seeds.push_back(std::move(reference_seed));
+            std::vector<double> gradient_seed(nrot + 1, 0.0);
+            for (int pq = 0; pq < nrot; ++pq) gradient_seed[pq + 1] = state.gradient[pq];
+            seeds.push_back(std::move(gradient_seed));
+            std::vector<double> curvature_seed(nrot + 1, 0.0);
+            auto tangent_seed = deterministic_localization_seed(nrot, 0.381);
+            for (int pq = 0; pq < nrot; ++pq) curvature_seed[pq + 1] = tangent_seed[pq];
+            seeds.push_back(std::move(curvature_seed));
 
-        auto Kappa_old = Kappa->clone();
-        Kappa->add(dKappa);
-
-        // DIIS extrapolation (of dKappa, past iteration 100)
-        if (iter > 100) {
-            diis.set_error_vector_size(dKappa.get());
-            diis.set_vector_size(Kappa.get());
-
-            diis.add_entry(dKappa.get(), Kappa.get());
-            diis.extrapolate(Kappa.get());
-
-            // Compute dKappa from Kappa - Kappa_old
-            dKappa = Kappa->clone();
-            dKappa->subtract(Kappa_old);
+            auto apply_augmented_hessian = [&apply_hessian, &state, nrot](const std::vector<double>& vector) {
+                std::vector<double> tangent(nrot, 0.0);
+                for (int pq = 0; pq < nrot; ++pq) tangent[pq] = vector[pq + 1];
+                auto hessian_tangent = apply_hessian(tangent);
+                std::vector<double> product(nrot + 1, 0.0);
+                product[0] = localization_vector_dot(state.gradient, tangent);
+                for (int pq = 0; pq < nrot; ++pq)
+                    product[pq + 1] = vector[0] * state.gradient[pq] + hessian_tangent[pq];
+                return product;
+            };
+            const auto ah_root = largest_matrix_free_eigenpair(
+                nrot + 1, augmented_hessian_max_subspace_, eigensolver_tolerance, apply_augmented_hessian,
+                std::move(seeds));
+            if (!ah_root.eigenvector.empty()) {
+                const double reference_component = ah_root.eigenvector[0];
+                step.resize(nrot, 0.0);
+                if (std::fabs(reference_component) > 1.0E-10) {
+                    for (int pq = 0; pq < nrot; ++pq)
+                        step[pq] = ah_root.eigenvector[pq + 1] / reference_component;
+                } else {
+                    for (int pq = 0; pq < nrot; ++pq) step[pq] = ah_root.eigenvector[pq + 1];
+                }
+                step_label = "AH";
+            }
+            if (debug_ > 1 && !ah_root.converged)
+                outfile->Printf("    ER AH reached subspace %d with residual %11.3E.\n",
+                                ah_root.subspace_dimension, ah_root.residual_norm);
+        } else {
+            // Safeguarded gradient ascent is retained for startup iterations or
+            // when AH is explicitly disabled.  The 1/4 factor reproduces the
+            // scale of the original ER orbital rotation.
+            step = state.gradient;
+            for (double& value : step) value *= 0.25;
+            step_label = "GRAD";
         }
 
-        // Directly compute unitary transformation matrix
-        auto dU = dKappa->clone();
-        dU->scale(-0.25); // negative for gradient "ascent"
-        dU->expm();
-
-        // Form new U and L matrices
-        U_ = linalg::doublet(U_, dU, false, false);
-        L_ = linalg::doublet(L_, dU, false, false);
-
-        // Recompute two electron integrals from rotated orbitals
-
-        // Recomputation of x_mo
-        x_mo = linalg::doublet(x_mo, dU, false, false);
-
-        // Recomputation of S^{I}_{p}
-#pragma omp parallel for collapse(2)
-        for (size_t I = 0; I < nthc; ++I) {
-            for (size_t p = 0; p < nmo; ++p) {
-                double val = x_mo->get(I, p);
-                SI_p->set(I, p, val * val);
-            } // end p
-        } // end I
-
-        // Recomputation of A^{J}_{p}
-        AJ_p = linalg::doublet(Z_IJ, SI_p, false, false);
-
-        // Recomputation of (pp|pq)
-#pragma omp parallel for collapse(2)
-        for (size_t p = 0; p < nmo; ++p) {
-            for (size_t q = 0; q < nmo; ++q) {
-                double val = 0.0;
-                for (size_t J = 0; J < nthc; ++J) {
-                    val += AJ_p->get(J, p) * x_mo->get(J, p) * x_mo->get(J, q);
-                } // end J
-                pppq->set(p, q, val);
-            } // end q
-        } // end p
-
-        // => Metric and Convergence Checks <= //
-        
-        metric = 0.0;
-        for (size_t p = 0; p < nmo; p++) {
-            delta_pppp->set(p, 0, pppq->get(p, p) - delta_pppp->get(p, 0));
-            metric += pppq->get(p, p);
+        double step_norm = localization_vector_norm(step);
+        if (!step.empty() && std::isfinite(step_norm) && step_norm > trust_radius) {
+            const double scale = trust_radius / step_norm;
+            for (double& value : step) value *= scale;
+            step_norm = trust_radius;
         }
 
-        // Check for convergence
-        double conv = std::fabs(metric - old_metric) / std::fabs(old_metric);
-        old_metric = metric;
+        bool accepted = false;
+        double accepted_scale = 0.0;
+        if (!step.empty() && std::isfinite(step_norm) && step_norm > std::numeric_limits<double>::epsilon()) {
+            const double directional_derivative = localization_vector_dot(state.gradient, step);
+            const double preferred_sign = directional_derivative < 0.0 ? -1.0 : 1.0;
+            const double acceptance_tolerance =
+                64.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, std::fabs(state.objective));
+            for (int trial = 0; trial < 8 && !accepted; ++trial) {
+                const double line_scale = std::ldexp(1.0, -trial);
+                for (double sign : {preferred_sign, -preferred_sign}) {
+                    auto rotation = localization_rotation(pairs, step, sign * line_scale, nmo);
+                    auto trial_x = linalg::doublet(state.x, rotation, false, false);
+                    auto trial_state = build_er_thc_state(trial_x, Z_, pairs);
+                    if (trial_state.objective > state.objective + acceptance_tolerance) {
+                        U_ = linalg::doublet(U_, rotation, false, false);
+                        state = std::move(trial_state);
+                        accepted = true;
+                        accepted_scale = line_scale;
+                        break;
+                    }
+                }
+            }
+        }
 
-        // => Iteration Print <= //
-        
-        outfile->Printf("    @ER   %4d %24.16E %14.6E\n", iter, metric, conv);
+        if (accepted) {
+            if (accepted_scale == 1.0)
+                trust_radius = std::min(0.5, 1.5 * trust_radius);
+            else
+                trust_radius = std::max(1.0E-5, accepted_scale * trust_radius);
+        } else if (!stable) {
+            trust_radius = std::max(1.0E-5, 0.5 * trust_radius);
+        }
 
-        // => Convergence Check <= //
+        const double relative_change =
+            std::fabs(state.objective - previous_objective) / std::max(1.0, std::fabs(previous_objective));
+        const bool first_order_converged = state.max_gradient < gradient_convergence_;
+        const bool objective_converged = relative_change < convergence_;
 
-        if (conv < convergence_) {
+        // A step can land directly in the convergence region.  Perform the
+        // matrix-free stability analysis there instead of waiting for another
+        // outer iteration.
+        if (ah_iteration && first_order_converged && objective_converged && !stability_checked) {
+            curvature_root = largest_curvature();
+            stability_checked = curvature_root.converged;
+            curvature = curvature_root.eigenvalue;
+            stable = stability_checked && curvature <= saddle_tolerance_ * std::max(1.0, std::fabs(state.objective));
+        }
+
+        if (stability_checked) {
+            outfile->Printf("    @ER   %4d %24.16E %14.6E %14.6E %14.6E%s%s\n", iter, state.objective,
+                            relative_change, state.max_gradient, curvature, accepted ? "  " : "",
+                            accepted ? step_label.c_str() : "");
+        } else {
+            outfile->Printf("    @ER   %4d %24.16E %14.6E %14.6E %14s%s%s\n", iter, state.objective,
+                            relative_change, state.max_gradient, "-", accepted ? "  " : "",
+                            accepted ? step_label.c_str() : "");
+        }
+
+        if (first_order_converged && objective_converged &&
+            (!stability_will_be_checked || (stability_checked && stable))) {
             converged_ = true;
+            hessian_stable_at_convergence = stability_checked && stable;
             break;
         }
-    } // end iter
-
-    outfile->Printf("\n");
-    if (converged_) {
-        outfile->Printf("    ER   Localizer converged.\n\n");
-    } else {
-        outfile->Printf("    ER   Localizer failed.\n\n");
     }
+
+    L_ = linalg::doublet(C_, U_, false, false);
+    outfile->Printf("\n");
+    if (converged_ && hessian_stable_at_convergence)
+        outfile->Printf("    ER Localizer converged to a Hessian-stable maximum.\n\n");
+    else if (converged_)
+        outfile->Printf("    ER Localizer converged (Hessian stability was not tested).\n\n");
+    else
+        outfile->Printf("    ER Localizer failed to reach a Hessian-stable maximum.\n\n");
 }
 
 }  // Namespace psi

@@ -41,6 +41,7 @@
 #include "psi4/libmints/molecule.h"
 #include "psi4/libmints/orthog.h"
 #include "psi4/libmints/oeprop.h"
+#include "psi4/libmints/thc_eri.h"
 #include "psi4/libmints/twobody.h"
 #include "psi4/libmints/vector.h"
 #include "psi4/libpsi4util/PsiOutStream.h"
@@ -493,6 +494,7 @@ void DLPNO::setup_orbitals() {
         localizer.set_use_augmented_hessian(options_.get_bool("LOCAL_USE_AUGMENTED_HESSIAN"));
         localizer.set_augmented_hessian_start(options_.get_int("LOCAL_AH_START"));
         localizer.set_augmented_hessian_max_rotations(options_.get_int("LOCAL_AH_MAX_ROTATIONS"));
+        localizer.set_augmented_hessian_max_subspace(options_.get_int("LOCAL_AH_MAX_SUBSPACE"));
         localizer.set_augmented_hessian_trust_radius(options_.get_double("LOCAL_AH_TRUST_RADIUS"));
         localizer.set_saddle_tolerance(options_.get_double("LOCAL_SADDLE_TOLERANCE"));
     };
@@ -525,9 +527,24 @@ void DLPNO::setup_orbitals() {
         localizer.localize();
         C_lmo_ = localizer.L();
     } else if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "ER") {
-        ERLocalizer localizer = ERLocalizer(basisset_, get_basisset("DF_BASIS_THC"), C_localizer_input);
-        localizer.set_convergence(options_.get_double("LOCAL_CONVERGENCE"));
-        localizer.set_maxiter(options_.get_int("LOCAL_MAXITER"));
+        // The LS-THC AO collocation and coupling factors are invariant under
+        // occupied-orbital rotations.  Their construction (grid pruning and
+        // AO integral fitting) is substantially more expensive than the
+        // subsequent ER optimization, so retain them across all Brueckner
+        // macroiterations and only transform x^I_mu into the current LMO frame.
+        if (!er_thc_x_ao_ || !er_thc_Z_) {
+            timer_on("ER AO THC Factorization");
+            auto thc_computer = std::make_shared<LS_THC_Computer>(
+                basisset_->molecule(), basisset_, get_basisset("DF_BASIS_THC"), options_);
+            thc_computer->compute_thc_factorization();
+            er_thc_x_ao_ = thc_computer->get_x1();
+            er_thc_Z_ = thc_computer->get_Z();
+            timer_off("ER AO THC Factorization");
+        } else if (print_ > 0) {
+            outfile->Printf("    Reusing AO THC factors for ER localization.\n\n");
+        }
+        ERLocalizer localizer(basisset_, C_localizer_input, er_thc_x_ao_, er_thc_Z_);
+        configure_matrix_localizer(localizer);
         localizer.localize();
         C_lmo_ = localizer.L();
     } else {
