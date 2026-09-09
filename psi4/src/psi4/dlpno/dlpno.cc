@@ -460,8 +460,8 @@ void DLPNO::setup_orbitals() {
     //
     //   M = C_occ(k)^T S L(k-1) = X Sigma Y^T,   U_guess = X Y^T,
     //
-    // and start the localizer from C_occ(k) U_guess.  All three localizers
-    // below initialize their internal U to the identity, making this exactly
+    // and start the localizer from C_occ(k) U_guess.  All localizers below
+    // initialize their internal U to the identity, making this exactly
     // equivalent to a warm start in the transported occupied frame.
     brueckner_localization_frame_discontinuous_ = false;
     auto C_localizer_input = C_lmo_->clone();
@@ -524,6 +524,29 @@ void DLPNO::setup_orbitals() {
         auto populations = mbis.compute_mbis_orbital_populations(C_localizer_input, print_ > 1);
         PMLocalizer localizer = PMLocalizer(basisset_, C_localizer_input, populations, "MBIS");
         configure_matrix_localizer(localizer);
+        localizer.localize();
+        C_lmo_ = localizer.L();
+    } else if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "IBO") {
+        // Only active occupied orbitals are localized in DLPNO, but Knizia's
+        // IAO projector must represent the complete determinant.  Append the
+        // unchanged frozen core to the current (possibly Brueckner-rotated)
+        // active occupied space without admitting core/valence rotations to
+        // the fourth-power IBO optimization.
+        auto C_core = reference_wavefunction_->Ca_subset("AO", "FROZEN_OCC");
+        const int nfrozen = C_core->ncol();
+        auto C_occupied_reference = std::make_shared<Matrix>(
+            "Complete occupied reference for IAO construction", nbf, nfrozen + C_lmo_->ncol());
+        for (int mu = 0; mu < nbf; ++mu) {
+            for (int i = 0; i < nfrozen; ++i) (*C_occupied_reference)(mu, i) = (*C_core)(mu, i);
+            for (int i = 0; i < C_lmo_->ncol(); ++i)
+                (*C_occupied_reference)(mu, nfrozen + i) = (*C_lmo_)(mu, i);
+        }
+
+        IBOLocalizer localizer(basisset_, get_basisset("MINAO"), C_localizer_input, C_occupied_reference);
+        configure_matrix_localizer(localizer);
+        localizer.set_use_ghosts(options_.get_bool("LOCAL_USE_GHOSTS"));
+        localizer.set_condition(options_.get_double("LOCAL_IBO_CONDITION"));
+        localizer.set_power(options_.get_int("LOCAL_IBO_POWER"));
         localizer.localize();
         C_lmo_ = localizer.L();
     } else if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "ER") {

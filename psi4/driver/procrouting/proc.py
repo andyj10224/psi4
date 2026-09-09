@@ -4515,6 +4515,26 @@ def run_dfep2(name, **kwargs):
     return dfep2_wfn
 
 
+def _prepare_dlpno_localization_basis(ref_wfn):
+    """Attach any auxiliary basis required by the selected LMO localizer."""
+    localization = core.get_option("DLPNO", "DLPNO_LOCAL_ORBITALS")
+
+    if localization == "ER":
+        # AO LS-THC factors are built once in C++ and reused across Brueckner
+        # macroiterations, but their fitting basis must be attached up front.
+        auxiliary = core.BasisSet.build(ref_wfn.molecule(), "DF_BASIS_THC",
+                                        core.get_global_option("DF_BASIS_THC"),
+                                        "JKFIT", core.get_global_option("BASIS"))
+        ref_wfn.set_basisset("DF_BASIS_THC", auxiliary)
+    elif localization == "IBO":
+        # IAOs depend only on the AO/minimal bases and the current occupied
+        # projector. Construct the minimal basis once; C++ reuses it while
+        # rebuilding the occupied projector at each Brueckner macroiteration.
+        minao = core.BasisSet.build(ref_wfn.molecule(), "BASIS",
+                                    core.get_option("DLPNO", "MINAO_BASIS"))
+        ref_wfn.set_basisset("MINAO", minao)
+
+
 def run_dlpnomp2(name, **kwargs):
     """Function encoding sequence of PSI module calls for
     a DLPNO-MP2 calculation.
@@ -4567,13 +4587,7 @@ def run_dlpnomp2(name, **kwargs):
                                     "RIFIT", core.get_global_option('BASIS'))
     ref_wfn.set_basisset("DF_BASIS_MP2", aux_basis)
 
-    # If Edmiston-Ruedenberg (ER) Orbitals are selected for LMOs, form
-    # DF orbitals for THC-fitting of ERIs
-    if core.get_option("DLPNO", "DLPNO_LOCAL_ORBITALS") == "ER":
-        aux_basis_thc = core.BasisSet.build(ref_wfn.molecule(), "DF_BASIS_THC",
-                                        core.get_global_option("DF_BASIS_THC"),
-                                        "JKFIT", core.get_global_option('BASIS'))
-        ref_wfn.set_basisset("DF_BASIS_THC", aux_basis_thc)
+    _prepare_dlpno_localization_basis(ref_wfn)
 
     core.set_local_option("DLPNO", "DLPNO_ALGORITHM", "MP2")
 
@@ -4652,13 +4666,7 @@ def run_dlpnoccsd(name, **kwargs):
                                     "RIFIT", core.get_global_option('BASIS'))
     ref_wfn.set_basisset("DF_BASIS_CC", aux_basis)
 
-    # If Edmiston-Ruedenberg (ER) Orbitals are selected for LMOs, form
-    # DF orbitals for THC-fitting of ERIs
-    if core.get_option("DLPNO", "DLPNO_LOCAL_ORBITALS") == "ER":
-        aux_basis_thc = core.BasisSet.build(ref_wfn.molecule(), "DF_BASIS_THC",
-                                        core.get_global_option("DF_BASIS_THC"),
-                                        "JKFIT", core.get_global_option('BASIS'))
-        ref_wfn.set_basisset("DF_BASIS_THC", aux_basis_thc)
+    _prepare_dlpno_localization_basis(ref_wfn)
 
     core.set_local_option("DLPNO", "DLPNO_ALGORITHM", "CCSD")
     core.set_local_option("DLPNO", "DLPNO_BRUECKNER_ORBS", do_brueckner)
@@ -4749,13 +4757,7 @@ def run_dlpnoccsd_t(name, **kwargs):
                                     "RIFIT", core.get_global_option('BASIS'))
     ref_wfn.set_basisset("DF_BASIS_CC", aux_basis)
 
-    # If Edmiston-Ruedenberg (ER) Orbitals are selected for LMOs, form
-    # DF orbitals for THC-fitting of ERIs
-    if core.get_option("DLPNO", "DLPNO_LOCAL_ORBITALS") == "ER":
-        aux_basis_thc = core.BasisSet.build(ref_wfn.molecule(), "DF_BASIS_THC",
-                                        core.get_global_option("DF_BASIS_THC"),
-                                        "JKFIT", core.get_global_option('BASIS'))
-        ref_wfn.set_basisset("DF_BASIS_THC", aux_basis_thc)
+    _prepare_dlpno_localization_basis(ref_wfn)
 
     core.set_local_option("DLPNO", "DLPNO_ALGORITHM", "CCSD(T)")
     core.set_local_option("DLPNO", "T0_APPROXIMATION", do_t0)

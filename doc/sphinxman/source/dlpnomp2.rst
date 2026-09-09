@@ -101,7 +101,16 @@ to the current determinant and integrates atom-resolved stockholder population
 matrices on the MBIS grid.  It is consequently more expensive than Mulliken PM,
 is currently restricted to all-electron calculations, and is experimental.
 
-Boys and generalized PM localization use exact Jacobi pair rotations followed
+Intrinsic bond orbitals are available with ``DLPNO_LOCAL_ORBITALS IBO``.  The
+IAO population operators are constructed with ``MINAO_BASIS`` and optimized
+with the conventional fourth-power generalized Pipek--Mezey objective.  For a
+frozen-core calculation, the frozen orbitals contribute to the complete
+occupied projector used to construct the IAOs, while only active occupied
+orbitals participate in the localization.  During Brueckner optimization the
+minimal basis is retained and the IAO projector is updated from the current
+occupied determinant at every macroiteration.
+
+Boys, generalized PM, and IBO localization use Jacobi pair rotations followed
 by trust-region augmented-Hessian steps.  Convergence requires both a small
 orbital gradient and, when the dense Hessian is available, absence of positive
 curvature in the maximization problem.  This stability check prevents a small

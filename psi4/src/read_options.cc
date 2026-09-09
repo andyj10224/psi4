@@ -2692,7 +2692,15 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         /*- Residual convergence criteria for local MP2/CCSD/CCSD(T) iterations -*/
         options.add_double("R_CONVERGENCE", 1e-6);
         /*- Orbital localizer -*/
-        options.add_str("DLPNO_LOCAL_ORBITALS", "BOYS", "BOYS PIPEK_MEZEY PIPEK_MEZEY_MBIS ER");
+        options.add_str("DLPNO_LOCAL_ORBITALS", "BOYS", "BOYS PIPEK_MEZEY PIPEK_MEZEY_MBIS IBO ER");
+        /*- Use minimal-basis functions on ghost atoms in the IAO/IBO population metric !expert -*/
+        options.add_bool("LOCAL_USE_GHOSTS", false);
+        /*- Eigenvalue cutoff for inverse square roots in IAO construction !expert -*/
+        options.add_double("LOCAL_IBO_CONDITION", 1.0E-7);
+        /*- Generalized Pipek--Mezey power used for IBO localization -*/
+        options.add_int("LOCAL_IBO_POWER", 4);
+        /*- Minimal basis used to construct intrinsic atomic orbitals -*/
+        options.add_str("MINAO_BASIS", "CC-PVTZ-MINAO");
         /*- Maximum number of iterations to determine the MP2/CCSD/CCSD(T) amplitudes. -*/
         options.add_int("DLPNO_MAXITER", 50);
         /*- Perform automatic memory checks to toggle between core and disk? 

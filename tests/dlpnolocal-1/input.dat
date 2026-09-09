@@ -75,9 +75,9 @@ compare_values(1.0, abs(U_ibo_ordered[0, 0]), 10,
 clean()
 
 set {
-    dlpno_local_orbitals pipek_mezey_mbis
+    dlpno_local_orbitals ibo
     # Remove the domain and PNO screens so this compact test primarily probes
-    # construction and optimization of the MBIS population operators.
+    # construction and optimization of the localization population operators.
     t_cut_pno 0.0
     t_cut_do 0.0
     t_cut_do_pre 0.0
@@ -93,6 +93,15 @@ set {
     dlpno_ao_ints_tol 1.0e-14
     dlpno_toggle_memory false
 }
+
+e_ibo, wfn_ibo = energy("dlpno-mp2", return_wfn=True)
+compare_values(e_ibo, wfn_ibo.variable("MP2 TOTAL ENERGY"), 10,
+               "IBO DLPNO-MP2 total energy")                                                #TEST
+compare_values(e_ibo, variable("CURRENT ENERGY"), 10,
+               "IBO DLPNO-MP2 current energy")                                              #TEST
+
+clean()
+set dlpno_local_orbitals pipek_mezey_mbis
 
 e_mbis, wfn_mbis = energy("dlpno-mp2", return_wfn=True)
 compare_values(e_mbis, wfn_mbis.variable("MP2 TOTAL ENERGY"), 10,
