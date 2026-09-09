@@ -77,6 +77,26 @@ void Localizer::common_init() {
     saddle_tolerance_ = 1.0E-8;
     converged_ = false;
 }
+void Localizer::configure(Options& options) {
+    set_print(options.get_int("PRINT"));
+    set_debug(options.get_int("DEBUG"));
+    set_bench(options.get_int("BENCH"));
+    set_convergence(options.get_double("LOCAL_CONVERGENCE"));
+    set_maxiter(options.get_int("LOCAL_MAXITER"));
+    if (options.exists("LOCAL_GRADIENT_CONVERGENCE"))
+        set_gradient_convergence(options.get_double("LOCAL_GRADIENT_CONVERGENCE"));
+    if (options.exists("LOCAL_USE_AUGMENTED_HESSIAN"))
+        set_use_augmented_hessian(options.get_bool("LOCAL_USE_AUGMENTED_HESSIAN"));
+    if (options.exists("LOCAL_AH_START")) set_augmented_hessian_start(options.get_int("LOCAL_AH_START"));
+    if (options.exists("LOCAL_AH_MAX_ROTATIONS"))
+        set_augmented_hessian_max_rotations(options.get_int("LOCAL_AH_MAX_ROTATIONS"));
+    if (options.exists("LOCAL_AH_MAX_SUBSPACE"))
+        set_augmented_hessian_max_subspace(options.get_int("LOCAL_AH_MAX_SUBSPACE"));
+    if (options.exists("LOCAL_AH_TRUST_RADIUS"))
+        set_augmented_hessian_trust_radius(options.get_double("LOCAL_AH_TRUST_RADIUS"));
+    if (options.exists("LOCAL_SADDLE_TOLERANCE"))
+        set_saddle_tolerance(options.get_double("LOCAL_SADDLE_TOLERANCE"));
+}
 std::shared_ptr<Localizer> Localizer::build(const std::string& type, std::shared_ptr<BasisSet> primary,
                                             std::shared_ptr<Matrix> C, Options& options) {
     std::shared_ptr<Localizer> local;
@@ -85,29 +105,13 @@ std::shared_ptr<Localizer> Localizer::build(const std::string& type, std::shared
         local = std::make_shared<BoysLocalizer>(primary, C);
     } else if (type == "PIPEK_MEZEY") {
         local = std::make_shared<PMLocalizer>(primary, C);
+    } else if (type == "IBO") {
+        throw PSIEXCEPTION("Localizer: IBO localization requires a minimal basis; use IBOLocalizer::build");
     } else {
         throw PSIEXCEPTION("Localizer: Unrecognized localization algorithm");
     }
 
-    local->set_print(options.get_int("PRINT"));
-    local->set_debug(options.get_int("DEBUG"));
-    local->set_bench(options.get_int("BENCH"));
-    local->set_convergence(options.get_double("LOCAL_CONVERGENCE"));
-    local->set_maxiter(options.get_int("LOCAL_MAXITER"));
-    if (options.exists("LOCAL_GRADIENT_CONVERGENCE"))
-        local->set_gradient_convergence(options.get_double("LOCAL_GRADIENT_CONVERGENCE"));
-    if (options.exists("LOCAL_USE_AUGMENTED_HESSIAN"))
-        local->set_use_augmented_hessian(options.get_bool("LOCAL_USE_AUGMENTED_HESSIAN"));
-    if (options.exists("LOCAL_AH_START"))
-        local->set_augmented_hessian_start(options.get_int("LOCAL_AH_START"));
-    if (options.exists("LOCAL_AH_MAX_ROTATIONS"))
-        local->set_augmented_hessian_max_rotations(options.get_int("LOCAL_AH_MAX_ROTATIONS"));
-    if (options.exists("LOCAL_AH_MAX_SUBSPACE"))
-        local->set_augmented_hessian_max_subspace(options.get_int("LOCAL_AH_MAX_SUBSPACE"));
-    if (options.exists("LOCAL_AH_TRUST_RADIUS"))
-        local->set_augmented_hessian_trust_radius(options.get_double("LOCAL_AH_TRUST_RADIUS"));
-    if (options.exists("LOCAL_SADDLE_TOLERANCE"))
-        local->set_saddle_tolerance(options.get_double("LOCAL_SADDLE_TOLERANCE"));
+    local->configure(options);
 
     return local;
 }
@@ -119,33 +123,45 @@ std::shared_ptr<Localizer> Localizer::build(std::shared_ptr<BasisSet> primary, s
                                             Options& options) {
     return Localizer::build(options.get_str("LOCAL_TYPE"), primary, C, options);
 }
-std::shared_ptr<Matrix> Localizer::fock_update(std::shared_ptr<Matrix> Fc) {
+std::shared_ptr<Matrix> Localizer::fock_update(std::shared_ptr<Matrix> Fc, const std::vector<int>& ranges) {
     if (!L_ || !U_) {
-        throw PSIEXCEPTION("Localizer: run compute() first");
+        throw PSIEXCEPTION("Localizer: run localize() before updating the Fock matrix");
     }
 
     int nso = L_->rowspi()[0];
     int nmo = L_->colspi()[0];
 
+    if (!Fc || Fc->nirrep() != 1 || Fc->nrow() != nmo || Fc->ncol() != nmo)
+        throw PSIEXCEPTION("Localizer: Fock matrix does not match the localized orbital space");
     if (nmo < 1) return Fc;
+
+    std::vector<int> boundaries = ranges;
+    if (boundaries.empty()) boundaries = {0, nmo};
+    if (boundaries.front() != 0 || boundaries.back() != nmo)
+        throw PSIEXCEPTION("Localizer: orbital ranges must begin at zero and end at nmo");
+    for (size_t block = 1; block < boundaries.size(); ++block) {
+        if (boundaries[block] <= boundaries[block - 1])
+            throw PSIEXCEPTION("Localizer: orbital ranges must be strictly increasing");
+    }
 
     std::shared_ptr<Matrix> Fl = linalg::triplet(U_, Fc, U_, true, false, false);
     double** Fp = Fl->pointer();
     double** Lp = L_->pointer();
     double** Up = U_->pointer();
 
-    std::vector<std::pair<double, int> > order;
-    for (int i = 0; i < nmo; i++) {
-        order.push_back(std::pair<double, int>(Fp[i][i], i));
+    std::vector<int> order(nmo);
+    std::iota(order.begin(), order.end(), 0);
+    for (size_t block = 0; block + 1 < boundaries.size(); ++block) {
+        std::sort(order.begin() + boundaries[block], order.begin() + boundaries[block + 1],
+                  [Fp](int i, int j) { return Fp[i][i] < Fp[j][j]; });
     }
-    std::sort(order.begin(), order.end());
 
     std::shared_ptr<Matrix> Fl2(Fl->clone());
     Fl2->copy(Fl);
     double** F2p = Fl2->pointer();
     for (int i = 0; i < nmo; i++) {
         for (int j = 0; j < nmo; j++) {
-            Fp[i][j] = F2p[order[i].second][order[j].second];
+            Fp[i][j] = F2p[order[i]][order[j]];
         }
     }
 
@@ -156,8 +172,8 @@ std::shared_ptr<Matrix> Localizer::fock_update(std::shared_ptr<Matrix> Fc) {
     U2->copy(U_);
     double** U2p = U2->pointer();
     for (int i = 0; i < nmo; i++) {
-        C_DCOPY(nso, &L2p[0][order[i].second], nmo, &Lp[0][i], nmo);
-        C_DCOPY(nmo, &U2p[0][order[i].second], nmo, &Up[0][i], nmo);
+        C_DCOPY(nso, &L2p[0][order[i]], nmo, &Lp[0][i], nmo);
+        C_DCOPY(nmo, &U2p[0][order[i]], nmo, &Up[0][i], nmo);
     }
 
     return Fl;
@@ -165,14 +181,16 @@ std::shared_ptr<Matrix> Localizer::fock_update(std::shared_ptr<Matrix> Fc) {
 
 namespace {
 
-// Boys and generalized Pipek--Mezey localization can both be written as
+// Boys, generalized Pipek--Mezey, and IBO localization can be written as
 //
-//     max_U sum_K sum_p [(U^T A^K U)_pp]^2.
+//     max_U sum_K sum_p [(U^T A^K U)_pp]^zeta,
 //
 // For generalized PM, A^K is an atomic population operator; see
 // Lehtola and Jonsson, JCTC 2014, doi:10.1021/ct401016x.  Keeping the
 // optimizer independent of the population partition lets Mulliken and
 // real-space stockholder analyses share the same derivatives and safeguards.
+// The conventional IBO functional uses IAO population operators and zeta = 4;
+// see Knizia, JCTC 2013, doi:10.1021/ct400687b.
 
 struct LocalizationPair {
     int i;
@@ -185,34 +203,74 @@ struct LocalizationDiagnostics {
     double max_pair_gain = 0.0;
 };
 
-double localization_objective(const std::vector<std::shared_ptr<Matrix>>& operators) {
+double localization_objective(const std::vector<std::shared_ptr<Matrix>>& operators, int power) {
     if (operators.empty()) return 0.0;
     const int nmo = operators.front()->nrow();
     double value = 0.0;
     for (const auto& op : operators) {
         double** Ap = op->pointer();
-        value += C_DDOT(nmo, Ap[0], nmo + 1, Ap[0], nmo + 1);
+        if (power == 2) {
+            value += C_DDOT(nmo, Ap[0], nmo + 1, Ap[0], nmo + 1);
+        } else {
+            for (int i = 0; i < nmo; ++i) {
+                const double diagonal2 = Ap[i][i] * Ap[i][i];
+                value += diagonal2 * diagonal2;
+            }
+        }
     }
     return value;
 }
 
-std::vector<LocalizationPair> localization_pairs(int nmo) {
+std::vector<int> localization_ranges(int nmo, const std::vector<int>& requested_ranges) {
+    std::vector<int> ranges = requested_ranges;
+    if (ranges.empty()) ranges = {0, nmo};
+    if (ranges.front() != 0 || ranges.back() != nmo)
+        throw PSIEXCEPTION("Localizer: orbital ranges must begin at zero and end at nmo");
+    for (size_t block = 1; block < ranges.size(); ++block) {
+        if (ranges[block] <= ranges[block - 1])
+            throw PSIEXCEPTION("Localizer: orbital ranges must be strictly increasing");
+    }
+    return ranges;
+}
+
+std::vector<LocalizationPair> localization_pairs(int nmo, const std::vector<int>& requested_ranges = {}) {
+    const auto ranges = localization_ranges(nmo, requested_ranges);
     std::vector<LocalizationPair> pairs;
     pairs.reserve(nmo * (nmo - 1) / 2);
-    for (int i = 0; i < nmo - 1; ++i) {
-        for (int j = i + 1; j < nmo; ++j) pairs.push_back({i, j});
+    for (size_t block = 0; block + 1 < ranges.size(); ++block) {
+        for (int i = ranges[block]; i < ranges[block + 1] - 1; ++i) {
+            for (int j = i + 1; j < ranges[block + 1]; ++j) pairs.push_back({i, j});
+        }
     }
     return pairs;
 }
 
-LocalizationDiagnostics localization_diagnostics(const std::vector<std::shared_ptr<Matrix>>& operators,
-                                                   const std::vector<LocalizationPair>& pairs) {
-    LocalizationDiagnostics result;
-    result.gradient.assign(pairs.size(), 0.0);
+double localization_pair_objective(const std::vector<std::shared_ptr<Matrix>>& operators, int i, int j,
+                                   double theta, int power) {
+    const double cc = std::cos(theta);
+    const double ss = std::sin(theta);
+    double value = 0.0;
+    for (const auto& op : operators) {
+        double** Ap = op->pointer();
+        const double Aii = Ap[i][i];
+        const double Ajj = Ap[j][j];
+        const double Aij = Ap[i][j];
+        const double rotated_i = cc * cc * Aii + 2.0 * cc * ss * Aij + ss * ss * Ajj;
+        const double rotated_j = ss * ss * Aii - 2.0 * cc * ss * Aij + cc * cc * Ajj;
+        value += std::pow(rotated_i, power) + std::pow(rotated_j, power);
+    }
+    return value;
+}
 
-    for (size_t pq = 0; pq < pairs.size(); ++pq) {
-        const int i = pairs[pq].i;
-        const int j = pairs[pq].j;
+struct LocalizationJacobiStep {
+    double theta = 0.0;
+    double gain = 0.0;
+};
+
+LocalizationJacobiStep localization_jacobi_step(const std::vector<std::shared_ptr<Matrix>>& operators, int i, int j,
+                                                 int power) {
+    LocalizationJacobiStep result;
+    if (power == 2) {
         double a = 0.0;
         double b = 0.0;
         double c = 0.0;
@@ -226,9 +284,69 @@ LocalizationDiagnostics localization_diagnostics(const std::vector<std::shared_p
         }
         const double Hd = a - b;
         const double Ho = 2.0 * c;
-        result.gradient[pq] = Ho;
-        result.max_gradient = std::max(result.max_gradient, std::fabs(Ho));
-        result.max_pair_gain = std::max(result.max_pair_gain, 0.25 * (std::hypot(Hd, Ho) - Hd));
+        result.theta = 0.25 * std::atan2(Ho, Hd);
+        result.gain = 0.25 * (std::hypot(Hd, Ho) - Hd);
+        return result;
+    }
+
+    // The fourth-power IBO Jacobi proposal is the one used by the historical
+    // FISAPT implementation.  The fourth-power line contains both 4 theta and
+    // 8 theta harmonics, so test both stationary branches against the actual
+    // objective and retain only the increasing one.  AH subsequently uses the
+    // exact analytic gradient and Hessian.
+    double Acoef = 0.0;
+    double Bcoef = 0.0;
+    for (const auto& op : operators) {
+        double** Ap = op->pointer();
+        const double Qii = Ap[i][i];
+        const double Qij = Ap[i][j];
+        const double Qjj = Ap[j][j];
+        const double Qii2 = Qii * Qii;
+        const double Qjj2 = Qjj * Qjj;
+        Acoef += -Qii2 * Qii2 - Qjj2 * Qjj2 + 6.0 * (Qii2 + Qjj2) * Qij * Qij +
+                 Qii2 * Qii * Qjj + Qii * Qjj2 * Qjj;
+        Bcoef += 4.0 * Qij * (Qii2 * Qii - Qjj2 * Qjj);
+    }
+    const double proposal = 0.25 * std::atan2(Bcoef, -Acoef);
+    const double old_value = localization_pair_objective(operators, i, j, 0.0, power);
+    const double quarter_pi = 0.25 * std::acos(-1.0);
+    for (double theta : {proposal, -proposal, proposal + quarter_pi, -proposal + quarter_pi}) {
+        const double gain = localization_pair_objective(operators, i, j, theta, power) - old_value;
+        if (gain > result.gain) {
+            result.theta = theta;
+            result.gain = gain;
+        }
+    }
+    return result;
+}
+
+LocalizationDiagnostics localization_diagnostics(const std::vector<std::shared_ptr<Matrix>>& operators,
+                                                   const std::vector<LocalizationPair>& pairs, int power) {
+    LocalizationDiagnostics result;
+    result.gradient.assign(pairs.size(), 0.0);
+
+    for (size_t pq = 0; pq < pairs.size(); ++pq) {
+        const int i = pairs[pq].i;
+        const int j = pairs[pq].j;
+        double gradient = 0.0;
+        if (power == 2) {
+            double cross = 0.0;
+            for (const auto& op : operators) {
+                double** Ap = op->pointer();
+                cross += (Ap[i][i] - Ap[j][j]) * (2.0 * Ap[i][j]);
+            }
+            gradient = 2.0 * cross;
+        } else {
+            for (const auto& op : operators) {
+                double** Ap = op->pointer();
+                gradient += 8.0 * Ap[i][j] *
+                            (Ap[i][i] * Ap[i][i] * Ap[i][i] - Ap[j][j] * Ap[j][j] * Ap[j][j]);
+            }
+        }
+        result.gradient[pq] = gradient;
+        result.max_gradient = std::max(result.max_gradient, std::fabs(gradient));
+        result.max_pair_gain =
+            std::max(result.max_pair_gain, localization_jacobi_step(operators, i, j, power).gain);
     }
     return result;
 }
@@ -263,7 +381,7 @@ double operator_rotation_derivative(const std::shared_ptr<Matrix>& op, int p, in
 }
 
 double gradient_derivative(const std::vector<std::shared_ptr<Matrix>>& operators,
-                           const LocalizationPair& gradient_pair, const LocalizationPair& direction) {
+                           const LocalizationPair& gradient_pair, const LocalizationPair& direction, int power) {
     const int i = gradient_pair.i;
     const int j = gradient_pair.j;
     double value = 0.0;
@@ -274,13 +392,19 @@ double gradient_derivative(const std::vector<std::shared_ptr<Matrix>>& operators
         const double dAii = operator_rotation_derivative(op, i, i, direction);
         const double dAjj = operator_rotation_derivative(op, j, j, direction);
         const double dAij = operator_rotation_derivative(op, i, j, direction);
-        value += 4.0 * ((dAii - dAjj) * Aij + (Aii - Ajj) * dAij);
+        if (power == 2) {
+            value += 4.0 * ((dAii - dAjj) * Aij + (Aii - Ajj) * dAij);
+        } else {
+            value += 8.0 *
+                     (dAij * (Aii * Aii * Aii - Ajj * Ajj * Ajj) +
+                      3.0 * Aij * (Aii * Aii * dAii - Ajj * Ajj * dAjj));
+        }
     }
     return value;
 }
 
 std::shared_ptr<Matrix> localization_hessian(const std::vector<std::shared_ptr<Matrix>>& operators,
-                                             const std::vector<LocalizationPair>& pairs) {
+                                             const std::vector<LocalizationPair>& pairs, int power) {
     const int nrot = pairs.size();
     auto H = std::make_shared<Matrix>("Localization Hessian", nrot, nrot);
     for (int pq = 0; pq < nrot; ++pq) {
@@ -288,8 +412,8 @@ std::shared_ptr<Matrix> localization_hessian(const std::vector<std::shared_ptr<M
             // The derivative of the coordinate gradient is not symmetric away from the
             // expansion point because finite rotations do not commute.  The symmetric
             // exponential-coordinate Hessian is its Jordan symmetrization.
-            const double value = 0.5 * (gradient_derivative(operators, pairs[pq], pairs[rs]) +
-                                        gradient_derivative(operators, pairs[rs], pairs[pq]));
+            const double value = 0.5 * (gradient_derivative(operators, pairs[pq], pairs[rs], power) +
+                                        gradient_derivative(operators, pairs[rs], pairs[pq], power));
             H->set(pq, rs, value);
             H->set(rs, pq, value);
         }
@@ -326,7 +450,7 @@ AugmentedHessianResult augmented_hessian_step(std::vector<std::shared_ptr<Matrix
                                               std::shared_ptr<Matrix>& U,
                                               const std::vector<LocalizationPair>& pairs,
                                               const LocalizationDiagnostics& diagnostics, double objective,
-                                              double saddle_tolerance, double& trust_radius, int debug) {
+                                              int power, double saddle_tolerance, double& trust_radius, int debug) {
     // The dense second-order model follows the robust-optimization motivation
     // of Clement, Wang, and Valeev, JCTC 2021, doi:10.1021/acs.jctc.1c00238.
     // Here an augmented-Hessian root replaces a quasi-Newton step so positive
@@ -338,7 +462,7 @@ AugmentedHessianResult augmented_hessian_step(std::vector<std::shared_ptr<Matrix
         return result;
     }
 
-    auto H = localization_hessian(operators, pairs);
+    auto H = localization_hessian(operators, pairs, power);
     auto Hwork = H->clone();
     auto Hvectors = std::make_shared<Matrix>("Localization Hessian eigenvectors", nrot, nrot);
     auto Hvalues = std::make_shared<Vector>("Localization Hessian eigenvalues", nrot);
@@ -404,7 +528,7 @@ AugmentedHessianResult augmented_hessian_step(std::vector<std::shared_ptr<Matrix
             trial_operators.reserve(operators.size());
             for (const auto& op : operators)
                 trial_operators.push_back(linalg::triplet(R, op, R, true, false, false));
-            const double trial_objective = localization_objective(trial_operators);
+            const double trial_objective = localization_objective(trial_operators, power);
             if (trial_objective > best_objective + acceptance_tolerance) {
                 best_objective = trial_objective;
                 best_operators = std::move(trial_operators);
@@ -681,11 +805,13 @@ std::vector<double> er_thc_hessian_product(const ERTHCState& state, const std::s
 }  // namespace
 
 void Localizer::localize_matrix_objective(std::vector<std::shared_ptr<Matrix>> operators,
-                                          const std::string& label) {
+                                          const std::string& label, int power, const std::vector<int>& ranges) {
     const int nmo = C_->ncol();
     if (gradient_convergence_ <= 0.0 || augmented_hessian_max_rotations_ < 0 ||
         augmented_hessian_trust_radius_ <= 0.0 || saddle_tolerance_ < 0.0)
         throw PSIEXCEPTION("Localizer: invalid convergence or augmented-Hessian control parameter");
+    if (power != 2 && power != 4)
+        throw PSIEXCEPTION("Localizer: matrix-objective power must be 2 or 4");
     L_ = C_->clone();
     U_ = std::make_shared<Matrix>("MO -> localized-MO transformation", nmo, nmo);
     U_->identity();
@@ -702,7 +828,8 @@ void Localizer::localize_matrix_objective(std::vector<std::shared_ptr<Matrix>> o
         op->hermitivitize();
     }
 
-    const auto pairs = localization_pairs(nmo);
+    const auto blocks = localization_ranges(nmo, ranges);
+    const auto pairs = localization_pairs(nmo, blocks);
     const bool dense_hessian_available = pairs.size() <= static_cast<size_t>(augmented_hessian_max_rotations_);
     const bool stability_will_be_checked = use_augmented_hessian_ && dense_hessian_available &&
                                            augmented_hessian_start_ <= maxiter_;
@@ -712,12 +839,17 @@ void Localizer::localize_matrix_objective(std::vector<std::shared_ptr<Matrix>> o
     }
 
     std::mt19937 generator(0);
-    std::vector<int> order(nmo);
-    std::iota(order.begin(), order.end(), 0);
-    double objective = localization_objective(operators);
+    std::vector<std::vector<int>> block_orders;
+    block_orders.reserve(blocks.size() - 1);
+    for (size_t block = 0; block + 1 < blocks.size(); ++block) {
+        std::vector<int> order(blocks[block + 1] - blocks[block]);
+        std::iota(order.begin(), order.end(), blocks[block]);
+        block_orders.push_back(std::move(order));
+    }
+    double objective = localization_objective(operators, power);
     double old_objective = objective;
     double trust_radius = augmented_hessian_trust_radius_;
-    auto diagnostics = localization_diagnostics(operators, pairs);
+    auto diagnostics = localization_diagnostics(operators, pairs, power);
     bool hessian_stable_at_convergence = false;
 
     outfile->Printf("    Iteration %24s %14s %14s %14s\n", "Metric", "Rel. change", "Max |grad|", "Max curvature");
@@ -725,39 +857,31 @@ void Localizer::localize_matrix_objective(std::vector<std::shared_ptr<Matrix>> o
                     diagnostics.max_gradient, "-");
 
     for (int iter = 1; iter <= maxiter_; ++iter) {
-        std::shuffle(order.begin(), order.end(), generator);
-
-        // Exact two-orbital maximizations retain the inexpensive and very robust
-        // Jacobi behavior of the original Boys/PM implementations.
-        for (int p = 0; p < nmo - 1; ++p) {
-            for (int q = p + 1; q < nmo; ++q) {
-                const int i = order[p];
-                const int j = order[q];
-                double a = 0.0;
-                double b = 0.0;
-                double c = 0.0;
-                for (const auto& op : operators) {
-                    double** Ap = op->pointer();
-                    const double Ad = Ap[i][i] - Ap[j][j];
-                    const double Ao = 2.0 * Ap[i][j];
-                    a += Ad * Ad;
-                    b += Ao * Ao;
-                    c += Ad * Ao;
+        // Two-orbital maximizations retain the inexpensive and very robust
+        // Jacobi behavior of the original Boys/PM/IBO implementations.  Each
+        // requested range is an independent variational block, so (for
+        // example) frozen-core and valence orbitals are never mixed.
+        for (auto& order : block_orders) {
+            std::shuffle(order.begin(), order.end(), generator);
+            for (size_t p = 0; p + 1 < order.size(); ++p) {
+                for (size_t q = p + 1; q < order.size(); ++q) {
+                    const int i = order[p];
+                    const int j = order[q];
+                    const auto step = localization_jacobi_step(operators, i, j, power);
+                    if (step.gain <=
+                        16.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, objective))
+                        continue;
+                    if (debug_ > 3)
+                        outfile->Printf(
+                            "    @Rotation i = %4d, j = %4d, theta = %24.16E, gain = %11.3E\n", i, j,
+                            step.theta, step.gain);
+                    apply_jacobi_rotation(operators, U_, i, j, step.theta);
                 }
-                const double Hd = a - b;
-                const double Ho = 2.0 * c;
-                const double gain = 0.25 * (std::hypot(Hd, Ho) - Hd);
-                if (gain <= 16.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, objective)) continue;
-                const double theta = 0.25 * std::atan2(Ho, Hd);
-                if (debug_ > 3)
-                    outfile->Printf("    @Rotation i = %4d, j = %4d, theta = %24.16E, gain = %11.3E\n", i, j,
-                                    theta, gain);
-                apply_jacobi_rotation(operators, U_, i, j, theta);
             }
         }
 
-        objective = localization_objective(operators);
-        diagnostics = localization_diagnostics(operators, pairs);
+        objective = localization_objective(operators, power);
+        diagnostics = localization_diagnostics(operators, pairs, power);
         double relative_change = std::fabs(objective - old_objective) / std::max(1.0, std::fabs(old_objective));
 
         bool stability_checked = false;
@@ -768,14 +892,14 @@ void Localizer::localize_matrix_objective(std::vector<std::shared_ptr<Matrix>> o
                                   iter >= std::max(1, augmented_hessian_start_);
         if (ah_iteration) {
             stability_checked = true;
-            const auto ah = augmented_hessian_step(operators, U_, pairs, diagnostics, objective, saddle_tolerance_,
-                                                   trust_radius, debug_);
+            const auto ah = augmented_hessian_step(operators, U_, pairs, diagnostics, objective, power,
+                                                   saddle_tolerance_, trust_radius, debug_);
             stable = ah.stable;
             ah_accepted = ah.accepted;
             largest_curvature = ah.largest_curvature;
             if (ah_accepted) {
-                objective = localization_objective(operators);
-                diagnostics = localization_diagnostics(operators, pairs);
+                objective = localization_objective(operators, power);
+                diagnostics = localization_diagnostics(operators, pairs, power);
                 relative_change =
                     std::fabs(objective - old_objective) / std::max(1.0, std::fabs(old_objective));
             }
@@ -867,10 +991,12 @@ PMLocalizer::PMLocalizer(std::shared_ptr<BasisSet> primary, std::shared_ptr<Matr
 PMLocalizer::~PMLocalizer() {}
 void PMLocalizer::common_init() {
     if (population_method_.empty()) population_method_ = "Mulliken";
+    power_ = 2;
 }
 void PMLocalizer::print_header() const {
     outfile->Printf("  ==> Generalized Pipek-Mezey Localizer <==\n\n");
     outfile->Printf("    Population partition  = %11s\n", population_method_.c_str());
+    outfile->Printf("    Objective power       = %11d\n", power_);
     outfile->Printf("    Objective convergence = %11.3E\n", convergence_);
     outfile->Printf("    Gradient convergence  = %11.3E\n", gradient_convergence_);
     outfile->Printf("    Maxiter               = %11d\n", maxiter_);
@@ -913,7 +1039,246 @@ void PMLocalizer::localize() {
         }
     }
 
-    localize_matrix_objective(population_matrices_, "PM");
+    localize_matrix_objective(population_matrices_, "PM", power_);
+}
+
+IBOLocalizer::IBOLocalizer(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> minao,
+                           std::shared_ptr<Matrix> C)
+    : IBOLocalizer(std::move(primary), std::move(minao), C, C) {}
+
+IBOLocalizer::IBOLocalizer(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> minao,
+                           std::shared_ptr<Matrix> C, std::shared_ptr<Matrix> C_reference)
+    : PMLocalizer(std::move(primary), std::move(C)),
+      minao_(std::move(minao)),
+      C_reference_(std::move(C_reference)) {
+    if (!minao_) throw PSIEXCEPTION("IBOLocalizer: minimal basis is null");
+    if (!C_reference_ || C_reference_->nirrep() != 1 || C_reference_->nrow() != primary_->nbf())
+        throw PSIEXCEPTION("IBOLocalizer: occupied reference orbitals do not match the primary basis");
+    if (minao_->molecule()->natom() != primary_->molecule()->natom())
+        throw PSIEXCEPTION("IBOLocalizer: primary and minimal bases belong to different molecules");
+    common_init();
+}
+
+IBOLocalizer::~IBOLocalizer() = default;
+
+void IBOLocalizer::common_init() {
+    population_method_ = "IAO";
+    power_ = 4;
+    use_ghosts_ = false;
+    condition_ = 1.0E-7;
+}
+
+std::shared_ptr<IBOLocalizer> IBOLocalizer::build(std::shared_ptr<BasisSet> primary,
+                                                 std::shared_ptr<BasisSet> minao,
+                                                 std::shared_ptr<Matrix> C) {
+    return IBOLocalizer::build(std::move(primary), std::move(minao), C, C, Process::environment.options);
+}
+
+std::shared_ptr<IBOLocalizer> IBOLocalizer::build(std::shared_ptr<BasisSet> primary,
+                                                 std::shared_ptr<BasisSet> minao,
+                                                 std::shared_ptr<Matrix> C,
+                                                 std::shared_ptr<Matrix> C_reference) {
+    return IBOLocalizer::build(std::move(primary), std::move(minao), std::move(C), std::move(C_reference),
+                               Process::environment.options);
+}
+
+std::shared_ptr<IBOLocalizer> IBOLocalizer::build(std::shared_ptr<BasisSet> primary,
+                                                 std::shared_ptr<BasisSet> minao,
+                                                 std::shared_ptr<Matrix> C, Options& options) {
+    return IBOLocalizer::build(std::move(primary), std::move(minao), C, C, options);
+}
+
+std::shared_ptr<IBOLocalizer> IBOLocalizer::build(std::shared_ptr<BasisSet> primary,
+                                                 std::shared_ptr<BasisSet> minao,
+                                                 std::shared_ptr<Matrix> C,
+                                                 std::shared_ptr<Matrix> C_reference, Options& options) {
+    auto localizer =
+        std::make_shared<IBOLocalizer>(std::move(primary), std::move(minao), std::move(C), std::move(C_reference));
+    localizer->configure(options);
+    if (options.exists("LOCAL_USE_GHOSTS")) localizer->set_use_ghosts(options.get_bool("LOCAL_USE_GHOSTS"));
+    if (options.exists("LOCAL_IBO_CONDITION")) localizer->set_condition(options.get_double("LOCAL_IBO_CONDITION"));
+    if (options.exists("LOCAL_IBO_POWER")) localizer->set_power(options.get_int("LOCAL_IBO_POWER"));
+    return localizer;
+}
+
+void IBOLocalizer::print_header() const {
+    outfile->Printf("  ==> Intrinsic Bond Orbital Localizer <==\n\n");
+    outfile->Printf("    Population partition  = %11s\n", "IAO");
+    outfile->Printf("    Minimal basis         = %11s\n", minao_->name().c_str());
+    outfile->Printf("    Include ghost centers = %11s\n", use_ghosts_ ? "yes" : "no");
+    outfile->Printf("    Metric condition      = %11.3E\n", condition_);
+    outfile->Printf("    Objective power       = %11d\n", power_);
+    outfile->Printf("    Objective convergence = %11.3E\n", convergence_);
+    outfile->Printf("    Gradient convergence  = %11.3E\n", gradient_convergence_);
+    outfile->Printf("    Maxiter               = %11d\n", maxiter_);
+    outfile->Printf("    Augmented Hessian     = %11s\n", use_augmented_hessian_ ? "enabled" : "disabled");
+    if (use_augmented_hessian_) {
+        outfile->Printf("    AH start iteration     = %11d\n", augmented_hessian_start_);
+        outfile->Printf("    AH trust radius        = %11.3E\n", augmented_hessian_trust_radius_);
+    }
+    outfile->Printf("\n");
+}
+
+void IBOLocalizer::build_iaos() {
+    if (condition_ <= 0.0) throw PSIEXCEPTION("IBOLocalizer: metric condition must be positive");
+
+    // Build compact maps that omit ghost-center minimal functions unless the
+    // user explicitly requests them.  The original basis-function numbering
+    // is retained in true_iaos_ for extracting the rectangular overlaps.
+    const auto molecule = minao_->molecule();
+    true_atoms_.clear();
+    true_iaos_.clear();
+    iaos_to_atoms_.clear();
+    for (int atom = 0; atom < molecule->natom(); ++atom) {
+        if (!use_ghosts_ && molecule->Z(atom) == 0.0) continue;
+        const int compact_atom = true_atoms_.size();
+        const int nshell = minao_->nshell_on_center(atom);
+        if (nshell > 0) {
+            const int first_shell = minao_->shell_on_center(atom, 0);
+            for (int shell = first_shell; shell < first_shell + nshell; ++shell) {
+                const int first_function = minao_->shell(shell).function_index();
+                for (int function = 0; function < minao_->shell(shell).nfunction(); ++function) {
+                    true_iaos_.push_back(first_function + function);
+                    iaos_to_atoms_.push_back(compact_atom);
+                }
+            }
+        }
+        true_atoms_.push_back(atom);
+    }
+    if (true_iaos_.empty()) throw PSIEXCEPTION("IBOLocalizer: minimal basis contains no active atomic functions");
+
+    auto factory11 = std::make_shared<IntegralFactory>(primary_, primary_, primary_, primary_);
+    auto factory12 = std::make_shared<IntegralFactory>(primary_, minao_, primary_, minao_);
+    auto factory22 = std::make_shared<IntegralFactory>(minao_, minao_, minao_, minao_);
+    auto overlap11 = factory11->ao_overlap();
+    auto overlap12 = factory12->ao_overlap();
+    auto overlap22 = factory22->ao_overlap();
+    auto S11 = std::make_shared<Matrix>("Primary AO overlap", primary_->nbf(), primary_->nbf());
+    auto S12_full = std::make_shared<Matrix>("Primary-minimal AO overlap", primary_->nbf(), minao_->nbf());
+    auto S22_full = std::make_shared<Matrix>("Minimal AO overlap", minao_->nbf(), minao_->nbf());
+    overlap11->compute(S11);
+    overlap12->compute(S12_full);
+    overlap22->compute(S22_full);
+
+    const int nbf = primary_->nbf();
+    const int nmin = true_iaos_.size();
+    auto S12 = std::make_shared<Matrix>("Active primary-minimal AO overlap", nbf, nmin);
+    auto S22 = std::make_shared<Matrix>("Active minimal AO overlap", nmin, nmin);
+    for (int mu = 0; mu < nbf; ++mu) {
+        for (int p = 0; p < nmin; ++p) S12->set(mu, p, S12_full->get(mu, true_iaos_[p]));
+    }
+    for (int p = 0; p < nmin; ++p) {
+        for (int q = 0; q < nmin; ++q) S22->set(p, q, S22_full->get(true_iaos_[p], true_iaos_[q]));
+    }
+
+    auto S11_m12 = S11->clone();
+    auto S22_m12 = S22->clone();
+    S11_m12->power(-0.5, condition_);
+    S22_m12->power(-0.5, condition_);
+
+    // Knizia's depolarized occupied space and symmetric IAO construction:
+    // C_tilde = S11^(-1/2) T2 (T2^T T2)^(-1/2),
+    // A = A_N (A_N^T S11 A_N)^(-1/2).
+    auto T1 = linalg::doublet(S22_m12, S12, false, true);
+    auto T2 = linalg::doublet(
+        S11_m12, linalg::triplet(T1, T1, C_reference_, true, false, false), false, false);
+    auto T3 = linalg::doublet(T2, T2, true, false);
+    T3->power(-0.5, condition_);
+    auto Ctilde = linalg::triplet(S11_m12, T2, T3, false, false, false);
+
+    auto D = linalg::doublet(C_reference_, C_reference_, false, true);
+    auto Dtilde = linalg::doublet(Ctilde, Ctilde, false, true);
+    auto DSDtilde = linalg::triplet(D, S11, Dtilde, false, false, false);
+    DSDtilde->scale(2.0);
+
+    auto projector = linalg::doublet(S11_m12, S11_m12, false, false);
+    projector->add(DSDtilde);
+    projector->subtract(D);
+    projector->subtract(Dtilde);
+    auto unnormalized_iaos = linalg::doublet(projector, S12, false, false);
+    auto iao_metric = linalg::triplet(unnormalized_iaos, S11, unnormalized_iaos, true, false, false);
+    iao_metric->power(-0.5, condition_);
+
+    S_ = S11;
+    A_ = linalg::doublet(unnormalized_iaos, iao_metric, false, false);
+    A_->set_name("Intrinsic atomic orbitals");
+}
+
+void IBOLocalizer::build_population_matrices() {
+    if (!A_) build_iaos();
+    const int nmo = C_->ncol();
+    auto orbital_iao_overlap = linalg::triplet(C_, S_, A_, true, false, false);
+
+    population_matrices_.clear();
+    population_matrices_.reserve(true_atoms_.size());
+    for (size_t atom = 0; atom < true_atoms_.size(); ++atom)
+        population_matrices_.push_back(std::make_shared<Matrix>("IAO atomic population", nmo, nmo));
+
+    // q^A_ij = sum_{rho in A} <i|rho><rho|j>.  These symmetric,
+    // positive-semidefinite matrices are exactly the atom-resolved operators
+    // expected by the generalized PM interface.
+    for (size_t rho = 0; rho < iaos_to_atoms_.size(); ++rho) {
+        auto population = population_matrices_[iaos_to_atoms_[rho]];
+        for (int i = 0; i < nmo; ++i) {
+            for (int j = 0; j <= i; ++j) {
+                const double value = orbital_iao_overlap->get(i, rho) * orbital_iao_overlap->get(j, rho);
+                population->add(i, j, value);
+                if (i != j) population->add(j, i, value);
+            }
+        }
+    }
+}
+
+void IBOLocalizer::update_orbital_charges() {
+    Q_ = orbital_charges(L_ ? L_ : C_);
+}
+
+std::shared_ptr<Matrix> IBOLocalizer::orbital_charges(const std::shared_ptr<Matrix>& orbitals) const {
+    if (!A_ || !S_) throw PSIEXCEPTION("IBOLocalizer: IAOs have not been constructed");
+    auto orbital_iao_overlap = linalg::triplet(orbitals, S_, A_, true, false, false);
+    auto charges = std::make_shared<Matrix>("IBO atomic populations", true_atoms_.size(), orbitals->ncol());
+    for (size_t rho = 0; rho < iaos_to_atoms_.size(); ++rho) {
+        for (int i = 0; i < orbitals->ncol(); ++i) {
+            const double coefficient = orbital_iao_overlap->get(i, rho);
+            charges->add(iaos_to_atoms_[rho], i, coefficient * coefficient);
+        }
+    }
+    return charges;
+}
+
+std::shared_ptr<Matrix> IBOLocalizer::Q() const {
+    if (!L_) return Q_;
+    return orbital_charges(L_);
+}
+
+void IBOLocalizer::localize() {
+    print_header();
+    build_population_matrices();
+    localize_matrix_objective(population_matrices_, "IBO", power_, ranges_);
+    update_orbital_charges();
+}
+
+void IBOLocalizer::print_charges(double scale) {
+    if (!A_) build_iaos();
+    update_orbital_charges();
+    const auto molecule = minao_->molecule();
+    outfile->Printf("   > IAO Atomic Charges <\n\n");
+    outfile->Printf("    %4s %3s %11s %11s %11s\n", "N", "Z", "Nuclear", "Electronic", "Atomic");
+    double total_nuclear = 0.0;
+    double total_electronic = 0.0;
+    for (size_t atom = 0; atom < true_atoms_.size(); ++atom) {
+        double population = 0.0;
+        for (int i = 0; i < Q_->ncol(); ++i) population += Q_->get(atom, i);
+        const int full_atom = true_atoms_[atom];
+        const double nuclear = molecule->Z(full_atom);
+        const double electronic = -scale * population;
+        outfile->Printf("    %4d %3s %11.3E %11.3E %11.3E\n", full_atom + 1,
+                        molecule->symbol(full_atom).c_str(), nuclear, electronic, nuclear + electronic);
+        total_nuclear += nuclear;
+        total_electronic += electronic;
+    }
+    outfile->Printf("    %8s %11.3E %11.3E %11.3E\n\n", "Total", total_nuclear, total_electronic,
+                    total_nuclear + total_electronic);
 }
 
 ERLocalizer::ERLocalizer(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> auxiliary,

@@ -1927,11 +1927,11 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_bool("DFT_VV10_POSTSCF", false);
         /*- The convergence on the orbital localization procedure -*/
         options.add_double("LOCAL_CONVERGENCE", 1E-12);
-        /*- Maximum orbital-gradient component for Boys and generalized Pipek--Mezey localization -*/
+        /*- Maximum orbital-gradient component for Boys, generalized Pipek--Mezey, and IBO localization -*/
         options.add_double("LOCAL_GRADIENT_CONVERGENCE", 1E-8);
         /*- The maxiter on the orbital localization procedure -*/
         options.add_int("LOCAL_MAXITER", 200);
-        /*- Use trust-region augmented-Hessian steps and explicit saddle checks in Boys/PM/ER localization -*/
+        /*- Use trust-region augmented-Hessian steps and explicit saddle checks in Boys/PM/IBO/ER localization -*/
         options.add_bool("LOCAL_USE_AUGMENTED_HESSIAN", true);
         /*- First localization iteration on which the augmented Hessian is used !expert -*/
         options.add_int("LOCAL_AH_START", 3);
@@ -2671,11 +2671,11 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_str("PNO_CONVERGENCE", "NORMAL", "LOOSE NORMAL TIGHT VERY_TIGHT GLACIER");
         /*- Relative objective convergence criterion for orbital localization -*/
         options.add_double("LOCAL_CONVERGENCE", 1.0E-12);
-        /*- Maximum orbital-gradient component for Boys and generalized Pipek--Mezey localization -*/
+        /*- Maximum orbital-gradient component for Boys, generalized Pipek--Mezey, and IBO localization -*/
         options.add_double("LOCAL_GRADIENT_CONVERGENCE", 1.0E-8);
         /*- Maximum iterations in orbital localization -*/
         options.add_int("LOCAL_MAXITER", 1000);
-        /*- Use trust-region augmented-Hessian steps and explicit saddle checks in Boys/PM/ER localization -*/
+        /*- Use trust-region augmented-Hessian steps and explicit saddle checks in Boys/PM/IBO/ER localization -*/
         options.add_bool("LOCAL_USE_AUGMENTED_HESSIAN", true);
         /*- First localization iteration on which the augmented Hessian is used !expert -*/
         options.add_int("LOCAL_AH_START", 3);

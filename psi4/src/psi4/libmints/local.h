@@ -88,10 +88,14 @@ class PSI_API Localizer {
 
     /// Set defaults
     void common_init();
+    /// Apply common localization controls from an Options object
+    void configure(Options &options);
 
-    /// Maximize sum_K sum_p [(U^T A_K U)_pp]^2 for symmetric orbital-space operators A_K.
-    /// This is the common form of the Boys and generalized Pipek--Mezey objectives.
-    void localize_matrix_objective(std::vector<std::shared_ptr<Matrix>> operators, const std::string &label);
+    /// Maximize sum_K sum_p [(U^T A_K U)_pp]^power for symmetric orbital-space operators A_K.
+    /// This is the common form of the Boys, generalized Pipek--Mezey, and IBO objectives.
+    /// Optional range boundaries restrict rotations to independent orbital subspaces.
+    void localize_matrix_objective(std::vector<std::shared_ptr<Matrix>> operators, const std::string &label,
+                                   int power = 2, const std::vector<int> &ranges = {});
 
    public:
     // => Constructors <= //
@@ -119,7 +123,8 @@ class PSI_API Localizer {
 
     /// Given a Fock matrix in the original basis (usually diagonal), produce an ordered copy in the local basis, and
     /// reorder L and U
-    std::shared_ptr<Matrix> fock_update(std::shared_ptr<Matrix> F_orig);
+    std::shared_ptr<Matrix> fock_update(std::shared_ptr<Matrix> F_orig,
+                                        const std::vector<int> &ranges = {});
 
     // => Accessors <= //
 
@@ -179,6 +184,8 @@ class PSI_API PMLocalizer : public Localizer {
     std::vector<std::shared_ptr<Matrix>> population_matrices_;
     /// Label for the population partition used by the generalized PM functional
     std::string population_method_;
+    /// Even power used in the generalized PM objective (normally 2; IBO conventionally uses 4)
+    int power_;
 
    public:
     PMLocalizer(std::shared_ptr<BasisSet> primary, std::shared_ptr<Matrix> C);
@@ -192,6 +199,110 @@ class PSI_API PMLocalizer : public Localizer {
     void print_header() const override;
 
     void localize() override;
+
+    void set_power(int power) { power_ = power; }
+};
+
+/**
+ * Intrinsic-bond-orbital localizer.
+ *
+ * This libmints implementation deliberately coexists with the historical
+ * FISAPT IBOLocalizer2 while that client is migrated and regression-tested.
+ * It constructs Knizia intrinsic atomic orbitals (IAOs), converts their
+ * atom-resolved projectors into generalized Pipek--Mezey population
+ * operators, and delegates the orbital optimization (including augmented-
+ * Hessian saddle control) to Localizer::localize_matrix_objective.
+ */
+class PSI_API IBOLocalizer : public PMLocalizer {
+   protected:
+    /// Minimal basis used to construct IAOs
+    std::shared_ptr<BasisSet> minao_;
+    /// Complete occupied space defining the determinant projector. This may
+    /// include frozen occupied orbitals not present in C_.
+    std::shared_ptr<Matrix> C_reference_;
+    /// Include basis functions on ghost centers in the IAO partition
+    bool use_ghosts_;
+    /// Eigenvalue cutoff used in IAO metric inverse square roots
+    double condition_;
+    /// Boundaries of independently localized orbital blocks
+    std::vector<int> ranges_;
+
+    /// Maps compact, non-ghosted atoms/IAOs to the complete molecule/minimal basis
+    std::vector<int> true_atoms_;
+    std::vector<int> true_iaos_;
+    std::vector<int> iaos_to_atoms_;
+
+    /// AO overlap, orthonormal IAOs in the primary basis, and final orbital populations
+    std::shared_ptr<Matrix> S_;
+    std::shared_ptr<Matrix> A_;
+    std::shared_ptr<Matrix> Q_;
+
+    void common_init();
+    void build_iaos();
+    void build_population_matrices();
+    void update_orbital_charges();
+    std::shared_ptr<Matrix> orbital_charges(const std::shared_ptr<Matrix> &orbitals) const;
+
+   public:
+    IBOLocalizer(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> minao,
+                 std::shared_ptr<Matrix> C);
+    IBOLocalizer(std::shared_ptr<BasisSet> primary, std::shared_ptr<BasisSet> minao,
+                 std::shared_ptr<Matrix> C, std::shared_ptr<Matrix> C_reference);
+    ~IBOLocalizer() override;
+
+    static std::shared_ptr<IBOLocalizer> build(std::shared_ptr<BasisSet> primary,
+                                               std::shared_ptr<BasisSet> minao,
+                                               std::shared_ptr<Matrix> C);
+    static std::shared_ptr<IBOLocalizer> build(std::shared_ptr<BasisSet> primary,
+                                               std::shared_ptr<BasisSet> minao,
+                                               std::shared_ptr<Matrix> C,
+                                               std::shared_ptr<Matrix> C_reference);
+    static std::shared_ptr<IBOLocalizer> build(std::shared_ptr<BasisSet> primary,
+                                               std::shared_ptr<BasisSet> minao,
+                                               std::shared_ptr<Matrix> C, Options &options);
+    static std::shared_ptr<IBOLocalizer> build(std::shared_ptr<BasisSet> primary,
+                                               std::shared_ptr<BasisSet> minao,
+                                               std::shared_ptr<Matrix> C,
+                                               std::shared_ptr<Matrix> C_reference, Options &options);
+
+    void print_header() const override;
+    void localize() override;
+    void print_charges(double scale = 2.0);
+
+    std::shared_ptr<Matrix> A() const { return A_; }
+    std::shared_ptr<Matrix> Q() const;
+
+    void set_use_ghosts(bool use_ghosts) {
+        if (use_ghosts_ != use_ghosts) {
+            use_ghosts_ = use_ghosts;
+            S_.reset();
+            A_.reset();
+            Q_.reset();
+            population_matrices_.clear();
+            L_.reset();
+            U_.reset();
+            converged_ = false;
+        }
+    }
+    void set_condition(double condition) {
+        if (condition_ != condition) {
+            condition_ = condition;
+            S_.reset();
+            A_.reset();
+            Q_.reset();
+            population_matrices_.clear();
+            L_.reset();
+            U_.reset();
+            converged_ = false;
+        }
+    }
+    void set_ranges(const std::vector<int> &ranges) {
+        ranges_ = ranges;
+        L_.reset();
+        U_.reset();
+        Q_.reset();
+        converged_ = false;
+    }
 };
 
 class PSI_API ERLocalizer : public Localizer {
