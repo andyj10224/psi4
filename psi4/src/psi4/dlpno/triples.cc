@@ -2287,7 +2287,13 @@ SharedMatrix DLPNOCCSD_cT::build_ct_moment(int ijk,
         }
     }
 
-    Tensor<double, 3> pair_buffer("ct_pair_buffer", nlmo_ijk, ntno_ijk, ntno_ijk);
+    // Keep the exchange contractions in the layout used by the original
+    // complete-triples implementation.  In particular, contracting
+    // T(l,e,c) with q(e,b) directly is *not* dispatched as a GEMM by Einsums:
+    // the free (l,c) block is split by the contracted e index.  The explicit
+    // permutations below make both contractions contiguous BLAS-3 products.
+    Tensor<double, 3> buffer_a("ct_buffer_a", ntno_ijk, ntno_ijk, ntno_ijk);
+    Tensor<double, 3> buffer_b("ct_buffer_b", ntno_ijk, ntno_ijk, ntno_ijk);
     std::array<Tensor<double, 3>, 3> rho_dbck;
     for (int idx = 0; idx < 3; ++idx) {
         rho_dbck[idx] = Tensor<double, 3>("rho_dbck", ntno_ijk, ntno_ijk, ntno_ijk);
@@ -2316,20 +2322,24 @@ SharedMatrix DLPNOCCSD_cT::build_ct_moment(int ijk,
         for (int q = 0; q < naux_ijk; ++q) {
             TensorView<double, 2> q_vv_slice = q_vv_t1(q, All, All);
             TensorView<double, 2> q_ov_slice = q_ov(q, All, All);
-            // Contract q_vv with T2 before q_ov.  The former ordering first
-            // produced an N_TNO^3 tensor and then multiplied it by q_vv at
-            // O(N_TNO^4) for every Q.  The two exchange pieces are accumulated
-            // into one pair buffer and share the final q_ov contraction; all
-            // three GEMMs are O(N_LMO N_TNO^3), with no N_TNO^4 temporary.
-            einsum(0.0, Indices{index::l, index::b, index::c}, &pair_buffer, 1.0,
-                   Indices{index::l, index::e, index::c}, T_lp,
-                   Indices{index::e, index::b}, q_vv_slice);
-            einsum(1.0, Indices{index::l, index::b, index::c}, &pair_buffer, 1.0,
-                   Indices{index::l, index::b, index::e}, T_lp,
-                   Indices{index::e, index::c}, q_vv_slice);
-            einsum(1.0, Indices{index::d, index::b, index::c}, &rho_dbck[idx], -1.0,
+            einsum(0.0, Indices{index::d, index::e, index::c}, &buffer_a, 1.0,
                    Indices{index::l, index::d}, q_ov_slice,
-                   Indices{index::l, index::b, index::c}, pair_buffer);
+                   Indices{index::l, index::e, index::c}, T_lp);
+            permute(Indices{index::e, index::d, index::c}, &buffer_b,
+                    Indices{index::d, index::e, index::c}, buffer_a);
+            einsum(0.0, Indices{index::b, index::d, index::c}, &buffer_a, -1.0,
+                   Indices{index::e, index::d, index::c}, buffer_b,
+                   Indices{index::e, index::b}, q_vv_slice);
+            permute(Indices{index::d, index::b, index::c}, &buffer_b,
+                    Indices{index::b, index::d, index::c}, buffer_a);
+            rho_dbck[idx] += buffer_b;
+
+            einsum(0.0, Indices{index::d, index::b, index::e}, &buffer_a, 1.0,
+                   Indices{index::l, index::b, index::e}, T_lp,
+                   Indices{index::l, index::d}, q_ov_slice);
+            einsum(1.0, Indices{index::d, index::b, index::c}, &rho_dbck[idx], -1.0,
+                   Indices{index::d, index::b, index::e}, buffer_a,
+                   Indices{index::e, index::c}, q_vv_slice);
         }
     }
 
