@@ -58,6 +58,12 @@ PSI Variables by Alpha
    The complete perturbative-triples correction [E_h], evaluated with CCSD or
    Brueckner-CCD orbitals, respectively.
 
+.. psivar:: (cT0) CORRECTION ENERGY
+   B(cT0) CORRECTION ENERGY
+
+   The semicanonical complete perturbative-triples correction [E_h], evaluated
+   with CCSD or Brueckner-CCD orbitals, respectively.
+
 .. psivar:: (AT) CORRECTION ENERGY
    A-(T) CORRECTION ENERGY
 
@@ -574,12 +580,16 @@ PSI Variables by Alpha
    CC(n-1)(n) CORRELATION ENERGY
    CCSD(cT) TOTAL ENERGY
    CCSD(cT) CORRELATION ENERGY
+   CCSD(cT0) TOTAL ENERGY
+   CCSD(cT0) CORRELATION ENERGY
    BCCD(cT) TOTAL ENERGY
    BCCD(cT) CORRELATION ENERGY
+   BCCD(cT0) TOTAL ENERGY
+   BCCD(cT0) CORRELATION ENERGY
 
    The total electronic energy [E_h] and correlation energy component [E_h]
    for the perturbatively corrected coupled-cluster (CCSD(T), A-CCSD(T) = CCSD(AT),
-   CCSD(cT), BCCD(T), A-BCCD(T), BCCD(cT), CCSDT(Q),
+   CCSD(cT0), CCSD(cT), BCCD(T), A-BCCD(T), BCCD(cT0), BCCD(cT), CCSDT(Q),
    up to CC(\ *n*\ -1)(\ *n*\ ) level of theory.
 
 .. psivar:: CCSDT-1a TOTAL ENERGY
@@ -933,6 +943,14 @@ PSI Variables by Alpha
    A-(T) CORRECTION ENERGY
 
    Various components of the ordinary or asymmetric DLPNO-(T) correlation energy.
+
+.. psivar:: DLPNO SEMICANONICAL (cT0) ENERGY
+   DLPNO SCREENED COMPLETE TRIPLES ENERGY
+   (cT0) CORRECTION ENERGY
+   (cT) CORRECTION ENERGY
+
+   Various components of the semicanonical or iterative DLPNO complete-triples
+   correlation energy.
 
 .. psivar:: DOUBLE-HYBRID CORRECTION ENERGY
 

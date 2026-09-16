@@ -4690,13 +4690,15 @@ def run_dlpnoccsd(name, **kwargs):
     return dlpnoccsd_wfn
 
 _DLPNO_TRIPLES_METHOD_SETTINGS = {
-    # method: (Brueckner orbitals, Lambda equations, semicanonical T0, force all retained pairs strong)
+    # method: (Brueckner orbitals, Lambda equations, semicanonical T0/cT0, force all retained pairs strong)
     "dlpno-ccsd(t0)": (False, False, True, False),
     "dlpno-ccsd(t)": (False, False, False, False),
+    "dlpno-ccsd(ct0)": (False, False, True, False),
     "dlpno-ccsd(ct)": (False, False, False, False),
     "dlpno-ccsd(t)_l": (False, True, False, False),
     "dlpno-ccsd(at)": (False, True, False, False),
     "dlpno-bccd(t)": (True, False, False, True),
+    "dlpno-bccd(ct0)": (True, False, True, True),
     "dlpno-bccd(ct)": (True, False, False, True),
     "dlpno-bccd(t)_l": (True, True, False, False),
     "dlpno-bccd(at)": (True, True, False, False),
@@ -4705,7 +4707,7 @@ _DLPNO_TRIPLES_METHOD_SETTINGS = {
 
 def run_dlpnoccsd_t(name, **kwargs):
     """Function encoding sequence of PSI module calls for
-    a DLPNO-CCSD(T0), DLPNO-CCSD(T), or DLPNO-CCSD(cT)
+    a DLPNO-CCSD(T0), DLPNO-CCSD(T), DLPNO-CCSD(cT0), or DLPNO-CCSD(cT)
     calculation, including the corresponding Brueckner variants.
 
     """
@@ -4752,7 +4754,7 @@ def run_dlpnoccsd_t(name, **kwargs):
     
     core.tstart()
     core.print_out('\n')
-    method_banner = name.upper().replace("(AT)", "(T)_L").replace("(CT)", "(cT)")
+    method_banner = name.upper().replace("(AT)", "(T)_L").replace("(CT0)", "(cT0)").replace("(CT)", "(cT)")
     p4util.banner(method_banner)
     core.print_out('\n')
 
@@ -4763,7 +4765,7 @@ def run_dlpnoccsd_t(name, **kwargs):
 
     _prepare_dlpno_localization_basis(ref_wfn)
 
-    is_ct = name in {"dlpno-ccsd(ct)", "dlpno-bccd(ct)"}
+    is_ct = name in {"dlpno-ccsd(ct0)", "dlpno-ccsd(ct)", "dlpno-bccd(ct0)", "dlpno-bccd(ct)"}
     core.set_local_option("DLPNO", "DLPNO_ALGORITHM", "CCSD(CT)" if is_ct else "CCSD(T)")
     core.set_local_option("DLPNO", "T0_APPROXIMATION", do_t0)
     core.set_local_option("DLPNO", "DLPNO_BRUECKNER_ORBS", do_brueckner)
@@ -4776,7 +4778,8 @@ def run_dlpnoccsd_t(name, **kwargs):
     dlpnoccsd_t_wfn.compute_energy()
 
     if is_ct:
-        energy_label = 'BCCD(cT)' if do_brueckner else 'CCSD(cT)'
+        ct_suffix = '(cT0)' if do_t0 else '(cT)'
+        energy_label = ('BCCD' if do_brueckner else 'CCSD') + ct_suffix
     elif do_lambda:
         energy_label = 'A-BCCD(T)' if do_brueckner else 'A-CCSD(T)'
     else:

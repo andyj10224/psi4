@@ -39,9 +39,11 @@
 #include "psi4/libpsio/psio.h"
 #include "psi4/psifiles.h"
 
+#include <array>
+#include <functional>
 #include <map>
-#include <tuple>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -616,11 +618,16 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     double compute_t_l_iteration_energy();
 
     /// Form right and left triples moments and their semicanonical (T0)/(T0)_L energies.
-    std::pair<double, double> compute_lccsd_t0(bool save_memory=false);
+    /// An optional consumer can use each ordinary energy moment while it is
+    /// triplet-local, without forcing all of the underlying DF intermediates
+    /// to remain resident in memory.
+    std::pair<double, double> compute_lccsd_t0(
+        bool save_memory=false,
+        const std::function<void(int, const SharedMatrix&)>& triplet_moment_consumer = {});
     /// A function to estimate (T) memory costs
     void estimate_triples_memory();
     /// L_CCSD(T) iterations (Jiang Eq. 111-112)
-    std::pair<double, double> lccsd_t_iterations();
+    std::pair<double, double> lccsd_t_iterations(bool complete_triples=false);
 
     void print_header(DLPNOCCSDPhase phase);
 
@@ -645,28 +652,24 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
 // Phys. Rev. Lett. 131, 186401 (2023), DOI: 10.1103/PhysRevLett.131.186401.
 class PSI_API DLPNOCCSD_cT : public DLPNOCCSD_T {
    protected:
-    // Density-fitted integrals in each surviving triplet's TNO domain.
-    std::vector<einsums::Tensor<double, 2>> q_io_;
-    std::vector<einsums::Tensor<double, 2>> q_jo_;
-    std::vector<einsums::Tensor<double, 2>> q_ko_;
-    std::vector<einsums::Tensor<double, 2>> q_iv_;
-    std::vector<einsums::Tensor<double, 2>> q_jv_;
-    std::vector<einsums::Tensor<double, 2>> q_kv_;
-    std::vector<einsums::Tensor<double, 3>> q_ov_;
-    std::vector<einsums::Tensor<double, 3>> q_vv_;
-
-    // Converged CCSD singles projected into each triplet TNO domain.
-    std::vector<einsums::Tensor<double, 2>> T_n_ijk_;
-
     double e_lccsd_ct_ = 0.0;
+    double de_lccsd_ct_screened_ = 0.0;
+    double E_cT_ = 0.0;
 
-    void project_triplet_singles();
-    void compute_ct_integrals();
-    SharedMatrix build_ct_moment(int ijk);
-    SharedMatrix load_triples_energy_moment(int ijk);
-    double compute_ct_energy();
+    einsums::Tensor<double, 2> project_triplet_singles(int ijk);
+    void compute_ct_integrals(int ijk,
+                              std::array<einsums::Tensor<double, 2>, 3>& q_io,
+                              std::array<einsums::Tensor<double, 2>, 3>& q_iv,
+                              einsums::Tensor<double, 3>& q_ov,
+                              einsums::Tensor<double, 3>& q_vv);
+    SharedMatrix build_ct_moment(int ijk,
+                                 const einsums::Tensor<double, 2>& T_n_ijk,
+                                 const std::array<einsums::Tensor<double, 2>, 3>& q_io,
+                                 const std::array<einsums::Tensor<double, 2>, 3>& q_iv,
+                                 einsums::Tensor<double, 3>& q_ov,
+                                 const einsums::Tensor<double, 3>& q_vv);
+    double compute_lccsd_ct0(bool save_memory=false);
     void compute_ct_correction(DLPNOCCSDPhase phase);
-    void clear_ct_state();
 
     void post_ccsd_correction(DLPNOCCSDPhase phase) override;
 

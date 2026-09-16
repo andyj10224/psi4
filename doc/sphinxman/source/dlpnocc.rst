@@ -122,7 +122,7 @@ first evaluates the corresponding non-Brueckner DLPNO-CCSD(T) or
 DLPNO-CCSD(T)\ :sub:`L` result at macroiteration zero, then reevaluates the
 requested correction after the Brueckner orbitals converge. The initial results
 are retained in PSI variables whose names begin with ``INITIAL DLPNO-``.
-For ``dlpno-bccd(t)`` and ``dlpno-bccd(ct)``, the driver also enables
+For ``dlpno-bccd(t)``, ``dlpno-bccd(ct0)``, and ``dlpno-bccd(ct)``, the driver also enables
 |dlpno__dlpno_disable_weak_pairs| so every pair surviving the initial pair
 screen is treated as a strong pair. The same option may be enabled explicitly
 for another DLPNO calculation; its default is ``false``.
@@ -132,16 +132,21 @@ Grueneis [Masios:2023:186401]_ is selected with
 ``energy('dlpno-ccsd(ct)')``. Its Brueckner counterpart is selected with
 ``energy('dlpno-bccd(ct)')``; as for DLPNO-BCCD(T), the latter first publishes
 the corresponding initial DLPNO-CCSD(cT) result and then the converged
-DLPNO-BCCD(cT) result. Each cT calculation first computes and publishes the
-corresponding iterative DLPNO-CCSD(T) or DLPNO-BCCD(T) result. The complete
-triples correction is evaluated at |dlpno__t_cut_tno_full| and receives the
-TNO-rank correction
+DLPNO-BCCD(cT) result. The semicanonical variants, which omit the iterative
+local-triplet solve, are available as ``energy('dlpno-ccsd(ct0)')`` and
+``energy('dlpno-bccd(ct0)')``. Each complete-triples calculation first computes
+and publishes the corresponding ordinary DLPNO-CCSD(T)/(T0) or
+DLPNO-BCCD(T)/(T0) result.
 
-.. math::
-
-   \Delta E_{\mathrm{rank}}
-   = E_{(T0)}(\mathrm{T\_CUT\_TNO})
-   - E_{(T0)}(\mathrm{T\_CUT\_TNO\_FULL}).
+Triplet prescreening is performed with cT0 itself at
+|dlpno__t_cut_tno_pre|. The surviving triplets are recomputed with cT0 at the
+tighter |dlpno__t_cut_tno| cutoff. For cT, those cT0 energies classify strong
+and weak triplets; the TNO spaces are then rebuilt with
+|dlpno__t_cut_tno_strong_scale| and |dlpno__t_cut_tno_weak_scale|, and the net
+iterative cT increment in those spaces is added to the tight-cutoff cT0 energy.
+The density-fitted integral workspaces used to form the complete triples source
+are built and released one triplet at a time. Only the source, ordinary energy
+moment, and triples amplitudes needed by the iterative solve are retained.
 
 The cT implementation evaluates the complete CCSDT triples residual at zero
 triples amplitude and therefore requires a |PSIfour| build with Einsums

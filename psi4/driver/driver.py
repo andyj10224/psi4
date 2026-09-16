@@ -268,6 +268,8 @@ def energy(name, **kwargs):
     +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
     | dlpno-ccsd(t)           | local CCSD(T) with pair natural orbital domains (DLPNO) :ref:`[manual] <sec:dlpnocc>`                                                 |
     +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
+    | dlpno-ccsd(ct0)         | local CCSD with semicanonical complete perturbative triples (DLPNO) :ref:`[manual] <sec:dlpnocc>`                                     |
+    +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
     | dlpno-ccsd(ct)          | local CCSD with complete perturbative triples (DLPNO) :ref:`[manual] <sec:dlpnocc>`                                                   |
     +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
     | dlpno-ccsd(t)_l         | local CCSD with asymmetric perturbative triples (DLPNO) :ref:`[manual] <sec:dlpnocc>`                                                 |
@@ -275,6 +277,8 @@ def energy(name, **kwargs):
     | dlpno-ccsd(at)          | alias for DLPNO-CCSD(T)_L :ref:`[manual] <sec:dlpnocc>`                                                                              |
     +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
     | dlpno-bccd(t)           | local Brueckner CCD(T) with pair natural orbital domains (DLPNO) :ref:`[manual] <sec:dlpnocc>`                                        |
+    +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
+    | dlpno-bccd(ct0)         | local Brueckner CCD with semicanonical complete perturbative triples (DLPNO) :ref:`[manual] <sec:dlpnocc>`                            |
     +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
     | dlpno-bccd(ct)          | local Brueckner CCD with complete perturbative triples (DLPNO) :ref:`[manual] <sec:dlpnocc>`                                         |
     +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+

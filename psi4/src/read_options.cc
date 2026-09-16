@@ -2737,8 +2737,8 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_bool("DLPNO_DO_LAMBDA", false);
         /*- Form the correlated DLPNO-CCSD AO OPDM for the properties driver. !expert -*/
         options.add_bool("DLPNO_DO_ONEPDM", false);
-        /*- Use T0 approximation for DLPNO-CCSD(T)? (not set explicitly), 
-        triggered by indicating 'dlpno-ccsd(t0)' rather than 'dlpno-ccsd(t)' !expert -*/
+        /*- Use the semicanonical T0/cT0 approximation? (not set explicitly),
+        triggered by requesting a method name ending in '(t0)' or '(ct0)' !expert -*/
         options.add_bool("T0_APPROXIMATION", false);
         /*- DOI threshold for treating LMOs (i,j) as interacting !expert -*/
         options.add_double("T_CUT_DO_IJ", 1e-5);
@@ -2766,7 +2766,7 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         /*- The tolerance to decide between "Weak Pairs" and "Strong Pairs" after the initial pair prescreening -*/
         options.add_double("T_CUT_PAIRS", 1e-5);
         /*- Treat every pair surviving the initial pair prescreening as a strong pair.
-            This is enabled automatically for DLPNO-BCCD(T) and DLPNO-BCCD(cT). !expert -*/
+            This is enabled automatically for DLPNO-BCCD(T), DLPNO-BCCD(cT0), and DLPNO-BCCD(cT). !expert -*/
         options.add_bool("DLPNO_DISABLE_WEAK_PAIRS", false);
         /*- How much to scale T_CUT_PNO by for diagonal PNOs !expert */
         options.add_double("T_CUT_PNO_DIAG_SCALE", 3e-2);
@@ -2790,8 +2790,6 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
 
         /*- Occupation number threshold for removing TNOs -*/
         options.add_double("T_CUT_TNO", 1e-9);
-        /*- Occupation number threshold for the TNO space used by complete triples methods !expert -*/
-        options.add_double("T_CUT_TNO_FULL", 1.0e-7);
         /*- Maximum number of weak pairs in (ij, jk, ik) to consider when forming triplet ijk !expert -*/
         options.add_int("TRIPLES_MAX_WEAK_PAIRS", 1);
         /*- T_CUT_TNO scaling for strong triplets in the iterative (T) algorithm !expert -*/
