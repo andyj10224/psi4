@@ -44,6 +44,12 @@ SharedWavefunction dlpno(SharedWavefunction ref_wfn, Options& options) {
             dlpno = std::make_shared<DLPNOCCSD>(ref_wfn, options);
         } else if (options.get_str("DLPNO_ALGORITHM") == "CCSD(T)") {
             dlpno = std::make_shared<DLPNOCCSD_T>(ref_wfn, options);
+        } else if (options.get_str("DLPNO_ALGORITHM") == "CCSD(CT)") {
+#ifdef USING_Einsums
+            dlpno = std::make_shared<DLPNOCCSD_cT>(ref_wfn, options);
+#else
+            throw PSIEXCEPTION("DLPNO-CCSD(cT) requires Psi4 to be built with Einsums support");
+#endif
         } else {
             throw PSIEXCEPTION("Requested DLPNO method is not available: " +
                                options.get_str("DLPNO_ALGORITHM"));

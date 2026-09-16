@@ -43,11 +43,17 @@
 #include <tuple>
 #include <string>
 #include <unordered_map>
+#include <vector>
+
+#ifdef USING_Einsums
+#include "Einsums/Tensor.hpp"
+#include "Einsums/TensorAlgebra.hpp"
+#endif
 
 namespace psi {
 namespace dlpno {
 
-enum class DLPNOMethod { MP2, CCSD, CCSD_T };
+enum class DLPNOMethod { MP2, CCSD, CCSD_T, CCSD_cT };
 
 /// Identifies the point at which an optional post-CCSD correction is evaluated.
 enum class DLPNOCCSDPhase { SinglePoint, InitialBrueckner, FinalBrueckner };
@@ -630,6 +636,47 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
 
     double compute_energy() override;
 };
+
+#ifdef USING_Einsums
+
+// The complete perturbative-triples correction (cT) uses the CCSDT triples
+// residual evaluated at T3 = 0. See Masios, Irmler, Schaefer, and Grueneis,
+// Phys. Rev. Lett. 131, 186401 (2023), DOI: 10.1103/PhysRevLett.131.186401.
+class PSI_API DLPNOCCSD_cT : public DLPNOCCSD_T {
+   protected:
+    // Density-fitted integrals in each surviving triplet's TNO domain.
+    std::vector<einsums::Tensor<double, 2>> q_io_;
+    std::vector<einsums::Tensor<double, 2>> q_jo_;
+    std::vector<einsums::Tensor<double, 2>> q_ko_;
+    std::vector<einsums::Tensor<double, 2>> q_iv_;
+    std::vector<einsums::Tensor<double, 2>> q_jv_;
+    std::vector<einsums::Tensor<double, 2>> q_kv_;
+    std::vector<einsums::Tensor<double, 3>> q_ov_;
+    std::vector<einsums::Tensor<double, 3>> q_vv_;
+
+    // Converged CCSD singles projected into each triplet TNO domain.
+    std::vector<einsums::Tensor<double, 2>> T_n_ijk_;
+
+    double e_lccsd_ct_ = 0.0;
+
+    void project_triplet_singles();
+    void compute_ct_integrals();
+    SharedMatrix build_ct_moment(int ijk);
+    SharedMatrix load_triples_energy_moment(int ijk);
+    double compute_ct_energy();
+    void compute_ct_correction(DLPNOCCSDPhase phase);
+    void clear_ct_state();
+
+    void post_ccsd_correction(DLPNOCCSDPhase phase) override;
+
+   public:
+    DLPNOCCSD_cT(SharedWavefunction ref_wfn, Options& options);
+    ~DLPNOCCSD_cT() override;
+
+    double compute_energy() override;
+};
+
+#endif
 
 }
 }

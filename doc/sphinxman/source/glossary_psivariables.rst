@@ -52,6 +52,12 @@ PSI Variables by Alpha
 
    The coupled-cluster perturbative triples correction [E_h].
 
+.. psivar:: (cT) CORRECTION ENERGY
+   B(cT) CORRECTION ENERGY
+
+   The complete perturbative-triples correction [E_h], evaluated with CCSD or
+   Brueckner-CCD orbitals, respectively.
+
 .. psivar:: (AT) CORRECTION ENERGY
    A-(T) CORRECTION ENERGY
 
@@ -566,10 +572,14 @@ PSI Variables by Alpha
    CCSDT(Q) CORRELATION ENERGY
    CC(n-1)(n) TOTAL ENERGY
    CC(n-1)(n) CORRELATION ENERGY
+   CCSD(cT) TOTAL ENERGY
+   CCSD(cT) CORRELATION ENERGY
+   BCCD(cT) TOTAL ENERGY
+   BCCD(cT) CORRELATION ENERGY
 
    The total electronic energy [E_h] and correlation energy component [E_h]
    for the perturbatively corrected coupled-cluster (CCSD(T), A-CCSD(T) = CCSD(AT),
-   BCCD(T), A-BCCD(T), CCSDT(Q),
+   CCSD(cT), BCCD(T), A-BCCD(T), BCCD(cT), CCSDT(Q),
    up to CC(\ *n*\ -1)(\ *n*\ ) level of theory.
 
 .. psivar:: CCSDT-1a TOTAL ENERGY

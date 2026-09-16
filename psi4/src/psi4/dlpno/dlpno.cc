@@ -177,6 +177,8 @@ void DLPNO::common_init() {
         algorithm_ = DLPNOMethod::CCSD;
     } else if (options_.get_str("DLPNO_ALGORITHM") == "CCSD(T)") {
         algorithm_ = DLPNOMethod::CCSD_T;
+    } else if (options_.get_str("DLPNO_ALGORITHM") == "CCSD(CT)") {
+        algorithm_ = DLPNOMethod::CCSD_cT;
     } else {
         throw PSIEXCEPTION("Requested DLPNO algorithm is not available: " + options_.get_str("DLPNO_ALGORITHM"));
     }

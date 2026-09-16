@@ -624,6 +624,11 @@ Bibliography
    *J. Chem. Theory Comput.* **22** (15), 7667-7681 (2026).
    https://doi.org/10.1021/acs.jctc.6c00758
 
+.. [Masios:2023:186401]
+   N. Masios, A. Irmler, T. Schaefer, and A. Grueneis,
+   *Phys. Rev. Lett.* **131**, 186401 (2023).
+   https://doi.org/10.1103/PhysRevLett.131.186401
+
 .. [Neese:2009:98]
    F. Neese, F. Wennmohs, and A. Hansen
    *Chem. Phys.* **356**, 98-109 (2009)

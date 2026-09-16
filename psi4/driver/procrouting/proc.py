@@ -4693,9 +4693,11 @@ _DLPNO_TRIPLES_METHOD_SETTINGS = {
     # method: (Brueckner orbitals, Lambda equations, semicanonical T0)
     "dlpno-ccsd(t0)": (False, False, True),
     "dlpno-ccsd(t)": (False, False, False),
+    "dlpno-ccsd(ct)": (False, False, False),
     "dlpno-ccsd(t)_l": (False, True, False),
     "dlpno-ccsd(at)": (False, True, False),
     "dlpno-bccd(t)": (True, False, False),
+    "dlpno-bccd(ct)": (True, False, False),
     "dlpno-bccd(t)_l": (True, True, False),
     "dlpno-bccd(at)": (True, True, False),
 }
@@ -4703,7 +4705,8 @@ _DLPNO_TRIPLES_METHOD_SETTINGS = {
 
 def run_dlpnoccsd_t(name, **kwargs):
     """Function encoding sequence of PSI module calls for
-    a DLPNO-CCSD(T0)/(T) calculation.
+    a DLPNO-CCSD(T0), DLPNO-CCSD(T), or DLPNO-CCSD(cT)
+    calculation, including the corresponding Brueckner variants.
 
     """
     optstash = p4util.OptionsState(
@@ -4740,15 +4743,15 @@ def run_dlpnoccsd_t(name, **kwargs):
             
         ref_wfn = scf_helper(name, use_c1=True, **kwargs)  # C1 certified
     elif ref_wfn.molecule().schoenflies_symbol() != 'c1':
-        raise ValidationError("""  DLPNO-CCSD(T) does not make use of molecular symmetry: """
+        raise ValidationError(f"""  {name.upper()} does not make use of molecular symmetry: """
                               """reference wavefunction must be C1.\n""")
     
     if core.get_global_option('REFERENCE') != "RHF":
-        raise ValidationError(f"DLPNO-CCSD(T) is not available for {core.get_global_option('REFERENCE')} references.")
+        raise ValidationError(f"{name.upper()} is not available for {core.get_global_option('REFERENCE')} references.")
     
     core.tstart()
     core.print_out('\n')
-    method_banner = name.upper().replace("(AT)", "(T)_L")
+    method_banner = name.upper().replace("(AT)", "(T)_L").replace("(CT)", "(cT)")
     p4util.banner(method_banner)
     core.print_out('\n')
 
@@ -4759,7 +4762,8 @@ def run_dlpnoccsd_t(name, **kwargs):
 
     _prepare_dlpno_localization_basis(ref_wfn)
 
-    core.set_local_option("DLPNO", "DLPNO_ALGORITHM", "CCSD(T)")
+    is_ct = name in {"dlpno-ccsd(ct)", "dlpno-bccd(ct)"}
+    core.set_local_option("DLPNO", "DLPNO_ALGORITHM", "CCSD(CT)" if is_ct else "CCSD(T)")
     core.set_local_option("DLPNO", "T0_APPROXIMATION", do_t0)
     core.set_local_option("DLPNO", "DLPNO_BRUECKNER_ORBS", do_brueckner)
     core.set_local_option("DLPNO", "DLPNO_DO_LAMBDA", do_lambda)
@@ -4768,7 +4772,9 @@ def run_dlpnoccsd_t(name, **kwargs):
     dlpnoccsd_t_wfn = core.dlpno(ref_wfn)
     dlpnoccsd_t_wfn.compute_energy()
 
-    if do_lambda:
+    if is_ct:
+        energy_label = 'BCCD(cT)' if do_brueckner else 'CCSD(cT)'
+    elif do_lambda:
         energy_label = 'A-BCCD(T)' if do_brueckner else 'A-CCSD(T)'
     else:
         energy_label = 'BCCD(T)' if do_brueckner else 'CCSD(T)'

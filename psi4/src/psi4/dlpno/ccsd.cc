@@ -3267,7 +3267,8 @@ double DLPNOCCSD::compute_energy() {
                 // intermediates. If the starting orbitals already satisfy the
                 // Brueckner criterion, rebuild that same converged right-hand
                 // state before evaluating the separately labelled BCCD result.
-                if (iteration == 0 && algorithm_ == DLPNOMethod::CCSD_T) {
+                if (iteration == 0 &&
+                    (algorithm_ == DLPNOMethod::CCSD_T || algorithm_ == DLPNOMethod::CCSD_cT)) {
                     const bool old_intermediate_convergence = brueckner_intermediate_converged_;
                     brueckner_intermediate_converged_ = true;
                     e_dlpno_ccsd = compute_dlpno_ccsd_energy();

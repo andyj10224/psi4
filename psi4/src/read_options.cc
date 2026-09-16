@@ -2732,7 +2732,7 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         /*- SUBSECTION Expert Options -*/
 
         /*- Which DLPNO Algorithm to run (not set by user) !expert -*/
-        options.add_str("DLPNO_ALGORITHM", "CCSD(T)", "MP2 CCSD CCSD(T)");
+        options.add_str("DLPNO_ALGORITHM", "CCSD(T)", "MP2 CCSD CCSD(T) CCSD(CT)");
         /*- Solve the DLPNO-CCSD Lambda equations for an asymmetric-triples result. !expert -*/
         options.add_bool("DLPNO_DO_LAMBDA", false);
         /*- Form the correlated DLPNO-CCSD AO OPDM for the properties driver. !expert -*/

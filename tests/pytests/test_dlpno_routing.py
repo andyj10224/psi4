@@ -10,9 +10,11 @@ def test_dlpno_energy_routing():
     triples_names = {
         "dlpno-ccsd(t0)",
         "dlpno-ccsd(t)",
+        "dlpno-ccsd(ct)",
         "dlpno-ccsd(t)_l",
         "dlpno-ccsd(at)",
         "dlpno-bccd(t)",
+        "dlpno-bccd(ct)",
         "dlpno-bccd(t)_l",
         "dlpno-bccd(at)",
     }
@@ -24,9 +26,11 @@ def test_dlpno_energy_routing():
     assert proc._DLPNO_TRIPLES_METHOD_SETTINGS == {
         "dlpno-ccsd(t0)": (False, False, True),
         "dlpno-ccsd(t)": (False, False, False),
+        "dlpno-ccsd(ct)": (False, False, False),
         "dlpno-ccsd(t)_l": (False, True, False),
         "dlpno-ccsd(at)": (False, True, False),
         "dlpno-bccd(t)": (True, False, False),
+        "dlpno-bccd(ct)": (True, False, False),
         "dlpno-bccd(t)_l": (True, True, False),
         "dlpno-bccd(at)": (True, True, False),
     }
@@ -40,3 +44,8 @@ def test_dlpno_property_routing():
 def test_dlpno_asymmetric_triples_cbs_aliases():
     assert VARH["dlpno-ccsd(at)"]["dlpno-ccsd(at)"] == "CCSD(AT) TOTAL ENERGY"
     assert VARH["dlpno-bccd(at)"]["dlpno-bccd(at)"] == "BCCD(AT) TOTAL ENERGY"
+
+
+def test_dlpno_complete_triples_cbs_hierarchy():
+    assert VARH["dlpno-ccsd(ct)"]["dlpno-ccsd(ct)"] == "CCSD(cT) TOTAL ENERGY"
+    assert VARH["dlpno-bccd(ct)"]["dlpno-bccd(ct)"] == "BCCD(cT) TOTAL ENERGY"

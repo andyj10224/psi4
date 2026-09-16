@@ -123,6 +123,17 @@ DLPNO-CCSD(T)\ :sub:`L` result at macroiteration zero, then reevaluates the
 requested correction after the Brueckner orbitals converge. The initial results
 are retained in PSI variables whose names begin with ``INITIAL DLPNO-``.
 
+The complete perturbative-triples correction of Masios, Irmler, Schaefer, and
+Grueneis [Masios:2023:186401]_ is selected with
+``energy('dlpno-ccsd(ct)')``. Its Brueckner counterpart is selected with
+``energy('dlpno-bccd(ct)')``; as for DLPNO-BCCD(T), the latter first publishes
+the corresponding initial DLPNO-CCSD(cT) result and then the converged
+DLPNO-BCCD(cT) result. The cT implementation evaluates the complete CCSDT
+triples residual at zero triples amplitude and therefore requires a |PSIfour|
+build with Einsums support. The occupied--virtual Fock block is retained in
+both the triples energy moment and the complete residual source, as required
+for the noncanonical orbitals encountered during Brueckner optimization.
+
 One-electron properties are requested through the standard properties driver,
 for example::
 
