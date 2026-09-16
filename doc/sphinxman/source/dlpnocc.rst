@@ -122,17 +122,32 @@ first evaluates the corresponding non-Brueckner DLPNO-CCSD(T) or
 DLPNO-CCSD(T)\ :sub:`L` result at macroiteration zero, then reevaluates the
 requested correction after the Brueckner orbitals converge. The initial results
 are retained in PSI variables whose names begin with ``INITIAL DLPNO-``.
+For ``dlpno-bccd(t)`` and ``dlpno-bccd(ct)``, the driver also enables
+|dlpno__dlpno_disable_weak_pairs| so every pair surviving the initial pair
+screen is treated as a strong pair. The same option may be enabled explicitly
+for another DLPNO calculation; its default is ``false``.
 
 The complete perturbative-triples correction of Masios, Irmler, Schaefer, and
 Grueneis [Masios:2023:186401]_ is selected with
 ``energy('dlpno-ccsd(ct)')``. Its Brueckner counterpart is selected with
 ``energy('dlpno-bccd(ct)')``; as for DLPNO-BCCD(T), the latter first publishes
 the corresponding initial DLPNO-CCSD(cT) result and then the converged
-DLPNO-BCCD(cT) result. The cT implementation evaluates the complete CCSDT
-triples residual at zero triples amplitude and therefore requires a |PSIfour|
-build with Einsums support. The occupied--virtual Fock block is retained in
-both the triples energy moment and the complete residual source, as required
-for the noncanonical orbitals encountered during Brueckner optimization.
+DLPNO-BCCD(cT) result. Each cT calculation first computes and publishes the
+corresponding iterative DLPNO-CCSD(T) or DLPNO-BCCD(T) result. The complete
+triples correction is evaluated at |dlpno__t_cut_tno_full| and receives the
+TNO-rank correction
+
+.. math::
+
+   \Delta E_{\mathrm{rank}}
+   = E_{(T0)}(\mathrm{T\_CUT\_TNO})
+   - E_{(T0)}(\mathrm{T\_CUT\_TNO\_FULL}).
+
+The cT implementation evaluates the complete CCSDT triples residual at zero
+triples amplitude and therefore requires a |PSIfour| build with Einsums
+support. The occupied--virtual Fock block is retained in both the triples
+energy moment and the complete residual source, as required for the
+noncanonical orbitals encountered during Brueckner optimization.
 
 One-electron properties are requested through the standard properties driver,
 for example::

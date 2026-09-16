@@ -2765,6 +2765,9 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
 
         /*- The tolerance to decide between "Weak Pairs" and "Strong Pairs" after the initial pair prescreening -*/
         options.add_double("T_CUT_PAIRS", 1e-5);
+        /*- Treat every pair surviving the initial pair prescreening as a strong pair.
+            This is enabled automatically for DLPNO-BCCD(T) and DLPNO-BCCD(cT). !expert -*/
+        options.add_bool("DLPNO_DISABLE_WEAK_PAIRS", false);
         /*- How much to scale T_CUT_PNO by for diagonal PNOs !expert */
         options.add_double("T_CUT_PNO_DIAG_SCALE", 3e-2);
         /*- How much to scale T_CUT_PNO for core pairs !expert */
@@ -2787,6 +2790,8 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
 
         /*- Occupation number threshold for removing TNOs -*/
         options.add_double("T_CUT_TNO", 1e-9);
+        /*- Occupation number threshold for the TNO space used by complete triples methods !expert -*/
+        options.add_double("T_CUT_TNO_FULL", 1.0e-7);
         /*- Maximum number of weak pairs in (ij, jk, ik) to consider when forming triplet ijk !expert -*/
         options.add_int("TRIPLES_MAX_WEAK_PAIRS", 1);
         /*- T_CUT_TNO scaling for strong triplets in the iterative (T) algorithm !expert -*/

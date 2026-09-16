@@ -46,6 +46,7 @@
 #include <vector>
 
 #ifdef USING_Einsums
+#include "Einsums/Profile.hpp"
 #include "Einsums/Tensor.hpp"
 #include "Einsums/TensorAlgebra.hpp"
 #endif

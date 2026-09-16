@@ -4690,16 +4690,16 @@ def run_dlpnoccsd(name, **kwargs):
     return dlpnoccsd_wfn
 
 _DLPNO_TRIPLES_METHOD_SETTINGS = {
-    # method: (Brueckner orbitals, Lambda equations, semicanonical T0)
-    "dlpno-ccsd(t0)": (False, False, True),
-    "dlpno-ccsd(t)": (False, False, False),
-    "dlpno-ccsd(ct)": (False, False, False),
-    "dlpno-ccsd(t)_l": (False, True, False),
-    "dlpno-ccsd(at)": (False, True, False),
-    "dlpno-bccd(t)": (True, False, False),
-    "dlpno-bccd(ct)": (True, False, False),
-    "dlpno-bccd(t)_l": (True, True, False),
-    "dlpno-bccd(at)": (True, True, False),
+    # method: (Brueckner orbitals, Lambda equations, semicanonical T0, force all retained pairs strong)
+    "dlpno-ccsd(t0)": (False, False, True, False),
+    "dlpno-ccsd(t)": (False, False, False, False),
+    "dlpno-ccsd(ct)": (False, False, False, False),
+    "dlpno-ccsd(t)_l": (False, True, False, False),
+    "dlpno-ccsd(at)": (False, True, False, False),
+    "dlpno-bccd(t)": (True, False, False, True),
+    "dlpno-bccd(ct)": (True, False, False, True),
+    "dlpno-bccd(t)_l": (True, True, False, False),
+    "dlpno-bccd(at)": (True, True, False, False),
 }
 
 
@@ -4716,12 +4716,13 @@ def run_dlpnoccsd_t(name, **kwargs):
         ["DLPNO", "DLPNO_ALGORITHM"],
         ["DLPNO", "T0_APPROXIMATION"],
         ["DLPNO", "DLPNO_BRUECKNER_ORBS"],
+        ["DLPNO", "DLPNO_DISABLE_WEAK_PAIRS"],
         ["DLPNO", "DLPNO_DO_LAMBDA"],
         ["DLPNO", "DLPNO_DO_ONEPDM"])
 
     if name not in _DLPNO_TRIPLES_METHOD_SETTINGS:
         raise ValidationError(f"run_dlpnoccsd_t: method '{name}' is not recognized")
-    do_brueckner, do_lambda, do_t0 = _DLPNO_TRIPLES_METHOD_SETTINGS[name]
+    do_brueckner, do_lambda, do_t0, disable_weak_pairs = _DLPNO_TRIPLES_METHOD_SETTINGS[name]
 
     # Alter default algorithm (if not set by user)
     if not core.has_global_option_changed('SCF_TYPE'):
@@ -4766,6 +4767,8 @@ def run_dlpnoccsd_t(name, **kwargs):
     core.set_local_option("DLPNO", "DLPNO_ALGORITHM", "CCSD(CT)" if is_ct else "CCSD(T)")
     core.set_local_option("DLPNO", "T0_APPROXIMATION", do_t0)
     core.set_local_option("DLPNO", "DLPNO_BRUECKNER_ORBS", do_brueckner)
+    if disable_weak_pairs:
+        core.set_local_option("DLPNO", "DLPNO_DISABLE_WEAK_PAIRS", True)
     core.set_local_option("DLPNO", "DLPNO_DO_LAMBDA", do_lambda)
     core.set_local_option("DLPNO", "DLPNO_DO_ONEPDM", False)
 

@@ -24,15 +24,15 @@ def test_dlpno_energy_routing():
     assert "dlpno-ccsd_l" not in procedures["energy"]
 
     assert proc._DLPNO_TRIPLES_METHOD_SETTINGS == {
-        "dlpno-ccsd(t0)": (False, False, True),
-        "dlpno-ccsd(t)": (False, False, False),
-        "dlpno-ccsd(ct)": (False, False, False),
-        "dlpno-ccsd(t)_l": (False, True, False),
-        "dlpno-ccsd(at)": (False, True, False),
-        "dlpno-bccd(t)": (True, False, False),
-        "dlpno-bccd(ct)": (True, False, False),
-        "dlpno-bccd(t)_l": (True, True, False),
-        "dlpno-bccd(at)": (True, True, False),
+        "dlpno-ccsd(t0)": (False, False, True, False),
+        "dlpno-ccsd(t)": (False, False, False, False),
+        "dlpno-ccsd(ct)": (False, False, False, False),
+        "dlpno-ccsd(t)_l": (False, True, False, False),
+        "dlpno-ccsd(at)": (False, True, False, False),
+        "dlpno-bccd(t)": (True, False, False, True),
+        "dlpno-bccd(ct)": (True, False, False, True),
+        "dlpno-bccd(t)_l": (True, True, False, False),
+        "dlpno-bccd(at)": (True, True, False, False),
     }
 
 

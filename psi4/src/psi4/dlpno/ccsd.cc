@@ -1329,7 +1329,9 @@ template<bool crude> double DLPNOCCSD::filter_pairs(const std::vector<double>& e
         // require the integral/amplitude tensors allocated for strong pairs.
         // Until weak-pair Lambda approximations are implemented, promote every
         // pair surviving the initial screening whenever Lambda is requested.
-        const bool force_strong = lambda_requested_;
+        // The same promotion can be requested explicitly and is enabled by the
+        // driver for the ordinary and complete Brueckner triples methods.
+        const bool force_strong = lambda_requested_ || options_.get_bool("DLPNO_DISABLE_WEAK_PAIRS");
         int ij_strong = 0, ij_weak = 0;
         for (int ij = 0; ij < n_lmo_pairs; ++ij) {
             auto &[i, j] = ij_to_i_j_[ij];
@@ -3489,6 +3491,8 @@ void DLPNOCCSD::print_header() {
     outfile->Printf("    T_CUT_ENERGY     = %6.4e \n", T_CUT_ENERGY_);
     outfile->Printf("    T_CUT_PAIRS      = %6.4e \n", T_CUT_PAIRS_);
     outfile->Printf("    T_CUT_PAIRS_MP2  = %6.4e \n", T_CUT_PAIRS_MP2_);
+    outfile->Printf("    DLPNO_DISABLE_WEAK_PAIRS = %6s   \n",
+                    options_.get_bool("DLPNO_DISABLE_WEAK_PAIRS") ? "TRUE" : "FALSE");
     outfile->Printf("    T_CUT_PRE        = %6.4e \n", T_CUT_PRE_);
     outfile->Printf("    T_CUT_DO_PRE     = %6.4e \n", options_.get_double("T_CUT_DO_PRE"));
     outfile->Printf("    T_CUT_MKN        = %6.4e \n", T_CUT_MKN_);
