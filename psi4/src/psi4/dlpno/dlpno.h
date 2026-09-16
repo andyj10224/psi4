@@ -617,13 +617,21 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     /// Contract the converged right triples amplitudes with the left triples moment for (T)_L.
     double compute_t_l_iteration_energy();
 
+    struct TripletDFIntegrals {
+        std::array<SharedMatrix, 3> q_io;
+        std::array<SharedMatrix, 3> q_iv;
+        SharedMatrix q_ov;
+        SharedMatrix q_vv;
+    };
+
     /// Form right and left triples moments and their semicanonical (T0)/(T0)_L energies.
-    /// An optional consumer can use each ordinary energy moment while it is
-    /// triplet-local, without forcing all of the underlying DF intermediates
-    /// to remain resident in memory.
+    /// An optional consumer can use each ordinary energy moment and the
+    /// orthonormalized DF factors that produced it while they are triplet-local,
+    /// without forcing any of those intermediates to remain resident in memory.
     std::pair<double, double> compute_lccsd_t0(
         bool save_memory=false,
-        const std::function<void(int, const SharedMatrix&)>& triplet_moment_consumer = {});
+        const std::function<void(int, const SharedMatrix&, const TripletDFIntegrals&)>&
+            triplet_moment_consumer = {});
     /// A function to estimate (T) memory costs
     void estimate_triples_memory();
     /// L_CCSD(T) iterations (Jiang Eq. 111-112)
@@ -657,11 +665,6 @@ class PSI_API DLPNOCCSD_cT : public DLPNOCCSD_T {
     double E_cT_ = 0.0;
 
     einsums::Tensor<double, 2> project_triplet_singles(int ijk);
-    void compute_ct_integrals(int ijk,
-                              std::array<einsums::Tensor<double, 2>, 3>& q_io,
-                              std::array<einsums::Tensor<double, 2>, 3>& q_iv,
-                              einsums::Tensor<double, 3>& q_ov,
-                              einsums::Tensor<double, 3>& q_vv);
     SharedMatrix build_ct_moment(int ijk,
                                  const einsums::Tensor<double, 2>& T_n_ijk,
                                  const std::array<einsums::Tensor<double, 2>, 3>& q_io,
