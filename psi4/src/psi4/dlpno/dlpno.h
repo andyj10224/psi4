@@ -618,16 +618,24 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     double compute_t_l_iteration_energy();
 
     struct TripletDFIntegrals {
+        SharedMatrix T_n;
+        // Raw three-center integrals.
         std::array<SharedMatrix, 3> q_io;
-        std::array<SharedMatrix, 3> q_iv;
         SharedMatrix q_ov;
         SharedMatrix q_vv;
+        // Fully metric-solved copies.  q_vv is deliberately excluded: its
+        // O(N_aux^2 N_TNO^2) solve is replaced by narrow, T1-contracted RHSs.
+        std::array<SharedMatrix, 3> q_io_solved;
+        std::array<SharedMatrix, 3> q_iv_solved;
+        std::array<SharedMatrix, 3> q_vv_ti_solved;
+        SharedMatrix q_ov_solved;
     };
 
     /// Form right and left triples moments and their semicanonical (T0)/(T0)_L energies.
     /// An optional consumer can use each ordinary energy moment and the
-    /// orthonormalized DF factors that produced it while they are triplet-local,
-    /// without forcing any of those intermediates to remain resident in memory.
+    /// raw and fully metric-solved DF factors that produced it while they are
+    /// triplet-local, without forcing any of those intermediates to remain
+    /// resident in memory.
     std::pair<double, double> compute_lccsd_t0(
         bool save_memory=false,
         const std::function<void(int, const SharedMatrix&, const TripletDFIntegrals&)>&
@@ -664,12 +672,14 @@ class PSI_API DLPNOCCSD_cT : public DLPNOCCSD_T {
     double de_lccsd_ct_screened_ = 0.0;
     double E_cT_ = 0.0;
 
-    einsums::Tensor<double, 2> project_triplet_singles(int ijk);
     SharedMatrix build_ct_moment(int ijk,
                                  const einsums::Tensor<double, 2>& T_n_ijk,
                                  const std::array<einsums::Tensor<double, 2>, 3>& q_io,
-                                 const std::array<einsums::Tensor<double, 2>, 3>& q_iv,
-                                 einsums::Tensor<double, 3>& q_ov,
+                                 const std::array<einsums::Tensor<double, 2>, 3>& q_io_solved,
+                                 const std::array<einsums::Tensor<double, 2>, 3>& q_iv_solved,
+                                 const std::array<einsums::Tensor<double, 2>, 3>& q_vv_ti_solved,
+                                 const einsums::Tensor<double, 3>& q_ov,
+                                 einsums::Tensor<double, 3>& q_ov_solved,
                                  const einsums::Tensor<double, 3>& q_vv);
     double compute_lccsd_ct0(bool save_memory=false);
     void compute_ct_correction(DLPNOCCSDPhase phase);
