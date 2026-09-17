@@ -139,11 +139,13 @@ and reports the corresponding tight-cutoff semicanonical DLPNO-CCSD(T0) or
 DLPNO-BCCD(T0) reference contribution. An iterative ordinary (T) calculation
 is deliberately bypassed for cT requests.
 
-Triplet prescreening forms ordinary T0 and cT0 together at
-|dlpno__t_cut_tno_pre|, and retains their union of significant triplets. For
-those triplets, T0 and cT0 are formed together at
-|dlpno__t_cut_tno_ct|. The difference between T0 at the tight
-|dlpno__t_cut_tno| cutoff and T0 at |dlpno__t_cut_tno_ct| is added as a
+Triplet prescreening is performed once with ordinary T0 at
+|dlpno__t_cut_tno_pre|. The complete-triples stage directly reuses both the
+surviving triplet list and the screened ordinary-triples contribution from that
+calculation; no separate cT0 prescreen is performed. For the surviving triplets,
+T0 and cT0 are formed together at |dlpno__t_cut_tno_ct|. The difference between
+T0 at the tight |dlpno__t_cut_tno| cutoff and T0 at
+|dlpno__t_cut_tno_ct| is added as a
 cT-specific TNO-rank correction. Thus the expensive complete triples source is
 never formed at |dlpno__t_cut_tno|. Iterative cT uses those same unscaled
 |dlpno__t_cut_tno_ct| spaces: no strong- or weak-triplet TNO scaling is applied.

@@ -948,13 +948,14 @@ PSI Variables by Alpha
    DLPNO SEMICANONICAL (T0) ENERGY AT T_CUT_TNO_CT
    DLPNO SEMICANONICAL (cT0) ENERGY AT T_CUT_TNO_CT
    DLPNO (cT) TNO RANK CORRECTION ENERGY
-   DLPNO SCREENED TRIPLETS ENERGY AT T_CUT_TNO_CT
    DLPNO SCREENED COMPLETE TRIPLES ENERGY
    (cT0) CORRECTION ENERGY
    (cT) CORRECTION ENERGY
 
    Various components of the semicanonical or iterative DLPNO complete-triples
-   correlation energy and its ordinary-(T0) TNO-rank correction.
+   correlation energy and its ordinary-(T0) TNO-rank correction. The screened
+   complete-triples diagnostic is the screened ordinary-(T0) contribution
+   inherited unchanged by cT; cT0 is not separately prescreened.
 
 .. psivar:: DOUBLE-HYBRID CORRECTION ENERGY
 

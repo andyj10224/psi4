@@ -602,7 +602,7 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     double E_T_L_ = 0.0; ///< raw iterative (T)_Lambda energy at weaker triples cutoffs
 
     /// Create sparsity maps for triples
-    void triples_sparsity(bool prescreening, double* screened_target_energy=nullptr);
+    void triples_sparsity(bool prescreening);
     /// Create TNOs (Triplet Natural Orbitals) for DLPNO-(T)
     void tno_transform(double tno_tolerance);
     /// Sort triplets to split between "strong" and "weak" triplets (for (T) iterations)
@@ -671,7 +671,6 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
 class PSI_API DLPNOCCSD_cT : public DLPNOCCSD_T {
    protected:
     double e_lccsd_ct_ = 0.0;
-    double de_lccsd_ct_screened_ = 0.0;
     double E_cT_ = 0.0;
 
     SharedMatrix build_ct_moment(int ijk,

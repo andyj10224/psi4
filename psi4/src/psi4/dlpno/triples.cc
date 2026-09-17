@@ -143,7 +143,7 @@ SharedMatrix DLPNOCCSD_T::matmul_3d(SharedMatrix A, SharedMatrix X, int dim_old,
     return A_new;
 }
 
-void DLPNOCCSD_T::triples_sparsity(bool prescreening, double* screened_target_energy) {
+void DLPNOCCSD_T::triples_sparsity(bool prescreening) {
     /* 
     In the prescreening step, this generates the initial list of triplets from
     strong and weak pairs ijk from strong and weak pairs ij, jk, and ik 
@@ -195,7 +195,6 @@ void DLPNOCCSD_T::triples_sparsity(bool prescreening, double* screened_target_en
         double t_cut_triples_weak = options_.get_double("T_CUT_TRIPLES_WEAK");
         de_lccsd_t_screened_ = 0.0;
         de_lccsd_t_l_screened_ = 0.0;
-        if (screened_target_energy) *screened_target_energy = 0.0;
 
         int ijk_new = 0;
         for (int ijk = 0; ijk < ijk_to_i_j_k_.size(); ++ijk) {
@@ -204,10 +203,9 @@ void DLPNOCCSD_T::triples_sparsity(bool prescreening, double* screened_target_en
 
             const bool right_significant = std::fabs(e_ijk_right_[ijk]) >= t_cut_triples_weak;
             const bool target_significant = std::fabs(e_ijk_[ijk]) >= t_cut_triples_weak;
-            // When a second target moment is present, retain the union of
-            // triplets significant to ordinary (T0) and that target. This lets
-            // one run publish both Lambda/cT and ordinary rank estimates without
-            // biasing either screened contribution.
+            // For an asymmetric calculation retain the union of triplets
+            // significant to ordinary (T) and (T)_L. This lets one run publish
+            // both corrections without biasing either screened contribution.
             if (right_significant || target_significant) {
                 ijk_to_i_j_k_new.push_back(std::make_tuple(i, j, k));
                 i_j_k_to_ijk_new[i * naocc * naocc + j * naocc + k] = ijk_new;
@@ -219,11 +217,7 @@ void DLPNOCCSD_T::triples_sparsity(bool prescreening, double* screened_target_en
                 ++ijk_new;
             } else {
                 de_lccsd_t_screened_ += e_ijk_right_[ijk];
-                if (screened_target_energy) {
-                    *screened_target_energy += e_ijk_[ijk];
-                } else if (lambda_requested_) {
-                    de_lccsd_t_l_screened_ += e_ijk_[ijk];
-                }
+                if (lambda_requested_) de_lccsd_t_l_screened_ += e_ijk_[ijk];
             }
         }
         i_j_k_to_ijk_ = i_j_k_to_ijk_new;
@@ -2629,8 +2623,8 @@ void DLPNOCCSD_cT::compute_ct_correction(DLPNOCCSDPhase phase) {
     const double t_cut_tno = options_.get_double("T_CUT_TNO");
     const double t_cut_tno_ct = options_.get_double("T_CUT_TNO_CT");
     // The immediately preceding ordinary pass is deliberately semicanonical
-    // for every cT request. Preserve its tight-space value before rebuilding
-    // the triplet list and TNOs for the reduced-cost complete-triples pass.
+    // for every cT request. Preserve its tight-space value, surviving triplet
+    // list, and screened-triplet correction for the complete-triples pass.
     const double E_T0_tight = scalar_variable("DLPNO SEMICANONICAL (T0) ENERGY");
 
     outfile->Printf("\n   --------------------------------------------\n");
@@ -2665,60 +2659,35 @@ void DLPNOCCSD_cT::compute_ct_correction(DLPNOCCSDPhase phase) {
     Fab_.clear();
     T_n_ij_.clear();
 
-    // A Brueckner calculation evaluates cT twice. Rebuild every
-    // triplet-dependent object in the current orbital frame for each phase.
-    lmotriplet_to_ribfs_.clear();
-    lmotriplet_to_lmos_.clear();
-    lmotriplet_to_paos_.clear();
-    i_j_k_to_ijk_.clear();
-    ijk_to_i_j_k_.clear();
+    // Keep the refined domains, surviving triplet map, unit TNO scales, and
+    // screened ordinary-(T0) tail produced immediately above. A Brueckner job
+    // still gets phase-correct state because its tight T0 pass is repeated in
+    // the current orbital frame before every cT evaluation.
     W_iajbkc_.clear();
     V_iajbkc_.clear();
     L_iajbkc_.clear();
     T_iajbkc_.clear();
-    X_tno_.clear();
-    e_tno_.clear();
-    n_tno_.clear();
     e_ijk_.clear();
     e_ijk_right_.clear();
-    tno_scale_.clear();
     is_strong_triplet_.clear();
-    de_lccsd_t_screened_ = 0.0;
     de_lccsd_t_l_screened_ = 0.0;
-    de_lccsd_ct_screened_ = 0.0;
     e_lccsd_ct_ = 0.0;
     E_cT_ = 0.0;
 
     psio_->open(PSIF_DLPNO_TRIPLES, PSIO_OPEN_NEW);
 
-    const double t_cut_tno_pre = options_.get_double("T_CUT_TNO_PRE");
-
-    // Step 1: form ordinary T0 and cT0 together in the inexpensive
-    // prescreening spaces. Their union determines which weak triplets survive,
-    // so neither side of the subsequent rank correction is biased.
-    outfile->Printf("   Starting cT0 Triplet Prescreening...\n");
-    outfile->Printf("     T_CUT_TNO set to %6.3e \n", t_cut_tno_pre);
-    outfile->Printf("     T_CUT_DO  set to %6.3e \n", options_.get_double("T_CUT_DO_TRIPLES_PRE"));
-    outfile->Printf("     T_CUT_MKN set to %6.3e \n\n", options_.get_double("T_CUT_MKN_TRIPLES_PRE"));
-    triples_sparsity(true);
-    tno_transform(t_cut_tno_pre);
-    compute_lccsd_ct0();
-
-    // Step 2: recompute ordinary T0 and cT0 together for the union of
-    // significant prescreening triplets. The ordinary value supplies a rank
-    // correction from T_CUT_TNO_CT back to the tight T_CUT_TNO reference,
-    // without ever forming the complete source in the expensive tight space.
-    triples_sparsity(false, &de_lccsd_ct_screened_);
-    outfile->Printf("    * T0 Energy From Screened Triplets:  %.12f \n", de_lccsd_t_screened_);
-    outfile->Printf("    * cT0 Energy From Screened Triplets: %.12f \n\n", de_lccsd_ct_screened_);
+    // Reuse the ordinary-(T0) survivors directly: do not perform a second cT0
+    // prescreen. Recompute only those triplets at T_CUT_TNO_CT and carry the
+    // screened ordinary triples contribution unchanged into cT/cT0.
+    outfile->Printf("   Continuing cT with %6zu triplets surviving the (T0) prescreen...\n",
+                    ijk_to_i_j_k_.size());
+    outfile->Printf("    * Screened (T0) Triplets Reused by cT: %.12f \n\n", de_lccsd_t_screened_);
     outfile->Printf("     T_CUT_TNO_CT set to %6.3e \n", t_cut_tno_ct);
-    outfile->Printf("     T_CUT_DO  (re)set to %6.3e \n", options_.get_double("T_CUT_DO_TRIPLES"));
-    outfile->Printf("     T_CUT_MKN (re)set to %6.3e \n\n", options_.get_double("T_CUT_MKN_TRIPLES"));
     tno_transform(t_cut_tno_ct);
     if (!ct0_only) estimate_triples_memory();
     const auto [E_T0_ct, E_cT0] = compute_lccsd_ct0(!ct0_only);
     const double E_T0_ct_total = E_T0_ct + de_lccsd_t_screened_;
-    const double E_cT0_total = E_cT0 + de_lccsd_ct_screened_;
+    const double E_cT0_total = E_cT0 + de_lccsd_t_screened_;
     const double tno_rank_correction = E_T0_tight - E_T0_ct_total;
     const double E_cT0_corrected = E_cT0_total + tno_rank_correction;
     e_lccsd_ct_ = e_lccsd_ + E_cT0_corrected;
@@ -2735,8 +2704,9 @@ void DLPNOCCSD_cT::compute_ct_correction(DLPNOCCSDPhase phase) {
     set_scalar_variable("DLPNO SEMICANONICAL (cT0) ENERGY AT T_CUT_TNO_CT", E_cT0_total);
     set_scalar_variable("DLPNO SEMICANONICAL (cT0) ENERGY", E_cT0_corrected);
     set_scalar_variable("DLPNO (cT) TNO RANK CORRECTION ENERGY", tno_rank_correction);
-    set_scalar_variable("DLPNO SCREENED TRIPLETS ENERGY AT T_CUT_TNO_CT", de_lccsd_t_screened_);
-    set_scalar_variable("DLPNO SCREENED COMPLETE TRIPLES ENERGY", de_lccsd_ct_screened_);
+    // Backward-compatible complete-triples diagnostic: no separate cT screen
+    // is performed, so this is exactly the ordinary screened-(T0) correction.
+    set_scalar_variable("DLPNO SCREENED COMPLETE TRIPLES ENERGY", de_lccsd_t_screened_);
     set_scalar_variable("(cT0) CORRECTION ENERGY", ct0_correction);
     if (bccd_result) set_scalar_variable("B(cT0) CORRECTION ENERGY", ct0_correction);
 
@@ -2793,7 +2763,7 @@ void DLPNOCCSD_cT::compute_ct_correction(DLPNOCCSDPhase phase) {
     outfile->Printf("    * DLPNO-%s Contribution:           %16.12f\n", reference.c_str(),
                     e_lccsd_ + de_weak_ + de_lmp2_eliminated_ + de_dipole_ + de_pno_total_);
     outfile->Printf("    * DLPNO-(cT0) at T_CUT_TNO_CT:     %16.12f\n", E_cT0_total);
-    outfile->Printf("    * Screened cT0 Triplets:           %16.12f\n", de_lccsd_ct_screened_);
+    outfile->Printf("    * Screened (T0) Triplets Reused:   %16.12f\n", de_lccsd_t_screened_);
     outfile->Printf("    * DLPNO-(T0) at T_CUT_TNO:         %16.12f\n", E_T0_tight);
     outfile->Printf("    * DLPNO-(T0) at T_CUT_TNO_CT:      %16.12f\n", E_T0_ct_total);
     outfile->Printf("    * (T0) TNO-Rank Correction:        %16.12f\n", tno_rank_correction);
