@@ -78,8 +78,8 @@ namespace index = einsums::index;
 DLPNOCCSD_T::DLPNOCCSD_T(SharedWavefunction ref_wfn, Options &options) : DLPNOCCSD(ref_wfn, options) {}
 DLPNOCCSD_T::~DLPNOCCSD_T() {}
 
-void DLPNOCCSD_T::print_header(DLPNOCCSDPhase phase) {
-    bool t0_only = options_.get_bool("T0_APPROXIMATION");
+void DLPNOCCSD_T::print_header(DLPNOCCSDPhase phase, bool semicanonical_only) {
+    const bool t0_only = semicanonical_only || options_.get_bool("T0_APPROXIMATION");
     std::string triples_algorithm = (t0_only) ? "SEMICANONICAL (T0)" : "ITERATIVE (T)";
     const bool bccd_result = brueckner_orbs_ && phase == DLPNOCCSDPhase::FinalBrueckner;
     std::string method = bccd_result ? "DLPNO-BCCD" : "DLPNO-CCSD";
@@ -143,7 +143,7 @@ SharedMatrix DLPNOCCSD_T::matmul_3d(SharedMatrix A, SharedMatrix X, int dim_old,
     return A_new;
 }
 
-void DLPNOCCSD_T::triples_sparsity(bool prescreening) {
+void DLPNOCCSD_T::triples_sparsity(bool prescreening, double* screened_target_energy) {
     /* 
     In the prescreening step, this generates the initial list of triplets from
     strong and weak pairs ijk from strong and weak pairs ij, jk, and ik 
@@ -195,6 +195,7 @@ void DLPNOCCSD_T::triples_sparsity(bool prescreening) {
         double t_cut_triples_weak = options_.get_double("T_CUT_TRIPLES_WEAK");
         de_lccsd_t_screened_ = 0.0;
         de_lccsd_t_l_screened_ = 0.0;
+        if (screened_target_energy) *screened_target_energy = 0.0;
 
         int ijk_new = 0;
         for (int ijk = 0; ijk < ijk_to_i_j_k_.size(); ++ijk) {
@@ -203,9 +204,10 @@ void DLPNOCCSD_T::triples_sparsity(bool prescreening) {
 
             const bool right_significant = std::fabs(e_ijk_right_[ijk]) >= t_cut_triples_weak;
             const bool target_significant = std::fabs(e_ijk_[ijk]) >= t_cut_triples_weak;
-            // For an asymmetric calculation retain the union of triplets
-            // significant to ordinary (T) and (T)_L. This lets one run publish
-            // both corrections without biasing either screened contribution.
+            // When a second target moment is present, retain the union of
+            // triplets significant to ordinary (T0) and that target. This lets
+            // one run publish both Lambda/cT and ordinary rank estimates without
+            // biasing either screened contribution.
             if (right_significant || target_significant) {
                 ijk_to_i_j_k_new.push_back(std::make_tuple(i, j, k));
                 i_j_k_to_ijk_new[i * naocc * naocc + j * naocc + k] = ijk_new;
@@ -217,7 +219,11 @@ void DLPNOCCSD_T::triples_sparsity(bool prescreening) {
                 ++ijk_new;
             } else {
                 de_lccsd_t_screened_ += e_ijk_right_[ijk];
-                if (lambda_requested_) de_lccsd_t_l_screened_ += e_ijk_[ijk];
+                if (screened_target_energy) {
+                    *screened_target_energy += e_ijk_[ijk];
+                } else if (lambda_requested_) {
+                    de_lccsd_t_l_screened_ += e_ijk_[ijk];
+                }
             }
         }
         i_j_k_to_ijk_ = i_j_k_to_ijk_new;
@@ -1786,7 +1792,7 @@ std::pair<double, double> DLPNOCCSD_T::lccsd_t_iterations(bool complete_triples)
     return std::make_pair(e_t, e_t_lambda);
 }
 
-void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
+void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase, bool semicanonical_only) {
     timer_on("DLPNO-CCSD(T)");
 
     if (lambda_requested_ && !lambda_solved_) {
@@ -1797,8 +1803,9 @@ void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
     const std::string reference_method = bccd_result ? "BCCD" : "CCSD";
     const std::string right_method = reference_method + "(T)";
     const std::string left_method = "A-" + reference_method + "(T)";
+    const bool t0_only = semicanonical_only || options_.get_bool("T0_APPROXIMATION");
 
-    print_header(phase);
+    print_header(phase, semicanonical_only);
 
     const int naocc = nalpha_ - nfrzc();
     const int n_lmo_pairs = ij_to_i_j_.size();
@@ -1923,7 +1930,7 @@ void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
     }
 
     // Step 3: Compute the full iterative correction unless (T0) was requested.
-    if (!options_.get_bool("T0_APPROXIMATION")) {
+    if (!t0_only) {
         outfile->Printf("\n\n  ==> Computing Full Iterative (T) <==\n\n");
 
         sort_triplets(lambda_requested_ ? E_T_L0 : E_T0);
@@ -2015,7 +2022,7 @@ void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
         set_scalar_variable("CURRENT ENERGY", right_total);
     }
 
-    print_results(phase);
+    print_results(phase, semicanonical_only);
     psio_->close(PSIF_DLPNO_TRIPLES, 0);
     timer_off("DLPNO-CCSD(T)");
 }
@@ -2038,10 +2045,11 @@ double DLPNOCCSD_T::compute_energy() {
     return scalar_variable("CURRENT ENERGY");
 }
 
-void DLPNOCCSD_T::print_results(DLPNOCCSDPhase phase) {
+void DLPNOCCSD_T::print_results(DLPNOCCSDPhase phase, bool semicanonical_only) {
     const bool bccd_result = brueckner_orbs_ && phase == DLPNOCCSDPhase::FinalBrueckner;
     const std::string reference_method = bccd_result ? "BCCD" : "CCSD";
-    const std::string triples_suffix = options_.get_bool("T0_APPROXIMATION") ? "(T0)" : "(T)";
+    const bool t0_only = semicanonical_only || options_.get_bool("T0_APPROXIMATION");
+    const std::string triples_suffix = t0_only ? "(T0)" : "(T)";
     const std::string right_method = "DLPNO-" + reference_method + triples_suffix;
     const double reference_corr = e_lccsd_ + de_weak_ + de_lmp2_eliminated_ + de_pno_total_ + de_dipole_;
     const double right_corr = e_lccsd_t_ + de_weak_ + de_lmp2_eliminated_ + de_pno_total_ + de_dipole_;
@@ -2474,7 +2482,7 @@ SharedMatrix DLPNOCCSD_cT::build_ct_moment(int ijk,
     return M_ijk;
 }
 
-double DLPNOCCSD_cT::compute_lccsd_ct0(bool save_memory) {
+std::pair<double, double> DLPNOCCSD_cT::compute_lccsd_ct0(bool save_memory) {
     timer_on("LCCSD(cT0)");
 
     const int n_lmo_triplets = static_cast<int>(ijk_to_i_j_k_.size());
@@ -2598,16 +2606,15 @@ double DLPNOCCSD_cT::compute_lccsd_ct0(bool save_memory) {
     // Its V moment and every DF integral workspace are consumed in the same
     // triplet-local scope; only the three tensors needed by iterative cT are
     // retained when save_memory is requested.
-    compute_lccsd_t0(false, consume_triplet_moment);
+    const double E_T0 = compute_lccsd_t0(false, consume_triplet_moment).first;
 
     double E_cT = 0.0;
     for (double e_ijk : e_ct0_ijk) E_cT += e_ijk;
     e_ijk_ = e_ct0_ijk;
-    e_ijk_right_ = e_ct0_ijk;
 
     outfile->Printf("    (Relevant) Semicanonical LCCSD(cT0) Computation Complete.\n\n");
     timer_off("LCCSD(cT0)");
-    return E_cT;
+    return std::make_pair(E_T0, E_cT);
 }
 
 void DLPNOCCSD_cT::compute_ct_correction(DLPNOCCSDPhase phase) {
@@ -2619,20 +2626,20 @@ void DLPNOCCSD_cT::compute_ct_correction(DLPNOCCSDPhase phase) {
     const std::string reference = bccd_result ? "BCCD" : "CCSD";
     const std::string method = reference + (ct0_only ? "(cT0)" : "(cT)");
     const std::string ct0_method = reference + "(cT0)";
+    const double t_cut_tno = options_.get_double("T_CUT_TNO");
+    const double t_cut_tno_ct = options_.get_double("T_CUT_TNO_CT");
+    // The immediately preceding ordinary pass is deliberately semicanonical
+    // for every cT request. Preserve its tight-space value before rebuilding
+    // the triplet list and TNOs for the reduced-cost complete-triples pass.
+    const double E_T0_tight = scalar_variable("DLPNO SEMICANONICAL (T0) ENERGY");
 
     outfile->Printf("\n   --------------------------------------------\n");
     outfile->Printf("                 DLPNO-%-25s\n", method.c_str());
     outfile->Printf("      Complete perturbative triples (%s)     \n", ct0_only ? "cT0" : "cT");
     outfile->Printf("          DOI: 10.1103/PhysRevLett.131.186401 \n");
     outfile->Printf("   --------------------------------------------\n\n");
-    outfile->Printf("     T_CUT_TNO (cT0)                  = %6.3e \n",
-                    options_.get_double("T_CUT_TNO"));
-    if (!ct0_only) {
-        outfile->Printf("     T_CUT_TNO_STRONG (cT)            = %6.3e \n",
-                        options_.get_double("T_CUT_TNO") * options_.get_double("T_CUT_TNO_STRONG_SCALE"));
-        outfile->Printf("     T_CUT_TNO_WEAK (cT)              = %6.3e \n",
-                        options_.get_double("T_CUT_TNO") * options_.get_double("T_CUT_TNO_WEAK_SCALE"));
-    }
+    outfile->Printf("     T_CUT_TNO (T0 rank target)       = %6.3e \n", t_cut_tno);
+    outfile->Printf("     T_CUT_TNO_CT (cT0)               = %6.3e \n", t_cut_tno_ct);
     outfile->Printf("\n");
 
     // Release post-CCSD intermediates not used by either the ordinary triples
@@ -2685,11 +2692,10 @@ void DLPNOCCSD_cT::compute_ct_correction(DLPNOCCSDPhase phase) {
     psio_->open(PSIF_DLPNO_TRIPLES, PSIO_OPEN_NEW);
 
     const double t_cut_tno_pre = options_.get_double("T_CUT_TNO_PRE");
-    const double t_cut_tno = options_.get_double("T_CUT_TNO");
 
-    // Step 1: form cT0 in the inexpensive prescreening spaces. The resulting
-    // complete-source triplet energies, rather than ordinary (T0), determine
-    // which weak triplets survive.
+    // Step 1: form ordinary T0 and cT0 together in the inexpensive
+    // prescreening spaces. Their union determines which weak triplets survive,
+    // so neither side of the subsequent rank correction is biased.
     outfile->Printf("   Starting cT0 Triplet Prescreening...\n");
     outfile->Printf("     T_CUT_TNO set to %6.3e \n", t_cut_tno_pre);
     outfile->Printf("     T_CUT_DO  set to %6.3e \n", options_.get_double("T_CUT_DO_TRIPLES_PRE"));
@@ -2698,17 +2704,24 @@ void DLPNOCCSD_cT::compute_ct_correction(DLPNOCCSDPhase phase) {
     tno_transform(t_cut_tno_pre);
     compute_lccsd_ct0();
 
-    // Step 2: recompute cT0 for surviving triplets at the requested tight cutoff.
-    triples_sparsity(false);
-    de_lccsd_ct_screened_ = de_lccsd_t_screened_;
+    // Step 2: recompute ordinary T0 and cT0 together for the union of
+    // significant prescreening triplets. The ordinary value supplies a rank
+    // correction from T_CUT_TNO_CT back to the tight T_CUT_TNO reference,
+    // without ever forming the complete source in the expensive tight space.
+    triples_sparsity(false, &de_lccsd_ct_screened_);
+    outfile->Printf("    * T0 Energy From Screened Triplets:  %.12f \n", de_lccsd_t_screened_);
     outfile->Printf("    * cT0 Energy From Screened Triplets: %.12f \n\n", de_lccsd_ct_screened_);
-    outfile->Printf("     T_CUT_TNO (re)set to %6.3e \n", t_cut_tno);
+    outfile->Printf("     T_CUT_TNO_CT set to %6.3e \n", t_cut_tno_ct);
     outfile->Printf("     T_CUT_DO  (re)set to %6.3e \n", options_.get_double("T_CUT_DO_TRIPLES"));
     outfile->Printf("     T_CUT_MKN (re)set to %6.3e \n\n", options_.get_double("T_CUT_MKN_TRIPLES"));
-    tno_transform(t_cut_tno);
-    const double E_cT0 = compute_lccsd_ct0();
+    tno_transform(t_cut_tno_ct);
+    if (!ct0_only) estimate_triples_memory();
+    const auto [E_T0_ct, E_cT0] = compute_lccsd_ct0(!ct0_only);
+    const double E_T0_ct_total = E_T0_ct + de_lccsd_t_screened_;
     const double E_cT0_total = E_cT0 + de_lccsd_ct_screened_;
-    e_lccsd_ct_ = e_lccsd_ + E_cT0_total;
+    const double tno_rank_correction = E_T0_tight - E_T0_ct_total;
+    const double E_cT0_corrected = E_cT0_total + tno_rank_correction;
+    e_lccsd_ct_ = e_lccsd_ + E_cT0_corrected;
 
     const double ct0_correlation =
         e_lccsd_ct_ + de_weak_ + de_lmp2_eliminated_ + de_dipole_ + de_pno_total_;
@@ -2718,7 +2731,11 @@ void DLPNOCCSD_cT::compute_ct_correction(DLPNOCCSDPhase phase) {
     set_scalar_variable(ct0_method + " TOTAL ENERGY", ct0_total);
     set_scalar_variable("DLPNO-" + ct0_method + " CORRELATION ENERGY", ct0_correlation);
     set_scalar_variable("DLPNO-" + ct0_method + " TOTAL ENERGY", ct0_total);
-    set_scalar_variable("DLPNO SEMICANONICAL (cT0) ENERGY", E_cT0_total);
+    set_scalar_variable("DLPNO SEMICANONICAL (T0) ENERGY AT T_CUT_TNO_CT", E_T0_ct_total);
+    set_scalar_variable("DLPNO SEMICANONICAL (cT0) ENERGY AT T_CUT_TNO_CT", E_cT0_total);
+    set_scalar_variable("DLPNO SEMICANONICAL (cT0) ENERGY", E_cT0_corrected);
+    set_scalar_variable("DLPNO (cT) TNO RANK CORRECTION ENERGY", tno_rank_correction);
+    set_scalar_variable("DLPNO SCREENED TRIPLETS ENERGY AT T_CUT_TNO_CT", de_lccsd_t_screened_);
     set_scalar_variable("DLPNO SCREENED COMPLETE TRIPLES ENERGY", de_lccsd_ct_screened_);
     set_scalar_variable("(cT0) CORRECTION ENERGY", ct0_correction);
     if (bccd_result) set_scalar_variable("B(cT0) CORRECTION ENERGY", ct0_correction);
@@ -2726,33 +2743,24 @@ void DLPNOCCSD_cT::compute_ct_correction(DLPNOCCSDPhase phase) {
     outfile->Printf("    DLPNO-%s Correlation Energy:       %16.12f\n", ct0_method.c_str(), ct0_correlation);
     outfile->Printf("    * DLPNO-%s Contribution:           %16.12f\n", reference.c_str(),
                     e_lccsd_ + de_weak_ + de_lmp2_eliminated_ + de_dipole_ + de_pno_total_);
-    outfile->Printf("    * DLPNO-(cT0) Contribution:        %16.12f\n", E_cT0);
-    outfile->Printf("    * Screened cT0 Triplets:           %16.12f\n\n", de_lccsd_ct_screened_);
+    outfile->Printf("    * DLPNO-(cT0) at T_CUT_TNO_CT:     %16.12f\n", E_cT0_total);
+    outfile->Printf("    * (T0) TNO-Rank Correction:        %16.12f\n", tno_rank_correction);
+    outfile->Printf("    * Rank-Corrected DLPNO-(cT0):      %16.12f\n\n", E_cT0_corrected);
 
-    // Step 3: as in ordinary (T), classify strong and weak triplets using the
-    // tight cT0 energies, rebuild their scaled TNO spaces, and add the net
-    // iterative correction relative to cT0 in those same spaces.
+    // Step 3: iterate cT in exactly the same unscaled T_CUT_TNO_CT spaces used
+    // above. Complete triples deliberately does not classify strong/weak
+    // triplets or apply either ordinary-(T) TNO scaling factor.
     double dE_cT = 0.0;
     if (!ct0_only) {
-        outfile->Printf("\n\n  ==> Computing Full Iterative (cT) <==\n\n");
-        sort_triplets(E_cT0);
-
-        const double strong_scale = options_.get_double("T_CUT_TNO_STRONG_SCALE");
-        const double weak_scale = options_.get_double("T_CUT_TNO_WEAK_SCALE");
-        outfile->Printf("     T_CUT_TNO (re)set to %6.3e for strong triples \n", t_cut_tno * strong_scale);
-        outfile->Printf("     T_CUT_TNO (re)set to %6.3e for weak triples   \n\n", t_cut_tno * weak_scale);
-
-        tno_transform(t_cut_tno);
-        estimate_triples_memory();
-        const double E_cT0_crude = compute_lccsd_ct0(true);
+        outfile->Printf("\n\n  ==> Computing Full Iterative (cT) at T_CUT_TNO_CT <==\n\n");
         E_cT_ = lccsd_t_iterations(true).first;
-        dE_cT = E_cT_ - E_cT0_crude;
+        dE_cT = E_cT_ - E_cT0;
         e_lccsd_ct_ += dE_cT;
 
         outfile->Printf("\n");
-        outfile->Printf("    DLPNO-%s(cT0) energy at scaled tolerance: %16.12f\n", reference.c_str(), E_cT0_crude);
-        outfile->Printf("    DLPNO-%s(cT)  energy at scaled tolerance: %16.12f\n", reference.c_str(), E_cT_);
-        outfile->Printf("    * Net Iterative (cT) contribution:         %16.12f\n\n", dE_cT);
+        outfile->Printf("    DLPNO-%s(cT0) energy at T_CUT_TNO_CT: %16.12f\n", reference.c_str(), E_cT0);
+        outfile->Printf("    DLPNO-%s(cT)  energy at T_CUT_TNO_CT: %16.12f\n", reference.c_str(), E_cT_);
+        outfile->Printf("    * Net Iterative (cT) contribution:   %16.12f\n\n", dE_cT);
     }
 
     const double correlation =
@@ -2784,8 +2792,11 @@ void DLPNOCCSD_cT::compute_ct_correction(DLPNOCCSDPhase phase) {
     outfile->Printf("    DLPNO-%s Correlation Energy:       %16.12f\n", method.c_str(), correlation);
     outfile->Printf("    * DLPNO-%s Contribution:           %16.12f\n", reference.c_str(),
                     e_lccsd_ + de_weak_ + de_lmp2_eliminated_ + de_dipole_ + de_pno_total_);
-    outfile->Printf("    * DLPNO-(cT0) at T_CUT_TNO:        %16.12f\n", E_cT0);
+    outfile->Printf("    * DLPNO-(cT0) at T_CUT_TNO_CT:     %16.12f\n", E_cT0_total);
     outfile->Printf("    * Screened cT0 Triplets:           %16.12f\n", de_lccsd_ct_screened_);
+    outfile->Printf("    * DLPNO-(T0) at T_CUT_TNO:         %16.12f\n", E_T0_tight);
+    outfile->Printf("    * DLPNO-(T0) at T_CUT_TNO_CT:      %16.12f\n", E_T0_ct_total);
+    outfile->Printf("    * (T0) TNO-Rank Correction:        %16.12f\n", tno_rank_correction);
     if (!ct0_only) {
         outfile->Printf("    * Iterative (cT) Increment:         %16.12f\n", dE_cT);
     }
@@ -2801,9 +2812,12 @@ void DLPNOCCSD_cT::compute_ct_correction(DLPNOCCSDPhase phase) {
 
 void DLPNOCCSD_cT::post_ccsd_correction(DLPNOCCSDPhase phase) {
     // In a Brueckner job this hook is called once before orbital optimization
-    // and once after convergence. First publish the corresponding ordinary
-    // (T)/(T0) result, then evaluate cT/cT0 in the same orbital frame.
-    DLPNOCCSD_T::post_ccsd_correction(phase);
+    // and once after convergence. A cT request needs the tight semicanonical
+    // (T0) value only as its rank-correction reference: deliberately bypass
+    // the ordinary iterative-(T) route, then proceed directly to cT/cT0 in the
+    // same orbital frame.
+    DLPNOCCSD::post_ccsd_correction(phase);
+    compute_triples_correction(phase, true);
     compute_ct_correction(phase);
 }
 

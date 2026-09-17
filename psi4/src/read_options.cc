@@ -2790,6 +2790,9 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
 
         /*- Occupation number threshold for removing TNOs -*/
         options.add_double("T_CUT_TNO", 1e-9);
+        /*- Occupation number threshold for the TNO spaces used by cT0 and iterative cT.
+            The cT energy receives the ordinary T0 rank correction between this cutoff and T_CUT_TNO. !expert -*/
+        options.add_double("T_CUT_TNO_CT", 1e-7);
         /*- Maximum number of weak pairs in (ij, jk, ik) to consider when forming triplet ijk !expert -*/
         options.add_int("TRIPLES_MAX_WEAK_PAIRS", 1);
         /*- T_CUT_TNO scaling for strong triplets in the iterative (T) algorithm !expert -*/

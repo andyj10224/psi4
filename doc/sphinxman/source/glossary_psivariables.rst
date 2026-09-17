@@ -945,12 +945,16 @@ PSI Variables by Alpha
    Various components of the ordinary or asymmetric DLPNO-(T) correlation energy.
 
 .. psivar:: DLPNO SEMICANONICAL (cT0) ENERGY
+   DLPNO SEMICANONICAL (T0) ENERGY AT T_CUT_TNO_CT
+   DLPNO SEMICANONICAL (cT0) ENERGY AT T_CUT_TNO_CT
+   DLPNO (cT) TNO RANK CORRECTION ENERGY
+   DLPNO SCREENED TRIPLETS ENERGY AT T_CUT_TNO_CT
    DLPNO SCREENED COMPLETE TRIPLES ENERGY
    (cT0) CORRECTION ENERGY
    (cT) CORRECTION ENERGY
 
    Various components of the semicanonical or iterative DLPNO complete-triples
-   correlation energy.
+   correlation energy and its ordinary-(T0) TNO-rank correction.
 
 .. psivar:: DOUBLE-HYBRID CORRECTION ENERGY
 

@@ -602,7 +602,7 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     double E_T_L_ = 0.0; ///< raw iterative (T)_Lambda energy at weaker triples cutoffs
 
     /// Create sparsity maps for triples
-    void triples_sparsity(bool prescreening);
+    void triples_sparsity(bool prescreening, double* screened_target_energy=nullptr);
     /// Create TNOs (Triplet Natural Orbitals) for DLPNO-(T)
     void tno_transform(double tno_tolerance);
     /// Sort triplets to split between "strong" and "weak" triplets (for (T) iterations)
@@ -645,14 +645,16 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     /// L_CCSD(T) iterations (Jiang Eq. 111-112)
     std::pair<double, double> lccsd_t_iterations(bool complete_triples=false);
 
-    void print_header(DLPNOCCSDPhase phase);
+    void print_header(DLPNOCCSDPhase phase, bool semicanonical_only=false);
 
-    void print_results(DLPNOCCSDPhase phase);
+    void print_results(DLPNOCCSDPhase phase, bool semicanonical_only=false);
 
     /// Evaluate triples after a single-point CCSD solve or selected Brueckner macroiterations.
     void post_ccsd_correction(DLPNOCCSDPhase phase) override;
     /// Compute the requested symmetric and, optionally, asymmetric triples corrections.
-    void compute_triples_correction(DLPNOCCSDPhase phase);
+    /// Complete-triples callers force a tight (T0) reference without entering
+    /// the ordinary iterative-(T) route.
+    void compute_triples_correction(DLPNOCCSDPhase phase, bool semicanonical_only=false);
 
    public:
     DLPNOCCSD_T(SharedWavefunction ref_wfn, Options& options);
@@ -681,7 +683,10 @@ class PSI_API DLPNOCCSD_cT : public DLPNOCCSD_T {
                                  const einsums::Tensor<double, 3>& q_ov,
                                  einsums::Tensor<double, 3>& q_ov_solved,
                                  const einsums::Tensor<double, 3>& q_vv);
-    double compute_lccsd_ct0(bool save_memory=false);
+    /// Return the ordinary (T0) and complete (cT0) energies formed in the same
+    /// TNO spaces.  Sharing the pass makes the cT-specific TNO-rank correction
+    /// essentially free once the complete source has been requested.
+    std::pair<double, double> compute_lccsd_ct0(bool save_memory=false);
     void compute_ct_correction(DLPNOCCSDPhase phase);
 
     void post_ccsd_correction(DLPNOCCSDPhase phase) override;
