@@ -500,6 +500,32 @@ def return_energy_components():
                     'dlpno-ccsdt': 'CCSDT TOTAL ENERGY',
                  'dlpno-ccsdt(q)': 'CCSDT(Q) TOTAL ENERGY',
                    'dlpno-ccsdtq': 'CCSDTQ TOTAL ENERGY'}
+    # Brueckner references differ by optimization rank; only the same-rank
+    # Brueckner parent is guaranteed to have been evaluated for these routes.
+    for method in ("bccdt", "bccdt(q0)", "bccdt(q)", "bccdtq"):
+        VARH['dlpno-' + method] = {'hf': 'HF TOTAL ENERGY',
+                                  'dlpno-' + method: method.upper() + ' TOTAL ENERGY'}
+
+    VARH['dlpno-ccsd(t)_l'] = {
+                             'hf': 'HF TOTAL ENERGY',
+                      'dlpno-mp2': 'MP2 TOTAL ENERGY',
+                     'dlpno-ccsd': 'CCSD TOTAL ENERGY',
+                 'dlpno-ccsd(t)_l': 'A-CCSD(T) TOTAL ENERGY'}
+    VARH['dlpno-ccsd(at)'] = dict(VARH['dlpno-ccsd(t)_l'])
+    VARH['dlpno-ccsd(at)']['dlpno-ccsd(at)'] = 'CCSD(AT) TOTAL ENERGY'
+    VARH['dlpno-bccd'] = {
+                             'hf': 'HF TOTAL ENERGY',
+                     'dlpno-bccd': 'BCCD TOTAL ENERGY'}
+    VARH['dlpno-bccd(t)'] = {
+                             'hf': 'HF TOTAL ENERGY',
+                     'dlpno-bccd': 'BCCD TOTAL ENERGY',
+                 'dlpno-bccd(t)': 'BCCD(T) TOTAL ENERGY'}
+    VARH['dlpno-bccd(t)_l'] = {
+                             'hf': 'HF TOTAL ENERGY',
+                     'dlpno-bccd': 'BCCD TOTAL ENERGY',
+             'dlpno-bccd(t)_l': 'A-BCCD(T) TOTAL ENERGY'}
+    VARH['dlpno-bccd(at)'] = dict(VARH['dlpno-bccd(t)_l'])
+    VARH['dlpno-bccd(at)']['dlpno-bccd(at)'] = 'BCCD(AT) TOTAL ENERGY'
     VARH['qcisd(t)'] = {
                              'hf': 'HF TOTAL ENERGY',
                             'mp2': 'MP2 TOTAL ENERGY',

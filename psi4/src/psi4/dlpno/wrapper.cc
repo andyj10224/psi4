@@ -36,6 +36,24 @@ namespace dlpno {
 
 SharedWavefunction dlpno(SharedWavefunction ref_wfn, Options& options) {
 
+    const auto reference = options.get_str("REFERENCE");
+    const auto algorithm = options.get_str("DLPNO_ALGORITHM");
+    const auto orbitals = options.get_str("DLPNO_REFERENCE_ORBITALS");
+    const int orbital_rank = orbitals == "BCCDTQ" ? 4 : orbitals == "BCCDT" ? 3 :
+                             (orbitals == "BCCD" || options.get_bool("DLPNO_BRUECKNER_ORBS")) ? 2 : 0;
+    const int energy_rank = algorithm == "CCSDTQ" ? 4 :
+                            (algorithm == "CCSDT" || algorithm == "CCSDT(Q)") ? 3 :
+                            algorithm == "MP2" ? 0 : 2;
+    if (orbital_rank > energy_rank)
+        throw PSIEXCEPTION("DLPNO_REFERENCE_ORBITALS cannot exceed the final iterative CC rank.");
+    const bool lambda = options.get_bool("DLPNO_DO_LAMBDA") || options.get_bool("DLPNO_DO_ONEPDM");
+    if (lambda && (reference != "RHF" || energy_rank != 2))
+        throw PSIEXCEPTION("DLPNO Lambda/OPDM is available only for RHF CCSD and CCSD(T).");
+    if (reference == "ROHF" && (orbital_rank > 2 || energy_rank != 2))
+        throw PSIEXCEPTION("ROHF DLPNO supports CCSD/CCSD(T) with HF or BCCD orbitals; BCCDT/BCCDTQ require RHF.");
+    if (reference == "UHF" && orbital_rank)
+        throw PSIEXCEPTION("DLPNO Brueckner optimization requires RHF or ROHF; the UHF-QRO route supports HF orbitals only.");
+
     std::shared_ptr<Wavefunction> dlpno;
     if (options.get_str("REFERENCE") == "RHF") {
         if (options.get_str("DLPNO_ALGORITHM") == "MP2") {
@@ -58,10 +76,26 @@ SharedWavefunction dlpno(SharedWavefunction ref_wfn, Options& options) {
             throw PSIEXCEPTION("DLPNO-CCSDT, DLPNO-CCSDT(Q), and DLPNO-CCSDTQ require Psi4 built with Einsums support (ENABLE_Einsums=ON).");
 #endif
         } else {
-            throw PSIEXCEPTION("Requested DLPNO method is not yet available!");
+            throw PSIEXCEPTION("Requested DLPNO method is not available: " +
+                               options.get_str("DLPNO_ALGORITHM"));
+        }
+    } else if (options.get_str("REFERENCE") == "ROHF") {
+        if (options.get_str("DLPNO_ALGORITHM") == "CCSD") {
+            dlpno = std::make_shared<RO_DLPNOCCSD>(ref_wfn, options);
+        } else if (options.get_str("DLPNO_ALGORITHM") == "CCSD(T)") {
+            dlpno = std::make_shared<RO_DLPNOCCSD_T>(ref_wfn, options);
+        } else {
+            throw PSIEXCEPTION("Requested DLPNO method is not yet available for ROHF reference!");
+        }
+    } else if (options.get_str("REFERENCE") == "UHF") {
+        if (options.get_str("DLPNO_ALGORITHM") == "CCSD") {
+            dlpno = std::make_shared<RO_DLPNOCCSD>(ref_wfn, options);
+        } else {
+            throw PSIEXCEPTION(
+                "UHF references are supported only for DLPNO-CCSD through the UHF -> QRO transformation.");
         }
     } else {
-        throw PSIEXCEPTION("DLPNO requires closed-shell reference"); 
+        throw PSIEXCEPTION("Requested DLPNO reference is not supported.\n");
     }
 
     return dlpno;

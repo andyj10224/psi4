@@ -1,0 +1,83 @@
+#! Spin-restricted ROHF BCCD(T): spin-sum/SOMO convergence, shared spatial
+#! orbitals, determinant energy, and preservation of the supplied reference.
+
+import numpy as np
+
+memory 2 GB
+
+molecule ch2 {
+0 3
+C
+H 1 1.08
+H 1 1.08 2 133.0
+symmetry c1
+}
+
+set {
+    basis sto-3g
+    reference rohf
+    freeze_core true
+    scf_type df
+    df_basis_scf cc-pvdz-ri
+    df_basis_cc cc-pvdz-ri
+    e_convergence 1.0e-10
+    d_convergence 1.0e-10
+    r_convergence 1.0e-9
+    brueckner_orbs_r_convergence 1.0e-7
+    brueckner_maxiter 80
+    dlpno_maxiter 100
+    dlpno_toggle_memory false
+    t_cut_pno 0.0
+    t_cut_pno_mp2 0.0
+    t_cut_pairs 0.0
+    t_cut_pairs_mp2 0.0
+    t_cut_pre 0.0
+    t_cut_do 0.0
+    t_cut_do_pre 0.0
+    t_cut_do_ij 0.0
+    t_cut_do_uv 0.0
+    t_cut_mkn 0.0
+    t_cut_clmo 0.0
+    t_cut_cpao 0.0
+    f_cut 0.0
+    t_cut_tno 0.0
+    t_cut_tno_pre 0.0
+    t_cut_triples_weak 0.0
+    t_cut_do_triples 0.0
+    t_cut_do_triples_pre 0.0
+    t_cut_mkn_triples 0.0
+    t_cut_mkn_triples_pre 0.0
+    f_cut_t 0.0
+    t_cut_iter 0.0
+}
+
+set_num_threads(1)
+escf, ref = energy('scf', return_wfn=True)
+C_initial = ref.Ca().np.copy()
+energy_alias, wfn = energy('dlpno-bccd(t)', ref_wfn=ref, return_wfn=True)
+compare_integers(2, int(variable('BRUECKNER REFERENCE RANK')), 'RO optimized rank')  #TEST
+for label in ['BRUECKNER MAX SPIN-SUM SINGLES',
+              'BRUECKNER MAX DOCC-SOMO SINGLES',
+              'BRUECKNER MAX SOMO-VIRTUAL SINGLES']:
+    compare_integers(1, int(variable(label) < 1.0e-7), label)  #TEST
+
+Ca, Cb, S = wfn.Ca().np, wfn.Cb().np, wfn.S().np
+compare_arrays(Ca, Cb, 1.0e-12, 'spin-restricted spatial orbitals')  #TEST
+compare_arrays(np.eye(Ca.shape[1]), Ca.T @ S @ Ca, 1.0e-10, 'RO orbital orthogonality')  #TEST
+compare_arrays(C_initial, ref.Ca().np, 1.0e-12, 'supplied ROHF reference unchanged')  #TEST
+compare_values(wfn.nalpha(), np.einsum('pq,qp', wfn.Da().np, S), 10, 'alpha electrons')  #TEST
+compare_values(wfn.nbeta(), np.einsum('pq,qp', wfn.Db().np, S), 10, 'beta electrons')  #TEST
+e_det = ch2.nuclear_repulsion_energy()
+e_det += 0.5 * np.sum(wfn.Da().np * (wfn.H().np + wfn.Fa().np))
+e_det += 0.5 * np.sum(wfn.Db().np * (wfn.H().np + wfn.Fb().np))
+compare_values(e_det, variable('CURRENT REFERENCE ENERGY'), 10, 'rotated determinant energy')  #TEST
+compare_values(escf, variable('SCF TOTAL ENERGY'), 10, 'ROHF SCF provenance')  #TEST
+compare_values(energy_alias, variable('BCCD(T) TOTAL ENERGY'), 10, 'RO BCCD(T) result')  #TEST
+compare_values(energy_alias, variable('BCCD TOTAL ENERGY') + variable('(T) CORRECTION ENERGY'),
+               10, 'RO perturbative triples after BCCD')  #TEST
+clean()
+
+set dlpno_reference_orbitals BCCD
+energy_explicit = energy('dlpno-ccsd(t)', ref_wfn=ref)
+compare_values(energy_alias, energy_explicit, 1.0e-10, 'RO BCCD(T) explicit-reference equivalence')  #TEST
+clean()

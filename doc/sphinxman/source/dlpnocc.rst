@@ -627,6 +627,189 @@ monomer.
    requirements should be interpreted as order-of-magnitude planning data for
    these settings and this hardware, not as universal performance guarantees.
 
+Open-Shell References and UHF-to-QRO Transformation
+----------------------------------------------------
+
+``DLPNO-CCSD`` and ``DLPNO-CCSD(T)`` support high-spin ``ROHF`` references.
+When ``REFERENCE UHF`` is requested for DLPNO-CCSD, |PSIfour| first constructs
+a common set of quasi-restricted orbitals (QROs) and then invokes the restricted
+open-shell DLPNO-CCSD solver.
+The QRO construction follows Neese [Neese:2006:10213]_ and the open-shell
+local-correlation formulation of Hansen, Liakos, and Neese
+[Hansen:2011:214102]_.  Related restricted-orbital open-shell local-correlation
+considerations are discussed by Szabó *et al.* [Szabo:2021:2886]_.  The
+spin-resolved semicanonical and iterative triples corrections follow the
+open-shell DLPNO-(T0/T) formulation of Guo *et al.* [Guo:2020:024116]_.
+
+The spin-summed UHF density is diagonalized to obtain unrestricted natural
+orbitals.  The first :math:`N_\beta` orbitals define the doubly occupied space,
+the next :math:`N_\alpha-N_\beta` define the singly occupied space, and the
+remainder define the external space.  These three spaces are separately
+semicanonicalized with :math:`F^\beta`,
+:math:`(F^\alpha+F^\beta)/2`, and :math:`F^\alpha`, respectively.  Rotations
+between occupation classes are not permitted.
+
+The resulting restricted high-spin determinant is not an optimized ROHF
+determinant.  Therefore, occupied--virtual Fock elements and their singles
+contributions are retained.  Its spin-resolved Fock matrices and determinant
+energy are rebuilt from the QRO densities.  Energy variables follow
+
+.. math::
+
+   E_\text{DLPNO-CCSD}=E_\text{QRO reference}+E_\text{CCSD correlation}.
+
+``SCF TOTAL ENERGY`` remains the energy of the input UHF calculation for
+provenance, while ``QRO REFERENCE ENERGY`` and ``CURRENT REFERENCE ENERGY``
+contain the determinant energy used by the correlation calculation.  A
+broken-symmetry UHF singlet cannot be represented by this high-spin restricted
+formalism and is rejected; a collapsed closed-shell UHF reference is allowed.
+At present, the UHF-to-QRO route is available for ``DLPNO-CCSD`` only.
+
+This implementation was developed from published equations and native
+|PSIfour| infrastructure.  No ORCA source code was used.
+
+Lambda, Brueckner, and Property Calculations
+--------------------------------------------
+
+The Lambda equations and asymmetric triples correction described by Toth, Jiang,
+and Schaefer [Toth:2026:7667]_ are available through
+``energy('dlpno-ccsd(t)_l')``. The equivalent Psi4-style asymmetric-triples
+spelling is ``energy('dlpno-ccsd(at)')``. Either call computes and publishes both
+the ordinary DLPNO-CCSD(T) energy and the Lambda-based DLPNO-CCSD(T)\ :sub:`L`
+energy. In contrast, ``energy('dlpno-ccsd(t)')`` performs only the ordinary
+right-hand calculation and does not solve the Lambda equations.
+At finite local cutoffs, the ordinary energy produced alongside an asymmetric
+calculation shares the Lambda-compatible pair space and the union of ordinary
+and asymmetric triplet screens, so it need not be bit-for-bit identical to a
+standalone ordinary calculation.
+
+The orbital reference is selected independently of the final energy with
+|dlpno__dlpno_reference_orbitals|: ``HF`` (default), ``BCCD``, ``BCCDT``, or
+``BCCDTQ``. Each Brueckner macroiteration fully converges CCSD, CCSDT, or
+CCSDTQ, respectively, and uses the singles from that rank to update the
+orbitals. In particular, BCCDT drives the **CCSDT** singles to zero; it does
+not stop at a CCSD orbital optimization.
+
+.. list-table:: Brueckner method names
+   :header-rows: 1
+
+   * - Energy call
+     - Orbital optimization
+     - Final energy
+   * - ``dlpno-bccd``
+     - BCCD
+     - CCSD
+   * - ``dlpno-bccd(t)``
+     - BCCD
+     - CCSD(T)
+   * - ``dlpno-bccd(t)_l`` or ``dlpno-bccd(at)``
+     - BCCD
+     - CCSD(T)\ :sub:`L`
+   * - ``dlpno-bccdt``
+     - BCCDT
+     - CCSDT
+   * - ``dlpno-bccdt(q)`` (or ``dlpno-bccdt(q0)``)
+     - BCCDT
+     - CCSDT(Q) (or CCSDT(Q0))
+   * - ``dlpno-bccdtq``
+     - BCCDTQ
+     - CCSDTQ
+
+These names automatically select the listed orbital level. An explicitly
+selected, incompatible Brueckner level raises an error. The legacy
+``DLPNO_BRUECKNER_ORBS true`` switch selects BCCD when the reference-orbital
+option remains ``HF``.
+
+The final energy must include at least the **iterative** excitation rank used
+to optimize the orbitals. CCSD(T) on BCCDT orbitals and CCSDT(Q) on BCCDTQ
+orbitals are therefore rejected. Higher energies on lower-rank Brueckner
+orbitals are supported, for example::
+
+   set reference rhf
+   set dlpno_reference_orbitals bccdt
+   energy('dlpno-ccsdtq')
+
+The final higher-rank amplitudes are solved in the converged BCCDT orbitals;
+their singles are allowed to be nonzero. The correlation energy retains
+:math:`2\sum_{ia} f_{ia}t_i^a` for RHF, and
+:math:`\sum_{\sigma ia} f^\sigma_{ia}t^{a\sigma}_{i\sigma}` for ROHF.
+Bare occupied--virtual Fock terms are also retained in the full triples and
+quadruples residual intermediates. The perturbative quadruples correction
+includes the non-HF left-moment contraction
+:math:`\langle 0|T_3^\dagger F_{ov}T_4|0\rangle`, in addition to the
+existing two-electron contractions. This uses the same leading quadruples
+moment and local-space approximations as the HF-orbital implementation; it
+does not introduce a Lambda-based quadruples model.
+
+The optimizer transports residuals into a fixed orbital frame and uses
+trust-limited steps and optional DIIS. Localized occupied orbitals are aligned
+between macroiterations by subspace transport, maximum overlap, and phase
+matching. Inner amplitude equations are fully converged before an orbital
+residual is evaluated; ``DLPNO_BRUECKNER_N_MICRO_ITER`` is retained only as a
+legacy input. Initial energies are retained in variables beginning with
+``INITIAL DLPNO-``. ``SCF TOTAL ENERGY`` remains the input SCF energy;
+``CURRENT REFERENCE ENERGY`` and ``BRUECKNER REFERENCE ENERGY`` contain the
+rotated determinant energy. ``BRUECKNER REFERENCE RANK``,
+``BRUECKNER ITERATIONS``, and ``BRUECKNER ORBITAL RESIDUAL MAX`` describe the
+converged orbital optimization, including when a higher-rank energy follows.
+
+ROHF Brueckner Orbitals
+~~~~~~~~~~~~~~~~~~~~~~
+
+ROHF supports ``dlpno-bccd`` and ``dlpno-bccd(t)`` (or the corresponding
+CCSD/(T) calls with ``DLPNO_REFERENCE_ORBITALS BCCD``). The spatial orbitals
+remain identical for both spins. With DOCC indices :math:`i`, SOMO indices
+:math:`w`, and external virtual indices :math:`a`, the rotation generator is
+
+.. math::
+
+   \kappa_{ia} = \tfrac12(t^{a\alpha}_{i\alpha}+t^{a\beta}_{i\beta}),
+   \qquad \kappa_{iw} = t^{w\beta}_{i\beta}/\sqrt{2},
+   \qquad \kappa_{wa} = t^{a\alpha}_{w\alpha}/\sqrt{2},
+   \qquad \kappa_{qp}=-\kappa_{pq}.
+
+The sign convention follows the supplied ``roccsd.py`` pilot:
+:math:`C_{new}=C\exp(\kappa)^T`. Each physical SOMO occurs once in the
+antisymmetric generator so that the finite rotation is orthogonal. This
+preserves the pilot's spin weights and update signs without its duplicated
+SOMO coordinates and column-by-column normalization. Alpha and beta Fock
+matrices and the determinant energy are rebuilt from the rotated densities.
+Localization and occupied canonicalization act separately in the DOCC and
+SOMO subspaces.
+
+Convergence requires the maximum absolute DOCC--virtual **spin sum** and
+both weighted SOMO blocks to satisfy ``BRUECKNER_ORBS_R_CONVERGENCE``. These
+are published as ``BRUECKNER MAX SPIN-SUM SINGLES``,
+``BRUECKNER MAX DOCC-SOMO SINGLES``, and
+``BRUECKNER MAX SOMO-VIRTUAL SINGLES``. The spin difference is retained;
+individual alpha and beta singles need not vanish. ROHF full triples,
+quadruples, BCCDT/BCCDTQ references, and Lambda corrections are rejected.
+The UHF-to-QRO route remains limited to CCSD with ``HF`` reference orbitals.
+
+Orbital Localization
+~~~~~~~~~~~~~~~~~~~~
+
+``DLPNO_LOCAL_ORBITALS`` accepts ``BOYS``, ``PIPEK_MEZEY``,
+``PIPEK_MEZEY_MBIS``, ``IBO``, and ``ER``. The ER implementation uses THC
+integrals. All support ``LOCAL_USE_AUGMENTED_HESSIAN``. The dense Hessian
+rotation limit, ``LOCAL_AH_MAX_ROTATIONS``, defaults to **2048** (previously
+512). The separate matrix-free ER Davidson limit,
+``LOCAL_AH_MAX_SUBSPACE``, retains its default of 20.
+
+One-Electron Properties
+~~~~~~~~~~~~~~~~~~~~~~~
+
+One-electron properties are requested through the standard properties driver,
+for example::
+
+   properties('dlpno-ccsd', properties=['dipole'])
+
+The correlated AO one-particle density is assembled only for such a property
+request and is then passed to :ref:`OEProp <sec:oeprop>`. Dipole and quadrupole
+properties are available for both ``dlpno-ccsd`` and ``dlpno-bccd``. Thus, plain
+energy calculations do not pay the time or memory cost of the Lambda equations
+or correlated density.
+
 PNO Convergence Settings
 ------------------------
 
@@ -703,7 +886,11 @@ Practical Advice
   point group, after which the converged wavefunction is transformed to C1 for the DLPNO calculation. A
   user-supplied higher-symmetry SCF reference wavefunction is transformed in the same way.
 
-* At this time, all DLPNO coupled-cluster methods are available only for closed-shell RHF energy computations.
+* DLPNO-CCSD is available for closed-shell RHF, high-spin ROHF, and high-spin
+  UHF references transformed to QROs.  The perturbative triples correction is
+  available for closed-shell RHF and high-spin ROHF computations; the UHF-to-QRO
+  route is presently available only for DLPNO-CCSD.
+  Higher-order methods through CCSDTQ require RHF.
 
 Computation Size Limits
 -----------------------

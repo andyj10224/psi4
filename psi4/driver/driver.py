@@ -252,6 +252,8 @@ def energy(name, **kwargs):
     +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
     | dlpno-ccsd              | local CCSD with pair natural orbital domains (DLPNO) :ref:`[manual] <sec:dlpnocc>`                                                    |
     +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
+    | dlpno-bccd              | local Brueckner CCD with pair natural orbital domains (DLPNO) :ref:`[manual] <sec:dlpnocc>`                                           |
+    +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
     | qcisd(t)                | QCISD with perturbative triples :ref:`[manual] <sec:fnocc>` :ref:`[details] <dd_qcisd_prt_pr>`                                        |
     +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
     | fno-qcisd(t)            | QCISD(T) with frozen natural orbitals :ref:`[manual] <sec:fnocc>`                                                                     |
@@ -271,6 +273,24 @@ def energy(name, **kwargs):
     | dlpno-ccsdt(q)          | local CCSDT(Q) with pair natural orbital domains (DLPNO) :ref:`[manual] <sec:dlpnocc>`                                                |
     +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
     | dlpno-ccsdtq            | local CCSDTQ (full quadruples) with pair natural orbital domains :ref:`[manual] <sec:dlpnocc>`                                        |
+    +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
+    | dlpno-ccsd(t)_l         | local CCSD with asymmetric perturbative triples (DLPNO) :ref:`[manual] <sec:dlpnocc>`                                                 |
+    +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
+    | dlpno-ccsd(at)          | alias for DLPNO-CCSD(T)_L :ref:`[manual] <sec:dlpnocc>`                                                                              |
+    +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
+    | dlpno-bccd(t)           | local Brueckner CCD(T) with pair natural orbital domains (DLPNO) :ref:`[manual] <sec:dlpnocc>`                                        |
+    +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
+    | dlpno-bccd(t)_l         | local Brueckner CCD with asymmetric perturbative triples (DLPNO) :ref:`[manual] <sec:dlpnocc>`                                        |
+    +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
+    | dlpno-bccd(at)          | alias for DLPNO-BCCD(T)_L :ref:`[manual] <sec:dlpnocc>`                                                                               |
+    +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
+    | dlpno-bccdt             | local Brueckner CCDT with full-triples orbital optimization :ref:`[manual] <sec:dlpnocc>`                                             |
+    +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
+    | dlpno-bccdt(q)          | local Brueckner CCDT with perturbative quadruples :ref:`[manual] <sec:dlpnocc>`                                                       |
+    +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
+    | dlpno-bccdt(q0)         | local Brueckner CCDT with semicanonical perturbative quadruples :ref:`[manual] <sec:dlpnocc>`                                         |
+    +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
+    | dlpno-bccdtq            | local Brueckner CCDTQ with full-quadruples orbital optimization :ref:`[manual] <sec:dlpnocc>`                                         |
     +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
     | cc3                     | approximate CC singles, doubles, and triples (CC3) :ref:`[manual] <sec:cc>` :ref:`[details] <dd_cc3>`                                 |
     +-------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
@@ -688,6 +708,11 @@ def properties(*args, **kwargs):
     | cc2                | 2nd-order approximate CCSD                    | RHF            | dipole, quadrupole, polarizability, rotation, roa_tensor      |
     +--------------------+-----------------------------------------------+----------------+---------------------------------------------------------------+
     | ccsd               | Coupled cluster singles and doubles (CCSD)    | RHF            | dipole, quadrupole, polarizability, rotation, roa_tensor      |
+    +--------------------+-----------------------------------------------+----------------+---------------------------------------------------------------+
+    | dlpno-ccsd          | Local CCSD with pair natural orbitals (DLPNO) | RHF            | dipole, quadrupole                                             |
+    +--------------------+-----------------------------------------------+----------------+---------------------------------------------------------------+
+    | dlpno-bccd          | Local Brueckner CCD with pair natural        | RHF            | dipole, quadrupole                                             |
+    |                    | orbital domains (DLPNO)                      |                |                                                               |
     +--------------------+-----------------------------------------------+----------------+---------------------------------------------------------------+
     | dct                | density cumulant (functional) theory          | RHF/UHF        | Listed :ref:`here <sec:oeprop>`                               |
     |                    | :ref:`[manual] <sec:dct>`                     |                |                                                               |

@@ -385,6 +385,11 @@ void DLPNOCCSDT_Q::quadruples_sparsity(bool prescreening) {
     int n_lmo_pairs = ij_to_i_j_.size();
 
     if (prescreening) {
+        ijkl_to_i_j_k_l_.clear();
+        i_j_k_l_to_ijkl_.clear();
+        lmoquadruplet_to_lmos_.clear();
+        lmoquadruplet_to_paos_.clear();
+        lmoquadruplet_to_ribfs_.clear();
         int ijkl = 0;
         // Form unique quadruplets from the retained strong-pair connectivity graph.
         for (int ij = 0; ij < n_lmo_pairs; ij++) {
@@ -901,6 +906,23 @@ void DLPNOCCSDT_Q::estimate_memory() {
     const size_t max_nqno2 = max_nqno * max_nqno;
     const size_t max_nqno4 = max_nqno2 * max_nqno2;
 
+    // The non-HF left moment projects one T3 into a QNO space. Its source
+    // TNO domain may be larger than that QNO domain, so count mixed-size
+    // transformation buffers rather than estimating everything as nqno^3.
+    size_t max_ntno = 0, max_triplet_npao = 0;
+    for (size_t ijk = 0; ijk < n_lmo_triplets; ++ijk) {
+        max_ntno = std::max(max_ntno, static_cast<size_t>(n_tno_[ijk]));
+        max_triplet_npao = std::max(max_triplet_npao, lmotriplet_to_paos_[ijk].size());
+    }
+    auto fock_energy_workspace = [&](size_t nq, size_t npao) {
+        const size_t nt2 = max_ntno * max_ntno, nt3 = nt2 * max_ntno;
+        const size_t nq2 = nq * nq, nq3 = nq2 * nq, nq4 = nq2 * nq2;
+        const size_t transform = std::max({2 * nt2 * nq, nt2 * nq + max_ntno * nq2,
+                                          2 * max_ntno * nq2, max_ntno * nq2 + nq3, 2 * nq3});
+        return 2 * nq4 + nt3 + transform + 2 * nq3 +
+               npao * max_triplet_npao + npao * max_ntno + 2 * nq * max_ntno + 4 * (npao + nq);
+    };
+
     for (size_t ijkl = 0; ijkl < n_lmo_quadruplets; ++ijkl) {
         const size_t naux = lmoquadruplet_to_ribfs_[ijkl].size();
         const size_t nlmo = lmoquadruplet_to_lmos_[ijkl].size();
@@ -939,9 +961,9 @@ void DLPNOCCSDT_Q::estimate_memory() {
         const size_t gamma_contraction_workspace =
             std::max({gamma_terms_12_workspace, gamma_term_3_workspace,
                       gamma_terms_45_workspace, gamma_term_6_workspace});
-        const size_t energy_contraction_workspace =
-            2 * nlmo * nqno3 + 5 * nqno4 + 8 * nlmo * nqno + 8 * nqno3 +
-            4 * nqno2;
+        const size_t energy_contraction_workspace = std::max(
+            2 * nlmo * nqno3 + 5 * nqno4 + 8 * nlmo * nqno + 8 * nqno3 + 4 * nqno2,
+            fock_energy_workspace(nqno, npao));
         gamma_workspace_per_thread =
             std::max(gamma_workspace_per_thread,
                      df_workspace + energy_intermediates +
@@ -1075,9 +1097,9 @@ void DLPNOCCSDT_Q::estimate_memory() {
             const size_t nqno4 = nqno2 * nqno2;
             const size_t energy_intermediates =
                 4 * nqno3 + 16 * nqno * nlmo + 20 * nqno2;
-            const size_t energy_contraction_workspace =
-                2 * nlmo * nqno3 + 5 * nqno4 + 8 * nlmo * nqno + 8 * nqno3 +
-                4 * nqno2;
+            const size_t energy_contraction_workspace = std::max(
+                2 * nlmo * nqno3 + 5 * nqno4 + 8 * nlmo * nqno + 8 * nqno3 + 4 * nqno2,
+                fock_energy_workspace(nqno, lmoquadruplet_to_paos_[ijkl].size()));
             const size_t old_dim = max_nqno;
             const size_t new_dim = nqno;
             const size_t old2 = old_dim * old_dim;
@@ -1822,6 +1844,60 @@ double DLPNOCCSDT_Q::compute_gamma_ijkl(bool store_amplitudes) {
     return E_Q0;
 }
 
+double DLPNOCCSDT_Q::compute_quadruplet_fock_energy(int ijkl, const Tensor<double, 4>& T4) {
+    // General-reference (Q) left moment: <0|T3^dagger F_ov T4|0>.
+    // For spin-free T_n = (1/n!) t E...E, the spin trace of the four
+    // excitation lines is sum_P (-1)^P 2^{cycles(P)} P_virtual T4.
+    // The full ordered occupied sum has prefactor 1/3!. Collapsing the
+    // first three equivalent occupied-column permutations gives the inverse
+    // factorial of their multiplicities below (1 or 1/2 for allowed tuples).
+    const auto [i, j, k, l] = ijkl_to_i_j_k_l_[ijkl];
+    const std::array<int, 4> occupied = {i, j, k, l};
+    const int nq = n_qno_[ijkl];
+    auto F = linalg::doublet(submatrix_rows_and_cols(*F_lmo_pao_,
+        std::vector<int>{i, j, k, l}, lmoquadruplet_to_paos_[ijkl]), X_qno_[ijkl]);
+    if (F->absmax() == 0.0) return 0.0;
+
+    Tensor<double, 4> spin_trace("Spin trace of T4 for F_ov left moment", nq, nq, nq, nq);
+    spin_trace.zero();
+    for (const auto& permutation : quadruple_permutations_) {
+        const auto [p0, p1, p2, p3] = permutation;
+        const std::array<int, 4> p = {p0, p1, p2, p3};
+        std::array<bool, 4> visited{};
+        int cycles = 0;
+        for (int start = 0; start < 4; ++start) {
+            if (visited[start]) continue;
+            ++cycles;
+            for (int n = start; !visited[n]; n = p[n]) visited[n] = true;
+        }
+        auto permuted = quadruples_permuter(T4, p0, p1, p2, p3);
+        permuted *= ((4 - cycles) % 2 ? -1.0 : 1.0) * static_cast<double>(1 << cycles);
+        spin_trace += permuted;
+    }
+    double energy = 0.0;
+    for (int omitted = 0; omitted < 4; ++omitted) {
+        if (omitted && occupied[omitted] == occupied[omitted - 1]) continue;
+        std::array<int, 3> triple{};
+        for (int p = 0, q = 0; p < 4; ++p) if (p != omitted) triple[q++] = occupied[p];
+        const auto found = i_j_k_to_ijk_.find(triplet_key(triple[0], triple[1], triple[2], i_j_to_ij_.size()));
+        if (found == i_j_k_to_ijk_.end()) continue;
+        const int ijk = found->second;
+        auto S = submatrix_rows_and_cols(*S_pao_, lmoquadruplet_to_paos_[ijkl], lmotriplet_to_paos_[ijk]);
+        S = linalg::triplet(X_qno_[ijkl], S, X_tno_[ijk], true, false, false);
+        auto T3 = matmul_3d_einsums(triples_permuter_einsums(T_iajbkc_clone_[ijk],
+            triple[0], triple[1], triple[2]), S, n_tno_[ijk], nq);
+        auto oriented_trace = quadruples_permuter(spin_trace, triple[0], triple[1], triple[2], occupied[omitted]);
+        Tensor<double, 1> f("Bare f_ld in QNOs", nq);
+        ::memcpy(f.data(), F->pointer()[omitted], static_cast<size_t>(nq) * sizeof(double));
+        Tensor<double, 3> reduced("F_ov T4", nq, nq, nq);
+        einsum(0.0, Indices{index::a, index::b, index::c}, &reduced, 1.0,
+               Indices{index::a, index::b, index::c, index::d}, oriented_trace, Indices{index::d}, f);
+        const double multiplicity = (triple[0] == triple[1] || triple[1] == triple[2]) ? 0.5 : 1.0;
+        energy += multiplicity * linear_algebra::dot(T3, reduced);
+    }
+    return energy;
+}
+
 double DLPNOCCSDT_Q::compute_quadruplet_energy(
     int ijkl, const Tensor<double, 4>& T4,
     const QuadrupletEnergyIntermediates& intermediates) {
@@ -1837,7 +1913,7 @@ double DLPNOCCSDT_Q::compute_quadruplet_energy(
     // number of quadruplet natural orbitals in quadruplet domain
     const int nqno_ijkl = n_qno_[ijkl];
 
-    double quadruplet_energy = 0.0;
+    double quadruplet_energy = compute_quadruplet_fock_energy(ijkl, T4);
     std::unordered_map<size_t, double> e_perm_energy;
 
     // Materialize an oriented view of a packed pair tensor only when the requested
@@ -2388,11 +2464,22 @@ double DLPNOCCSDT_Q::lccsdt_q_iterations() {
     return e_curr;
 }
 
-double DLPNOCCSDT_Q::compute_energy() {
-    timer_on("DLPNO-CCSDT(Q)");
+double DLPNOCCSDT_Q::compute_energy() { return DLPNOCCSD::compute_energy(); }
 
-    // Run DLPNO-CCSDT
-    DLPNOCCSDT::compute_energy();
+void DLPNOCCSDT_Q::post_ccsd_correction(DLPNOCCSDPhase phase) {
+    DLPNOCCSDT::post_ccsd_correction(phase);
+    compute_quadruples_correction_energy();
+    if (phase == DLPNOCCSDPhase::FinalBrueckner && brueckner_reference_rank_ == 3) {
+        const std::string label = options_.get_bool("Q0_APPROXIMATION") ? "BCCDT(Q0)" : "BCCDT(Q)";
+        set_scalar_variable(label + " TOTAL ENERGY", scalar_variable("CURRENT ENERGY"));
+        set_scalar_variable(label + " CORRELATION ENERGY", scalar_variable("CURRENT CORRELATION ENERGY"));
+        set_scalar_variable("DLPNO-" + label + " TOTAL ENERGY", scalar_variable("CURRENT ENERGY"));
+        set_scalar_variable("DLPNO-" + label + " CORRELATION ENERGY", scalar_variable("CURRENT CORRELATION ENERGY"));
+    }
+}
+
+double DLPNOCCSDT_Q::compute_quadruples_correction_energy() {
+    timer_on("DLPNO-CCSDT(Q)");
 
     einsums::profile::initialize();
     print_header();
@@ -2487,7 +2574,7 @@ double DLPNOCCSDT_Q::compute_energy() {
     outfile->Printf("    (Total) DLPNO-(Q0) Correlation Energy:      %16.12f\n", E_Q0 + de_lccsdt_q_screened_);
     outfile->Printf("    * Screened Quadruplets Contribution:        %16.12f\n", de_lccsdt_q_screened_);
 
-    double e_scf = variables_["SCF TOTAL ENERGY"];
+    double e_scf = reference_energy_;
     double e_ccsdt_q_corr = E_Q0 + de_lccsdt_q_screened_ + e_lccsdt_ + de_tno_ +
                             de_lccsd_t_screened_ + de_weak_ + de_lmp2_eliminated_ + de_dipole_ + de_pno_total_;
     double e_ccsdt_q_total = e_scf + e_ccsdt_q_corr;
@@ -2626,7 +2713,7 @@ void DLPNOCCSDT_Q::print_results() {
         de_pno_total_;
     const double quadruples_correlation = e_lccsdt_q_ + de_lccsdt_q_screened_;
     const double total_correlation = lower_rank_correlation + quadruples_correlation;
-    const double total_energy = variables_["SCF TOTAL ENERGY"] + total_correlation;
+    const double total_energy = reference_energy_ + total_correlation;
     const double ccsdt_q_minus_ccsdt = total_energy - variables_["CCSDT TOTAL ENERGY"];
 
     outfile->Printf("  \n");
@@ -3869,8 +3956,11 @@ void DLPNOCCSDTQ::add_t4_to_triples_residual(std::vector<SharedMatrix>& R_iajbkc
 
         // => F_ld (this is scoped to ensure that the intermediate tensors are not persistent in memory <= //
         Tensor<double, 2> F_ld("F_ld", nlmo_ijk, ntno_ijk); {
-            // J contractions
-            einsum(0.0, Indices{index::l, index::d}, &F_ld, 2.0, Indices{index::Q, index::l, index::d}, q_ov_[ijk], Indices{index::Q}, gamma_Q);
+            auto F_bare = linalg::doublet(submatrix_rows_and_cols(
+                *F_lmo_pao_, lmotriplet_to_lmos_[ijk], lmotriplet_to_paos_[ijk]), X_tno_[ijk]);
+            ::memcpy(F_ld.data(), F_bare->get_pointer(), static_cast<size_t>(nlmo_ijk) * ntno_ijk * sizeof(double));
+            // Bare f_ld plus the Coulomb/exchange singles dressing.
+            einsum(1.0, Indices{index::l, index::d}, &F_ld, 2.0, Indices{index::Q, index::l, index::d}, q_ov_[ijk], Indices{index::Q}, gamma_Q);
             
             // K contractions
             Tensor<double, 3> F_ld_K_temp("F_ld_K_temp", naux_ijk, nlmo_ijk, nlmo_ijk);
@@ -4267,8 +4357,11 @@ void DLPNOCCSDTQ::compute_quadruples_residual(std::vector<Tensor<double, 4>>& R_
 
         // F_me (this is scoped to ensure that the intermediate tensors are not persistent in memory)
         Tensor<double, 2> F_me("F_me", nlmo_ijkl, nqno_ijkl); {
-            // J contractions
-            einsum(0.0, Indices{index::m, index::e}, &F_me, 2.0, Indices{index::Q, index::m, index::e}, q_ov, Indices{index::Q}, gamma_Q);
+            auto F_bare = linalg::doublet(submatrix_rows_and_cols(
+                *F_lmo_pao_, lmoquadruplet_to_lmos_[ijkl], lmoquadruplet_to_paos_[ijkl]), X_qno_[ijkl]);
+            ::memcpy(F_me.data(), F_bare->get_pointer(), static_cast<size_t>(nlmo_ijkl) * nqno_ijkl * sizeof(double));
+            // Also supplies all f_ov*T2*T3 and f_ov*T1 dressings downstream.
+            einsum(1.0, Indices{index::m, index::e}, &F_me, 2.0, Indices{index::Q, index::m, index::e}, q_ov, Indices{index::Q}, gamma_Q);
             
             // K contractions (rc|ks)t_{k}^{c} ... (mf|ne) t_{n}^{f}
             Tensor<double, 3> F_me_K_temp("F_me_K_temp", naux_ijkl, nlmo_ijkl, nlmo_ijkl);
@@ -5949,6 +6042,7 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
             if (i_j_to_ij_strong_[i][j] == -1) e_weak += e_ij;
         }
 
+        e_curr += singles_fock_energy();
         r_converged = fabs(r_curr1) < options_.get_double("R_CONVERGENCE");
         r_converged &= fabs(r_curr2) < options_.get_double("R_CONVERGENCE");
         r_converged &= fabs(r_curr3) < options_.get_double("R_CONVERGENCE");
@@ -5972,9 +6066,25 @@ void DLPNOCCSDTQ::lccsdtq_iterations() {
     }
 }
 
-double DLPNOCCSDTQ::compute_energy() {
-    // Run DLPNO-CCSDT(Q) as initial step
-    DLPNOCCSDT_Q::compute_energy();
+double DLPNOCCSDTQ::compute_energy() { return DLPNOCCSD::compute_energy(); }
+
+double DLPNOCCSDTQ::compute_orbital_reference_energy() {
+    DLPNOCCSDT::compute_orbital_reference_energy();
+    if (brueckner_reference_rank_ == 4) {
+        compute_quadruples_correction_energy();
+        compute_full_quadruples_energy();
+    }
+    return scalar_variable("CURRENT ENERGY");
+}
+
+void DLPNOCCSDTQ::post_ccsd_correction(DLPNOCCSDPhase phase) {
+    if (brueckner_reference_rank_ < 4) {
+        DLPNOCCSDT_Q::post_ccsd_correction(phase);
+        compute_full_quadruples_energy();
+    }
+}
+
+double DLPNOCCSDTQ::compute_full_quadruples_energy() {
 
     timer_on("DLPNO-CCSDTQ");
 
@@ -6041,7 +6151,7 @@ double DLPNOCCSDTQ::compute_energy() {
 
     timer_off("DLPNO-CCSDTQ");
 
-    double e_scf = variables_["SCF TOTAL ENERGY"];
+    double e_scf = reference_energy_;
     double e_ccsdtq_corr = e_lccsdtq_ + de_tno_ + de_qno_ + de_lccsdt_q_screened_ +
                            de_lccsd_t_screened_ + de_weak_ + de_lmp2_eliminated_ + de_dipole_ + de_pno_total_;
     double e_ccsdtq_total = e_scf + e_ccsdtq_corr;
@@ -6074,7 +6184,7 @@ void DLPNOCCSDTQ::print_results() {
     const double total_correlation =
         e_lccsdtq_ + de_tno_ + de_qno_ + de_lccsdt_q_screened_ + de_lccsd_t_screened_ + de_weak_ +
         de_lmp2_eliminated_ + de_dipole_ + de_pno_total_;
-    const double total_energy = variables_["SCF TOTAL ENERGY"] + total_correlation;
+    const double total_energy = reference_energy_ + total_correlation;
     const double ccsdtq_minus_ccsdt = total_energy - variables_["CCSDT TOTAL ENERGY"];
     const double ccsdtq_minus_ccsdt_q = total_energy - variables_["CCSDT(Q) TOTAL ENERGY"];
 

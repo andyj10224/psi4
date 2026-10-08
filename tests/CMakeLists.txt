@@ -55,8 +55,8 @@ foreach(test_name aediis-1
                   dft-grad-lr1 dft-grad-lr2 dft-grad-lr3 dft-grad-disk
                   dfomp2p5-grad2 dfrasscf-sp dfscf-bz2 dft-b2plyp dft-grac dft-ghost dft-grad-meta
                   dft-freq dft-freq-analytic1 dft-freq-analytic2 dft-grad1 dft-grad2 dft-psivar dft-b3lyp dft1 dft-vv10
-                  dft1-alt dft2 dft3 dft-omega dft-dens-cut dlpnocc-1 dlpnocc-2 dlpnocc-4 dlpnocc-5 dlpnomp2-1 dlpnomp2-2 
-                  dlpnomp2-3 docs-bases docs-dft embpot1 embpot1-puream explicit-am-basis
+                  dft1-alt dft2 dft3 dft-omega dft-dens-cut dlpnobcc-1 dlpnobcc-2 dlpnocc-1 dlpnocc-2 dlpnocc-4 dlpnocc-5 dlpnolocal-1 dlpnomp2-1 dlpnomp2-2
+                  dlpnomp2-3 dlpnoprop-1 docs-bases docs-dft embpot1 embpot1-puream explicit-am-basis
                   extern1 extern2 extern3 extern4 extern5 extern6 extern7
                   fsapt1 fsapt2 fsapt-terms fsapt-allterms fsapt-ext fsapt-ext-abc fsapt-ext-abc2
                   fsapt-ext-abc-au isapt1 isapt2 isapt-siao1 fisapt-siao1 isapt-charged
@@ -89,8 +89,9 @@ foreach(test_name aediis-1
                   pywrap-checkrun-rohf pywrap-checkrun-uhf pywrap-db1
                   pywrap-db3
                   pywrap-molecule rasci-c2-active rasci-h2o
-                  rasci-ne rasscf-sp sad-scf-type sad1 sapt1 sapt2 sapt3 sapt4 sapt5 sapt6 sapt-dft-api sapt-dft-lrc
-                  remp-energy1 remp-energy2
+                  rasci-ne rasscf-sp remp-energy1 remp-energy2 rodlpnobcc-1 rodlpnocc-1 rodlpnocc-2 rodlpnocc-3 rodlpnocc-4
+                  uhfqrodlpnocc-1 uhfqrodlpnocc-2
+                  sad-scf-type sad1 sapt1 sapt2 sapt3 sapt4 sapt5 sapt6 sapt-dft-api sapt-dft-lrc
                   sapt-exch-disp-inf sapt-exch-ind-inf sapt-exch-ind30-inf
                   sapt7 sapt8 scf-bz2 scf-dipder scf-guess scf-guess-read1 scf-upcast-custom-basis
                   scf-guess-read2 scf-guess-read3 scf1 scf-occ scf2 scf3 scf4 scf5 scf6

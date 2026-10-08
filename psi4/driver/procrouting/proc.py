@@ -4505,8 +4505,28 @@ def run_dfep2(name, **kwargs):
     return dfep2_wfn
 
 
-def run_dlpno(name, **kwargs):
-    """Run the standalone DLPNO-MP2 method and the DLPNO coupled-cluster hierarchy through DLPNO-CCSDTQ."""
+def _prepare_dlpno_localization_basis(ref_wfn):
+    """Attach any auxiliary basis required by the selected LMO localizer."""
+    localization = core.get_option("DLPNO", "DLPNO_LOCAL_ORBITALS")
+
+    if localization == "ER":
+        # AO LS-THC factors are built once in C++ and reused across Brueckner
+        # macroiterations, but their fitting basis must be attached up front.
+        auxiliary = core.BasisSet.build(ref_wfn.molecule(), "DF_BASIS_THC",
+                                        core.get_global_option("DF_BASIS_THC"),
+                                        "JKFIT", core.get_global_option("BASIS"))
+        ref_wfn.set_basisset("DF_BASIS_THC", auxiliary)
+    elif localization == "IBO":
+        # IAOs depend only on the AO/minimal bases and the current occupied
+        # projector. Construct the minimal basis once; C++ reuses it while
+        # rebuilding the occupied projector at each Brueckner macroiteration.
+        minao = core.BasisSet.build(ref_wfn.molecule(), "BASIS",
+                                    core.get_option("DLPNO", "MINAO_BASIS"))
+        ref_wfn.set_basisset("MINAO", minao)
+
+
+def _dlpno_method_settings(name, reference_orbitals="HF", legacy_brueckner=False):
+    """Resolve the final energy method and the independently selected orbital level."""
 
     method_name = name.lower()
     methods = {
@@ -4571,10 +4591,70 @@ def run_dlpno(name, **kwargs):
         },
     }
 
+    for alias, parent, use_lambda in (
+        ("dlpno-ccsd(t)_l", "dlpno-ccsd(t)", True),
+        ("dlpno-ccsd(at)", "dlpno-ccsd(t)", True),
+        ("dlpno-bccd", "dlpno-ccsd", False),
+        ("dlpno-bccdt", "dlpno-ccsdt", False),
+        ("dlpno-bccdt(q0)", "dlpno-ccsdt(q0)", False),
+        ("dlpno-bccdt(q)", "dlpno-ccsdt(q)", False),
+        ("dlpno-bccdtq", "dlpno-ccsdtq", False),
+        ("dlpno-bccd(t)", "dlpno-ccsd(t)", False),
+        ("dlpno-bccd(t)_l", "dlpno-ccsd(t)", True),
+        ("dlpno-bccd(at)", "dlpno-ccsd(t)", True),
+    ):
+        methods[alias] = dict(methods[parent], banner=alias.upper(),
+                              brueckner="bccd" in alias, use_lambda=use_lambda)
+
     if method_name not in methods:
         raise ValidationError(f"Unrecognized DLPNO method '{name}'.")
 
     method = methods[method_name]
+    orbital_level = reference_orbitals.upper()
+    if orbital_level not in {"HF", "BCCD", "BCCDT", "BCCDTQ"}:
+        raise ValidationError(f"Unknown DLPNO_REFERENCE_ORBITALS '{reference_orbitals}'.")
+    if method_name.startswith("dlpno-bccd"):
+        alias_level = method_name[6:].split("(")[0].upper()
+        if orbital_level not in {"HF", alias_level}:
+            raise ValidationError(f"{name} requires DLPNO_REFERENCE_ORBITALS {alias_level}; "
+                                  f"it conflicts with {orbital_level}.")
+        orbital_level = alias_level
+    elif orbital_level == "HF" and legacy_brueckner:
+        orbital_level = "BCCD"
+    ranks = {"HF": 0, "BCCD": 2, "BCCDT": 3, "BCCDTQ": 4}
+    energy_ranks = {"MP2": 0, "CCSD": 2, "CCSD(T)": 2,
+                    "CCSDT": 3, "CCSDT(Q)": 3, "CCSDTQ": 4}
+    if ranks[orbital_level] > energy_ranks[method["algorithm"]]:
+        raise ValidationError(f"{name} is below the requested {orbital_level} orbital-optimization level. "
+                              "The final energy must include at least that iterative excitation rank.")
+    method["reference_orbitals"] = orbital_level
+    method["brueckner"] = orbital_level != "HF"
+    return method
+
+
+def _validate_dlpno_reference(method, reference, do_lambda=False):
+    """Reject unsupported combinations before constructing the SCF reference."""
+    algorithm = method["algorithm"]
+    orbital_level = method["reference_orbitals"]
+    if reference == "RHF":
+        if do_lambda and algorithm not in {"CCSD", "CCSD(T)"}:
+            raise ValidationError("DLPNO Lambda/OPDM is available only for RHF CCSD and CCSD(T).")
+        return
+    if reference == "ROHF":
+        if algorithm not in {"CCSD", "CCSD(T)"} or orbital_level not in {"HF", "BCCD"} or do_lambda:
+            raise ValidationError("ROHF DLPNO supports CCSD and CCSD(T), with HF or BCCD orbitals. "
+                                  "BCCDT/BCCDTQ orbitals, full triples/quadruples, and Lambda are RHF-only.")
+        return
+    if reference == "UHF" and algorithm == "CCSD" and orbital_level == "HF" and not do_lambda:
+        return  # Existing UHF -> QRO -> RO-DLPNO-CCSD route.
+    raise ValidationError(f"{method['banner']} with {orbital_level} orbitals is not available for {reference}.")
+
+
+def run_dlpno(name, **kwargs):
+    """Run DLPNO with a separately selected Brueckner orbital-optimization level."""
+    method_name = name.lower()
+    method = _dlpno_method_settings(name, core.get_option("DLPNO", "DLPNO_REFERENCE_ORBITALS"),
+                                    core.get_option("DLPNO", "DLPNO_BRUECKNER_ORBS"))
     optstash = p4util.OptionsState(
         ["DLPNO", "DF_BASIS_MP2"],
         ["DLPNO", "DF_BASIS_CC"],
@@ -4583,6 +4663,10 @@ def run_dlpno(name, **kwargs):
         ["DLPNO", "T0_APPROXIMATION"],
         ["DLPNO", "Q0_APPROXIMATION"],
         ["DLPNO", "T_CUT_XPNO"],
+        ["DLPNO", "DLPNO_BRUECKNER_ORBS"],
+        ["DLPNO", "DLPNO_REFERENCE_ORBITALS"],
+        ["DLPNO", "DLPNO_DO_LAMBDA"],
+        ["DLPNO", "DLPNO_DO_ONEPDM"],
     )
 
     timer_started = False
@@ -4596,6 +4680,18 @@ def run_dlpno(name, **kwargs):
                 "DLPNO-MP2 is only implemented with density fitting. "
                 "'mp2_type' must be set to 'DF'."
             )
+
+        do_brueckner = method["brueckner"]
+        do_onepdm = kwargs.pop("_dlpno_do_onepdm", False)
+        do_lambda = method.get("use_lambda", False) or do_onepdm
+        _validate_dlpno_reference(method, core.get_global_option("REFERENCE"), do_lambda)
+        core.set_local_option("DLPNO", "DLPNO_REFERENCE_ORBITALS", method["reference_orbitals"])
+        if do_brueckner and core.get_global_option("SCF_TYPE") == "PK":
+            core.set_global_option("SCF_TYPE", "DIRECT")
+            core.print_out("    SCF_TYPE reset to DIRECT for Brueckner Fock rebuilds.\n")
+        core.set_local_option("DLPNO", "DLPNO_BRUECKNER_ORBS", do_brueckner)
+        core.set_local_option("DLPNO", "DLPNO_DO_LAMBDA", do_lambda)
+        core.set_local_option("DLPNO", "DLPNO_DO_ONEPDM", do_onepdm)
 
         # Every DLPNO implementation currently expects a C1 reference because its sparse
         # orbital, pair, triplet, and quadruplet domains do not carry irrep block structure.
@@ -4612,7 +4708,9 @@ def run_dlpno(name, **kwargs):
             ref_wfn = proc_util.prepare_c1_reference(ref_wfn)
 
         reference = core.get_global_option("REFERENCE")
-        if reference != "RHF":
+        allowed = (("RHF", "ROHF", "UHF") if method["algorithm"] == "CCSD" else
+                   (("RHF", "ROHF") if method["algorithm"] == "CCSD(T)" else ("RHF",)))
+        if reference not in allowed:
             raise ValidationError(f"{method['banner']} is not available for {reference} references.")
 
         core.tstart()
@@ -4630,6 +4728,7 @@ def run_dlpno(name, **kwargs):
             core.get_global_option("BASIS"),
         )
         ref_wfn.set_basisset(aux_basis_name, aux_basis)
+        _prepare_dlpno_localization_basis(ref_wfn)
 
         algorithm = method["algorithm"]
         core.set_local_option("DLPNO", "DLPNO_ALGORITHM", algorithm)
@@ -4647,12 +4746,11 @@ def run_dlpno(name, **kwargs):
         dlpno_wfn = core.dlpno(ref_wfn)
         dlpno_wfn.compute_energy()
 
-        energy_label = method["energy_label"]
-        dlpno_wfn.set_variable("CURRENT ENERGY", dlpno_wfn.variable(f"{energy_label} TOTAL ENERGY"))
-        dlpno_wfn.set_variable(
-            "CURRENT CORRELATION ENERGY",
-            dlpno_wfn.variable(f"{energy_label} CORRELATION ENERGY"),
-        )
+        if method["algorithm"] == "MP2":
+            energy_label = method["energy_label"]
+            dlpno_wfn.set_variable("CURRENT ENERGY", dlpno_wfn.variable(f"{energy_label} TOTAL ENERGY"))
+            dlpno_wfn.set_variable("CURRENT CORRELATION ENERGY",
+                                   dlpno_wfn.variable(f"{energy_label} CORRELATION ENERGY"))
 
         for variable, value in dlpno_wfn.variables().items():
             core.set_variable(variable, value)
@@ -4663,6 +4761,35 @@ def run_dlpno(name, **kwargs):
             core.tstop()
         optstash.restore()
 
+
+def run_dlpnoccsd_property(name, **kwargs):
+    """Compute DLPNO-CCSD/BCCD one-electron properties through OEProp."""
+    properties = kwargs.pop("properties")
+    proc_util.oeprop_validator(properties)
+    properties = [prop.upper() for prop in properties]
+
+    kwargs["_dlpno_do_onepdm"] = True
+    dlpno_wfn = run_dlpno(name, **kwargs)
+
+    # Contracting the C++ solver's AO OPDM with the requested OEProp operators
+    # realizes the one-electron expectation value in Toth et al. Eq. A1. The
+    # solver publishes a spin-summed restricted density, whereas OEProp expects
+    # one spin block and supplies the identical beta block.
+    Da_ao = dlpno_wfn.array_variable("DLPNO-CCSD AO OPDM").clone()
+    Da_ao.scale(0.5)
+
+    oe = core.OEProp(dlpno_wfn)
+    oe.set_Da_ao(Da_ao)
+    oe.set_title(name.upper())
+    for prop in properties:
+        oe.add(prop)
+    oe.compute()
+    dlpno_wfn.oeprop = oe
+
+    for key, value in dlpno_wfn.variables().items():
+        core.set_variable(key, value)
+
+    return dlpno_wfn
 
 def run_mp2f12(name, **kwargs):
     r"""Function encoding sequence of PSI module calls

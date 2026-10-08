@@ -32,6 +32,7 @@
 #include "psi4/lib3index/3index.h"
 #include "psi4/libdiis/diismanager.h"
 #include "psi4/libfock/cubature.h"
+#include "psi4/libfock/jk.h"
 #include "psi4/libfock/points.h"
 #include "psi4/libmints/basisset.h"
 #include "psi4/libmints/integral.h"
@@ -40,6 +41,8 @@
 #include "psi4/libmints/mintshelper.h"
 #include "psi4/libmints/molecule.h"
 #include "psi4/libmints/orthog.h"
+#include "psi4/libmints/oeprop.h"
+#include "psi4/libmints/thc_eri.h"
 #include "psi4/libmints/twobody.h"
 #include "psi4/libmints/vector.h"
 #include "psi4/libpsi4util/PsiOutStream.h"
@@ -47,6 +50,8 @@
 #include "psi4/libqt/qt.h"
 
 #include <algorithm>
+#include <numeric>
+#include <cmath>
 #include <limits>
 
 #ifdef _OPENMP
@@ -55,6 +60,85 @@
 
 namespace psi {
 namespace dlpno {
+
+namespace {
+
+/**
+ * Find the column permutation that maximizes the sum of absolute diagonal
+ * overlaps.  This is the square Hungarian algorithm applied to
+ * max(|S_ij|) - |S_ij|, with a deterministic column-order tie break.
+ *
+ * The returned vector maps each row (an orbital in the preceding frame) to
+ * its matching column (an orbital in the newly localized frame).
+ */
+std::vector<int> maximum_overlap_assignment(const SharedMatrix& overlap) {
+    const int nrow = overlap->nrow();
+    const int ncol = overlap->ncol();
+    if (nrow != ncol) {
+        throw PSIEXCEPTION("DLPNO orbital-frame matching requires a square overlap matrix.");
+    }
+
+    double max_overlap = 0.0;
+    for (int i = 0; i < nrow; ++i) {
+        for (int j = 0; j < ncol; ++j) max_overlap = std::max(max_overlap, std::fabs((*overlap)(i, j)));
+    }
+
+    // Hungarian bookkeeping is conventionally one-indexed. p[j] is the row
+    // currently assigned to column j; way stores the augmenting path.
+    std::vector<double> row_potential(nrow + 1, 0.0);
+    std::vector<double> col_potential(ncol + 1, 0.0);
+    std::vector<int> p(ncol + 1, 0);
+    std::vector<int> way(ncol + 1, 0);
+
+    for (int i = 1; i <= nrow; ++i) {
+        p[0] = i;
+        int j0 = 0;
+        std::vector<double> min_reduced_cost(ncol + 1, std::numeric_limits<double>::infinity());
+        std::vector<bool> used(ncol + 1, false);
+
+        do {
+            used[j0] = true;
+            const int i0 = p[j0];
+            double delta = std::numeric_limits<double>::infinity();
+            int j1 = 0;
+            for (int j = 1; j <= ncol; ++j) {
+                if (used[j]) continue;
+                const double cost = max_overlap - std::fabs((*overlap)(i0 - 1, j - 1));
+                const double reduced_cost = cost - row_potential[i0] - col_potential[j];
+                if (reduced_cost < min_reduced_cost[j]) {
+                    min_reduced_cost[j] = reduced_cost;
+                    way[j] = j0;
+                }
+                if (min_reduced_cost[j] < delta) {
+                    delta = min_reduced_cost[j];
+                    j1 = j;
+                }
+            }
+
+            for (int j = 0; j <= ncol; ++j) {
+                if (used[j]) {
+                    row_potential[p[j]] += delta;
+                    col_potential[j] -= delta;
+                } else {
+                    min_reduced_cost[j] -= delta;
+                }
+            }
+            j0 = j1;
+        } while (p[j0] != 0);
+
+        do {
+            const int j1 = way[j0];
+            p[j0] = p[j1];
+            j0 = j1;
+        } while (j0 != 0);
+    }
+
+    std::vector<int> assignment(nrow, -1);
+    for (int j = 1; j <= ncol; ++j) assignment[p[j] - 1] = j - 1;
+    return assignment;
+}
+
+}  // namespace
 
 DLPNO::DLPNO(SharedWavefunction ref_wfn, Options& options) : Wavefunction(options) {
     shallow_copy(ref_wfn);
@@ -67,6 +151,13 @@ void DLPNO::common_init() {
     print_ = options_.get_int("PRINT");
     debug_ = options_.get_int("DEBUG");
 
+    // Using Brueckner orbitals?
+    const auto orbital_reference = options_.get_str("DLPNO_REFERENCE_ORBITALS");
+    brueckner_reference_rank_ = orbital_reference == "BCCDTQ" ? 4 :
+                                orbital_reference == "BCCDT" ? 3 :
+                                (orbital_reference == "BCCD" || options_.get_bool("DLPNO_BRUECKNER_ORBS")) ? 2 : 0;
+    brueckner_orbs_ = brueckner_reference_rank_ != 0;
+
     // PNO Truncation Parameters
     T_CUT_PNO_ = options_.get_double("T_CUT_PNO");
     T_CUT_TRACE_ = options_.get_double("T_CUT_TRACE");
@@ -76,7 +167,7 @@ void DLPNO::common_init() {
     T_CUT_ENERGY_MP2_ = options_.get_double("T_CUT_ENERGY_MP2");
     T_CUT_PNO_DIAG_SCALE_ = options_.get_double("T_CUT_PNO_DIAG_SCALE");
     T_CUT_PNO_CORE_SCALE_ = options_.get_double("T_CUT_PNO_CORE_SCALE");
-    
+
     // LMO and Auxiliary space truncation parameters
     T_CUT_DO_ = options_.get_double("T_CUT_DO");
     T_CUT_MKN_ = options_.get_double("T_CUT_MKN");
@@ -97,7 +188,7 @@ void DLPNO::common_init() {
     } else if (options_.get_str("DLPNO_ALGORITHM") == "CCSDTQ") {
         algorithm_ = DLPNOMethod::CCSDTQ;
     } else {
-        throw PSIEXCEPTION("Requested DLPNO algorithm has NOT been implemented yet");
+        throw PSIEXCEPTION("Requested DLPNO algorithm is not available: " + options_.get_str("DLPNO_ALGORITHM"));
     }
 
     // did the user manually change expert level options?
@@ -132,6 +223,10 @@ void DLPNO::common_init() {
             if (!T_CUT_PNO_changed) T_CUT_PNO_ = 1e-10;
             if (!T_CUT_DO_changed) T_CUT_DO_ = 5e-3;
             if (!T_CUT_MKN_changed) T_CUT_MKN_ = 1e-4;
+        } else if (options_.get_str("PNO_CONVERGENCE") == "GLACIER") {
+            if (!T_CUT_PNO_changed) T_CUT_PNO_ = 1e-12;
+            if (!T_CUT_DO_changed) T_CUT_DO_ = 1e-4;
+            if (!T_CUT_MKN_changed) T_CUT_MKN_ = 1e-5;
         }
     } else { // Coupled-cluster defaults
         if (options_.get_str("PNO_CONVERGENCE") == "LOOSE") {
@@ -152,7 +247,7 @@ void DLPNO::common_init() {
             if (!T_CUT_TRACE_changed) T_CUT_TRACE_ = 0.99;
             if (!T_CUT_ENERGY_changed) T_CUT_ENERGY_ = 0.99;
             if (!T_CUT_PAIRS_changed) T_CUT_PAIRS_ = 1e-4;
-            
+
             if (!T_CUT_PNO_MP2_changed) T_CUT_PNO_MP2_ = 3.33e-9;
             if (!T_CUT_TRACE_MP2_changed) T_CUT_TRACE_MP2_ = 0.999;
             if (!T_CUT_ENERGY_MP2_changed) T_CUT_ENERGY_MP2_ = 0.997;
@@ -182,10 +277,27 @@ void DLPNO::common_init() {
             if (!T_CUT_PNO_MP2_changed) T_CUT_PNO_MP2_ = 1e-10;
             if (!T_CUT_TRACE_MP2_changed) T_CUT_TRACE_MP2_ = 0.9999;
             if (!T_CUT_ENERGY_MP2_changed) T_CUT_ENERGY_MP2_ = 0.999;
-            
+
             if (!T_CUT_DO_changed) T_CUT_DO_ = 5e-3;
             if (!T_CUT_MKN_changed) T_CUT_MKN_ = 1e-4;
+        } else if (options_.get_str("PNO_CONVERGENCE") == "GLACIER") {
+            if (!T_CUT_PNO_changed) T_CUT_PNO_ = 1e-10;
+            if (!T_CUT_TRACE_changed) T_CUT_TRACE_ = 0.9999;
+            if (!T_CUT_ENERGY_changed) T_CUT_ENERGY_ = 0.999;
+            if (!T_CUT_PAIRS_changed) T_CUT_PAIRS_ = 1e-8;
+
+            if (!T_CUT_PNO_MP2_changed) T_CUT_PNO_MP2_ = 1e-12;
+            if (!T_CUT_TRACE_MP2_changed) T_CUT_TRACE_MP2_ = 0.9999;
+            if (!T_CUT_ENERGY_MP2_changed) T_CUT_ENERGY_MP2_ = 0.9995;
+
+            if (!T_CUT_DO_changed) T_CUT_DO_ = 1e-4;
+            if (!T_CUT_MKN_changed) T_CUT_MKN_ = 1e-5;
         }
+        if (!T_CUT_PRE_changed) T_CUT_PRE_ = std::min(T_CUT_PRE_, 0.01 * T_CUT_PAIRS_);
+
+        // Set T_CUT_PNO_MP2 to 1.0e-11 and T_CUT_PNO to 1.0e-9 if Brueckner is requested, for orbital stability
+        if (brueckner_orbs_ && options_.get_str("PNO_CONVERGENCE") != "GLACIER" && !options_["T_CUT_PNO_MP2"].has_changed()) T_CUT_PNO_MP2_ = 1.0e-11;
+        if (brueckner_orbs_ && options_.get_str("PNO_CONVERGENCE") != "GLACIER" && !options_["T_CUT_PNO"].has_changed()) T_CUT_PNO_ = 1.0e-9;
     }
 
     // Post-CCSD(T) methods do not use a separate weak-pair treatment. Collapsing the
@@ -225,13 +337,207 @@ void DLPNO::common_init() {
     name_ = "DLPNO";
     module_ = "dlpno";
 
-    variables_["SCF TOTAL ENERGY"] = reference_wavefunction_->energy();
+    input_scf_energy_ = reference_wavefunction_->energy();
+    reference_energy_ = input_scf_energy_;
+    variables_["SCF TOTAL ENERGY"] = input_scf_energy_;
 
     ribasis_ = (algorithm_ == DLPNOMethod::MP2) ? get_basisset("DF_BASIS_MP2") : get_basisset("DF_BASIS_CC");
     psio_ = _default_psio_lib_;
 
     memory_ = Process::environment.get_memory();
     toggle_memory_ = options_.get_bool("DLPNO_TOGGLE_MEMORY");
+}
+
+void DLPNO::prepare_reference() {
+    if (reference_prepared_) return;
+
+    if (options_.get_str("REFERENCE") == "UHF") {
+        build_qro_reference();
+    } else {
+        C_reference_occ_ = reference_wavefunction_->Ca_subset("AO", "OCC");
+        C_reference_active_a_ = reference_wavefunction_->Ca_subset("AO", "ACTIVE_OCC");
+        C_reference_active_b_ = reference_wavefunction_->Cb_subset("AO", "ACTIVE_OCC");
+        F_reference_a_ = reference_wavefunction_->Fa_subset("AO");
+        F_reference_b_ = reference_wavefunction_->Fb_subset("AO");
+        reference_energy_ = input_scf_energy_;
+        set_scalar_variable("CURRENT REFERENCE ENERGY", reference_energy_);
+    }
+
+    reference_prepared_ = true;
+}
+
+void DLPNO::build_qro_reference() {
+    if (nalpha_ < nbeta_) {
+        throw PSIEXCEPTION(
+            "The UHF -> QRO DLPNO-CCSD path requires nalpha >= nbeta. "
+            "Reverse the spin convention of the reference determinant.");
+    }
+
+    const int nbf = basisset_->nbf();
+    const int nsomo = nalpha_ - nbeta_;
+    const int nfrzc = this->nfrzc();
+    if (nfrzc > nbeta_) {
+        throw PSIEXCEPTION(
+            "The frozen-core space cannot contain more orbitals than the QRO doubly occupied space.");
+    }
+    const auto S_ao = reference_wavefunction_->S();
+    const auto Fa_uhf = reference_wavefunction_->Fa_subset("AO");
+    const auto Fb_uhf = reference_wavefunction_->Fb_subset("AO");
+    const auto Da_uhf = reference_wavefunction_->Da_subset("AO");
+    const auto Db_uhf = reference_wavefunction_->Db_subset("AO");
+
+    auto S_half = S_ao->clone();
+    S_half->power(0.5);
+
+    // A broken-symmetry singlet cannot be represented by the high-spin
+    // restricted determinant assumed by RO_DLPNOCCSD.  A collapsed UHF
+    // singlet is allowed and provides a useful closed-shell limit.
+    auto spin_density_orth = Da_uhf->clone();
+    spin_density_orth->subtract(Db_uhf);
+    spin_density_orth->transform(S_half);
+    const double spin_density_norm = std::sqrt(spin_density_orth->sum_of_squares());
+    set_scalar_variable("QRO UHF SPIN DENSITY NORM", spin_density_norm);
+    if (nsomo == 0 && spin_density_norm > 1.0e-6) {
+        throw PSIEXCEPTION(
+            "UHF -> QRO DLPNO-CCSD does not support broken-symmetry singlet references. "
+            "Use a high-spin UHF reference, a collapsed UHF singlet, or an RHF/ROHF reference.");
+    }
+
+    // Neese's QRO construction starts from the natural orbitals of the
+    // spin-summed UHF density: S^(1/2) (Da + Db) S^(1/2).
+    auto density_orth = Da_uhf->clone();
+    density_orth->add(Db_uhf);
+    density_orth->transform(S_half);
+
+    auto uno_vectors = std::make_shared<Matrix>("UHF natural-orbital eigenvectors", nbf, nbf);
+    qro_noons_ = std::make_shared<Vector>("UHF natural occupations", nbf);
+    density_orth->diagonalize(uno_vectors, qro_noons_, descending);
+
+    auto S_half_inverse = S_ao->clone();
+    S_half_inverse->power(-0.5);
+    auto C_uno = linalg::doublet(S_half_inverse, uno_vectors, false, false);
+
+    auto column_block = [](const SharedMatrix& C, int first, int count, const std::string& name) {
+        auto block = std::make_shared<Matrix>(name, C->nrow(), count);
+        for (int mu = 0; mu < C->nrow(); ++mu) {
+            for (int p = 0; p < count; ++p) block->set(mu, p, C->get(mu, first + p));
+        }
+        return block;
+    };
+
+    auto semicanonicalize = [](const SharedMatrix& C, const SharedMatrix& F,
+                               const std::string& name) {
+        if (C->ncol() <= 1) return C->clone();
+        auto F_block = linalg::triplet(C, F, C, true, false, false);
+        auto U = std::make_shared<Matrix>(name + " eigenvectors", C->ncol(), C->ncol());
+        auto epsilon = std::make_shared<Vector>(name + " energies", C->ncol());
+        F_block->diagonalize(U, epsilon, ascending);
+        return linalg::doublet(C, U, false, false);
+    };
+
+    auto C_docc = column_block(C_uno, 0, nbeta_, "QRO DOMOs");
+    auto C_somo = column_block(C_uno, nbeta_, nsomo, "QRO SOMOs");
+    auto C_virtual = column_block(C_uno, nalpha_, nbf - nalpha_, "QRO virtual orbitals");
+
+    // Hansen, Liakos, and Neese, JCP 135, 214102 (2011): DOMOs
+    // diagonalize F_beta, virtuals F_alpha, and SOMOs their average.
+    auto F_average = Fa_uhf->clone();
+    F_average->add(Fb_uhf);
+    F_average->scale(0.5);
+    C_docc = semicanonicalize(C_docc, Fb_uhf, "QRO DOMO");
+    C_somo = semicanonicalize(C_somo, F_average, "QRO SOMO");
+    C_virtual = semicanonicalize(C_virtual, Fa_uhf, "QRO virtual");
+
+    auto C_qro = std::make_shared<Matrix>("Quasi-restricted orbitals", nbf, nbf);
+    for (int mu = 0; mu < nbf; ++mu) {
+        for (int i = 0; i < nbeta_; ++i) C_qro->set(mu, i, C_docc->get(mu, i));
+        for (int u = 0; u < nsomo; ++u) C_qro->set(mu, nbeta_ + u, C_somo->get(mu, u));
+        for (int a = 0; a < nbf - nalpha_; ++a)
+            C_qro->set(mu, nalpha_ + a, C_virtual->get(mu, a));
+    }
+
+    C_reference_occ_ = column_block(C_qro, 0, nalpha_, "QRO alpha occupied orbitals");
+    C_reference_active_a_ =
+        column_block(C_qro, nfrzc, nalpha_ - nfrzc, "Active QRO alpha occupied orbitals");
+    C_reference_active_b_ =
+        column_block(C_qro, nfrzc, nbeta_ - nfrzc, "Active QRO beta occupied orbitals");
+    auto C_occ_beta = column_block(C_qro, 0, nbeta_, "QRO beta occupied orbitals");
+
+    auto D_qro_a = linalg::doublet(C_reference_occ_, C_reference_occ_, false, true);
+    auto D_qro_b = linalg::doublet(C_occ_beta, C_occ_beta, false, true);
+
+    // The input UHF Focks define the QRO rotations above.  The correlation
+    // Hamiltonian must instead be normal ordered with respect to the QRO
+    // determinant, so rebuild its spin Focks once from the QRO densities.
+    auto jk = JK::build_JK(basisset_, get_basisset("DF_BASIS_SCF"), options_, false,
+                           std::max<size_t>(1, memory_ / sizeof(double)));
+    jk->set_print(0);
+    jk->set_do_J(true);
+    jk->set_do_K(true);
+    jk->set_memory(std::max<size_t>(1, memory_ / sizeof(double)));
+    jk->initialize();
+    auto& C_left = jk->C_left();
+    C_left.clear();
+    C_left.push_back(C_reference_occ_);
+    C_left.push_back(C_occ_beta);
+    jk->compute();
+    const auto& J = jk->J();
+    const auto& K = jk->K();
+
+    auto J_total = J[0]->clone();
+    J_total->add(J[1]);
+    F_reference_a_ = reference_wavefunction_->H()->clone();
+    F_reference_a_->add(J_total);
+    F_reference_a_->subtract(K[0]);
+    F_reference_b_ = reference_wavefunction_->H()->clone();
+    F_reference_b_->add(J_total);
+    F_reference_b_->subtract(K[1]);
+    jk->finalize();
+
+    reference_energy_ =
+        molecule_->nuclear_repulsion_energy(reference_wavefunction_->get_dipole_field_strength());
+    auto D_qro_total = D_qro_a->clone();
+    D_qro_total->add(D_qro_b);
+    reference_energy_ += 0.5 * D_qro_total->vector_dot(reference_wavefunction_->H());
+    reference_energy_ += 0.5 * D_qro_a->vector_dot(F_reference_a_);
+    reference_energy_ += 0.5 * D_qro_b->vector_dot(F_reference_b_);
+
+    auto qro_orthogonality = linalg::triplet(C_qro, S_ao, C_qro, true, false, false);
+    for (int p = 0; p < nbf; ++p)
+        qro_orthogonality->set(p, p, qro_orthogonality->get(p, p) - 1.0);
+    const double orthogonality_error = std::sqrt(qro_orthogonality->sum_of_squares());
+    const double qro_nalpha = D_qro_a->vector_dot(S_ao);
+    const double qro_nbeta = D_qro_b->vector_dot(S_ao);
+    if (orthogonality_error > 1.0e-6 || std::fabs(qro_nalpha - nalpha_) > 1.0e-6 ||
+        std::fabs(qro_nbeta - nbeta_) > 1.0e-6) {
+        throw PSIEXCEPTION("The UHF -> QRO transformation failed its orthonormality or electron-count check.");
+    }
+
+    qro_reference_ = true;
+    set_scalar_variable("QRO REFERENCE ENERGY", reference_energy_);
+    set_scalar_variable("CURRENT REFERENCE ENERGY", reference_energy_);
+    set_scalar_variable("QRO ORTHONORMALITY ERROR", orthogonality_error);
+    set_scalar_variable("QRO ALPHA ELECTRONS", qro_nalpha);
+    set_scalar_variable("QRO BETA ELECTRONS", qro_nbeta);
+
+    outfile->Printf("\n  ==> UHF -> Quasi-Restricted Orbital Transformation <==\n\n");
+    outfile->Printf("    The UHF natural orbitals are being transformed to a common QRO basis.\n");
+    outfile->Printf("    DLPNO-CCSD will use the QRO determinant and its spin Fock matrices.\n");
+    outfile->Printf("    The reported total energy is E(QRO reference) + E(CCSD correlation).\n\n");
+    outfile->Printf("    Input UHF SCF energy:       %20.12f\n", input_scf_energy_);
+    outfile->Printf("    QRO determinant energy:     %20.12f\n", reference_energy_);
+    outfile->Printf("    QRO - UHF energy:           %20.12f\n", reference_energy_ - input_scf_energy_);
+    outfile->Printf("    QRO orthonormality error:   %20.3e\n", orthogonality_error);
+    outfile->Printf("    QRO electron counts:        alpha = %.8f, beta = %.8f\n", qro_nalpha, qro_nbeta);
+    if (nbeta_ > 0) outfile->Printf("    Last DOMO occupation:       %20.12f\n", qro_noons_->get(nbeta_ - 1));
+    if (nsomo > 0) {
+        outfile->Printf("    First SOMO occupation:      %20.12f\n", qro_noons_->get(nbeta_));
+        outfile->Printf("    Last SOMO occupation:       %20.12f\n", qro_noons_->get(nalpha_ - 1));
+    }
+    if (nalpha_ < nbf)
+        outfile->Printf("    First virtual occupation:   %20.12f\n", qro_noons_->get(nalpha_));
+    outfile->Printf("\n    QROs are not converged ROHF orbitals; nonzero occupied-virtual Fock\n");
+    outfile->Printf("    elements and their singles contributions are retained.\n\n");
 }
 
 /* Utility function for making C_DGESV calls
@@ -464,14 +770,16 @@ std::pair<SharedMatrix, SharedVector> DLPNO::orthocanonicalizer(SharedMatrix S, 
 }
 
 void DLPNO::setup_orbitals() {
+    prepare_reference();
+
     int natom = molecule_->natom();
     int nbf = basisset_->nbf();
     int nshell = basisset_->nshell();
     int naux = ribasis_->nbf();
     int nshellri = ribasis_->nshell();
     int naocc = nalpha_ - nfrzc();
-
-    auto C_occ = reference_wavefunction_->Ca_subset("AO", "OCC");
+    int nbocc = nbeta_ - nfrzc();
+    int nsomo = naocc - nbocc;
 
     // Compute number of core orbitals
     if (options_.get_str("FREEZE_CORE") == "TRUE" || options_.get_str("FREEZE_CORE") == "1") {
@@ -482,45 +790,296 @@ void DLPNO::setup_orbitals() {
         throw PSIEXCEPTION("DLPNO Methods do not yet support custom frozen core policies!");
     }
 
-    timer_on("Local MOs");
-    // Localize active occupied orbitals
-    if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "BOYS") {
-        BoysLocalizer localizer = BoysLocalizer(basisset_, reference_wavefunction_->Ca_subset("AO", "ACTIVE_OCC"));
-        localizer.set_convergence(options_.get_double("LOCAL_CONVERGENCE"));
-        localizer.set_maxiter(options_.get_int("LOCAL_MAXITER"));
-        localizer.localize();
-        C_lmo_ = localizer.L();
-    } else if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "PIPEK_MEZEY") {
-        PMLocalizer localizer = PMLocalizer(basisset_, reference_wavefunction_->Ca_subset("AO", "ACTIVE_OCC"));
-        localizer.set_convergence(options_.get_double("LOCAL_CONVERGENCE"));
-        localizer.set_maxiter(options_.get_int("LOCAL_MAXITER"));
-        localizer.localize();
-        C_lmo_ = localizer.L();
-    } else {
-        throw PSIEXCEPTION("Invalid option for DLPNO_LOCAL_ORBITALS");
+    // The JK object is first used after macroiteration zero to rebuild the
+    // Fock matrix in the rotated Brueckner orbitals. JK::build_JK only
+    // constructs the object; compute() is not valid until initialize() has
+    // allocated the algorithm-specific integral storage. Keep one initialized
+    // object for the whole orbital optimization and only replace its C vectors
+    // at each rotation.
+    if (brueckner_orbs_ && !jk_) {
+        const size_t jk_memory =
+            static_cast<size_t>(options_.get_double("SCF_MEM_SAFETY_FACTOR") * memory_ / sizeof(double));
+        jk_ = JK::build_JK(basisset_, get_basisset("DF_BASIS_SCF"), options_, false, jk_memory);
+        jk_->set_memory(jk_memory);
+        jk_->set_do_J(true);
+        jk_->set_do_K(true);
+        jk_->initialize();
     }
+
+    timer_on("Local MOs");
+    if (!brueckner_iter_) {
+        C_lmo_ = C_reference_active_a_->clone();
+        F_ao_ = F_reference_a_;
+        if (nsomo) {
+            auto C_aocc = C_reference_active_a_;
+            auto C_docc = C_reference_active_b_;
+            SharedMatrix C_somo;
+
+            if (nbocc == 0) {
+                C_somo = C_aocc->clone();
+            } else {
+                // Obtain the SOMO space without relying on the energy ordering
+                // used by Ca_subset("AO", ...), which can interleave irreps:
+                // C_somo' = (1 - C_docc C_docc^T S) C_aocc.
+                auto docc_overlap_aocc = linalg::triplet(
+                    C_docc, reference_wavefunction_->S(), C_aocc, true, false, false);
+                auto C_somo_projected = C_aocc->clone();
+                C_somo_projected->subtract(linalg::doublet(C_docc, docc_overlap_aocc));
+
+                auto S_somo = linalg::triplet(C_somo_projected, reference_wavefunction_->S(),
+                                              C_somo_projected, true, false, false);
+                auto U_somo = std::make_shared<Matrix>("SOMO subspace eigenvectors", naocc, naocc);
+                auto s_somo = std::make_shared<Vector>("SOMO subspace eigenvalues", naocc);
+                S_somo->diagonalize(U_somo, s_somo, descending);
+
+                auto X_somo = std::make_shared<Matrix>("SOMO orthogonalizer", naocc, nsomo);
+                for (int u = 0; u < nsomo; ++u) {
+                    const double eigenvalue = s_somo->get(u);
+                    if (eigenvalue <= options_.get_double("S_CUT")) {
+                        throw PSIEXCEPTION("Unable to separate the active ROHF DOCC and SOMO subspaces");
+                    }
+                    for (int p = 0; p < naocc; ++p) {
+                        X_somo->set(p, u, U_somo->get(p, u) / std::sqrt(eigenvalue));
+                    }
+                }
+                C_somo = linalg::doublet(C_somo_projected, X_somo);
+            }
+
+            C_lmo_ = linalg::horzcat({C_docc, C_somo});
+        }
+    }
+    auto complete_active = C_lmo_->clone();
+    std::vector<int> do_indices(nbocc), so_indices(nsomo);
+    std::iota(do_indices.begin(), do_indices.end(), 0);
+    std::iota(so_indices.begin(), so_indices.end(), nbocc);
+    brueckner_localization_frame_discontinuous_ = false;
+    auto localize_block = [&](SharedMatrix L, const SharedMatrix& previous) -> SharedMatrix {
+        if (L->ncol() <= 1) return L->clone();
+        // Localize active occupied orbitals.  A Brueckner rotation changes the
+        // occupied subspace between macroiterations, so the previous localizer U
+        // cannot be reused verbatim: it is expressed in the old unlocalized
+        // basis.  Instead solve the orthogonal Procrustes transport problem
+        //
+        //   M = C_occ(k)^T S L(k-1) = X Sigma Y^T,   U_guess = X Y^T,
+        //
+        // and start the localizer from C_occ(k) U_guess.  All localizers below
+        // initialize their internal U to the identity, making this exactly
+        // equivalent to a warm start in the transported occupied frame.
+        auto C_localizer_input = L->clone();
+        double transport_sigma_min = 1.0;
+        const bool transport_previous_frame = brueckner_iter_ && L->ncol() > 0 && previous &&
+                                              previous->ncol() == L->ncol();
+        if (transport_previous_frame) {
+            auto frame_overlap =
+                linalg::triplet(L, reference_wavefunction_->S(), previous, true, false, false);
+            SharedMatrix X;
+            SharedVector sigma;
+            SharedMatrix Yt;
+            std::tie(X, sigma, Yt) = frame_overlap->svd_temps();
+            frame_overlap->svd(X, sigma, Yt);
+            auto U_guess = linalg::doublet(X, Yt);
+            C_localizer_input = linalg::doublet(L, U_guess);
+
+            transport_sigma_min = std::numeric_limits<double>::infinity();
+            for (int i = 0; i < L->ncol(); ++i) {
+                transport_sigma_min = std::min(transport_sigma_min, sigma->get(i));
+            }
+        }
+
+        auto configure_matrix_localizer = [this](Localizer& localizer) {
+            localizer.set_print(print_);
+            localizer.set_debug(debug_);
+            localizer.set_convergence(options_.get_double("LOCAL_CONVERGENCE"));
+            localizer.set_gradient_convergence(options_.get_double("LOCAL_GRADIENT_CONVERGENCE"));
+            localizer.set_maxiter(options_.get_int("LOCAL_MAXITER"));
+            localizer.set_use_augmented_hessian(options_.get_bool("LOCAL_USE_AUGMENTED_HESSIAN"));
+            localizer.set_augmented_hessian_start(options_.get_int("LOCAL_AH_START"));
+            localizer.set_augmented_hessian_max_rotations(options_.get_int("LOCAL_AH_MAX_ROTATIONS"));
+            localizer.set_augmented_hessian_max_subspace(options_.get_int("LOCAL_AH_MAX_SUBSPACE"));
+            localizer.set_augmented_hessian_trust_radius(options_.get_double("LOCAL_AH_TRUST_RADIUS"));
+            localizer.set_saddle_tolerance(options_.get_double("LOCAL_SADDLE_TOLERANCE"));
+        };
+
+        // Choose algorithm based on user settings
+        if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "BOYS") {
+            BoysLocalizer localizer = BoysLocalizer(basisset_, C_localizer_input);
+            configure_matrix_localizer(localizer);
+            localizer.localize();
+            L = localizer.L();
+        } else if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "PIPEK_MEZEY") {
+            PMLocalizer localizer = PMLocalizer(basisset_, C_localizer_input);
+            configure_matrix_localizer(localizer);
+            localizer.localize();
+            L = localizer.L();
+        } else if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "PIPEK_MEZEY_MBIS") {
+            // MBIS is fitted to the current determinant density, not the stale SCF
+            // density stored on the reference wavefunction.  Include frozen core
+            // orbitals in that density even though only active occupied orbitals
+            // participate in the PM rotation.
+            auto mbis_density = linalg::doublet(complete_active, complete_active, false, true);
+            if (nsomo) {
+                auto C_docc = submatrix_cols(*complete_active, do_indices);
+                mbis_density->add(linalg::doublet(C_docc, C_docc, false, true));
+                mbis_density->scale(0.5);
+            }
+            auto C_core = reference_wavefunction_->Ca_subset("AO", "FROZEN_OCC");
+            if (C_core->ncol() > 0) mbis_density->add(linalg::doublet(C_core, C_core, false, true));
+
+            PopulationAnalysisCalc mbis(reference_wavefunction_);
+            mbis.set_Da_ao(mbis_density);
+            auto populations = mbis.compute_mbis_orbital_populations(C_localizer_input, print_ > 1);
+            PMLocalizer localizer = PMLocalizer(basisset_, C_localizer_input, populations, "MBIS");
+            configure_matrix_localizer(localizer);
+            localizer.localize();
+            L = localizer.L();
+        } else if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "IBO") {
+            // Only active occupied orbitals are localized in DLPNO, but Knizia's
+            // IAO projector must represent the complete determinant.  Append the
+            // unchanged frozen core to the current (possibly Brueckner-rotated)
+            // active occupied space without admitting core/valence rotations to
+            // the fourth-power IBO optimization.
+            auto C_core = reference_wavefunction_->Ca_subset("AO", "FROZEN_OCC");
+            const int nfrozen = C_core->ncol();
+            auto C_occupied_reference = std::make_shared<Matrix>(
+                "Complete occupied reference for IAO construction", nbf, nfrozen + complete_active->ncol());
+            for (int mu = 0; mu < nbf; ++mu) {
+                for (int i = 0; i < nfrozen; ++i) (*C_occupied_reference)(mu, i) = (*C_core)(mu, i);
+                for (int i = 0; i < complete_active->ncol(); ++i)
+                    (*C_occupied_reference)(mu, nfrozen + i) = (*complete_active)(mu, i);
+            }
+
+            IBOLocalizer localizer(basisset_, get_basisset("MINAO"), C_localizer_input, C_occupied_reference);
+            configure_matrix_localizer(localizer);
+            localizer.set_use_ghosts(options_.get_bool("LOCAL_USE_GHOSTS"));
+            localizer.set_condition(options_.get_double("LOCAL_IBO_CONDITION"));
+            localizer.set_power(options_.get_int("LOCAL_IBO_POWER"));
+            localizer.localize();
+            L = localizer.L();
+        } else if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "ER") {
+            // The LS-THC AO collocation and coupling factors are invariant under
+            // occupied-orbital rotations.  Their construction (grid pruning and
+            // AO integral fitting) is substantially more expensive than the
+            // subsequent ER optimization, so retain them across all Brueckner
+            // macroiterations and only transform x^I_mu into the current LMO frame.
+            if (!er_thc_x_ao_ || !er_thc_Z_) {
+                timer_on("ER AO THC Factorization");
+                auto thc_computer = std::make_shared<LS_THC_Computer>(
+                    basisset_->molecule(), basisset_, get_basisset("DF_BASIS_THC"), options_);
+                thc_computer->compute_thc_factorization();
+                er_thc_x_ao_ = thc_computer->get_x1();
+                er_thc_Z_ = thc_computer->get_Z();
+                timer_off("ER AO THC Factorization");
+            } else if (print_ > 0) {
+                outfile->Printf("    Reusing AO THC factors for ER localization.\n\n");
+            }
+            ERLocalizer localizer(basisset_, C_localizer_input, er_thc_x_ao_, er_thc_Z_);
+            configure_matrix_localizer(localizer);
+            localizer.localize();
+            L = localizer.L();
+        } else {
+            throw PSIEXCEPTION("Invalid option for DLPNO_LOCAL_ORBITALS");
+        }
+
+        if (transport_previous_frame) {
+            // Localization is invariant to occupied-orbital permutations and
+            // phases.  Restore those discrete gauges with a global (not greedy)
+            // maximum-overlap assignment so that LMO-indexed domains and local
+            // amplitudes retain the same identities from one macroiteration to
+            // the next.
+            auto localized_overlap = linalg::triplet(previous, reference_wavefunction_->S(), L, true,
+                                                     false, false);
+            const auto assignment = maximum_overlap_assignment(localized_overlap);
+            auto Laligned =
+                std::make_shared<Matrix>("Frame-aligned localized occupied orbitals", L->nrow(), L->ncol());
+            double matched_overlap_min = 1.0;
+            double matched_overlap_mean = 0.0;
+            bool permutation_changed = false;
+            for (int i = 0; i < L->ncol(); ++i) {
+                const int j = assignment[i];
+                const double signed_overlap = (*localized_overlap)(i, j);
+                const double phase = signed_overlap < 0.0 ? -1.0 : 1.0;
+                const double abs_overlap = std::fabs(signed_overlap);
+                matched_overlap_min = std::min(matched_overlap_min, abs_overlap);
+                matched_overlap_mean += abs_overlap;
+                permutation_changed = permutation_changed || i != j;
+                for (int mu = 0; mu < L->nrow(); ++mu) {
+                    (*Laligned)(mu, i) = phase * (*L)(mu, j);
+                }
+            }
+            matched_overlap_mean /= L->ncol();
+            L = Laligned;
+
+            outfile->Printf(
+                "    Brueckner LMO frame transport: min singular value = %9.6f, "
+                "min/mean matched overlap = %9.6f/%9.6f%s\n",
+                transport_sigma_min, matched_overlap_min, matched_overlap_mean,
+                permutation_changed ? ", labels restored" : "");
+
+            // These deliberately conservative thresholds only reject history
+            // after a genuinely large occupied-subspace motion or localization-
+            // branch change; ordinary small Brueckner steps remain continuous.
+            constexpr double FRAME_SIGMA_MIN_RESET = 0.90;
+            constexpr double FRAME_MATCH_MIN_RESET = 0.80;
+            brueckner_localization_frame_discontinuous_ |=
+                transport_sigma_min < FRAME_SIGMA_MIN_RESET || matched_overlap_min < FRAME_MATCH_MIN_RESET;
+            if (brueckner_localization_frame_discontinuous_) {
+                outfile->Printf(
+                    "    WARNING: The localized occupied frame changed discontinuously; "
+                    "Brueckner mixing/DIIS history will be reset.\n");
+            }
+        }
+
+        // The accepted, label- and phase-aligned LMOs define the continuation
+        // target for the next Brueckner macroiteration.
+        return L;
+
+    };
+    if (!nsomo) {
+        C_lmo_ = localize_block(C_lmo_, C_lmo_previous_);
+    } else {
+        auto previous_docc = C_lmo_previous_ ? submatrix_cols(*C_lmo_previous_, do_indices) : nullptr;
+        auto previous_somo = C_lmo_previous_ ? submatrix_cols(*C_lmo_previous_, so_indices) : nullptr;
+        auto L_docc = localize_block(submatrix_cols(*complete_active, do_indices), previous_docc);
+        auto L_somo = localize_block(submatrix_cols(*complete_active, so_indices), previous_somo);
+        C_lmo_ = linalg::horzcat({L_docc, L_somo});
+    }
+    C_lmo_previous_ = C_lmo_->clone();
+
     timer_off("Local MOs");
 
-    F_lmo_ = linalg::triplet(C_lmo_, reference_wavefunction_->Fa(), C_lmo_, true, false, false);
+    F_lmo_ = linalg::triplet(C_lmo_, F_ao_, C_lmo_, true, false, false);
+    F_lmo_a_ = linalg::triplet(C_lmo_, F_reference_a_, C_lmo_, true, false, false);
+    F_lmo_b_ = linalg::triplet(C_lmo_, F_reference_b_, C_lmo_, true, false, false);
 
     timer_on("Projected AOs");
 
     // Form projected atomic orbitals by removing occupied space from the basis
     C_pao_ = std::make_shared<Matrix>("Projected Atomic Orbitals", nbf, nbf);
     C_pao_->identity();
-    C_pao_->subtract(linalg::triplet(C_occ, C_occ, reference_wavefunction_->S(), false, true, false));
+    C_pao_->subtract(linalg::triplet(C_lmo_, C_lmo_, reference_wavefunction_->S(), false, true, false));
+    if (ncore_ == 0) {
+        auto C_core = reference_wavefunction_->Ca_subset("AO", "FROZEN_OCC");
+        C_pao_->subtract(linalg::triplet(C_core, C_core, reference_wavefunction_->S(), false, true, false));
+    }
     S_pao_ = linalg::triplet(C_pao_, reference_wavefunction_->S(), C_pao_, true, false, false);
 
     // normalize PAOs
     for (size_t i = 0; i < C_pao_->ncol(); ++i) {
-        C_pao_->scale_column(0, i, pow(S_pao_->get(i, i), -0.5));
+        const double norm2 = S_pao_->get(i, i);
+        if (norm2 > 1.0e-20) C_pao_->scale_column(0, i, 1.0 / std::sqrt(norm2));
+        else C_pao_->scale_column(0, i, 0.0);
     }
     S_pao_ = linalg::triplet(C_pao_, reference_wavefunction_->S(), C_pao_, true, false, false);
-    F_pao_ = linalg::triplet(C_pao_, reference_wavefunction_->Fa(), C_pao_, true, false, false);
+    F_pao_ = linalg::triplet(C_pao_, F_ao_, C_pao_, true, false, false);
+    F_lmo_pao_ = linalg::triplet(C_lmo_, F_ao_, C_pao_, true, false, false);
 
     timer_off("Projected AOs");
 
     // map from atomic center to orbital/aux basis function/shell index
+    atom_to_bf_.clear();
+    atom_to_ribf_.clear();
+    atom_to_shell_.clear();
+    atom_to_rishell_.clear();
 
     atom_to_bf_.resize(natom);
     atom_to_ribf_.resize(natom);
@@ -544,6 +1103,96 @@ void DLPNO::setup_orbitals() {
     }
 }
 
+void DLPNO::brueckner_rotation(const SharedMatrix &C_brueckner_ref, const SharedMatrix &kappa_total) {
+    int naocc = nalpha_ - nfrzc();
+    const int nbf = basisset_->nbf();
+
+    // kappa_total is an absolute, anti-Hermitian orbital coordinate measured
+    // from the macroiteration-zero active occupied/virtual frame.  Always
+    // rebuilding from that frame makes every DIIS vector refer to the same
+    // coordinates and avoids extrapolating the arbitrary LMO localization
+    // gauge.  The transpose preserves the historical convention
+    // kappa_ia = +t_i^a and kappa_ai = -t_i^a used by this module.
+    auto orbital_rotation = kappa_total->clone();
+    orbital_rotation->expm(4, true);
+    auto C_brueckner = linalg::doublet(C_brueckner_ref, orbital_rotation, false, true);
+
+    C_lmo_ = std::make_shared<Matrix>("Unlocalized Brueckner occupied orbitals", nbf, naocc);
+#pragma omp parallel for
+    for (int mu = 0; mu < nbf; ++mu) {
+        for (int i = 0; i < naocc; ++i) {
+            (*C_lmo_)(mu, i) = (*C_brueckner)(mu, i);
+        }
+    }
+
+    // The same spatial orbitals define both spins. Rebuild J[Da+Db], Ka and
+    // Kb independently; the RHF limit then reduces to H + 2J - K.
+    timer_on("Rebuilding Fock matrix");
+    const int nbocc = nbeta_ - nfrzc();
+    auto C_core = reference_wavefunction_->Ca_subset("AO", "FROZEN_OCC");
+    std::vector<int> docc(nbocc);
+    std::iota(docc.begin(), docc.end(), 0);
+    C_reference_active_a_ = C_lmo_->clone();
+    C_reference_active_b_ = submatrix_cols(*C_lmo_, docc);
+    C_reference_occ_ = linalg::horzcat({C_core, C_reference_active_a_});
+    auto C_beta_occ = linalg::horzcat({C_core, C_reference_active_b_});
+    auto& Cl = jk_->C_left();
+    auto& Cr = jk_->C_right();
+    Cl.clear(); Cr.clear();
+    Cl.push_back(C_reference_occ_);
+    Cl.push_back(C_beta_occ);
+    jk_->compute();
+
+    auto J_total = jk_->J()[0]->clone();
+    J_total->add(jk_->J()[1]);
+    F_reference_a_ = H_->clone();
+    F_reference_a_->add(J_total);
+    F_reference_a_->subtract(jk_->K()[0]);
+    F_reference_b_ = H_->clone();
+    F_reference_b_->add(J_total);
+    F_reference_b_->subtract(jk_->K()[1]);
+    F_ao_ = F_reference_a_;
+    auto Da = linalg::doublet(C_reference_occ_, C_reference_occ_, false, true);
+    auto Db = linalg::doublet(C_beta_occ, C_beta_occ, false, true);
+    auto Ha = H_->clone(); Ha->add(F_reference_a_);
+    auto Hb = H_->clone(); Hb->add(F_reference_b_);
+    reference_energy_ = 0.5 * (Ha->vector_dot(Da) + Hb->vector_dot(Db)) +
+        molecule_->nuclear_repulsion_energy(reference_wavefunction_->get_dipole_field_strength());
+    set_scalar_variable("CURRENT REFERENCE ENERGY", reference_energy_);
+    set_scalar_variable("BRUECKNER REFERENCE ENERGY", reference_energy_);
+    // Preserve the input wavefunction and SCF TOTAL ENERGY for provenance.
+    Ca_ = linalg::horzcat({C_core, C_brueckner});
+    Cb_ = Ca_->clone();
+    Fa_ = F_reference_a_;
+    Fb_ = F_reference_b_;
+    Da_ = Da;
+    Db_ = Db;
+    outfile->Printf("\n  Updated Brueckner determinant energy: %16.12f\n", reference_energy_);
+    timer_off("Rebuilding Fock matrix");
+}
+
+void DLPNO::lmo_canonicalize() {
+    // Never mix different ROHF occupation classes during canonicalization.
+    const int nbocc = nbeta_ - nfrzc(), naocc = nalpha_ - nfrzc();
+    auto canonicalize = [&](int first, int count, const SharedMatrix& F) {
+        std::vector<int> indices(count);
+        std::iota(indices.begin(), indices.end(), first);
+        auto C = submatrix_cols(*C_lmo_, indices);
+        if (count <= 1) return C;
+        auto F_block = linalg::triplet(C, F, C, true, false, false);
+        auto S_block = linalg::triplet(C, reference_wavefunction_->S(), C, true, false, false);
+        SharedMatrix X;
+        SharedVector e;
+        std::tie(X, e) = orthocanonicalizer(S_block, F_block);
+        return linalg::doublet(C, X);
+    };
+    auto F_average = F_reference_a_->clone();
+    F_average->add(F_reference_b_);
+    F_average->scale(0.5);
+    C_lmo_ = linalg::horzcat({canonicalize(0, nbocc, F_reference_b_),
+                             canonicalize(nbocc, naocc - nbocc, F_average)});
+}
+
 void DLPNO::compute_overlap_ints() {
     int nbf = basisset_->nbf();
     int naocc = nalpha_ - nfrzc();
@@ -559,13 +1208,13 @@ void DLPNO::compute_overlap_ints() {
         {"DFT_BLOCK_SCHEME",   "OCTREE"},
     };
     std::map<std::string, int> grid_init_int_options = {
-        {"DFT_SPHERICAL_POINTS", options_.get_int("DOI_SPHERICAL_POINTS")}, 
+        {"DFT_SPHERICAL_POINTS", options_.get_int("DOI_SPHERICAL_POINTS")},
         {"DFT_RADIAL_POINTS",    options_.get_int("DOI_RADIAL_POINTS")},
         {"DFT_BLOCK_MIN_POINTS", 100},
         {"DFT_BLOCK_MAX_POINTS", 256},
     };
     std::map<std::string, double> grid_init_float_options = {
-        {"DFT_BASIS_TOLERANCE",   options_.get_double("DOI_BASIS_TOLERANCE")}, 
+        {"DFT_BASIS_TOLERANCE",   options_.get_double("DOI_BASIS_TOLERANCE")},
         {"DFT_BS_RADIUS_ALPHA",   1.0},
         {"DFT_PRUNING_ALPHA",     1.0},
         {"DFT_BLOCK_MAX_RADIUS",  3.0},
@@ -668,7 +1317,30 @@ void DLPNO::compute_overlap_ints() {
 void DLPNO::compute_dipole_ints() {
     int natom = molecule_->natom();
     int naocc = nalpha_ - nfrzc();
+    int nbocc = nbeta_ - nfrzc();
     int nbf = C_lmo_->nrow();
+    const bool open_shell = naocc != nbocc;
+
+    // The dipole estimate is well-defined only for pairs of doubly occupied
+    // orbitals in a high-spin open-shell reference.  Pairs involving at least
+    // one singly occupied orbital are retained unconditionally below, so no
+    // transition-dipole domains are needed for the SOMOs here.
+    const int ndipole_occ = open_shell ? nbocc : naocc;
+
+    // The inactive/external part of the high-spin Dyall Hamiltonian uses the
+    // spin-free ROHF Fock matrix (Saitow et al., Eq. 9).  For a high-spin
+    // determinant this is exactly (F_alpha + F_beta) / 2, giving J - K / 2
+    // for each SOMO.  Keep the original matrices in the RHF path so its
+    // arithmetic remains unchanged.
+    auto F_lmo_dipole = F_lmo_;
+    auto F_pao_dipole = F_pao_;
+    if (open_shell) {
+        auto F_rohf = F_reference_a_->clone();
+        F_rohf->add(F_reference_b_);
+        F_rohf->scale(0.5);
+        F_lmo_dipole = linalg::triplet(C_lmo_, F_rohf, C_lmo_, true, false, false);
+        F_pao_dipole = linalg::triplet(C_pao_, F_rohf, C_pao_, true, false, false);
+    }
 
     const auto ao_dipole = MintsHelper(basisset_, options_).ao_dipole();
 
@@ -684,17 +1356,17 @@ void DLPNO::compute_dipole_ints() {
     std::vector<Vector3> R_i;
 
     // < i | dipole | u >
-    std::vector<std::vector<Vector3>> lmo_pao_dr(naocc);
+    std::vector<std::vector<Vector3>> lmo_pao_dr(ndipole_occ);
 
     // e_u
-    std::vector<SharedVector> lmo_pao_e(naocc);
+    std::vector<SharedVector> lmo_pao_e(ndipole_occ);
 
-    for (size_t i = 0; i < naocc; ++i) {
+    for (size_t i = 0; i < ndipole_occ; ++i) {
         R_i.push_back(Vector3(lmo_lmo_dipx->get(i, i), lmo_lmo_dipy->get(i, i), lmo_lmo_dipz->get(i, i)));
     }
 
     double T_CUT_DO_PRE = options_.get_double("T_CUT_DO_PRE");
-    for (size_t i = 0; i < naocc; ++i) {
+    for (size_t i = 0; i < ndipole_occ; ++i) {
         std::vector<int> pao_inds;
         for (size_t u = 0; u < nbf; u++) {
             if (fabs(DOI_iu_->get(i, u)) > T_CUT_DO_PRE) {
@@ -705,7 +1377,7 @@ void DLPNO::compute_dipole_ints() {
 
         auto C_pao_i = submatrix_cols(*C_pao_, pao_inds);
         auto S_pao_i = submatrix_rows_and_cols(*S_pao_, pao_inds, pao_inds);
-        auto F_pao_i = submatrix_rows_and_cols(*F_pao_, pao_inds, pao_inds);
+        auto F_pao_i = submatrix_rows_and_cols(*F_pao_dipole, pao_inds, pao_inds);
 
         SharedMatrix X_pao_i;
         SharedVector e_pao_i;
@@ -731,8 +1403,24 @@ void DLPNO::compute_dipole_ints() {
     dipole_pair_e_ = std::make_shared<Matrix>("Dipole SC MP2 Energies", naocc, naocc);
     dipole_pair_e_bound_ = std::make_shared<Matrix>("Parallel Dipole SC MP2 Energies", naocc, naocc);
 
+    size_t n_somo_pairs_retained = 0;
     for (size_t i = 0; i < naocc; ++i) {
         for (size_t j = i + 1; j < naocc; ++j) {
+            // In the open-shell dipole/SC-NEVPT prescreen, a pair energy cannot
+            // be defined reliably for DOCC-SOMO (ip) or SOMO-SOMO (pq) pairs.
+            // Saitow et al., J. Chem. Phys. 146, 164105 (2017),
+            // DOI: 10.1063/1.4981521, therefore keep every such pair in the
+            // crude guess.  An infinite screening bound makes prep_sparsity()
+            // retain the pair, while leaving its dipole
+            // correction at zero; the later PAO pair-energy screen decides it.
+            if (open_shell && (i >= nbocc || j >= nbocc)) {
+                const double keep_pair = std::numeric_limits<double>::infinity();
+                dipole_pair_e_bound_->set(i, j, keep_pair);
+                dipole_pair_e_bound_->set(j, i, keep_pair);
+                ++n_somo_pairs_retained;
+                continue;
+            }
+
             auto R_ij = R_i[i] - R_i[j];
             auto Rh_ij = R_ij / R_ij.norm();
 
@@ -747,14 +1435,18 @@ void DLPNO::compute_dipole_ints() {
                     double num_actual = iu.dot(jv) - 3 * (iu.dot(Rh_ij) * jv.dot(Rh_ij));
                     num_actual *= num_actual;
 
-                    double num_linear = -2 * iu.dot(jv);
-                    num_linear *= num_linear;
+                    // Conservative parallel-dipole bound (Guo et al.,
+                    // J. Chem. Phys. 144, 094111 (2016), Eq. 25).  The norm
+                    // product is essential: using iu.dot(jv) can vanish for
+                    // orthogonal transition dipoles and underestimate a pair.
+                    double num_bound = 4 * iu.dot(iu) * jv.dot(jv);
 
                     double denom =
-                        (lmo_pao_e[i]->get(u) + lmo_pao_e[j]->get(v)) - (F_lmo_->get(i, i) + F_lmo_->get(j, j));
+                        (lmo_pao_e[i]->get(u) + lmo_pao_e[j]->get(v)) -
+                        (F_lmo_dipole->get(i, i) + F_lmo_dipole->get(j, j));
 
                     dipole_pair_e_temp += (num_actual / denom);
-                    dipole_pair_e_bound_temp += (num_linear / denom);
+                    dipole_pair_e_bound_temp += (num_bound / denom);
                 }
             }
 
@@ -768,6 +1460,10 @@ void DLPNO::compute_dipole_ints() {
             dipole_pair_e_bound_->set(j, i, dipole_pair_e_bound_temp);
         }
     }
+
+    if (open_shell) {
+        outfile->Printf("    Retained %zu SOMO-containing pairs through dipole prescreening.\n", n_somo_pairs_retained);
+    }
 }
 
 
@@ -777,7 +1473,7 @@ void DLPNO::prep_sparsity(bool initial, bool final) {
     int nshell = basisset_->nshell();
     int naux = ribasis_->nbf();
     int naocc = nalpha_ - nfrzc();
-    int npao = C_pao_->ncol();  // same as nbf
+    int npao = C_pao_->ncol();  // either nbf or nbf + nsomo, depending on stage of computation
 
     auto bf_to_atom = std::vector<int>(nbf);
     auto ribf_to_atom = std::vector<int>(naux);
@@ -866,6 +1562,13 @@ void DLPNO::prep_sparsity(bool initial, bool final) {
 
         // contains the same information as previous map
         lmo_to_paoatoms_[i] = block_list(lmo_to_paos_[i], bf_to_atom);
+
+        // Add SOMOs to each LMO (does not affect closed-shell case)
+        if (final) {
+            for (int u = nbf; u < npao; ++u) {
+                lmo_to_paos_[i].push_back(u);
+            } // end for
+        } // end if
     }
 
     // map from LMO to local occupied domain (other LMOs)
@@ -958,92 +1661,92 @@ void DLPNO::prep_sparsity(bool initial, bool final) {
     print_lmo_pair_domains();
     print_pao_pair_domains();
 
-    if (initial) {
-        // => Coefficient Sparsity <= //
+    // => Coefficient Sparsity <= //
+    lmo_to_bfs_.clear();
+    lmo_to_atoms_.clear();
 
-        // which basis functions (on which atoms) contribute to each local MO?
-        lmo_to_bfs_.resize(naocc);
-        lmo_to_atoms_.resize(naocc);
+    // which basis functions (on which atoms) contribute to each local MO?
+    lmo_to_bfs_.resize(naocc);
+    lmo_to_atoms_.resize(naocc);
 
-        for (int i = 0; i < naocc; ++i) {
-            for (int bf_ind = 0; bf_ind < nbf; ++bf_ind) {
-                if (fabs(C_lmo_->get(bf_ind, i)) > options_.get_double("T_CUT_CLMO")) {
-                    lmo_to_bfs_[i].push_back(bf_ind);
-                }
-            }
-            lmo_to_atoms_[i] = block_list(lmo_to_bfs_[i], bf_to_atom);
-        }
-
-        // which basis functions (on which atoms) contribute to each projected AO?
-        pao_to_bfs_.resize(nbf);
-        pao_to_atoms_.resize(nbf);
-
-        for (int u = 0; u < nbf; ++u) {
-            for (int bf_ind = 0; bf_ind < nbf; ++bf_ind) {
-                if (fabs(C_pao_->get(bf_ind, u)) > options_.get_double("T_CUT_CPAO")) {
-                    pao_to_bfs_[u].push_back(bf_ind);
-                }
-            }
-            pao_to_atoms_[u] = block_list(pao_to_bfs_[u], bf_to_atom);
-        }
-    } // end if
-
-    if (!final) {
-        // determine maps to extended LMO domains, which are the union of an LMO's domain with domains
-        //   of all interacting LMOs
-
-        lmo_to_riatoms_ext_ = extend_maps(lmo_to_riatoms_, ij_to_i_j_);
-        riatom_to_lmos_ext_ = invert_map(lmo_to_riatoms_ext_, natom);
-        riatom_to_paos_ext_ = chain_maps(riatom_to_lmos_ext_, lmo_to_paos_);
-
-        // We'll use these maps to screen the the local MO transform (first index):
-        //   (mn|Q) * C_mi -> (in|Q)
-        riatom_to_atoms1_ = chain_maps(riatom_to_lmos_ext_, lmo_to_atoms_);
-        riatom_to_shells1_ = chain_maps(riatom_to_atoms1_, atom_to_shell_);
-        riatom_to_bfs1_ = chain_maps(riatom_to_atoms1_, atom_to_bf_);
-
-        // We'll use these maps to screen the projected AO transform (second index):
-        //   (mn|Q) * C_nu -> (mu|Q)
-        riatom_to_atoms2_ = chain_maps(riatom_to_lmos_ext_, chain_maps(lmo_to_paos_, pao_to_atoms_));
-        riatom_to_shells2_ = chain_maps(riatom_to_atoms2_, atom_to_shell_);
-        riatom_to_bfs2_ = chain_maps(riatom_to_atoms2_, atom_to_bf_);
-
-        // Need dense versions of previous maps for quick lookup
-
-        // riatom_to_lmos_ext_dense_[riatom][lmo] is the index of lmo in riatom_to_lmos_ext_[riatom]
-        //   (if present), else -1
-        riatom_to_lmos_ext_dense_.resize(natom);
-        // riatom_to_paos_ext_dense_[riatom][pao] is the index of pao in riatom_to_paos_ext_[riatom]
-        //   (if present), else -1
-        riatom_to_paos_ext_dense_.resize(natom);
-
-        // riatom_to_atoms1_dense_(1,2)[riatom][a] is true if the orbitals basis functions of atom A
-        //   are needed for the (LMO,PAO) transform
-        riatom_to_atoms1_dense_.resize(natom);
-        riatom_to_atoms2_dense_.resize(natom);
-
-        for (int a_ri = 0; a_ri < natom; a_ri++) {
-            riatom_to_lmos_ext_dense_[a_ri] = std::vector<int>(naocc, -1);
-            riatom_to_paos_ext_dense_[a_ri] = std::vector<int>(npao, -1);
-            riatom_to_atoms1_dense_[a_ri] = std::vector<bool>(natom, false);
-            riatom_to_atoms2_dense_[a_ri] = std::vector<bool>(natom, false);
-
-            for (int i_ind = 0; i_ind < riatom_to_lmos_ext_[a_ri].size(); i_ind++) {
-                int i = riatom_to_lmos_ext_[a_ri][i_ind];
-                riatom_to_lmos_ext_dense_[a_ri][i] = i_ind;
-            }
-            for (int u_ind = 0; u_ind < riatom_to_paos_ext_[a_ri].size(); u_ind++) {
-                int u = riatom_to_paos_ext_[a_ri][u_ind];
-                riatom_to_paos_ext_dense_[a_ri][u] = u_ind;
-            }
-            for (int a_bf : riatom_to_atoms1_[a_ri]) {
-                riatom_to_atoms1_dense_[a_ri][a_bf] = true;
-            }
-            for (int a_bf : riatom_to_atoms2_[a_ri]) {
-                riatom_to_atoms2_dense_[a_ri][a_bf] = true;
+    for (int i = 0; i < naocc; ++i) {
+        for (int bf_ind = 0; bf_ind < nbf; ++bf_ind) {
+            if (fabs(C_lmo_->get(bf_ind, i)) > options_.get_double("T_CUT_CLMO")) {
+                lmo_to_bfs_[i].push_back(bf_ind);
             }
         }
-    } // end if
+        lmo_to_atoms_[i] = block_list(lmo_to_bfs_[i], bf_to_atom);
+    }
+
+    // which basis functions (on which atoms) contribute to each projected AO?
+    pao_to_bfs_.clear();
+    pao_to_atoms_.clear();
+    pao_to_bfs_.resize(npao);
+    pao_to_atoms_.resize(npao);
+
+    for (int u = 0; u < npao; ++u) {
+        for (int bf_ind = 0; bf_ind < nbf; ++bf_ind) {
+            if (fabs(C_pao_->get(bf_ind, u)) > options_.get_double("T_CUT_CPAO")) {
+                pao_to_bfs_[u].push_back(bf_ind);
+            }
+        } // end bf_ind
+        pao_to_atoms_[u] = block_list(pao_to_bfs_[u], bf_to_atom);
+    } // end u
+
+    // determine maps to extended LMO domains, which are the union of an LMO's domain with domains
+    //   of all interacting LMOs
+
+    lmo_to_riatoms_ext_ = extend_maps(lmo_to_riatoms_, ij_to_i_j_);
+    riatom_to_lmos_ext_ = invert_map(lmo_to_riatoms_ext_, natom);
+    riatom_to_paos_ext_ = chain_maps(riatom_to_lmos_ext_, lmo_to_paos_);
+
+    // We'll use these maps to screen the the local MO transform (first index):
+    //   (mn|Q) * C_mi -> (in|Q)
+    riatom_to_atoms1_ = chain_maps(riatom_to_lmos_ext_, lmo_to_atoms_);
+    riatom_to_shells1_ = chain_maps(riatom_to_atoms1_, atom_to_shell_);
+    riatom_to_bfs1_ = chain_maps(riatom_to_atoms1_, atom_to_bf_);
+
+    // We'll use these maps to screen the projected AO transform (second index):
+    //   (mn|Q) * C_nu -> (mu|Q)
+    riatom_to_atoms2_ = chain_maps(riatom_to_lmos_ext_, chain_maps(lmo_to_paos_, pao_to_atoms_));
+    riatom_to_shells2_ = chain_maps(riatom_to_atoms2_, atom_to_shell_);
+    riatom_to_bfs2_ = chain_maps(riatom_to_atoms2_, atom_to_bf_);
+
+    // Need dense versions of previous maps for quick lookup
+
+    // riatom_to_lmos_ext_dense_[riatom][lmo] is the index of lmo in riatom_to_lmos_ext_[riatom]
+    //   (if present), else -1
+    riatom_to_lmos_ext_dense_.resize(natom);
+    // riatom_to_paos_ext_dense_[riatom][pao] is the index of pao in riatom_to_paos_ext_[riatom]
+    //   (if present), else -1
+    riatom_to_paos_ext_dense_.resize(natom);
+
+    // riatom_to_atoms1_dense_(1,2)[riatom][a] is true if the orbitals basis functions of atom A
+    //   are needed for the (LMO,PAO) transform
+    riatom_to_atoms1_dense_.resize(natom);
+    riatom_to_atoms2_dense_.resize(natom);
+
+    for (int a_ri = 0; a_ri < natom; a_ri++) {
+        riatom_to_lmos_ext_dense_[a_ri] = std::vector<int>(naocc, -1);
+        riatom_to_paos_ext_dense_[a_ri] = std::vector<int>(npao, -1);
+        riatom_to_atoms1_dense_[a_ri] = std::vector<bool>(natom, false);
+        riatom_to_atoms2_dense_[a_ri] = std::vector<bool>(natom, false);
+
+        for (int i_ind = 0; i_ind < riatom_to_lmos_ext_[a_ri].size(); i_ind++) {
+            int i = riatom_to_lmos_ext_[a_ri][i_ind];
+            riatom_to_lmos_ext_dense_[a_ri][i] = i_ind;
+        }
+        for (int u_ind = 0; u_ind < riatom_to_paos_ext_[a_ri].size(); u_ind++) {
+            int u = riatom_to_paos_ext_[a_ri][u_ind];
+            riatom_to_paos_ext_dense_[a_ri][u] = u_ind;
+        }
+        for (int a_bf : riatom_to_atoms1_[a_ri]) {
+            riatom_to_atoms1_dense_[a_ri][a_bf] = true;
+        }
+        for (int a_bf : riatom_to_atoms2_[a_ri]) {
+            riatom_to_atoms2_dense_[a_ri][a_bf] = true;
+        }
+    }
 }
 
 void DLPNO::compute_qij() {
@@ -1071,6 +1774,7 @@ void DLPNO::compute_qij() {
 
     auto SC_lmo = linalg::doublet(reference_wavefunction_->S(), C_lmo_, false, false);
 
+    qij_.clear();
     qij_.resize(naux);
 
     // LMO-LMO DF ints
@@ -1187,6 +1891,7 @@ void DLPNO::compute_qia() {
     auto SC_lmo =
         linalg::doublet(reference_wavefunction_->S(), C_lmo_, false, false);  // intermediate for coefficient fitting
 
+    qia_.clear();
     qia_.resize(naux);
 
 #pragma omp parallel for schedule(dynamic, 1)
@@ -1300,32 +2005,36 @@ void DLPNO::compute_qab() {
 
     int nbf = basisset_->nbf();
     int naux = ribasis_->nbf();
+    int npao = C_pao_->colspi(0);
     int natom = molecule_->natom();
     double ints_tolerance = options_.get_double("DLPNO_AO_INTS_TOL");
     double T_CUT_DO_UV = options_.get_double("T_CUT_DO_UV");
 
     // Prepare Sparsity info for QAB intergrals
+    riatom_to_pao_pairs_.clear();
+    riatom_to_pao_pairs_dense_.clear();
+
     riatom_to_pao_pairs_.resize(natom);
     riatom_to_pao_pairs_dense_.resize(natom);
 
     for (int Qatom = 0; Qatom < natom; ++Qatom) {
         int npao_Q = riatom_to_paos_ext_[Qatom].size();
-        riatom_to_pao_pairs_dense_[Qatom].resize(nbf);
+        riatom_to_pao_pairs_dense_[Qatom].resize(npao);
 
-        for (int u = 0; u < nbf; ++u) {
-            riatom_to_pao_pairs_dense_[Qatom][u].resize(nbf, -1);
+        for (int u = 0; u < npao; ++u) {
+            riatom_to_pao_pairs_dense_[Qatom][u].resize(npao, -1);
         }
 
         int uv_idx = 0;
-        for (int u = 0; u < nbf; ++u) {
+        for (int u = 0; u < npao; ++u) {
             int u_idx = riatom_to_paos_ext_dense_[Qatom][u];
             if (u_idx == -1) continue;
 
-            for (int v = 0; v < nbf; ++v) {
+            for (int v = 0; v < npao; ++v) {
                 int v_idx = riatom_to_paos_ext_dense_[Qatom][v];
                 if (v_idx == -1 || u > v) continue;
 
-                if (fabs(DOI_uv_->get(u,v)) > T_CUT_DO_UV) {
+                if (u >= nbf || v >= nbf || fabs(DOI_uv_->get(u,v)) > T_CUT_DO_UV) {
                     riatom_to_pao_pairs_[Qatom].push_back(std::make_pair(u,v));
                     riatom_to_pao_pairs_dense_[Qatom][u][v] = uv_idx;
                     riatom_to_pao_pairs_dense_[Qatom][v][u] = uv_idx;
@@ -1352,6 +2061,7 @@ void DLPNO::compute_qab() {
 
     outfile->Printf("\n  ==> Transforming 3-Index Integrals to PAO/PAO basis <==\n\n");
 
+    qab_.clear();
     qab_.resize(naux);
 
     size_t qab_doubles = 0L;
@@ -1484,6 +2194,16 @@ void DLPNO::pno_transform() {
     size_t MIN_PNO = options_.get_int("MIN_PNOS");
 
     outfile->Printf("\n  ==> Forming Pair Natural Orbitals <==\n");
+
+    K_iajb_.clear();     // exchange operators (i.e. (ia|jb) integrals)
+    T_iajb_.clear();     // amplitudes
+    Tt_iajb_.clear();    // antisymmetrized amplitudes
+    X_pno_.clear();      // global PAOs -> canonical PNOs
+    e_pno_.clear();      // PNO orbital energies
+    n_pno_.clear();      // number of pnos
+    de_pno_.clear();     // PNO truncation error
+    de_pno_os_.clear();  // opposite-spin contributions to de_pno_
+    de_pno_ss_.clear();  // same-spin contributions to de_pno_
 
     K_iajb_.resize(n_lmo_pairs);   // exchange operators (i.e. (ia|jb) integrals)
     T_iajb_.resize(n_lmo_pairs);   // amplitudes
