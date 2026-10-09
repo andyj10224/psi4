@@ -1,0 +1,106 @@
+#! Two-active-electron ROHF DLPNO-CCSD = DLPNO-BCCD for LiH/cc-pVDZ.
+#! Freeze the same Li 1s orbital in each comparison. The singlet tests the
+#! ROHF closed-shell limit; the triplet tests two SOMOs and no active DOCCs.
+#! With all local screens removed, both methods are full CI in this fixed
+#! frozen-core space, apart from the residual density-fitting error.
+
+import numpy as np
+
+memory 2 GB
+
+molecule lih_singlet {
+0 1
+Li
+H 1 1.6
+symmetry c1
+}
+
+molecule lih_triplet {
+0 3
+Li
+H 1 1.6
+symmetry c1
+}
+
+set {
+    basis cc-pvdz
+    reference rohf
+    freeze_core true
+    scf_type direct
+    # An oversized correlation fit limits the error relative to the direct
+    # Fock matrix. There is no SCF fitting basis to match in this test.
+    df_basis_cc cc-pv5z-ri
+    e_convergence 1.0e-11
+    d_convergence 1.0e-11
+    r_convergence 1.0e-10
+    brueckner_orbs_r_convergence 1.0e-8
+    brueckner_maxiter 80
+    dlpno_maxiter 100
+    dlpno_toggle_memory false
+    t_cut_pno 0.0
+    t_cut_pno_mp2 0.0
+    t_cut_pairs 0.0
+    t_cut_pairs_mp2 0.0
+    t_cut_pre 0.0
+    t_cut_do 0.0
+    t_cut_do_pre 0.0
+    t_cut_do_ij 0.0
+    t_cut_do_uv 0.0
+    t_cut_mkn 0.0
+    t_cut_clmo 0.0
+    t_cut_cpao 0.0
+    f_cut 0.0
+    dlpno_ao_ints_tol 1.0e-14
+}
+
+set_num_threads(1)
+for label, mol in [('singlet', lih_singlet), ('triplet', lih_triplet)]:
+    set_options({'dlpno_reference_orbitals': 'HF'})
+    escf, ref = energy('scf', molecule=mol, return_wfn=True)
+    C_initial = ref.Ca().np.copy()
+    ncore = ref.nfrzc()
+    compare_integers(1, ncore, label + ': frozen Li 1s')  #TEST
+    compare_integers(2, ref.nalpha() + ref.nbeta() - 2 * ncore,
+                     label + ': two active electrons')  #TEST
+
+    eccsd = energy('dlpno-ccsd', ref_wfn=ref)
+    clean()
+    ebccd, wfn = energy('dlpno-bccd', ref_wfn=ref, return_wfn=True)
+    compare_values(eccsd, ebccd, 1.0e-7, label + ': CCSD = BCCD')  #TEST
+    compare_values(eccsd, variable('INITIAL DLPNO-CCSD TOTAL ENERGY'),
+                   1.0e-10, label + ': same starting CCSD state')  #TEST
+    compare_values(ebccd, variable('BCCD TOTAL ENERGY'), 10,
+                   label + ': BCCD energy variable')  #TEST
+    compare_values(ebccd, variable('CURRENT REFERENCE ENERGY') +
+                   variable('CURRENT CORRELATION ENERGY'), 10,
+                   label + ': energy decomposition')  #TEST
+    compare_values(escf, variable('SCF TOTAL ENERGY'), 10,
+                   label + ': original SCF energy')  #TEST
+    compare_integers(2, int(variable('BRUECKNER REFERENCE RANK')),
+                     label + ': BCCD reference rank')  #TEST
+    # Require a real orbital update so this also catches stale pair maps
+    # when the same DLPNO object enters its second macroiteration.
+    compare_integers(1, int(variable('BRUECKNER ITERATIONS') > 0),
+                     label + ': pair maps rebuilt after orbital update')  #TEST
+    for residual in ['BRUECKNER ORBITAL RESIDUAL MAX',
+                     'BRUECKNER MAX SPIN-SUM SINGLES',
+                     'BRUECKNER MAX DOCC-SOMO SINGLES',
+                     'BRUECKNER MAX SOMO-VIRTUAL SINGLES']:
+        compare_integers(1, int(variable(residual) < 1.0e-8),
+                         label + ': ' + residual)  #TEST
+
+    Ca, Cb, S = wfn.Ca().np, wfn.Cb().np, wfn.S().np
+    compare_arrays(Ca, Cb, 1.0e-12, label + ': common spatial orbitals')  #TEST
+    compare_arrays(np.eye(Ca.shape[1]), Ca.T @ S @ Ca, 1.0e-10,
+                   label + ': orbital orthogonality')  #TEST
+    compare_arrays(C_initial[:, :ncore], Ca[:, :ncore], 1.0e-12,
+                   label + ': fixed frozen-core space')  #TEST
+    compare_arrays(C_initial, ref.Ca().np, 1.0e-12,
+                   label + ': supplied ROHF orbitals unchanged')  #TEST
+    clean()
+
+    set_options({'dlpno_reference_orbitals': 'BCCD'})
+    eexplicit = energy('dlpno-ccsd', ref_wfn=ref)
+    compare_values(ebccd, eexplicit, 1.0e-10,
+                   label + ': BCCD alias versus explicit reference')  #TEST
+    clean()

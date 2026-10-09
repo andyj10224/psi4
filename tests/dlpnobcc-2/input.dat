@@ -1,6 +1,6 @@
 #! Noncanonical full-rank invariance and mixed-rank Brueckner references.
-#! BH with a frozen B 1s has four correlated electrons, so untruncated
-#! CCSDTQ must be independent of active occupied/virtual rotations.
+#! BH/6-31G with a frozen B 1s has four correlated electrons, so untruncated
+#! CCSDTQ must be independent of active occupied/virtual rotations up to DF error.
 
 import numpy as np
 
@@ -14,13 +14,15 @@ symmetry c1
 }
 
 set {
-    basis sto-3g
+    basis 6-31g
     reference rhf
     freeze_core true
     scf_type df
-    # Use the same DF Hamiltonian for orbital updates and correlation.
-    df_basis_scf cc-pvdz-ri
-    df_basis_cc cc-pvdz-ri
+    # SCF/orbital updates use a JK-fit basis; correlation uses an RI basis.
+    # Oversized, distinct fits suppress the remaining DF contribution to
+    # the orbital-invariance comparison without equating the auxiliaries.
+    df_basis_scf cc-pv5z-jkfit
+    df_basis_cc cc-pv5z-ri
     e_convergence 1.0e-11
     d_convergence 1.0e-11
     r_convergence 1.0e-10
@@ -76,10 +78,12 @@ for orbitals, method, rank in [('BCCD', 'dlpno-ccsdtq', 2),
                                 ('HF', 'dlpno-bccdtq', 4)]:
     set_options({'dlpno_reference_orbitals': orbitals})
     result, wfn = energy(method, ref_wfn=ref, return_wfn=True)
-    compare_values(reference_energy, result, 2.0e-8,
+    compare_values(reference_energy, result, 1.0e-7,
                    method + ' on ' + orbitals + ': four-electron invariance')  #TEST
     compare_values(result, variable('CCSDTQ TOTAL ENERGY'), 10, 'final-rank energy')  #TEST
     compare_integers(rank, int(variable('BRUECKNER REFERENCE RANK')), 'optimized rank')  #TEST
+    compare_integers(1, int(variable('BRUECKNER ITERATIONS') > 0),
+                     'orbital updates rebuild the pair maps')  #TEST
     compare_integers(1, int(variable('BRUECKNER ORBITAL RESIDUAL MAX') < 1.0e-8),
                      'converged singles at orbital-reference rank')  #TEST
     compare_values(escf, variable('SCF TOTAL ENERGY'), 11, 'input SCF provenance')  #TEST

@@ -1576,7 +1576,12 @@ void DLPNO::prep_sparsity(bool initial, bool final) {
     //   and also approximated pair energies from dipole integrals
     // This is only performed in the initial step to eliminate dipole pairs
     if (initial) {
-        i_j_to_ij_.resize(naocc);
+        // Each Brueckner macroiteration starts a new pair space. Rebuild all
+        // three maps together: resize alone retains old rows and appending
+        // pairs leaves duplicate entries with inconsistent reverse indices.
+        i_j_to_ij_.assign(naocc, std::vector<int>(naocc, -1));
+        ij_to_i_j_.clear();
+        ij_to_ji_.clear();
         de_dipole_ = 0.0;
 
         for (size_t i = 0, ij = 0; i < naocc; i++) {
@@ -1585,12 +1590,11 @@ void DLPNO::prep_sparsity(bool initial, bool final) {
                 bool energy_big = (fabs(dipole_pair_e_bound_->get(i, j)) > T_CUT_PRE_);
 
                 if (overlap_big || energy_big || i == j) {
-                    i_j_to_ij_[i].push_back(ij);
+                    i_j_to_ij_[i][j] = ij;
                     ij_to_i_j_.push_back(std::make_pair(i, j));
                     ij++;
                 } else {
                     de_dipole_ += dipole_pair_e_->get(i, j);
-                    i_j_to_ij_[i].push_back(-1);
                 }
             }
         }
