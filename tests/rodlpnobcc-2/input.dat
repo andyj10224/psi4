@@ -1,0 +1,72 @@
+#! Full-space ROHF BCCD(T) on triplet CH2, including spin-resolved triples.
+#! The canonical triples oracle uses separate alpha/beta occupied and virtual
+#! semicanonical transformations of the converged spin-restricted BCCD state.
+#! Its connected W uses the roccsd.py sign convention, and its disconnected V
+#! agrees with PySCF's independent UCCSD(T) contraction for the same amplitudes,
+#! Fock matrices, and aug-cc-pVDZ-RI integrals. DIRECT J/K is used throughout.
+#! The nonzero spin-antisymmetric singles make this sensitive to an extra
+#! unpermuted t_i^a (jb|kc) in the AAB/ABB disconnected numerators.
+
+memory 2 GB
+
+molecule ch2 {
+0 3
+C
+H 1 1.0756
+H 1 1.0756 2 133.94
+symmetry c1
+}
+
+set {
+    basis aug-cc-pvdz
+    reference rohf
+    freeze_core false
+    scf_type direct
+    df_basis_cc aug-cc-pvdz-ri
+    e_convergence 1.0e-10
+    d_convergence 1.0e-10
+    r_convergence 1.0e-9
+    brueckner_orbs_r_convergence 1.0e-7
+    brueckner_maxiter 80
+    dlpno_maxiter 100
+    dlpno_toggle_memory false
+    t_cut_pno 0.0
+    t_cut_pno_mp2 0.0
+    t_cut_pairs 0.0
+    t_cut_pairs_mp2 0.0
+    t_cut_pre 0.0
+    t_cut_do 0.0
+    t_cut_do_pre 0.0
+    t_cut_do_ij 0.0
+    t_cut_do_uv 0.0
+    t_cut_mkn 0.0
+    t_cut_clmo 0.0
+    t_cut_cpao 0.0
+    f_cut 0.0
+    t0_approximation false
+    t_cut_tno 0.0
+    t_cut_tno_pre 0.0
+    t_cut_triples_weak 0.0
+    t_cut_do_triples 0.0
+    t_cut_do_triples_pre 0.0
+    t_cut_mkn_triples 0.0
+    t_cut_mkn_triples_pre 0.0
+    f_cut_t 0.0
+    t_cut_iter 0.0
+}
+
+val = energy('dlpno-bccd(t)')
+compare_values(-39.047623536608, variable('BCCD TOTAL ENERGY'), 1.0e-7,
+               'canonical spin-restricted BCCD total')  #TEST
+compare_values(-0.000131029934, variable('AAA (T) CORRECTION ENERGY'), 1.0e-8,
+               'AAA BCCD triples')  #TEST
+compare_values(-0.001822145434, variable('AAB (T) CORRECTION ENERGY'), 1.0e-8,
+               'AAB BCCD triples')  #TEST
+compare_values(-0.000444671250, variable('ABB (T) CORRECTION ENERGY'), 1.0e-8,
+               'ABB BCCD triples')  #TEST
+compare_values(-0.000000126701, variable('BBB (T) CORRECTION ENERGY'), 1.0e-8,
+               'BBB BCCD triples')  #TEST
+compare_values(-0.002397973318, variable('(T) CORRECTION ENERGY'), 1.0e-8,
+               'canonical BCCD triples correction')  #TEST
+compare_values(-39.050021509927, val, 1.0e-7, 'canonical BCCD(T) total')  #TEST
+clean()
