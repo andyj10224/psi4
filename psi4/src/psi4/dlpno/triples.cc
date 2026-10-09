@@ -1210,12 +1210,6 @@ double DLPNOCCSD_T::compute_t_iteration_energy() {
         int ntno_ijk = n_tno_[ijk];
         if (ntno_ijk == 0) continue;
 
-        int kji = i_j_k_to_ijk_[triplet_key(k, j, i, naocc)];
-        int ikj = i_j_k_to_ijk_[triplet_key(i, k, j, naocc)];
-        int jik = i_j_k_to_ijk_[triplet_key(j, i, k, naocc)];
-        int jki = i_j_k_to_ijk_[triplet_key(j, k, i, naocc)];
-        int kij = i_j_k_to_ijk_[triplet_key(k, i, j, naocc)];
-
         double prefactor = 1.0;
         if (i == j && j == k) {
             prefactor /= 6.0;
