@@ -665,6 +665,19 @@ broken-symmetry UHF singlet cannot be represented by this high-spin restricted
 formalism and is rejected; a collapsed closed-shell UHF reference is allowed.
 At present, the UHF-to-QRO route is available for ``DLPNO-CCSD`` only.
 
+The ROHF triples solver retains the full alpha/beta virtual Fock action in
+the common TNO basis. Its numerator and Fock contractions use BLAS without
+changing the PNO/TNO thresholds or spin conventions. Reusable pair densities
+for TNO construction are cached within a bounded part of the memory budget.
+With ``DLPNO_TOGGLE_MEMORY true``, triples memory estimates include resident
+orbital/amplitude data and initialization workspace; initialization may use
+fewer threads when its larger per-worker buffers would exceed the budget.
+Automatic disk selection spills W/V first, then next-T, then current-T.
+Disk-backed current/next amplitudes use alternating storage slots while
+preserving Jacobi updates, including triplets skipped by ``T_CUT_ITER``.
+The ``DLPNO-ROCCSD: Compute R2``, ``RO TNO Transform``, ``RO LCCSD(T0)``, and
+``RO LCCSD(T) Iterations`` timers distinguish the principal correlation stages.
+
 This implementation was developed from published equations and native
 |PSIfour| infrastructure.  No ORCA source code was used.
 

@@ -80,3 +80,14 @@ compare_values(ref_total, variable('CCSD(T) TOTAL ENERGY'), 6, 'ccsd(t) total') 
 compare_values(ref_total, variable('CURRENT ENERGY'), 6, 'current total')             #TEST
 compare_values(ref_total, val, 6, 'dlpno-ccsd(t) return')                             #TEST
 clean()
+
+# Force both triples generations and W/V to disk. This exercises the
+# alternating per-block PSIO slots against the in-core numerical oracle.
+set write_triples_intermediates true
+set write_triples_amplitudes true
+val_disk = energy('dlpno-ccsd(t)')
+compare_values(val, val_disk, 1.0e-9, 'RO triples disk/in-core total energy')  #TEST
+for label, expected in [('AAA', e_aaa), ('AAB', e_aab), ('ABB', e_abb), ('BBB', e_bbb)]:
+    compare_values(expected, variable(label + ' (T) CORRECTION ENERGY'),
+                   1.0e-9, label + ' triples disk/in-core equivalence')  #TEST
+clean()

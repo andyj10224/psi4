@@ -3834,8 +3834,8 @@ void RO_DLPNOCCSD::estimate_memory() {
         srolmp2_cache += 3 * vv_words;
         // R and Rn for AA, AB, and BB.
         ro_t2_residuals += 6 * vv_words;
-        // F_pno(alpha/beta) is allocated for every ordered pair.
-        ro_fock_pair_storage += 2 * vv_words;
+        // The two ordered orientations share the same PNO frame and bare Fock blocks.
+        if (i <= j) ro_fock_pair_storage += 2 * vv_words;
         // Projected T1(alpha/beta), and transformed Qk/Qa(alpha/beta).
         ro_projected_singles += 2 * ov_words;
         ro_transformed_df += 2 * naux_ij * (nlmo_ij + npno_ij);
@@ -3892,9 +3892,7 @@ void RO_DLPNOCCSD::estimate_memory() {
     // twice-transformed blocks in the residual build.
     const size_t occupied_fock_storage =
         2 * static_cast<size_t>(naocc) * static_cast<size_t>(naocc);
-    // t1_fock_spin() forms an additional pair of LMO-PAO Fock matrices.
-    ro_fock_intermediates +=
-        2 * static_cast<size_t>(naocc) * npao_global;
+    // t1_fock_spin() reuses the bare LMO-PAO blocks counted above.
     ro_fock_intermediates += occupied_fock_storage;
     ro_residual_intermediates += occupied_fock_storage;
 
@@ -4794,6 +4792,15 @@ void RO_DLPNOCCSD::matrix_spin_enforcer_vv(SharedMatrix &X, const SpinCase &sigm
     }
 }
 
+SharedMatrix RO_DLPNOCCSD::spin_pno_overlap(int ij, int kl, SpinCase sigma) {
+    auto overlap = S_PNO(ij, kl);
+    if (sigma == SpinCase::Alpha && nalpha_ != nbeta_) {
+        overlap = overlap->clone();
+        matrix_spin_enforcer_vv(overlap, sigma);
+    }
+    return overlap;
+}
+
 void RO_DLPNOCCSD::form_projected_singles() {
     const int n_lmo_pairs = ij_to_i_j_.size();
     const int nbocc = nbeta_ - nfrzc();
@@ -4814,8 +4821,7 @@ void RO_DLPNOCCSD::form_projected_singles() {
                 if (sigma == SpinCase::Beta && n >= nbocc) continue;
 
                 const int nn = i_j_to_ij_[n][n];
-                auto S_ij_nn = S_PNO(ij, nn)->clone();
-                matrix_spin_enforcer_vv(S_ij_nn, sigma);
+                auto S_ij_nn = spin_pno_overlap(ij, nn, sigma);
                 auto T_n = linalg::doublet(S_ij_nn, T_ia_spin_[s][n]);
 
                 for (int a_ij = 0; a_ij < npno_ij; ++a_ij) {
@@ -4899,7 +4905,7 @@ void RO_DLPNOCCSD::t1_ints_spin() {
     timer_off("DLPNO-ROCCSD: T1 Ints");
 }
 
-void RO_DLPNOCCSD::t1_fock_spin() {
+void RO_DLPNOCCSD::t1_fock_spin(const std::array<SharedMatrix, 2>& F_lmo_pao_spin) {
     timer_on("DLPNO-ROCCSD: T1 Fock");
 
     const int n_lmo_pairs = ij_to_i_j_.size();
@@ -4907,10 +4913,6 @@ void RO_DLPNOCCSD::t1_fock_spin() {
     const int nbocc = nbeta_ - nfrzc();
     const int nsomo = naocc - nbocc;
     constexpr std::array<SpinCase, 2> spins = {SpinCase::Alpha, SpinCase::Beta};
-
-    std::array<SharedMatrix, 2> F_lmo_pao_spin = {
-        linalg::triplet(C_lmo_, F_reference_a_, C_pao_, true, false, false),
-        linalg::triplet(C_lmo_, F_reference_b_, C_pao_, true, false, false)};
 
     // The bars denote dressing over contracted indices.  The Coulomb part
     // contains alpha + beta T1 density; exchange is same-spin only.
@@ -4937,14 +4939,13 @@ void RO_DLPNOCCSD::t1_fock_spin() {
         const int ji = ij_to_ji_[ij];
         if (i_j_to_ij_strong_[i][j] == -1) continue;
 
+        const double coulomb = T_n_ij_spin_[0][ij]->vector_dot(J_ijmb_[ij]) +
+                               T_n_ij_spin_[1][ij]->vector_dot(J_ijmb_[ij]);
         for (SpinCase sigma : spins) {
             const int s = static_cast<int>(sigma);
             if (sigma == SpinCase::Beta && (i >= nbocc || j >= nbocc)) continue;
 
-            for (SpinCase tau : spins) {
-                const int t = static_cast<int>(tau);
-                (*Fki_bar[s])(i, j) += T_n_ij_spin_[t][ij]->vector_dot(J_ijmb_[ij]);
-            }
+            (*Fki_bar[s])(i, j) += coulomb;
             (*Fki_bar[s])(i, j) -= T_n_ij_spin_[s][ij]->vector_dot(K_mibj_[ji]);
         }
     }
@@ -4963,6 +4964,19 @@ void RO_DLPNOCCSD::t1_fock_spin() {
         const int npno_ij = n_pno_[ij];
         const bool strong = (i_j_to_ij_strong_[i][j] != -1);
 
+        // The DF integrals and Coulomb density are common to both output
+        // spins. Load/contract once, including when QIA/QAB live on disk.
+        std::vector<SharedMatrix> qma_ij, qab_ij;
+        std::vector<double> density_q(naux_ij, 0.0);
+        if (strong) {
+            qma_ij = QIA_PNO(ij);
+            qab_ij = QAB_PNO(ij);
+            for (int q = 0; q < naux_ij; ++q) {
+                density_q[q] = qma_ij[q]->vector_dot(T_n_ij_spin_[0][ij]) +
+                               qma_ij[q]->vector_dot(T_n_ij_spin_[1][ij]);
+            }
+        }
+
         for (SpinCase sigma : spins) {
             const int s = static_cast<int>(sigma);
 
@@ -4978,30 +4992,17 @@ void RO_DLPNOCCSD::t1_fock_spin() {
             }
 
             if (strong && !(sigma == SpinCase::Beta && i >= nbocc)) {
-                auto qma_ij = QIA_PNO(ij);
-                auto qab_ij = QAB_PNO(ij);
                 auto Qia = i_Qa_ij_[ij]->clone();
                 auto Qik = i_Qk_ij_[ij]->clone();
                 matrix_spin_enforcer_qv(Qia, sigma);
                 matrix_spin_enforcer_qo(Qik, ij, sigma);
 
                 for (int q_ij = 0; q_ij < naux_ij; ++q_ij) {
-                    for (SpinCase tau : spins) {
-                        const int t = static_cast<int>(tau);
-                        const double density_q = qma_ij[q_ij]->vector_dot(T_n_ij_spin_[t][ij]);
-
-                        auto Jkc = qma_ij[q_ij]->clone();
-                        Jkc->scale(density_q);
-                        Fkc_bar[s][ij]->add(Jkc);
-
-                        auto Jab = qab_ij[q_ij]->clone();
-                        Jab->scale(density_q);
-                        Fab_bar[s][ij]->add(Jab);
-
-                        if (i == j) {
-                            for (int a_ij = 0; a_ij < npno_ij; ++a_ij) {
-                                (*Fai_bar[s][i])(a_ij, 0) += density_q * (*Qia)(q_ij, a_ij);
-                            }
+                    Fkc_bar[s][ij]->axpy(density_q[q_ij], qma_ij[q_ij]);
+                    Fab_bar[s][ij]->axpy(density_q[q_ij], qab_ij[q_ij]);
+                    if (i == j) {
+                        for (int a_ij = 0; a_ij < npno_ij; ++a_ij) {
+                            (*Fai_bar[s][i])(a_ij, 0) += density_q[q_ij] * (*Qia)(q_ij, a_ij);
                         }
                     }
 
@@ -5102,15 +5103,13 @@ void RO_DLPNOCCSD::t1_fock_spin() {
                 const int kk = i_j_to_ij_[k][k];
                 if (ik == -1 || kk == -1) continue;
 
-                auto S_ij_ik_s = S_PNO(ij, ik)->clone();
-                matrix_spin_enforcer_vv(S_ij_ik_s, sigma);
+                auto S_ij_ik_s = spin_pno_overlap(ij, ik, sigma);
 
                 // Coulomb density: sum the alpha and beta T1 amplitudes.
                 for (SpinCase tau : spins) {
                     if (tau == SpinCase::Beta && k >= nbocc) continue;
                     const int t = static_cast<int>(tau);
-                    auto S_ik_kk_t = S_PNO(ik, kk)->clone();
-                    matrix_spin_enforcer_vv(S_ik_kk_t, tau);
+                    auto S_ik_kk_t = spin_pno_overlap(ik, kk, tau);
                     auto T_k = linalg::doublet(S_ik_kk_t, T_ia_spin_[t][k]);
                     Fkc_tilde_spin_[s][ij]->add(linalg::triplet(
                         S_ij_ik_s, K_iajb_[ik], T_k));
@@ -5118,8 +5117,7 @@ void RO_DLPNOCCSD::t1_fock_spin() {
 
                 // Exchange density: same spin only.
                 if (!(sigma == SpinCase::Beta && k >= nbocc)) {
-                    auto S_ik_kk_s = S_PNO(ik, kk)->clone();
-                    matrix_spin_enforcer_vv(S_ik_kk_s, sigma);
+                    auto S_ik_kk_s = spin_pno_overlap(ik, kk, sigma);
                     auto T_k = linalg::doublet(S_ik_kk_s, T_ia_spin_[s][k]);
                     Fkc_tilde_spin_[s][ij]->subtract(linalg::triplet(
                         S_ij_ik_s, K_iajb_[ik], T_k, false, true, false));
@@ -5266,8 +5264,7 @@ std::array<std::array<std::vector<SharedMatrix>, 2>, 2> RO_DLPNOCCSD::compute_ga
                     T_n_ij_spin_[s2][ki], J_ijmb_[ki], true, false));
 
                 // Eq. 14b: +t_i^b(s1) (kb|ac).
-                auto S_ki_ii_s1 = S_PNO(ki, ii)->clone();
-                matrix_spin_enforcer_vv(S_ki_ii_s1, sigma1);
+                auto S_ki_ii_s1 = spin_pno_overlap(ki, ii, sigma1);
                 auto T_i = linalg::doublet(S_ki_ii_s1, T_ia_spin_[s1][i]);
                 auto gamma_vvv = linalg::doublet(T_i, K_ivvv_[ki], true, false);
                 gamma_vvv->reshape(npno_ki, npno_ki);
@@ -5282,16 +5279,13 @@ std::array<std::array<std::vector<SharedMatrix>, 2>, 2> RO_DLPNOCCSD::compute_ga
                     const int ll = i_j_to_ij_[l][l];
                     if (kl == -1 || ll == -1) continue;
 
-                    auto S_ki_ll_s2 = S_PNO(ki, ll)->clone();
-                    matrix_spin_enforcer_vv(S_ki_ll_s2, sigma2);
+                    auto S_ki_ll_s2 = spin_pno_overlap(ki, ll, sigma2);
                     auto T_l = linalg::doublet(S_ki_ll_s2, T_ia_spin_[s2][l]);
 
-                    auto S_kl_ii_s1 = S_PNO(kl, ii)->clone();
-                    matrix_spin_enforcer_vv(S_kl_ii_s1, sigma1);
+                    auto S_kl_ii_s1 = spin_pno_overlap(kl, ii, sigma1);
                     auto T_i_kl = linalg::doublet(S_kl_ii_s1, T_ia_spin_[s1][i]);
 
-                    auto S_ki_kl_s2 = S_PNO(ki, kl)->clone();
-                    matrix_spin_enforcer_vv(S_ki_kl_s2, sigma2);
+                    auto S_ki_kl_s2 = spin_pno_overlap(ki, kl, sigma2);
                     auto K_kl = linalg::triplet(S_ki_kl_s2, K_iajb_[kl], T_i_kl,
                                                 false, true, false);
                     C_DGER(npno_ki, npno_ki, -1.0, T_l->get_pointer(), 1,
@@ -5305,15 +5299,12 @@ std::array<std::array<std::vector<SharedMatrix>, 2>, 2> RO_DLPNOCCSD::compute_ga
                     if (sigma2 == SpinCase::Beta && l >= nbocc) continue;
 
                     auto T_iajb_li_s2_s1 = T_iajb_spin_helper(li, sigma2, sigma1);
-                    auto S_li_kl_s1 = S_PNO(li, kl)->clone();
-                    matrix_spin_enforcer_vv(S_li_kl_s1, sigma1);
+                    auto S_li_kl_s1 = spin_pno_overlap(li, kl, sigma1);
 
                     auto gamma_temp = linalg::triplet(T_iajb_li_s2_s1, S_li_kl_s1, K_iajb_[kl]);
 
-                    auto S_ki_li_s2 = S_PNO(ki, li)->clone();
-                    matrix_spin_enforcer_vv(S_ki_li_s2, sigma2);
-                    auto S_kl_ki_s2 = S_PNO(kl, ki)->clone();
-                    matrix_spin_enforcer_vv(S_kl_ki_s2, sigma2);
+                    auto S_ki_li_s2 = spin_pno_overlap(ki, li, sigma2);
+                    auto S_kl_ki_s2 = spin_pno_overlap(kl, ki, sigma2);
 
                     gamma_temp = linalg::triplet(S_ki_li_s2, gamma_temp, S_kl_ki_s2);
                     // The authoritative spin-resolved contraction uses
@@ -5382,8 +5373,7 @@ std::array<RO_DLPNOCCSD::SpinPairMatrixBlocks, 2> RO_DLPNOCCSD::compute_delta() 
                     T_n_ij_spin_[s1][ik], M_iklc, true, false));
 
                 // Eq. 15b: t_i^b(s1) [(kc|ab) - delta(s1,s2)(kb|ca)].
-                auto S_ik_ii_s1 = S_PNO(ik, ii)->clone();
-                matrix_spin_enforcer_vv(S_ik_ii_s1, sigma1);
+                auto S_ik_ii_s1 = spin_pno_overlap(ik, ii, sigma1);
                 auto T_i = linalg::doublet(S_ik_ii_s1, T_ia_spin_[s1][i]);
 
                 auto direct = K_ivvv_[ki]->clone();
@@ -5406,18 +5396,15 @@ std::array<RO_DLPNOCCSD::SpinPairMatrixBlocks, 2> RO_DLPNOCCSD::compute_delta() 
                     const int lk = i_j_to_ij_[l][k];
                     if (ll == -1 || lk == -1) continue;
 
-                    auto S_ik_ll_s1 = S_PNO(ik, ll)->clone();
-                    matrix_spin_enforcer_vv(S_ik_ll_s1, sigma1);
+                    auto S_ik_ll_s1 = spin_pno_overlap(ik, ll, sigma1);
                     auto T_l = linalg::doublet(S_ik_ll_s1, T_ia_spin_[s1][l]);
 
-                    auto S_lk_ii_s1 = S_PNO(lk, ii)->clone();
-                    matrix_spin_enforcer_vv(S_lk_ii_s1, sigma1);
+                    auto S_lk_ii_s1 = spin_pno_overlap(lk, ii, sigma1);
                     auto T_i_lk = linalg::doublet(S_lk_ii_s1, T_ia_spin_[s1][i]);
 
                     auto L_lk = K_iajb_[lk]->clone();
                     if (s1 == s2) L_lk->subtract(K_iajb_[lk]->transpose());
-                    auto S_lk_ik_s2 = S_PNO(lk, ik)->clone();
-                    matrix_spin_enforcer_vv(S_lk_ik_s2, sigma2);
+                    auto S_lk_ik_s2 = spin_pno_overlap(lk, ik, sigma2);
                     auto L_contract = linalg::triplet(T_i_lk, L_lk, S_lk_ik_s2,
                                                       true, false, false);
                     C_DGER(npno_ik, npno_ik, -1.0, T_l->get_pointer(), 1,
@@ -5433,19 +5420,16 @@ std::array<RO_DLPNOCCSD::SpinPairMatrixBlocks, 2> RO_DLPNOCCSD::compute_delta() 
                     if (il == -1 || lk == -1) continue;
 
                     for (SpinCase gamma : singles_spin_cases) {
-                        auto S_ik_il_s1 = S_PNO(ik, il)->clone();
-                        matrix_spin_enforcer_vv(S_ik_il_s1, sigma1);
+                        auto S_ik_il_s1 = spin_pno_overlap(ik, il, sigma1);
 
                         if (gamma == SpinCase::Beta && l >= nbocc) continue;
 
                         auto T_il_s1_g = T_iajb_spin_helper(il, sigma1, gamma);
-                        auto S_il_lk_g = S_PNO(il, lk)->clone();
-                        matrix_spin_enforcer_vv(S_il_lk_g, gamma);
+                        auto S_il_lk_g = spin_pno_overlap(il, lk, gamma);
 
                         auto L_lk = K_iajb_[lk]->clone();
                         if (sigma2 == gamma) L_lk->subtract(K_iajb_[lk]->transpose());
-                        auto S_lk_ik_s2 = S_PNO(lk, ik)->clone();
-                        matrix_spin_enforcer_vv(S_lk_ik_s2, sigma2);
+                        auto S_lk_ik_s2 = spin_pno_overlap(lk, ik, sigma2);
 
                         // (a_{il}, d_{il}) (d_{il}, d_{lk}) (d_{lk}, c_{lk}) -> (a_{il}, c_{lk})
                         auto delta_temp = linalg::triplet(T_il_s1_g, S_il_lk_g, L_lk);
@@ -5514,10 +5498,8 @@ std::array<SharedMatrix, 2> RO_DLPNOCCSD::compute_Fki_double_tilde() {
                     int il = i_j_to_ij_[i][l], jl = i_j_to_ij_[j][l];
                     if (gamma == SpinCase::Beta && l >= nbocc) continue;
 
-                    auto S_il_jl_s = S_PNO(il, jl)->clone();
-                    matrix_spin_enforcer_vv(S_il_jl_s, sigma);
-                    auto S_il_jl_g = S_PNO(il, jl)->clone();
-                    matrix_spin_enforcer_vv(S_il_jl_g, gamma);
+                    auto S_il_jl_s = spin_pno_overlap(il, jl, sigma);
+                    auto S_il_jl_g = spin_pno_overlap(il, jl, gamma);
 
                     auto T_jl_s_g = T_iajb_spin_helper(jl, sigma, gamma);
                     auto T_jl_s_g_proj = linalg::triplet(S_il_jl_s, T_jl_s_g, S_il_jl_g, false, false, true);
@@ -5609,8 +5591,7 @@ void RO_DLPNOCCSD::compute_R_ia(
                 K_kcad->reshape(npno_ik * npno_ik, npno_ik);
                 U_ki_flat->reshape(npno_ik * npno_ik, 1);
 
-                auto S_ki_ii_s = S_PNO(ki, ii)->clone();
-                matrix_spin_enforcer_vv(S_ki_ii_s, sigma);
+                auto S_ki_ii_s = spin_pno_overlap(ki, ii, sigma);
                 auto A_i = linalg::triplet(S_ki_ii_s, K_kcad, U_ki_flat, true, true, false);
                 A_i->scale(prefactor);
                 R_ia_buffer[s][thread][i]->add(A_i);
@@ -5623,14 +5604,11 @@ void RO_DLPNOCCSD::compute_R_ia(
                     const int ll = i_j_to_ij_[l][l];
                     if (kl == -1 || ll == -1) continue;
 
-                    auto S_kl_ki_t = S_PNO(kl, ki)->clone();
-                    matrix_spin_enforcer_vv(S_kl_ki_t, tau);
-                    auto S_ki_kl_s = S_PNO(ki, kl)->clone();
-                    matrix_spin_enforcer_vv(S_ki_kl_s, sigma);
+                    auto S_kl_ki_t = spin_pno_overlap(kl, ki, tau);
+                    auto S_ki_kl_s = spin_pno_overlap(ki, kl, sigma);
                     auto U_proj = linalg::triplet(S_kl_ki_t, U_ki, S_ki_kl_s);
 
-                    auto S_ii_ll_s = S_PNO(ii, ll)->clone();
-                    matrix_spin_enforcer_vv(S_ii_ll_s, sigma);
+                    auto S_ii_ll_s = spin_pno_overlap(ii, ll, sigma);
                     auto T_l = linalg::doublet(S_ii_ll_s, T_ia_spin_[s][l]);
                     T_l->scale(prefactor * U_proj->vector_dot(K_iajb_[kl]));
                     R_ia_buffer[s][thread][i]->subtract(T_l);
@@ -5678,8 +5656,7 @@ void RO_DLPNOCCSD::compute_R_ia(
                     const int i = lmopair_to_lmos_[kl][i_kl];
                     if (sigma == SpinCase::Beta && i >= nbocc) continue;
                     const int ii = i_j_to_ij_[i][i];
-                    auto S_kl_ii_s = S_PNO(kl, ii)->clone();
-                    matrix_spin_enforcer_vv(S_kl_ii_s, sigma);
+                    auto S_kl_ii_s = spin_pno_overlap(kl, ii, sigma);
                     auto B_i = linalg::doublet(
                         submatrix_rows(*B_ia, std::vector<int>(1, i_kl)), S_kl_ii_s);
                     R_ia_buffer[s][thread][i]->subtract(B_i->transpose());
@@ -5702,6 +5679,7 @@ void RO_DLPNOCCSD::compute_R_ia(
 }
 
 void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_iajb, std::array<std::vector<SharedMatrix>, 3> &Rn_iajb) {
+    timer_on("DLPNO-ROCCSD: Compute R2");
 
     int n_lmo_pairs = ij_to_i_j_.size();
     int nbocc = nbeta_ - nfrzc();
@@ -5858,6 +5836,29 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
             matrix_spin_enforcer_vv(F_bc_double_tilde_ij[s], sigma);
         }
 
+        // Eq. 20: Qbar_ab depends on the spin and auxiliary index, not on
+        // the doubles spin block. Build alpha/beta once per q and reuse them
+        // for AA, AB, BB (including both sides of a same-spin contraction).
+        // Stream q to keep the workspace at two PNO matrices per worker.
+        for (int q_ij = 0; q_ij < naux_ij; ++q_ij) {
+            std::array<SharedMatrix, 2> Qab_t1;
+            for (SpinCase sigma : singles_spin_cases) {
+                const int s = static_cast<int>(sigma);
+                Qab_t1[s] = qab_ij[q_ij]->clone();
+                Qab_t1[s]->gemm(true, false, -1.0, T_n_ij_spin_[s][ij], qma_ij[q_ij], 1.0);
+                matrix_spin_enforcer_vv(Qab_t1[s], sigma);
+            }
+            for (DoubleSpinCase double_sigma : doubles_spin_cases) {
+                const auto spin_pair = get_spin_pair(double_sigma);
+                if (spin_pair.first == SpinCase::Beta && i >= nbocc) continue;
+                if (spin_pair.second == SpinCase::Beta && j >= nbocc) continue;
+                const int ds = static_cast<int>(double_sigma);
+                const int s1 = static_cast<int>(spin_pair.first), s2 = static_cast<int>(spin_pair.second);
+                R_iajb[ds][ij]->add(linalg::triplet(Qab_t1[s1], T_iajb_spin_[ds][ij], Qab_t1[s2],
+                                                  false, false, true));
+            }
+        }
+
         for (DoubleSpinCase double_sigma : doubles_spin_cases) {
             auto [sigma1, sigma2] = get_spin_pair(double_sigma);
             const int ds = static_cast<int>(double_sigma);
@@ -5880,20 +5881,6 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
             R_iajb[ds][ij]->add(L_iajb);
             if (s1 == s2) R_iajb[ds][ij]->subtract(L_iajb->transpose());
 
-            // Jiang and Toth Eq. 20
-            for (int q_ij = 0; q_ij < naux_ij; ++q_ij) {
-                auto Qab_t1_s1 = qab_ij[q_ij]->clone();
-                Qab_t1_s1->subtract(linalg::doublet(
-                    T_n_ij_spin_[s1][ij], qma_ij[q_ij], true, false));
-                matrix_spin_enforcer_vv(Qab_t1_s1, sigma1);
-                auto Qab_t1_s2 = qab_ij[q_ij]->clone();
-                Qab_t1_s2->subtract(linalg::doublet(
-                    T_n_ij_spin_[s2][ij], qma_ij[q_ij], true, false));
-                matrix_spin_enforcer_vv(Qab_t1_s2, sigma2);
-
-                R_iajb[ds][ij]->add(linalg::triplet(Qab_t1_s1, T_ij, Qab_t1_s2, false, false, true)); // (a, c) (c, d) (b, d)
-            } // end for
-
             // Jiang and Toth Eq. 21 (formed with F_bc'' above so both terms
             // share the semi-direct PNO overlaps).
             R_iajb[ds][ij]->add(B_ij_spin[ds]);
@@ -5911,17 +5898,13 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
                 if (ik == -1 || kj == -1) continue;
 
                 // Get necessary overlap matrices
-                auto S_ij_ik_s1 = S_PNO(ij, ik)->clone();
-                matrix_spin_enforcer_vv(S_ij_ik_s1, sigma1);
+                auto S_ij_ik_s1 = spin_pno_overlap(ij, ik, sigma1);
 
-                auto S_ij_ik_s2 = S_PNO(ij, ik)->clone();
-                matrix_spin_enforcer_vv(S_ij_ik_s2, sigma2);
+                auto S_ij_ik_s2 = spin_pno_overlap(ij, ik, sigma2);
 
-                auto S_ij_kj_s1 = S_PNO(ij, kj)->clone();
-                matrix_spin_enforcer_vv(S_ij_kj_s1, sigma1);
+                auto S_ij_kj_s1 = spin_pno_overlap(ij, kj, sigma1);
 
-                auto S_ij_kj_s2 = S_PNO(ij, kj)->clone();
-                matrix_spin_enforcer_vv(S_ij_kj_s2, sigma2);
+                auto S_ij_kj_s2 = spin_pno_overlap(ij, kj, sigma2);
 
                 // ik contribution
                 auto T_ik = linalg::triplet(S_ij_ik_s1, T_iajb_spin_[ds][ik], S_ij_ik_s2, false, false, true);
@@ -5940,23 +5923,17 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
                 if (ik == -1 || kj == -1) continue;
                 int ki = ij_to_ji_[ik], jk = ij_to_ji_[kj];
 
-                auto S_ij_ik_s1 = S_PNO(ij, ik)->clone();
-                matrix_spin_enforcer_vv(S_ij_ik_s1, sigma1);
+                auto S_ij_ik_s1 = spin_pno_overlap(ij, ik, sigma1);
 
-                auto S_ij_ik_s2 = S_PNO(ij, ik)->clone();
-                matrix_spin_enforcer_vv(S_ij_ik_s2, sigma2);
+                auto S_ij_ik_s2 = spin_pno_overlap(ij, ik, sigma2);
 
-                auto S_ij_kj_s1 = S_PNO(ij, kj)->clone();
-                matrix_spin_enforcer_vv(S_ij_kj_s1, sigma1);
+                auto S_ij_kj_s1 = spin_pno_overlap(ij, kj, sigma1);
 
-                auto S_ij_kj_s2 = S_PNO(ij, kj)->clone();
-                matrix_spin_enforcer_vv(S_ij_kj_s2, sigma2);
+                auto S_ij_kj_s2 = spin_pno_overlap(ij, kj, sigma2);
 
-                auto S_ik_kj_s1 = S_PNO(ik, kj)->clone();
-                matrix_spin_enforcer_vv(S_ik_kj_s1, sigma1);
+                auto S_ik_kj_s1 = spin_pno_overlap(ik, kj, sigma1);
 
-                auto S_ik_kj_s2 = S_PNO(ik, kj)->clone();
-                matrix_spin_enforcer_vv(S_ik_kj_s2, sigma2);
+                auto S_ik_kj_s2 = spin_pno_overlap(ik, kj, sigma2);
 
                 // Same spin contributions
                 if (s1 == s2) {
@@ -5966,8 +5943,7 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
 
                         // "C" term: Jiang and Toth Eq. 24
                         SharedMatrix T_ik_s1_g = T_iajb_spin_helper(ik, sigma1, gamma);
-                        auto S_ik_jk_g = S_PNO(ik, jk)->clone();
-                        matrix_spin_enforcer_vv(S_ik_jk_g, gamma);
+                        auto S_ik_jk_g = spin_pno_overlap(ik, jk, gamma);
 
                         SharedMatrix L_jbck = K_iakc_non_proj_[ji][k_ij]->clone();
                         if (g == s2) L_jbck->subtract(J_ikac_non_proj_[ji][k_ij]);
@@ -6053,8 +6029,7 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
 
                         R_iajb[ds][ij]->add(linalg::triplet(L_iack, T_jk_s2_g, S_ij_kj_s2, false, true, true));
 
-                        auto S_ik_jk_g = S_PNO(ik, jk)->clone();
-                        matrix_spin_enforcer_vv(S_ik_jk_g, gamma);
+                        auto S_ik_jk_g = spin_pno_overlap(ik, jk, gamma);
                         auto T_ik_proj = linalg::triplet(S_ij_ik_s1, T_ik_s1_g, S_ik_jk_g);
                         auto delta_full_jk = delta_jk[s2][g][jk]->clone();
                         delta_full_jk->add(delta_bar_jk[s2][g][jk]);
@@ -6092,6 +6067,7 @@ void RO_DLPNOCCSD::compute_R_iajb(std::array<std::vector<SharedMatrix>, 3> &R_ia
         const int ds = static_cast<int>(double_sigma);
         double_spin_enforcer(R_iajb[ds], double_sigma);
     }
+    timer_off("DLPNO-ROCCSD: Compute R2");
 } // end void
 
 void RO_DLPNOCCSD::lccsd_iterations() {
@@ -6148,6 +6124,8 @@ void RO_DLPNOCCSD::lccsd_iterations() {
     }
 #pragma omp parallel for schedule(dynamic, 1)
     for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+        const auto& pair = ij_to_i_j_[ij];
+        if (pair.first > pair.second) continue;
         // F_pao_a_/F_pao_b_ span the *full* (nbf + nsomo) PAO space, while X_pno_[ij] only spans the
         // PAO domain of pair ij. Restrict the Fock matrices to that domain before transforming.
         auto F_pao_ij_a = submatrix_rows_and_cols(*F_pao_a_, lmopair_to_paos_[ij], lmopair_to_paos_[ij]);
@@ -6165,6 +6143,9 @@ void RO_DLPNOCCSD::lccsd_iterations() {
                                 SpinCase::Alpha);
         matrix_spin_enforcer_vv(F_pno_spin_[static_cast<int>(SpinCase::Beta)][ij],
                                 SpinCase::Beta);
+        const int ji = ij_to_ji_[ij];
+        F_pno_spin_[static_cast<int>(SpinCase::Alpha)][ji] = F_pno_spin_[static_cast<int>(SpinCase::Alpha)][ij];
+        F_pno_spin_[static_cast<int>(SpinCase::Beta)][ji] = F_pno_spin_[static_cast<int>(SpinCase::Beta)][ij];
     }
 
     outfile->Printf("\n  ==> Restricted Open Shell Local CCSD <==\n\n");
@@ -6318,7 +6299,7 @@ void RO_DLPNOCCSD::lccsd_iterations() {
         // Project T1 and form the similarity-transformed Hamiltonian.
         form_projected_singles();
         t1_ints_spin();
-        t1_fock_spin();
+        t1_fock_spin(F_lmo_pao_spin);
 
         // Compute singles residual.
         compute_R_ia(R_ia_spin, R_ia_buffer);
@@ -6458,10 +6439,8 @@ void RO_DLPNOCCSD::lccsd_iterations() {
                 const int ds = static_cast<int>(double_sigma);
                 const int s1 = static_cast<int>(sigma1), s2 = static_cast<int>(sigma2);
 
-                auto S_ij_ii_s1 = S_PNO(ij, ii)->clone();
-                matrix_spin_enforcer_vv(S_ij_ii_s1, sigma1);
-                auto S_ij_jj_s2 = S_PNO(ij, jj)->clone();
-                matrix_spin_enforcer_vv(S_ij_jj_s2, sigma2);
+                auto S_ij_ii_s1 = spin_pno_overlap(ij, ii, sigma1);
+                auto S_ij_jj_s2 = spin_pno_overlap(ij, jj, sigma2);
                 auto T_i = linalg::doublet(S_ij_ii_s1, T_ia_spin_[s1][i]);
                 auto T_j = linalg::doublet(S_ij_jj_s2, T_ia_spin_[s2][j]);
                 auto t1t1 = std::make_shared<Matrix>(n_pno_[ij], n_pno_[ij]);

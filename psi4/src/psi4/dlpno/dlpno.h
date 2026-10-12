@@ -779,12 +779,14 @@ class PSI_API RO_DLPNOCCSD : public DLPNOCCSD {
                                  const SpinCase &col_sigma);
     /// A helper function to enforce spin in matrix elements in the virtual-virtual block of a matrix
     void matrix_spin_enforcer_vv(SharedMatrix &X, const SpinCase &sigma);
+    /// Read-only overlap: share beta/unaugmented blocks; copy only to mask alpha SOMOs.
+    SharedMatrix spin_pno_overlap(int ij, int kl, SpinCase sigma);
     /// Project alpha and beta singles amplitudes into every pair domain
     void form_projected_singles();
     /// Form spin-resolved T1-transformed DF integrals
     void t1_ints_spin();
     /// Form spin-resolved T1-transformed Fock intermediates
-    void t1_fock_spin();
+    void t1_fock_spin(const std::array<SharedMatrix, 2>& F_lmo_pao_spin);
     /// computes singles residuals in RO LCCSD equations
     void compute_R_ia(std::array<std::vector<SharedMatrix>, 2>& R_ia, std::array<std::vector<std::vector<SharedMatrix>>, 2>& R_ia_buffer);
     /// computes doubles residuals in RO LCCSD equations
@@ -941,6 +943,8 @@ class PSI_API RO_DLPNOCCSD_T : public RO_DLPNOCCSD {
     // disk, avoiding repeated disk reads of Fock-coupled neighbors.
     bool write_amplitudes_ro_ = false;
     bool write_next_amplitudes_ro_ = false;
+    // Per-block disk slot: skipped triplets keep their own current generation.
+    std::array<std::vector<char>, 4> t_disk_generation_ro_;
 
     std::array<double, 4> de_lccsd_t_screened_spin_ro_{};
     double de_lccsd_t_screened_ro_ = 0.0;
@@ -951,6 +955,9 @@ class PSI_API RO_DLPNOCCSD_T : public RO_DLPNOCCSD {
     void ro_sort_triplets(double e_total);
     void ro_tno_transform(double tno_tolerance);
     void ro_estimate_memory();
+    size_t ro_triples_fixed_memory() const;
+    size_t ro_triples_init_workspace() const;
+    std::string ro_t_amplitude_name(TripleSpinCase spin, int index, bool next = false) const;
 
     double compute_ro_lccsd_t0(bool save_memory = false);
     double compute_ro_t_iteration_energy();

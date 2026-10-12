@@ -40,6 +40,7 @@
 #include <ctime>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -80,6 +81,53 @@ inline void cube_add(const SharedMatrix& X, int n, int a, int b, int c, double v
     X->add(0, a, b * n + c, value);
 }
 
+// K(a,b,d) T(d,c), or K(a,b,d) T(c,d).  The contiguous cube can be
+// viewed as (a*b,d) without copying or changing a shared Matrix's shape.
+void ro_contract_vvv_t2(const SharedMatrix& K, const SharedMatrix& T, const SharedMatrix& result,
+                       int n, bool transpose_t) {
+    C_DGEMM('N', transpose_t ? 'T' : 'N', n * n, n, n, 1.0, K->get_pointer(), n,
+            T->get_pointer(), n, 0.0, result->get_pointer(), n);
+}
+
+// Only the O(n^3) index permutation remains outside BLAS.  Reuse one work
+// cube for successive contractions rather than keeping four products live.
+void ro_add_permuted_cube(const SharedMatrix& result, const SharedMatrix& source, int n,
+                         const std::array<int, 3>& axes, double scale) {
+    const auto src = source->get_pointer();
+    auto dst = result->get_pointer();
+    const size_t nn = static_cast<size_t>(n) * n;
+    if (axes == std::array<int, 3>{0, 1, 2}) {
+        C_DAXPY(n * nn, scale, src, 1, dst, 1);
+        return;
+    }
+    for (int a = 0; a < n; ++a) {
+        for (int b = 0; b < n; ++b) {
+            for (int c = 0; c < n; ++c) {
+                const std::array<int, 3> index = {a, b, c};
+                dst[a * nn + b * n + c] +=
+                    scale * src[index[axes[0]] * nn + index[axes[1]] * n + index[axes[2]]];
+            }
+        }
+    }
+}
+
+// Full spin-dependent virtual Fock action, with no semicanonical or
+// spin-averaging approximation.  Fixed-a slices handle the middle index
+// without transposing an entire cube or allocating another work tensor.
+void ro_add_virtual_fock(const SharedMatrix& residual, const SharedMatrix& T,
+                        const std::array<SharedMatrix, 3>& F, double occupied_diagonal, int n) {
+    const int nn = n * n;
+    auto t = T->get_pointer();
+    auto r = residual->get_pointer();
+    C_DAXPY(static_cast<size_t>(n) * nn, -occupied_diagonal, t, 1, r, 1);
+    C_DGEMM('N', 'N', n, nn, n, 1.0, F[0]->get_pointer(), n, t, nn, 1.0, r, nn);
+    C_DGEMM('N', 'T', nn, n, n, 1.0, t, n, F[2]->get_pointer(), n, 1.0, r, n);
+    for (int a = 0; a < n; ++a) {
+        const size_t offset = static_cast<size_t>(a) * nn;
+        C_DGEMM('N', 'N', n, n, n, 1.0, F[1]->get_pointer(), n, t + offset, n, 1.0, r + offset, n);
+    }
+}
+
 }  // namespace
 
 RO_DLPNOCCSD_T::RO_DLPNOCCSD_T(SharedWavefunction ref_wfn, Options& options) : RO_DLPNOCCSD(ref_wfn, options) {}
@@ -118,37 +166,30 @@ void RO_DLPNOCCSD_T::ro_print_header() {
 }
 
 SharedMatrix RO_DLPNOCCSD_T::ro_matmul_3d(SharedMatrix A, SharedMatrix X, int dim_old, int dim_new) {
-    // A'[i,j,k] = A[I,J,K] X[I,i] X[J,j] X[K,k], with A stored as i x (j*k).
+    // X(new,old); A'[a,b,c] = X(a,I) X(b,J) X(c,K) A[I,J,K].
     auto A_new = linalg::doublet(X, A, false, false);
     A_new->reshape(dim_new * dim_old, dim_old);
     A_new = linalg::doublet(A_new, X, false, true);
 
-    auto A_transposed = std::make_shared<Matrix>(dim_new * dim_new, dim_old);
-    for (int index = 0; index < dim_new * dim_new * dim_old; ++index) {
-        const int a = index / (dim_new * dim_old);
-        const int b = (index / dim_old) % dim_new;
-        const int c = index % dim_old;
-        A_transposed->set(a * dim_new + b, c, A_new->get(a * dim_old + c, b));
-    }
-
-    A_transposed = linalg::doublet(A_transposed, X, false, true);
+    // A_new is now (a,J,c). Contract J in fixed-a slices to produce
+    // (a,b,c) directly, avoiding two full-cube permutations and their buffers.
     auto result = std::make_shared<Matrix>(dim_new, dim_new * dim_new);
     for (int a = 0; a < dim_new; ++a) {
-        for (int b = 0; b < dim_new; ++b) {
-            for (int c = 0; c < dim_new; ++c) {
-                result->set(a, b * dim_new + c, A_transposed->get(a * dim_new + c, b));
-            }
-        }
+        C_DGEMM('N', 'N', dim_new, dim_new, dim_old, 1.0, X->get_pointer(), dim_old,
+                A_new->get_pointer() + static_cast<size_t>(a) * dim_old * dim_new, dim_new, 0.0,
+                result->get_pointer() + static_cast<size_t>(a) * dim_new * dim_new, dim_new);
     }
     return result;
 }
 
 SharedMatrix RO_DLPNOCCSD_T::ro_triples_permuter(const SharedMatrix& X, TripleSpinCase spin, int i, int j, int k) {
     const int n = X->nrow();
-    auto result = X->clone();
+    // Callers only read the permuted tensor. An identity permutation may
+    // safely share the old Jacobi generation, including disk-loaded blocks.
+    if (i <= j && ((spin == TripleSpinCase::AAB || spin == TripleSpinCase::BBA) || j <= k)) return X;
+    auto result = std::make_shared<Matrix>(n, n * n);
 
     if (spin == TripleSpinCase::AAB || spin == TripleSpinCase::BBA) {
-        if (i <= j) return result;
         for (int a = 0; a < n; ++a) {
             for (int b = 0; b < n; ++b) {
                 for (int c = 0; c < n; ++c) cube_set(result, n, a, b, c, cube_get(X, n, b, a, c));
@@ -208,15 +249,19 @@ void RO_DLPNOCCSD_T::triples_spin_enforcer(SharedMatrix& X, TripleSpinCase spin,
     if (nsomo == 0) return;
     const int n = X->nrow();
     const int alpha_virtual_end = n - nsomo;
-    for (int a = 0; a < n; ++a) {
-        for (int b = 0; b < n; ++b) {
-            for (int c = 0; c < n; ++c) {
-                if ((spins[0] == SpinCase::Alpha && a >= alpha_virtual_end) ||
-                    (spins[1] == SpinCase::Alpha && b >= alpha_virtual_end) ||
-                    (spins[2] == SpinCase::Alpha && c >= alpha_virtual_end)) {
-                    cube_set(X, n, a, b, c, 0.0);
-                }
-            }
+    auto data = X->get_pointer();
+    const size_t nn = static_cast<size_t>(n) * n;
+    // Clear only forbidden contiguous slabs/rows/tails; do not scan every
+    // allowed element of the cube to discover that it needs no change.
+    const int a_end = spins[0] == SpinCase::Alpha ? alpha_virtual_end : n;
+    const int b_end = spins[1] == SpinCase::Alpha ? alpha_virtual_end : n;
+    if (a_end < n) std::fill(data + a_end * nn, data + n * nn, 0.0);
+    for (int a = 0; a < a_end; ++a) {
+        auto slab = data + a * nn;
+        if (b_end < n) std::fill(slab + b_end * n, slab + nn, 0.0);
+        if (spins[2] == SpinCase::Alpha) {
+            for (int b = 0; b < b_end; ++b)
+                std::fill(slab + b * n + alpha_virtual_end, slab + (b + 1) * n, 0.0);
         }
     }
 }
@@ -418,6 +463,66 @@ void RO_DLPNOCCSD_T::ro_tno_transform(double tno_tolerance) {
     n_tno_ro_.assign(ntriplets, 0);
     for (auto& fock : F_tno_spin_) fock.assign(ntriplets, nullptr);
 
+    auto build_pair_density = [&](int pair) {
+        const int npno = n_pno_[pair];
+        auto density = std::make_shared<Matrix>(npno, npno);
+        density->zero();
+
+        auto add_density = [&](const SharedMatrix& amplitudes, double scale) {
+            auto left = linalg::doublet(amplitudes, amplitudes, false, true);
+            auto right = linalg::doublet(amplitudes, amplitudes, true, false);
+            left->add(right);
+            left->scale(scale);
+            density->add(left);
+        };
+
+        // The spin trace includes both mixed-spin orientations and exactly recovers the established restricted
+        // density D(T) + 1/2 D(T - T^T) when the alpha and beta amplitudes coincide.
+        add_density(T_iajb_spin_[static_cast<int>(DoubleSpinCase::AA)][pair], 0.25);
+        add_density(T_iajb_spin_[static_cast<int>(DoubleSpinCase::AB)][pair], 0.5);
+        // D(T) = T T^T + T^T T is invariant to transposing T.
+        // Use AB(ji) directly for BA(ij), avoiding an amplitude copy.
+        add_density(T_iajb_spin_[static_cast<int>(DoubleSpinCase::AB)][ij_to_ji_[pair]], 0.5);
+        add_density(T_iajb_spin_[static_cast<int>(DoubleSpinCase::BB)][pair], 0.25);
+        auto& pair_indices = ij_to_i_j_[pair];
+        if (pair_indices.first == pair_indices.second) density->scale(0.5);
+        return density;
+    };
+
+    // Reuse frequently requested pair densities across triplets. Bound this
+    // optional cache to 5% of the memory budget (and available headroom);
+    // uncached pairs use the identical on-demand construction below.
+    const int npairs = ij_to_i_j_.size();
+    std::vector<size_t> uses(npairs, 0);
+    for (const auto& triplet : ijk_to_i_j_k_ro_) {
+        int i, j, k;
+        std::tie(i, j, k) = triplet;
+        ++uses[i_j_to_ij_[i][j]];
+        ++uses[i_j_to_ij_[j][k]];
+        ++uses[i_j_to_ij_[i][k]];
+    }
+    std::vector<int> ranked_pairs;
+    for (int pair = 0; pair < npairs; ++pair) if (uses[pair] > 1) ranked_pairs.push_back(pair);
+    std::stable_sort(ranked_pairs.begin(), ranked_pairs.end(),
+                     [&](int left, int right) { return uses[left] > uses[right]; });
+    const size_t budget = static_cast<size_t>(0.9 * memory_ / sizeof(double));
+    const size_t fixed = ro_triples_fixed_memory();
+    size_t cache_budget = fixed < budget ? std::min(static_cast<size_t>(memory_ / (20 * sizeof(double))),
+                                                    (budget - fixed) / 2) : 0;
+    std::vector<int> cached_pairs;
+    for (int pair : ranked_pairs) {
+        const size_t words = static_cast<size_t>(n_pno_[pair]) * n_pno_[pair];
+        if (words > cache_budget) continue;
+        cached_pairs.push_back(pair);
+        cache_budget -= words;
+    }
+    std::vector<SharedMatrix> pair_densities(npairs);
+#pragma omp parallel for schedule(dynamic, 1)
+    for (int index = 0; index < static_cast<int>(cached_pairs.size()); ++index) {
+        const int pair = cached_pairs[index];
+        pair_densities[pair] = build_pair_density(pair);
+    }
+
     auto F_pao_average = F_pao_a_->clone();
     F_pao_average->add(F_pao_b_);
     F_pao_average->scale(0.5);
@@ -464,32 +569,8 @@ void RO_DLPNOCCSD_T::ro_tno_transform(double tno_tolerance) {
             continue;
         }
 
-        auto pair_density = [&](int pair) {
-            const int npno = n_pno_[pair];
-            auto density = std::make_shared<Matrix>(npno, npno);
-            density->zero();
-
-            auto add_density = [&](const SharedMatrix& amplitudes, double scale) {
-                auto left = linalg::doublet(amplitudes, amplitudes, false, true);
-                auto right = linalg::doublet(amplitudes, amplitudes, true, false);
-                left->add(right);
-                left->scale(scale);
-                density->add(left);
-            };
-
-            // The spin trace includes both mixed-spin orientations and exactly recovers the established restricted
-            // density D(T) + 1/2 D(T - T^T) when the alpha and beta amplitudes coincide.
-            add_density(T_iajb_spin_[static_cast<int>(DoubleSpinCase::AA)][pair], 0.25);
-            add_density(T_iajb_spin_[static_cast<int>(DoubleSpinCase::AB)][pair], 0.5);
-            add_density(T_iajb_spin_helper(pair, SpinCase::Beta, SpinCase::Alpha), 0.5);
-            add_density(T_iajb_spin_[static_cast<int>(DoubleSpinCase::BB)][pair], 0.25);
-            auto& pair_indices = ij_to_i_j_[pair];
-            if (pair_indices.first == pair_indices.second) density->scale(0.5);
-            return density;
-        };
-
         auto project_pair_density = [&](int pair) {
-            auto density = pair_density(pair);
+            auto density = pair_densities[pair] ? pair_densities[pair] : build_pair_density(pair);
             auto S_pair_external = submatrix_rows_and_cols(*S_pao_, lmopair_to_paos_[pair], external_domain);
             S_pair_external = linalg::doublet(S_pair_external, X_canonical_pao);
             auto S_pno_external = linalg::doublet(X_pno_[pair], S_pair_external, true, false);
@@ -578,6 +659,7 @@ double RO_DLPNOCCSD_T::compute_ro_lccsd_t0(bool save_memory) {
             W_iajbkc_spin_[ts].assign(ntriplets, nullptr);
             V_iajbkc_spin_[ts].assign(ntriplets, nullptr);
             T_iajbkc_spin_[ts].assign(ntriplets, nullptr);
+            t_disk_generation_ro_[ts].assign(ntriplets, 0);
         }
     }
     e_ijk_ro_.assign(ntriplets, 0.0);
@@ -600,7 +682,35 @@ double RO_DLPNOCCSD_T::compute_ro_lccsd_t0(bool save_memory) {
     double total_energy = 0.0;
     std::time_t start_time = std::time(nullptr);
 
-#pragma omp parallel for schedule(dynamic, 1) reduction(+ : total_energy)
+    int init_threads = 1;
+#ifdef _OPENMP
+    init_threads = std::min(omp_get_max_threads(), std::max(1, ntriplets));
+#endif
+    if (toggle_memory_) {
+        size_t resident = ro_triples_fixed_memory() +
+                          2 * static_cast<size_t>(naocc) * C_pao_->ncol();
+        if (save_memory) {
+            const size_t generations = (!write_intermediates_ro_ ? 2 : 0) + (!write_amplitudes_ro_ ? 1 : 0);
+            for (int ijk = 0; ijk < ntriplets; ++ijk) {
+                const size_t n = n_tno_ro_[ijk];
+                for (int ts = 0; ts < 4; ++ts)
+                    if (active_ijk_spin_[ts][ijk]) resident += generations * n * n * n;
+            }
+        }
+        const size_t budget = static_cast<size_t>(0.9 * memory_ / sizeof(double));
+        const size_t workspace = ro_triples_init_workspace();
+        if (workspace > 0) {
+            if (resident >= budget || workspace > budget - resident)
+                throw PSIEXCEPTION("Too little memory for one RO-DLPNO-(T0) initialization worker");
+            const int allowed = static_cast<int>(std::min(static_cast<size_t>(init_threads),
+                                                          (budget - resident) / workspace));
+            if (allowed < init_threads)
+                outfile->Printf("    Limiting RO triples initialization to %d threads (memory budget).\n", allowed);
+            init_threads = allowed;
+        }
+    }
+
+#pragma omp parallel for schedule(dynamic, 1) num_threads(init_threads) reduction(+ : total_energy)
     for (int rank = 0; rank < ntriplets; ++rank) {
         const int ijk = ranked[rank].first;
         int i, j, k;
@@ -659,6 +769,7 @@ double RO_DLPNOCCSD_T::compute_ro_lccsd_t0(bool save_memory) {
                      ntno * ntno * sizeof(double));
         }
 
+        q_vv_pao.reset();
         for (int p = 0; p < 3; ++p) q_ov[p] = linalg::doublet(q_ov[p], X_tno_ro_[ijk]);
         auto metric =
             submatrix_rows_and_cols(*full_metric_, lmotriplet_to_ribfs_ro_[ijk], lmotriplet_to_ribfs_ro_[ijk]);
@@ -683,6 +794,7 @@ double RO_DLPNOCCSD_T::compute_ro_lccsd_t0(bool save_memory) {
             }
         }
 
+        q_ov_metric_rhs.reset();
         metric->power(0.5, 1.0e-14);
 
         // The inverse-square-root metric transform has six right-hand-side
@@ -711,6 +823,9 @@ double RO_DLPNOCCSD_T::compute_ro_lccsd_t0(bool save_memory) {
             }
         }
 
+        metric_rhs.reset();
+        metric.reset();
+
         // These twelve spatial integral blocks are formed once and reused by every spin case.
         std::array<SharedMatrix, 3> K_ovvv;
         for (int p = 0; p < 3; ++p) K_ovvv[p] = linalg::doublet(q_ov_metric[p], q_vv, true, false);
@@ -730,6 +845,15 @@ double RO_DLPNOCCSD_T::compute_ro_lccsd_t0(bool save_memory) {
         K_ovov[2][0] = K_ovov[0][2]->transpose();
         K_ovov[1][2] = linalg::doublet(q_ov[1], q_ov[2], true, false);
         K_ovov[2][1] = K_ovov[1][2]->transpose();
+
+        // These auxiliary buffers need not coexist with the spin moments,
+        // projected pair cache, and packed occupied-contraction workspace.
+        q_vv.reset();
+        for (int p = 0; p < 3; ++p) {
+            q_ov[p].reset();
+            q_oo[p].reset();
+            q_ov_metric[p].reset();
+        }
 
         std::unordered_map<long long, SharedMatrix> projected_pairs;
         auto project_pair = [&](int p, int q, SpinCase spin_p, SpinCase spin_q) -> SharedMatrix {
@@ -807,34 +931,36 @@ double RO_DLPNOCCSD_T::compute_ro_lccsd_t0(bool save_memory) {
             return projected;
         };
 
+        auto contraction_work = std::make_shared<Matrix>(ntno, ntno * ntno);
+        auto pair_stack = std::make_shared<Matrix>(nlmo, ntno * ntno);
+        // Pack projected pairs as (l,a*b), then sum the local occupied index
+        // with GEMM as well. project_pair() already caches each spin block.
+        auto add_ooov_t2 = [&](const SharedMatrix& result, const SharedMatrix& K, int fixed,
+                               SpinCase first_spin, SpinCase second_spin, bool local_first,
+                               const std::array<int, 3>& axes, double scale) {
+            if (nlmo == 0) return;
+            const size_t nn = static_cast<size_t>(ntno) * ntno;
+            for (int l_local = 0; l_local < nlmo; ++l_local) {
+                const int l = lmotriplet_to_lmos_ro_[ijk][l_local];
+                const auto T = local_first ? project_pair(l, fixed, first_spin, second_spin)
+                                           : project_pair(fixed, l, first_spin, second_spin);
+                ::memcpy(pair_stack->get_pointer() + l_local * nn, T->get_pointer(), nn * sizeof(double));
+            }
+            C_DGEMM('T', 'N', ntno, ntno * ntno, nlmo, 1.0, K->get_pointer(), ntno,
+                    pair_stack->get_pointer(), ntno * ntno, 0.0, contraction_work->get_pointer(), ntno * ntno);
+            ro_add_permuted_cube(result, contraction_work, ntno, axes, scale);
+        };
+
         auto pure_parent = [&](int p, int q, int r, SpinCase spin) {
             auto parent = std::make_shared<Matrix>(ntno, ntno * ntno);
             const auto T_qr = project_pair(occupied[q], occupied[r], spin, spin);
-            for (int a = 0; a < ntno; ++a) {
-                for (int b = 0; b < ntno; ++b) {
-                    for (int c = 0; c < ntno; ++c) {
-                        double value = 0.0;
-                        for (int d = 0; d < ntno; ++d) {
-                            value -= K_ovvv[p]->get(c, b * ntno + d) * T_qr->get(d, a);
-                            value -= K_ovvv[p]->get(b, c * ntno + d) * T_qr->get(a, d);
-                        }
-                        cube_set(parent, ntno, a, b, c, value);
-                    }
-                }
-            }
-            for (int l_local = 0; l_local < nlmo; ++l_local) {
-                const int l = lmotriplet_to_lmos_ro_[ijk][l_local];
-                const auto T_pl = project_pair(occupied[p], l, spin, spin);
-                for (int a = 0; a < ntno; ++a) {
-                    const double h_qr = K_ooov[q][r]->get(l_local, a);
-                    const double h_rq = K_ooov[r][q]->get(l_local, a);
-                    for (int b = 0; b < ntno; ++b) {
-                        for (int c = 0; c < ntno; ++c) {
-                            cube_add(parent, ntno, a, b, c, h_qr * T_pl->get(c, b) + h_rq * T_pl->get(b, c));
-                        }
-                    }
-                }
-            }
+            // -K_p(c,b,d) T_qr(d,a) - K_p(b,c,d) T_qr(a,d)
+            ro_contract_vvv_t2(K_ovvv[p], T_qr, contraction_work, ntno, false);
+            ro_add_permuted_cube(parent, contraction_work, ntno, {2, 1, 0}, -1.0);
+            ro_contract_vvv_t2(K_ovvv[p], T_qr, contraction_work, ntno, true);
+            ro_add_permuted_cube(parent, contraction_work, ntno, {1, 2, 0}, -1.0);
+            add_ooov_t2(parent, K_ooov[q][r], occupied[p], spin, spin, false, {0, 2, 1}, 1.0);
+            add_ooov_t2(parent, K_ooov[r][q], occupied[p], spin, spin, false, {0, 1, 2}, 1.0);
             return parent;
         };
 
@@ -912,36 +1038,17 @@ double RO_DLPNOCCSD_T::compute_ro_lccsd_t0(bool save_memory) {
             auto block = std::make_shared<Matrix>(ntno, ntno * ntno);
             const auto T_qr = project_pair(occupied[q], occupied[r], like, opposite);
             const auto T_pr = project_pair(occupied[p], occupied[r], like, opposite);
-            for (int a = 0; a < ntno; ++a) {
-                for (int b = 0; b < ntno; ++b) {
-                    for (int c = 0; c < ntno; ++c) {
-                        double value = 0.0;
-                        for (int d = 0; d < ntno; ++d) {
-                            value += K_ovvv[p]->get(a, b * ntno + d) * T_qr->get(d, c);
-                            value += K_ovvv[q]->get(b, c * ntno + d) * T_pr->get(a, d);
-                            value += K_ovvv[p]->get(a, c * ntno + d) * T_qr->get(b, d);
-                            value += K_ovvv[q]->get(b, a * ntno + d) * T_pr->get(d, c);
-                        }
-                        cube_set(block, ntno, a, b, c, value);
-                    }
-                }
-            }
-            for (int l_local = 0; l_local < nlmo; ++l_local) {
-                const int l = lmotriplet_to_lmos_ro_[ijk][l_local];
-                const auto T_pl_like = project_pair(occupied[p], l, like, like);
-                const auto T_ql_mixed = project_pair(occupied[q], l, like, opposite);
-                const auto T_pl_mixed = project_pair(occupied[p], l, like, opposite);
-                for (int a = 0; a < ntno; ++a) {
-                    for (int b = 0; b < ntno; ++b) {
-                        for (int c = 0; c < ntno; ++c) {
-                            cube_add(block, ntno, a, b, c,
-                                     -K_ooov[q][r]->get(l_local, c) * T_pl_like->get(a, b) -
-                                         K_ooov[r][p]->get(l_local, a) * T_ql_mixed->get(b, c) -
-                                         K_ooov[r][q]->get(l_local, b) * T_pl_mixed->get(a, c));
-                        }
-                    }
-                }
-            }
+            ro_contract_vvv_t2(K_ovvv[p], T_qr, contraction_work, ntno, false);
+            ro_add_permuted_cube(block, contraction_work, ntno, {0, 1, 2}, 1.0);
+            ro_contract_vvv_t2(K_ovvv[q], T_pr, contraction_work, ntno, true);
+            ro_add_permuted_cube(block, contraction_work, ntno, {1, 2, 0}, 1.0);
+            ro_contract_vvv_t2(K_ovvv[p], T_qr, contraction_work, ntno, true);
+            ro_add_permuted_cube(block, contraction_work, ntno, {0, 2, 1}, 1.0);
+            ro_contract_vvv_t2(K_ovvv[q], T_pr, contraction_work, ntno, false);
+            ro_add_permuted_cube(block, contraction_work, ntno, {1, 0, 2}, 1.0);
+            add_ooov_t2(block, K_ooov[q][r], occupied[p], like, like, false, {2, 0, 1}, -1.0);
+            add_ooov_t2(block, K_ooov[r][p], occupied[q], like, opposite, false, {0, 1, 2}, -1.0);
+            add_ooov_t2(block, K_ooov[r][q], occupied[p], like, opposite, false, {1, 0, 2}, -1.0);
             return block;
         };
 
@@ -949,28 +1056,10 @@ double RO_DLPNOCCSD_T::compute_ro_lccsd_t0(bool save_memory) {
             constexpr int p = 0, q = 1, r = 2;
             auto block = std::make_shared<Matrix>(ntno, ntno * ntno);
             const auto T_pq = project_pair(occupied[p], occupied[q], like, like);
-            for (int a = 0; a < ntno; ++a) {
-                for (int b = 0; b < ntno; ++b) {
-                    for (int c = 0; c < ntno; ++c) {
-                        double value = 0.0;
-                        for (int d = 0; d < ntno; ++d) value += K_ovvv[r]->get(c, b * ntno + d) * T_pq->get(a, d);
-                        cube_set(block, ntno, a, b, c, value);
-                    }
-                }
-            }
-            for (int l_local = 0; l_local < nlmo; ++l_local) {
-                const int l = lmotriplet_to_lmos_ro_[ijk][l_local];
-                const auto T_lr = project_pair(l, occupied[r], like, opposite);
-                for (int a = 0; a < ntno; ++a) {
-                    for (int b = 0; b < ntno; ++b) {
-                        for (int c = 0; c < ntno; ++c) {
-                            cube_add(block, ntno, a, b, c,
-                                     -K_ooov[q][p]->get(l_local, a) * T_lr->get(b, c) -
-                                         K_ooov[p][q]->get(l_local, b) * T_lr->get(a, c));
-                        }
-                    }
-                }
-            }
+            ro_contract_vvv_t2(K_ovvv[r], T_pq, contraction_work, ntno, true);
+            ro_add_permuted_cube(block, contraction_work, ntno, {2, 1, 0}, 1.0);
+            add_ooov_t2(block, K_ooov[q][p], occupied[r], like, opposite, true, {0, 1, 2}, -1.0);
+            add_ooov_t2(block, K_ooov[p][q], occupied[r], like, opposite, true, {1, 0, 2}, -1.0);
             return block;
         };
 
@@ -1090,9 +1179,7 @@ double RO_DLPNOCCSD_T::compute_ro_lccsd_t0(bool save_memory) {
 
             const double prefactor =
                 (spin == TripleSpinCase::AAA || spin == TripleSpinCase::BBB) ? 1.0 / 6.0 : 1.0 / 2.0;
-            auto W_plus_V = W->clone();
-            W_plus_V->add(V);
-            e_ijk_spin_[ts][ijk] = prefactor * W_plus_V->vector_dot(T);
+            e_ijk_spin_[ts][ijk] = prefactor * (W->vector_dot(T) + V->vector_dot(T));
             e_ijk_ro_[ijk] += e_ijk_spin_[ts][ijk];
             total_energy += e_ijk_spin_[ts][ijk];
 
@@ -1127,6 +1214,54 @@ double RO_DLPNOCCSD_T::compute_ro_lccsd_t0(bool save_memory) {
     return total_energy;
 }
 
+size_t RO_DLPNOCCSD_T::ro_triples_fixed_memory() const {
+    // Count resident matrices by allocation, not by ordered-pair alias.
+    // CCSD-only intermediates have already been released at this point.
+    size_t words = qij_memory_ + qia_memory_ + qab_memory_;
+    std::unordered_set<const Matrix*> counted;
+    auto add = [&](const SharedMatrix& matrix) {
+        if (matrix && counted.insert(matrix.get()).second)
+            for (int h = 0; h < matrix->nirrep(); ++h) words += matrix->size(h);
+    };
+    for (const auto& blocks : T_ia_spin_) for (const auto& matrix : blocks) add(matrix);
+    for (const auto& blocks : T_iajb_spin_) for (const auto& matrix : blocks) add(matrix);
+    for (const auto& matrix : X_pno_) add(matrix);
+    for (const auto& matrix : X_tno_ro_) add(matrix);
+    for (const auto& blocks : F_tno_spin_) for (const auto& matrix : blocks) add(matrix);
+    for (const auto& matrix : {C_lmo_, C_lmo_previous_, C_pao_, S_pao_, F_pao_, F_pao_a_, F_pao_b_,
+                               F_lmo_, F_lmo_a_, F_lmo_b_, F_lmo_pao_, F_ao_, F_reference_a_, F_reference_b_,
+                               full_metric_, DOI_ij_, DOI_iu_, DOI_uv_, dipole_pair_e_, dipole_pair_e_bound_,
+                               er_thc_x_ao_, er_thc_Z_}) add(matrix);
+    // AO reference data can be shared with the wavefunction above.
+    for (const auto& matrix : {reference_wavefunction_->Ca(), reference_wavefunction_->Cb(),
+                               reference_wavefunction_->Fa(), reference_wavefunction_->Fb(),
+                               reference_wavefunction_->Da(), reference_wavefunction_->Db(),
+                               reference_wavefunction_->S(), reference_wavefunction_->H()}) add(matrix);
+    return words;
+}
+
+size_t RO_DLPNOCCSD_T::ro_triples_init_workspace() const {
+    size_t maximum = 0;
+    for (int ijk = 0; ijk < static_cast<int>(n_tno_ro_.size()); ++ijk) {
+        const size_t n = n_tno_ro_[ijk];
+        if (n == 0) continue;
+        const size_t p = lmotriplet_to_paos_ro_[ijk].size();
+        const size_t q = lmotriplet_to_ribfs_ro_[ijk].size();
+        const size_t l = lmotriplet_to_lmos_ro_[ijk].size();
+        // DF/metric transforms and numerator construction are separate peaks:
+        // the auxiliary work arrays are released before building W/V/T.
+        const size_t integrals = q * (n * n + 3 * p + 9 * n + 6 * l) + 3 * q * q +
+                                 3 * p * p + 6 * p * n + 3 * n * n * n;
+        // Three K_ovvv, permutation parents, W/V/T, one BLAS work cube,
+        // packed local pairs, and all cached projected spin pairs. The
+        // bound also covers pair-projection and singles/Fia work arrays.
+        const size_t moments = 10 * n * n * n + (13 * l + 36) * n * n +
+                               3 * p * p + 6 * p * n + 12 * l * n;
+        maximum = std::max(maximum, std::max(integrals, moments));
+    }
+    return maximum;
+}
+
 void RO_DLPNOCCSD_T::ro_estimate_memory() {
     size_t cube_elements = 0;
     size_t max_cube_elements = 0;
@@ -1151,6 +1286,7 @@ void RO_DLPNOCCSD_T::ro_estimate_memory() {
     write_next_amplitudes_ro_ = write_amplitudes_ro_;
 
     const size_t integral_memory = qij_memory_ + qia_memory_ + qab_memory_;
+    const size_t fixed_memory = ro_triples_fixed_memory();
     const size_t w_memory = cube_elements;
     const size_t v_memory = cube_elements;
     const size_t current_t_memory = cube_elements;
@@ -1165,11 +1301,19 @@ void RO_DLPNOCCSD_T::ro_estimate_memory() {
     // This is deliberately conservative; persistent generations are counted
     // separately below.
     constexpr size_t workspace_cubes_per_thread = 8;
-    const size_t workspace_memory = nthreads * workspace_cubes_per_thread * max_cube_elements;
+    const size_t iteration_workspace = workspace_cubes_per_thread * max_cube_elements;
+    // Initialization can use fewer workers than the iterative solver. Reserve
+    // at least one initialization worker here; compute_ro_lccsd_t0 selects
+    // the largest concurrency that fits after its resident W/V/T are counted.
+    const size_t init_workspace = ro_triples_init_workspace();
+    const size_t workspace_memory = std::max(nthreads * iteration_workspace,
+                                             (toggle_memory_ ? 1 : nthreads) * init_workspace);
+    // The two bare LMO-PAO blocks are local to compute_ro_lccsd_t0().
+    const size_t fock_workspace = 2 * static_cast<size_t>(nalpha_ - nfrzc()) * C_pao_->ncol();
 
     const size_t all_in_core_memory =
-        integral_memory + w_memory + v_memory + current_t_memory + next_t_memory + workspace_memory;
-    size_t resident_memory = integral_memory + workspace_memory;
+        fixed_memory + w_memory + v_memory + current_t_memory + next_t_memory + workspace_memory + fock_workspace;
+    size_t resident_memory = fixed_memory + workspace_memory + fock_workspace;
     if (!write_intermediates_ro_) resident_memory += w_memory + v_memory;
     if (!write_amplitudes_ro_) resident_memory += current_t_memory;
     if (!write_next_amplitudes_ro_) resident_memory += next_t_memory;
@@ -1203,12 +1347,13 @@ void RO_DLPNOCCSD_T::ro_estimate_memory() {
     outfile->Printf("\n  ==> RO-DLPNO-(T) Memory Requirements <==\n\n");
     outfile->Printf("    Active spin-resolved T cubes : %zu\n", active_spin_blocks);
     outfile->Printf("    Integral storage              : %8.3f [GB]\n", words_to_gb(integral_memory));
+    outfile->Printf("    Resident orbitals/amplitudes   : %8.3f [GB]\n", words_to_gb(fixed_memory - integral_memory));
     outfile->Printf("    W generation                  : %8.3f [GB]\n", words_to_gb(w_memory));
     outfile->Printf("    V generation                  : %8.3f [GB]\n", words_to_gb(v_memory));
     outfile->Printf("    Current T generation          : %8.3f [GB]\n", words_to_gb(current_t_memory));
     outfile->Printf("    Next T generation             : %8.3f [GB]\n", words_to_gb(next_t_memory));
-    outfile->Printf("    Thread workspace allowance    : %8.3f [GB] (%zu threads)\n",
-                    words_to_gb(workspace_memory), nthreads);
+    outfile->Printf("    Initialization/iteration work : %8.3f [GB] (%zu iteration threads)\n",
+                    words_to_gb(workspace_memory + fock_workspace), nthreads);
     outfile->Printf("    All-in-core requirement       : %8.3f [GB]\n", words_to_gb(all_in_core_memory));
     outfile->Printf("    Selected resident memory      : %8.3f [GB]\n", words_to_gb(resident_memory));
     outfile->Printf("    Automatic memory limit (90%%)  : %8.3f [GB]\n", 0.9 * memory_ * bytes_to_gb);
@@ -1223,6 +1368,13 @@ void RO_DLPNOCCSD_T::ro_estimate_memory() {
         outfile->Printf("    Keeping both RO T Jacobi generations in memory.\n");
     }
     outfile->Printf("\n");
+}
+
+std::string RO_DLPNOCCSD_T::ro_t_amplitude_name(TripleSpinCase spin, int index, bool next) const {
+    const int ts = static_cast<int>(spin);
+    const bool alternate = write_amplitudes_ro_ && t_disk_generation_ro_[ts][index];
+    return std::string("RO T ") + ((alternate != next) ? "next " : "") +
+           triple_spin_label(spin) + " " + std::to_string(index);
 }
 
 double RO_DLPNOCCSD_T::compute_ro_t_iteration_energy() {
@@ -1244,7 +1396,8 @@ double RO_DLPNOCCSD_T::compute_ro_t_iteration_energy() {
                                    const std::array<std::vector<SharedMatrix>, 4>& matrices) {
                 if (!from_disk) return matrices[ts][ijk];
                 auto matrix = std::make_shared<Matrix>(
-                    std::string("RO ") + kind + " " + triple_spin_label(spin) + " " + std::to_string(ijk), ntno,
+                    std::strcmp(kind, "T") == 0 ? ro_t_amplitude_name(spin, ijk) :
+                        std::string("RO ") + kind + " " + triple_spin_label(spin) + " " + std::to_string(ijk), ntno,
                     ntno * ntno);
 #pragma omp critical(ro_triples_psio)
                 matrix->load(psio_, PSIF_DLPNO_TRIPLES, psi::Matrix::SubBlocks);
@@ -1254,11 +1407,9 @@ double RO_DLPNOCCSD_T::compute_ro_t_iteration_energy() {
             auto W = load_matrix("W", write_intermediates_ro_, W_iajbkc_spin_);
             auto V = load_matrix("V", write_intermediates_ro_, V_iajbkc_spin_);
             auto T = load_matrix("T", write_amplitudes_ro_, T_iajbkc_spin_);
-            auto W_plus_V = W->clone();
-            W_plus_V->add(V);
             const double prefactor =
                 (spin == TripleSpinCase::AAA || spin == TripleSpinCase::BBB) ? 1.0 / 6.0 : 1.0 / 2.0;
-            e_ijk_spin_[ts][ijk] = prefactor * W_plus_V->vector_dot(T);
+            e_ijk_spin_[ts][ijk] = prefactor * (W->vector_dot(T) + V->vector_dot(T));
             e_ijk_ro_[ijk] += e_ijk_spin_[ts][ijk];
             total_energy += e_ijk_spin_[ts][ijk];
         }
@@ -1321,7 +1472,8 @@ double RO_DLPNOCCSD_T::ro_lccsd_t_iterations() {
                     if (!from_disk) return matrices[ts][index];
                     const int n = n_tno_ro_[index];
                     auto matrix = std::make_shared<Matrix>(
-                        std::string("RO ") + kind + " " + triple_spin_label(spin) + " " + std::to_string(index), n,
+                        std::strcmp(kind, "T") == 0 ? ro_t_amplitude_name(spin, index) :
+                            std::string("RO ") + kind + " " + triple_spin_label(spin) + " " + std::to_string(index), n,
                         n * n);
 #pragma omp critical(ro_triples_psio)
                     matrix->load(psio_, PSIF_DLPNO_TRIPLES, psi::Matrix::SubBlocks);
@@ -1342,19 +1494,7 @@ double RO_DLPNOCCSD_T::ro_lccsd_t_iterations() {
                 const double occupied_diagonal = F_lmo_spin[static_cast<int>(spins[0])]->get(i, i) +
                                                  F_lmo_spin[static_cast<int>(spins[1])]->get(j, j) +
                                                  F_lmo_spin[static_cast<int>(spins[2])]->get(k, k);
-                for (int a = 0; a < ntno; ++a) {
-                    for (int b = 0; b < ntno; ++b) {
-                        for (int c = 0; c < ntno; ++c) {
-                            double value = -occupied_diagonal * cube_get(T, ntno, a, b, c);
-                            for (int d = 0; d < ntno; ++d) {
-                                value += F_a->get(a, d) * cube_get(T, ntno, d, b, c);
-                                value += F_b->get(b, d) * cube_get(T, ntno, a, d, c);
-                                value += F_c->get(c, d) * cube_get(T, ntno, a, b, d);
-                            }
-                            cube_add(residual, ntno, a, b, c, value);
-                        }
-                    }
-                }
+                ro_add_virtual_fock(residual, T, {F_a, F_b, F_c}, occupied_diagonal, ntno);
 
                 // Off-diagonal occupied Fock couplings preserve the spin carried by the replaced slot.
                 for (int axis = 0; axis < 3; ++axis) {
@@ -1381,7 +1521,7 @@ double RO_DLPNOCCSD_T::ro_lccsd_t_iterations() {
                         overlap = linalg::triplet(X_tno_ro_[ijk], overlap, X_tno_ro_[neighbor], true, false, false);
                         auto projected_neighbor =
                             ro_matmul_3d(neighbor_T, overlap, n_tno_ro_[neighbor], n_tno_ro_[ijk]);
-                        C_DAXPY(ntno * ntno * ntno, -coupling, projected_neighbor->get_pointer(), 1,
+                        C_DAXPY(static_cast<size_t>(ntno) * ntno * ntno, -coupling, projected_neighbor->get_pointer(), 1,
                                 residual->get_pointer(), 1);
                     }
                 }
@@ -1413,7 +1553,7 @@ double RO_DLPNOCCSD_T::ro_lccsd_t_iterations() {
                 amplitude_updated[ts][ijk] = 1;
 
                 if (write_next_amplitudes_ro_) {
-                    T->set_name(std::string("RO T next ") + triple_spin_label(spin) + " " + std::to_string(ijk));
+                    T->set_name(ro_t_amplitude_name(spin, ijk, true));
 #pragma omp critical(ro_triples_psio)
                     T->save(psio_, PSIF_DLPNO_TRIPLES, psi::Matrix::SubBlocks);
                 } else {
@@ -1424,26 +1564,27 @@ double RO_DLPNOCCSD_T::ro_lccsd_t_iterations() {
 
         // Jacobi semantics require every residual to read the same amplitude generation.  Promote the completed
         // generation only after all triplets have finished reading their neighbors.
-        if (write_next_amplitudes_ro_) {
+        if (write_amplitudes_ro_) {
+            // Swap disk slots only after the parallel residual build finishes.
+            // This replaces a serial read/rewrite of every updated cube. A
+            // skipped block retains its slot, so neighbors never read stale T.
+            for (int ts = 0; ts < 4; ++ts)
+                for (int ijk = 0; ijk < ntriplets; ++ijk)
+                    if (amplitude_updated[ts][ijk]) t_disk_generation_ro_[ts][ijk] ^= 1;
+        } else if (write_next_amplitudes_ro_) {
             for (TripleSpinCase spin : kTripleSpins) {
                 const int ts = static_cast<int>(spin);
                 for (int ijk = 0; ijk < ntriplets; ++ijk) {
                     if (!amplitude_updated[ts][ijk]) continue;
                     const int ntno = n_tno_ro_[ijk];
                     auto T = std::make_shared<Matrix>(
-                        std::string("RO T next ") + triple_spin_label(spin) + " " + std::to_string(ijk), ntno,
+                        ro_t_amplitude_name(spin, ijk, true), ntno,
                         ntno * ntno);
                     T->load(psio_, PSIF_DLPNO_TRIPLES, psi::Matrix::SubBlocks);
                     T->set_name(std::string("RO T ") + triple_spin_label(spin) + " " + std::to_string(ijk));
-                    if (write_amplitudes_ro_) {
-                        T->save(psio_, PSIF_DLPNO_TRIPLES, psi::Matrix::SubBlocks);
-                    } else {
-                        // All residuals have completed, so replacing one
-                        // current block at a time preserves Jacobi semantics
-                        // without ever materializing a second in-core
-                        // generation.
-                        T_iajbkc_spin_[ts][ijk] = T;
-                    }
+                    // All residuals have completed. Replace one current block
+                    // at a time without materializing a second in-core generation.
+                    T_iajbkc_spin_[ts][ijk] = T;
                 }
             }
         } else {
