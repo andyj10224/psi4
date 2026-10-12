@@ -3112,18 +3112,22 @@ double DLPNOCCSD::compute_dlpno_ccsd_energy() {
 }
 
 void DLPNOCCSD::post_ccsd_correction(DLPNOCCSDPhase phase) {
-    // Keep ordinary CCSD/BCCD free of all left-hand work. The initial
-    // canonical-orbital point of a Brueckner calculation is handled by the
-    // triples override; here Lambda is solved only for a requested final result.
-    if (!lambda_requested_ || phase == DLPNOCCSDPhase::InitialBrueckner) return;
+    // Solve the left-hand equations only for a requested final result.
+    if (!lambda_requested_) return;
 
-    // At a converged Brueckner point the orbital stationarity condition removes
-    // Lambda1; reference-orbital CCSD and OPDM calculations retain it.
-    solve_lambda(!brueckner_orbs_);
+    // The selected BCCD Lambda ansatz omits Lambda1; ordinary CCSD retains it.
+    solve_lambda(phase != DLPNOCCSDPhase::FinalBrueckner);
     if (onepdm_requested_) compute_ao_opdm();
 }
 
 double DLPNOCCSD::compute_orbital_reference_energy() { return compute_dlpno_ccsd_energy(); }
+
+void DLPNOCCSD::require_converged_brueckner_reference(int stage_rank, const std::string& stage) const {
+    if (brueckner_orbs_ && !brueckner_converged_ && stage_rank > brueckner_reference_rank_) {
+        throw PSIEXCEPTION("DLPNO-" + stage +
+                           " cannot run before the selected Brueckner orbital reference has converged.");
+    }
+}
 
 SharedMatrix DLPNOCCSD::brueckner_singles_generator(const SharedMatrix& C_optimizer) {
     const int naocc = nalpha_ - nfrzc();
@@ -3294,10 +3298,17 @@ double DLPNOCCSD::compute_energy() {
             }
 
             if (iteration == 0) {
-                set_scalar_variable("INITIAL DLPNO-" + reference_label + " CORRELATION ENERGY",
-                                    scalar_variable(reference_label + " CORRELATION ENERGY"));
-                set_scalar_variable("INITIAL DLPNO-" + reference_label + " TOTAL ENERGY",
-                                    scalar_variable(reference_label + " TOTAL ENERGY"));
+                // Save only stages needed by the selected orbital reference.
+                // Do not run the final higher-rank method in the starting HF
+                // orbitals: its amplitudes would be discarded after rotation.
+                for (const std::string label : {"CCSD", "CCSD(T)", "CCSD(T0)",
+                                                "CCSDT", "CCSDT(Q)", "CCSDT(Q0)", "CCSDTQ"}) {
+                    for (const std::string component : {" TOTAL ENERGY", " CORRELATION ENERGY"}) {
+                        if (has_scalar_variable(label + component))
+                            set_scalar_variable("INITIAL DLPNO-" + label + component,
+                                                scalar_variable(label + component));
+                    }
+                }
             }
 
             // Canonicalize the current PAOs only as a complete global virtual
@@ -3331,35 +3342,16 @@ double DLPNOCCSD::compute_energy() {
             outfile->Printf("\n    Brueckner Iteration %d: Energy = %16.12f, Max |T1| = %10.3e, RMS T1 = %10.3e\n",
                             iteration, e_dlpno_ccsd, T1_max, T1_rms);
 
-            if (iteration == 0) {
-                post_ccsd_correction(DLPNOCCSDPhase::InitialBrueckner);
-                // Save every completed starting-orbital energy before a
-                // subsequent macroiteration overwrites its ordinary label.
-                for (const std::string label : {"CCSD", "CCSD(T)", "CCSD(T0)",
-                                                "CCSDT", "CCSDT(Q)", "CCSDT(Q0)", "CCSDTQ"}) {
-                    for (const std::string component : {" TOTAL ENERGY", " CORRELATION ENERGY"}) {
-                        if (has_scalar_variable(label + component))
-                            set_scalar_variable("INITIAL DLPNO-" + label + component,
-                                                scalar_variable(label + component));
-                    }
-                }
-            }
-
             if (fabs(T1_max) < BRUECKNER_R_CONV) {
                 brueckner_converged_ = true;
                 outfile->Printf("    Brueckner orbital optimization converged in %d iterations!\n", iteration);
 
-                // The initial triples correction releases large CCSD
-                // intermediates. If the starting orbitals already satisfy the
-                // Brueckner criterion, rebuild that same converged right-hand
-                // state before evaluating the separately labelled BCCD result.
-                if (iteration == 0) {
-                    e_dlpno_ccsd = compute_orbital_reference_energy();
-                }
-
                 set_scalar_variable("BRUECKNER ITERATIONS", iteration);
                 set_scalar_variable("BRUECKNER REFERENCE RANK", brueckner_reference_rank_);
                 publish_brueckner_energy();
+                // Continue from the converged reference amplitudes. The
+                // derived hooks run only the remaining higher-rank stages;
+                // none of these stages may rotate the optimized orbitals.
                 post_ccsd_correction(DLPNOCCSDPhase::FinalBrueckner);
                 break;
             } else if (iteration >= BRUECKNER_MAXITER) {

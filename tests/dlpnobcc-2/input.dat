@@ -3,6 +3,8 @@
 #! CCSDTQ must be independent of active occupied/virtual rotations up to DF error.
 
 import numpy as np
+from pathlib import Path
+import re
 
 memory 2 GB
 
@@ -73,11 +75,39 @@ C_initial = ref.Ca().np.copy()
 reference_energy = energy('dlpno-ccsdtq', ref_wfn=ref)
 clean()
 
+def check_execution_order(output, rank, final_quadruples=True):
+    before, after = output.split('Brueckner orbital optimization converged', 1)
+    # Match solver headers, not the driver banner or repeated energy summaries.
+    header = r'^\s+(DLPNO-(?:BCCD\(T\)|CCSD\(T\)|CCSDT(?:\(Q\)|Q)?))\s*$'
+    initial_stages = re.findall(header, before, re.MULTILINE)
+    final_stages = re.findall(header, after, re.MULTILINE)
+    stage_ranks = {'DLPNO-BCCD(T)': 3, 'DLPNO-CCSD(T)': 3,
+                   'DLPNO-CCSDT': 3, 'DLPNO-CCSDT(Q)': 4, 'DLPNO-CCSDTQ': 4}
+    compare_integers(1, int(all(stage_ranks[s] <= rank for s in initial_stages)),
+                     'orbital iterations stop at selected reference rank')  #TEST
+    expected = []
+    if rank == 2:
+        expected += ['DLPNO-BCCD(T)', 'DLPNO-CCSDT']
+    if rank < 4:
+        expected += ['DLPNO-CCSDT(Q)']
+        if final_quadruples:
+            expected += ['DLPNO-CCSDTQ']
+    compare_integers(1, int(final_stages == expected),
+                     'remaining stages run once in order after orbital convergence')  #TEST
+
 for orbitals, method, rank in [('BCCD', 'dlpno-ccsdtq', 2),
                                 ('BCCDT', 'dlpno-ccsdtq', 3),
                                 ('HF', 'dlpno-bccdtq', 4)]:
     set_options({'dlpno_reference_orbitals': orbitals})
+    core.flush_outfile()
+    output_start = len(Path(core.get_output_file()).read_text())
     result, wfn = energy(method, ref_wfn=ref, return_wfn=True)
+    core.flush_outfile()
+    check_execution_order(Path(core.get_output_file()).read_text()[output_start:], rank)
+    for label, stage_rank in [('CCSD(T)', 3), ('CCSDT', 3), ('CCSDT(Q)', 4), ('CCSDTQ', 4)]:
+        compare_integers(int(stage_rank <= rank),
+                         int(wfn.has_variable('INITIAL DLPNO-' + label + ' TOTAL ENERGY')),
+                         label + ': initial energy only when required for orbital optimization')  #TEST
     compare_values(reference_energy, result, 1.0e-7,
                    method + ' on ' + orbitals + ': four-electron invariance')  #TEST
     compare_values(result, variable('CCSDTQ TOTAL ENERGY'), 10, 'final-rank energy')  #TEST
@@ -97,7 +127,11 @@ for orbitals, method, rank in [('BCCD', 'dlpno-ccsdtq', 2),
 
 # BCCDT(Q) must mean (Q) after a full-triples orbital optimization.
 set dlpno_reference_orbitals HF
+core.flush_outfile()
+output_start = len(Path(core.get_output_file()).read_text())
 eq_alias = energy('dlpno-bccdt(q)', ref_wfn=ref)
+core.flush_outfile()
+check_execution_order(Path(core.get_output_file()).read_text()[output_start:], 3, final_quadruples=False)
 compare_values(eq_alias, variable('BCCDT(Q) TOTAL ENERGY'), 10, 'BCCDT(Q) result variable')  #TEST
 compare_integers(3, int(variable('BRUECKNER REFERENCE RANK')), 'BCCDT(Q) reference rank')  #TEST
 clean()

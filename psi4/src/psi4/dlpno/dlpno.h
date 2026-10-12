@@ -143,7 +143,7 @@ constexpr std::array<SpinCase, 3> get_spin_triple(TripleSpinCase triple_spin_cas
 }
 
 /// Identifies the point at which an optional post-CCSD correction is evaluated.
-enum class DLPNOCCSDPhase { SinglePoint, InitialBrueckner, FinalBrueckner };
+enum class DLPNOCCSDPhase { SinglePoint, FinalBrueckner };
 
 // Equations refer to Pinski et al. (JCP 143, 034108, 2015; DOI: 10.1063/1.4926879)
 
@@ -652,7 +652,10 @@ class PSI_API DLPNOCCSD : public DLPNO {
     void lccsd_iterations();
     /// computes DLPNO-CCSD energy (this function is kept separate from compute_energy function in case Brueckner orbitals are requested)
     virtual double compute_dlpno_ccsd_energy();
+    /// Converge amplitudes only through the selected orbital-optimization rank.
     virtual double compute_orbital_reference_energy();
+    /// Higher-rank stages must wait for convergence of the selected Brueckner reference.
+    void require_converged_brueckner_reference(int stage_rank, const std::string& stage) const;
     /// Spin-adapted, antisymmetric singles generator in the common optimizer frame.
     virtual SharedMatrix brueckner_singles_generator(const SharedMatrix& C_optimizer);
     double singles_fock_energy() const;
@@ -880,7 +883,7 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
 
     void print_results(DLPNOCCSDPhase phase);
 
-    /// Evaluate triples after a single-point CCSD solve or selected Brueckner macroiterations.
+    /// Evaluate triples for a single-point solve, an inner CCSDT/Q solve, or converged BCCD orbitals.
     void post_ccsd_correction(DLPNOCCSDPhase phase) override;
     /// Compute the requested symmetric and, optionally, asymmetric triples corrections.
     void compute_triples_correction(DLPNOCCSDPhase phase);

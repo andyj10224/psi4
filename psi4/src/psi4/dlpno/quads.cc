@@ -2479,6 +2479,7 @@ void DLPNOCCSDT_Q::post_ccsd_correction(DLPNOCCSDPhase phase) {
 }
 
 double DLPNOCCSDT_Q::compute_quadruples_correction_energy() {
+    require_converged_brueckner_reference(4, "CCSDT(Q)");
     timer_on("DLPNO-CCSDT(Q)");
 
     einsums::profile::initialize();
@@ -6086,6 +6087,7 @@ void DLPNOCCSDTQ::post_ccsd_correction(DLPNOCCSDPhase phase) {
 
 double DLPNOCCSDTQ::compute_full_quadruples_energy() {
 
+    require_converged_brueckner_reference(4, "CCSDTQ");
     timer_on("DLPNO-CCSDTQ");
 
     einsums::profile::initialize();

@@ -730,7 +730,33 @@ orbitals are supported, for example::
    energy('dlpno-ccsdtq')
 
 The final higher-rank amplitudes are solved in the converged BCCDT orbitals;
-their singles are allowed to be nonzero. The correlation energy retains
+their singles are allowed to be nonzero. Each orbital macroiteration stops
+at the selected reference rank. Once that rank's Brueckner condition is
+satisfied, the remaining stages run once, in order, with the orbitals fixed:
+
+.. list-table:: Execution of ``energy('dlpno-ccsdtq')``
+   :header-rows: 1
+
+   * - ``DLPNO_REFERENCE_ORBITALS``
+     - Orbital optimization
+     - Stages after orbital convergence
+   * - ``BCCD``
+     - Converge CCSD singles to zero
+     - CCSD(T), CCSDT, CCSDT(Q), CCSDTQ
+   * - ``BCCDT``
+     - Converge CCSDT singles to zero
+     - CCSDT(Q), CCSDTQ
+   * - ``BCCDTQ``
+     - Converge CCSDTQ singles to zero
+     - None; the final inner solve is the requested result
+
+The same rule applies when the requested final energy stops earlier. For
+example, BCCD(T) adds (T) only after BCCD converges, and BCCDT(Q) adds (Q)
+only after BCCDT converges. BCCDT and BCCDTQ macroiterations still perform
+the lower-rank stages needed to initialize their full T3/T4 solves. No
+additional higher-rank calculation is performed in the initial HF orbitals.
+
+The correlation energy retains
 :math:`2\sum_{ia} f_{ia}t_i^a` for RHF, and
 :math:`\sum_{\sigma ia} f^\sigma_{ia}t^{a\sigma}_{i\sigma}` for ROHF.
 Bare occupied--virtual Fock terms are also retained in the full triples and
@@ -746,8 +772,12 @@ trust-limited steps and optional DIIS. Localized occupied orbitals are aligned
 between macroiterations by subspace transport, maximum overlap, and phase
 matching. Inner amplitude equations are fully converged before an orbital
 residual is evaluated; ``DLPNO_BRUECKNER_N_MICRO_ITER`` is retained only as a
-legacy input. Initial energies are retained in variables beginning with
-``INITIAL DLPNO-``. ``SCF TOTAL ENERGY`` remains the input SCF energy;
+legacy input. Energies of stages actually needed by the initial orbital
+macroiteration are retained in variables beginning with ``INITIAL DLPNO-``.
+For BCCD orbitals this includes CCSD, but not CCSD(T) or higher stages.
+Ordinary method energy variables describe the current orbital frame; for
+example, the final ``CCSD(T) TOTAL ENERGY`` on BCCD orbitals equals
+``BCCD(T) TOTAL ENERGY``. ``SCF TOTAL ENERGY`` remains the input SCF energy;
 ``CURRENT REFERENCE ENERGY`` and ``BRUECKNER REFERENCE ENERGY`` contain the
 rotated determinant energy. ``BRUECKNER REFERENCE RANK``,
 ``BRUECKNER ITERATIONS``, and ``BRUECKNER ORBITAL RESIDUAL MAX`` describe the

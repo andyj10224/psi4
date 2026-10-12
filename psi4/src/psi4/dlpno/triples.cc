@@ -1676,6 +1676,7 @@ std::pair<double, double> DLPNOCCSD_T::lccsd_t_iterations() {
 }
 
 void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
+    require_converged_brueckner_reference(3, "CCSD(T)");
     timer_on("DLPNO-CCSD(T)");
 
     if (lambda_requested_ && !lambda_solved_) {
@@ -1884,6 +1885,10 @@ void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
 
     set_scalar_variable(right_method + " CORRELATION ENERGY", right_corr);
     set_scalar_variable(right_method + " TOTAL ENERGY", right_total);
+    // Ordinary method labels refer to the current orbital frame. Preserve
+    // them alongside the BCCD aliases for explicit-reference and CBS routes.
+    set_scalar_variable("CCSD(T) CORRELATION ENERGY", right_corr);
+    set_scalar_variable("CCSD(T) TOTAL ENERGY", right_total);
     set_scalar_variable("DLPNO-" + right_method + " CORRELATION ENERGY", right_corr);
     set_scalar_variable("DLPNO-" + right_method + " TOTAL ENERGY", right_total);
     set_scalar_variable("(T) CORRECTION ENERGY", right_correction);
@@ -1894,6 +1899,8 @@ void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
     if (t0_only) {
         set_scalar_variable(reference_method + "(T0) CORRELATION ENERGY", right_corr);
         set_scalar_variable(reference_method + "(T0) TOTAL ENERGY", right_total);
+        set_scalar_variable("CCSD(T0) CORRELATION ENERGY", right_corr);
+        set_scalar_variable("CCSD(T0) TOTAL ENERGY", right_total);
         set_scalar_variable("(T0) CORRECTION ENERGY", right_correction);
     }
     if (full_triples_follow) set_scalar_variable("DLPNO TNO TRUNCATION ERROR", de_tno_);
@@ -1918,12 +1925,6 @@ void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
         }
     }
 
-    if (phase == DLPNOCCSDPhase::InitialBrueckner) {
-        set_scalar_variable("INITIAL DLPNO-CCSD(T) CORRELATION ENERGY", right_corr);
-        set_scalar_variable("INITIAL DLPNO-CCSD(T) TOTAL ENERGY", right_total);
-        set_scalar_variable("INITIAL DLPNO-(T) CORRECTION ENERGY", right_correction);
-    }
-
     if (lambda_requested_) {
         const double left_corr = e_lccsd_t_l_ + de_weak_ + de_lmp2_eliminated_ + de_dipole_ + de_pno_total_;
         const double left_total = e_scf + left_corr;
@@ -1941,11 +1942,10 @@ void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
         set_scalar_variable("DLPNO-" + at_method + " TOTAL ENERGY", left_total);
         set_scalar_variable("A-(T) CORRECTION ENERGY", left_correction);
 
-        if (phase == DLPNOCCSDPhase::InitialBrueckner) {
-            set_scalar_variable("INITIAL DLPNO-CCSD(T)_L CORRELATION ENERGY", left_corr);
-            set_scalar_variable("INITIAL DLPNO-CCSD(T)_L TOTAL ENERGY", left_total);
-            set_scalar_variable("INITIAL DLPNO-(T)_L CORRECTION ENERGY", left_correction);
-        }
+        set_scalar_variable("A-CCSD(T) CORRELATION ENERGY", left_corr);
+        set_scalar_variable("A-CCSD(T) TOTAL ENERGY", left_total);
+        set_scalar_variable("CCSD(AT) CORRELATION ENERGY", left_corr);
+        set_scalar_variable("CCSD(AT) TOTAL ENERGY", left_total);
 
         set_scalar_variable("CURRENT CORRELATION ENERGY", left_corr);
         set_scalar_variable("CURRENT ENERGY", left_total);
@@ -1960,15 +1960,7 @@ void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
 }
 
 void DLPNOCCSD_T::post_ccsd_correction(DLPNOCCSDPhase phase) {
-    if (lambda_requested_ && phase == DLPNOCCSDPhase::InitialBrueckner) {
-        // The first Brueckner macroiteration is intentionally the ordinary
-        // reference-orbital CCSD(T)_L result, including Lambda singles. At the
-        // final Brueckner point, the base hook omits Lambda1 by stationarity.
-        solve_lambda(true);
-    } else {
-        DLPNOCCSD::post_ccsd_correction(phase);
-    }
-
+    DLPNOCCSD::post_ccsd_correction(phase);
     compute_triples_correction(phase);
 }
 
@@ -4274,6 +4266,7 @@ void DLPNOCCSDT::post_ccsd_correction(DLPNOCCSDPhase phase) {
 
 double DLPNOCCSDT::compute_full_triples_energy() {
 
+    require_converged_brueckner_reference(3, "CCSDT");
     timer_on("DLPNO-CCSDT");
 
     einsums::profile::initialize();

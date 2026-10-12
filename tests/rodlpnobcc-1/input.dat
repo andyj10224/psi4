@@ -2,6 +2,7 @@
 #! orbitals, determinant energy, and preservation of the supplied reference.
 
 import numpy as np
+from pathlib import Path
 
 memory 2 GB
 
@@ -54,7 +55,18 @@ set {
 set_num_threads(1)
 escf, ref = energy('scf', return_wfn=True)
 C_initial = ref.Ca().np.copy()
+core.flush_outfile()
+output_start = len(Path(core.get_output_file()).read_text())
 energy_alias, wfn = energy('dlpno-bccd(t)', ref_wfn=ref, return_wfn=True)
+core.flush_outfile()
+output = Path(core.get_output_file()).read_text()[output_start:]
+before, after = output.split('Brueckner orbital optimization converged', 1)
+compare_integers(0, before.count('@Total RO-DLPNO-CCSD(T) Energy:'),
+                 'no RO triples before BCCD converges')  #TEST
+compare_integers(1, after.count('@Total RO-DLPNO-BCCD(T) Energy:'),
+                 'RO triples evaluated once after BCCD converges')  #TEST
+compare_integers(0, int(wfn.has_variable('INITIAL DLPNO-CCSD(T) TOTAL ENERGY')),
+                 'no unused initial RO CCSD(T) result')  #TEST
 compare_integers(2, int(variable('BRUECKNER REFERENCE RANK')), 'RO optimized rank')  #TEST
 for label in ['BRUECKNER MAX SPIN-SUM SINGLES',
               'BRUECKNER MAX DOCC-SOMO SINGLES',

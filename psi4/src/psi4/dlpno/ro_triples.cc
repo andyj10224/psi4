@@ -1476,10 +1476,7 @@ double RO_DLPNOCCSD_T::compute_energy() { return DLPNOCCSD::compute_energy(); }
 void RO_DLPNOCCSD_T::post_ccsd_correction(DLPNOCCSDPhase phase) {
     compute_ro_triples_correction();
     const std::string suffix = options_.get_bool("T0_APPROXIMATION") ? "(T0)" : "(T)";
-    if (phase == DLPNOCCSDPhase::InitialBrueckner) {
-        set_scalar_variable("INITIAL DLPNO-CCSD" + suffix + " TOTAL ENERGY", scalar_variable("CURRENT ENERGY"));
-        set_scalar_variable("INITIAL DLPNO-CCSD" + suffix + " CORRELATION ENERGY", scalar_variable("CURRENT CORRELATION ENERGY"));
-    } else if (phase == DLPNOCCSDPhase::FinalBrueckner) {
+    if (phase == DLPNOCCSDPhase::FinalBrueckner) {
         set_scalar_variable("BCCD" + suffix + " TOTAL ENERGY", scalar_variable("CURRENT ENERGY"));
         set_scalar_variable("BCCD" + suffix + " CORRELATION ENERGY", scalar_variable("CURRENT CORRELATION ENERGY"));
         set_scalar_variable("DLPNO-BCCD" + suffix + " TOTAL ENERGY", scalar_variable("CURRENT ENERGY"));
@@ -1489,6 +1486,7 @@ void RO_DLPNOCCSD_T::post_ccsd_correction(DLPNOCCSDPhase phase) {
 }
 
 double RO_DLPNOCCSD_T::compute_ro_triples_correction() {
+    require_converged_brueckner_reference(3, "RO-CCSD(T)");
     timer_on("RO-DLPNO-CCSD(T)");
 
     // Release the CCSD-only integral, overlap, and dressed-intermediate caches before allocating triples cubes.

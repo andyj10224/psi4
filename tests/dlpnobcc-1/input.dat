@@ -3,6 +3,8 @@
 
 memory 2 GB
 
+from pathlib import Path
+
 molecule h2o {
 0 1
 O
@@ -62,14 +64,25 @@ e_bccd_t = energy("bccd(t)")
 clean()
 
 print("   Testing DLPNO-BCCD(T) ...")
-e_dlpno_bccd_t = energy("dlpno-bccd(t)")
+core.flush_outfile()
+output_start = len(Path(core.get_output_file()).read_text())
+e_dlpno_bccd_t, bccd_wfn = energy("dlpno-bccd(t)", return_wfn=True)
+core.flush_outfile()
+output = Path(core.get_output_file()).read_text()[output_start:]
+before, after = output.split('Brueckner orbital optimization converged', 1)
+compare_integers(0, before.count('@Total DLPNO-CCSD(T) Energy:'),
+                 'no initial HF-orbital triples pass')  #TEST
+compare_integers(1, after.count('@Total DLPNO-BCCD(T) Energy:'),
+                 'triples evaluated once after BCCD converges')  #TEST
 
 # Allow a looser absolute tolerance for the RI approximation in DLPNO-BCCD(T).
 compare_values(e_bccd_t, e_dlpno_bccd_t, 1.0e-5, "BCCD(T) vs. DLPNO-BCCD(T)")                    #TEST
 compare_values(e_dlpno_bccd_t, variable("BCCD(T) TOTAL ENERGY"), 8, "DLPNO-BCCD(T) variable")   #TEST
 compare_values(e_dlpno_bccd_t, variable("CURRENT ENERGY"), 8, "DLPNO-BCCD(T) current energy")   #TEST
-compare_values(variable("CCSD(T) TOTAL ENERGY"), variable("INITIAL DLPNO-CCSD(T) TOTAL ENERGY"),
-               8, "initial non-Brueckner DLPNO-CCSD(T)")                                      #TEST
+compare_values(e_dlpno_bccd_t, variable("CCSD(T) TOTAL ENERGY"),
+               8, "CCSD(T) label in converged BCCD orbitals")                                 #TEST
+compare_integers(0, int(bccd_wfn.has_variable("INITIAL DLPNO-CCSD(T) TOTAL ENERGY")),
+                 "no unused initial CCSD(T) result")                                         #TEST
 compare_values(variable("MP2 CORRELATION ENERGY"),
                variable("MP2 SINGLES ENERGY") + variable("MP2 DOUBLES ENERGY"),
                10, "DLPNO-BCCD MP2 singles/doubles decomposition")                            #TEST
