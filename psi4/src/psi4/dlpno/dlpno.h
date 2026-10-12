@@ -145,6 +145,8 @@ constexpr std::array<SpinCase, 3> get_spin_triple(TripleSpinCase triple_spin_cas
 /// Identifies the point at which an optional post-CCSD correction is evaluated.
 enum class DLPNOCCSDPhase { SinglePoint, FinalBrueckner };
 
+class DLPNOOrbitalWriter;
+
 // Equations refer to Pinski et al. (JCP 143, 034108, 2015; DOI: 10.1063/1.4926879)
 
 class DLPNO : public Wavefunction {
@@ -395,6 +397,13 @@ class DLPNO : public Wavefunction {
 
     /// Form LMOs, PAOs, etc.
     void setup_orbitals();
+
+    /// Export once, after the final energy stage, only when DLPNO_WRITE_ORBITALS is set.
+    void write_orbitals() const;
+    /// Append the retained natural-orbital spaces available at this solver rank.
+    virtual void write_natural_orbitals(DLPNOOrbitalWriter& writer) const;
+    /// Transform a local PAO-domain orbital set (including ROHF SOMOs) to AOs.
+    SharedMatrix orbital_coefficients_ao(const std::vector<int>& domain, const SharedMatrix& X) const;
     
     /// Compute differential overlap integrals between LMO/LMO and LMO/PAO pairs (EQ 4), DOI_ij and DOI_iu
     void compute_overlap_ints();
@@ -887,6 +896,7 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     void post_ccsd_correction(DLPNOCCSDPhase phase) override;
     /// Compute the requested symmetric and, optionally, asymmetric triples corrections.
     void compute_triples_correction(DLPNOCCSDPhase phase);
+    void write_natural_orbitals(DLPNOOrbitalWriter& writer) const override;
 
    public:
     DLPNOCCSD_T(SharedWavefunction ref_wfn, Options& options);
@@ -952,6 +962,7 @@ class PSI_API RO_DLPNOCCSD_T : public RO_DLPNOCCSD {
 
     void post_ccsd_correction(DLPNOCCSDPhase phase) override;
     double compute_ro_triples_correction();
+    void write_natural_orbitals(DLPNOOrbitalWriter& writer) const override;
     void ro_print_header();
     void ro_print_results();
 
@@ -1058,6 +1069,7 @@ class DLPNOCCSDT_Q : public DLPNOCCSDT {
    protected:
     void post_ccsd_correction(DLPNOCCSDPhase phase) override;
     double compute_quadruples_correction_energy();
+    void write_natural_orbitals(DLPNOOrbitalWriter& writer) const override;
     struct QuadrupletEnergyIntermediates {
         /// g_i'(a,b,e) = (i'a|be), Algorithm 1; used by Eq. (19), term 1, and Algorithm 4.
         std::array<einsums::Tensor<double, 3>, 4> K_iabe;

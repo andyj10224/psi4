@@ -2705,6 +2705,10 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_int("DLPNO_MAXITER", 50);
         /*- Automatically select in-core or disk-backed intermediates from the available memory -*/
         options.add_bool("DLPNO_TOGGLE_MEMORY", true);
+        /*- Write final LMO, PNO, TNO, QNO, and (when optimized) Brueckner AO
+            coefficients as Molden files under dlpno_info. Only retained spaces
+            are written. Supports orbital basis shells through G. -*/
+        options.add_bool("DLPNO_WRITE_ORBITALS", false);
         /*- How much to damp T1 updates in DLPNO-CCSD -*/
         options.add_double("DLPNO_T1_DAMPING", 0.0);
         /*- How much to damp T2 updates in DLPNO-CCSD -*/

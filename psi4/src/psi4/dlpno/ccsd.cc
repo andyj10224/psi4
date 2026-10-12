@@ -3465,14 +3465,12 @@ double DLPNOCCSD::compute_energy() {
 
             iteration++;
         }
-
-        return scalar_variable("CURRENT ENERGY");
-
     } else {
         compute_orbital_reference_energy();
         post_ccsd_correction(DLPNOCCSDPhase::SinglePoint);
-        return scalar_variable("CURRENT ENERGY");
     }
+    write_orbitals();
+    return scalar_variable("CURRENT ENERGY");
 }
 
 void DLPNOCCSD::print_integral_sparsity() {

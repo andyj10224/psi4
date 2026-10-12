@@ -1,5 +1,6 @@
 list(APPEND sources
   dlpno.cc
+  orbitals.cc
   mp2.cc
   ccsd.cc
   ccsd_lambda.cc

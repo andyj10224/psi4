@@ -151,6 +151,11 @@ void DLPNO::common_init() {
     print_ = options_.get_int("PRINT");
     debug_ = options_.get_int("DEBUG");
 
+    if (options_.get_bool("DLPNO_WRITE_ORBITALS") && basisset_->max_am() > 4) {
+        throw PSIEXCEPTION("DLPNO_WRITE_ORBITALS: Molden/vibemol export supports orbital basis shells through G; "
+                           "higher angular momenta are not supported.");
+    }
+
     // Using Brueckner orbitals?
     const auto orbital_reference = options_.get_str("DLPNO_REFERENCE_ORBITALS");
     brueckner_reference_rank_ = orbital_reference == "BCCDTQ" ? 4 :

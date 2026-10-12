@@ -826,6 +826,79 @@ rotation limit, ``LOCAL_AH_MAX_ROTATIONS``, defaults to **2048** (previously
 512). The separate matrix-free ER Davidson limit,
 ``LOCAL_AH_MAX_SUBSPACE``, retains its default of 20.
 
+Exporting Orbitals for Visualization
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Set |dlpno__dlpno_write_orbitals| to ``true`` to write the final orbitals as
+AO coefficients in Molden format, for example::
+
+   set dlpno_write_orbitals true
+   energy('dlpno-bccd(t)')
+
+The option defaults to ``false`` and also works with DLPNO-MP2. Export takes
+place once, after all requested energy stages and any Brueckner optimization
+have finished. Each file contains the molecular geometry, the **orbital**
+basis (not an auxiliary fitting basis), and the coefficients needed to load
+it directly in `vibemol <https://vibemol.org/>`_.
+
+.. list-table:: Files in ``dlpno_info``
+   :header-rows: 1
+   :widths: 35 65
+
+   * - File
+     - Contents
+   * - ``LMO/lmo.molden``
+     - All active occupied LMOs, in the order used to index pairs and tuples.
+   * - ``PNO/pno_i_j.molden``
+     - Retained semicanonical PNOs for pair :math:`ij`; identical :math:`ji` sets are omitted.
+   * - ``TNO/tno_i_j_k.molden``
+     - Retained TNOs for triplet :math:`ijk`, when a triples stage is evaluated.
+   * - ``QNO/qno_i_j_k_l.molden``
+     - Retained QNOs for quadruplet :math:`ijkl`, when a quadruples stage is evaluated.
+   * - ``Brueckner/brueckner.molden``
+     - Final optimized MOs, including frozen occupied, active occupied, and virtual orbitals.
+   * - ``index.tsv``
+     - List of exported files and the number of orbitals in each file.
+
+Indices in filenames start at **1** and refer to columns of ``LMO/lmo.molden``;
+frozen occupied orbitals are excluded from this indexing. The files preserve
+the solver's column order. Only spaces retained by the final screening and
+truncation are exported, including the weak-pair spaces still stored by the
+solver. No spaces are constructed for screened-out tuples just for plotting.
+For ROHF, PNO/TNO files include the appended SOMOs used as beta virtuals;
+oriented ROHF triplets retain their individual filenames. RHF permutation
+duplicates are omitted.
+
+These are the semicanonical orbital sets used by the calculation, after
+natural-orbital truncation. Their Molden ``Occup`` entries are zero placeholders,
+**not** natural occupation numbers. LMO and Brueckner files instead use spatial
+occupations 2, 1, or 0, with one ``Alpha`` record per spatial orbital. ``Ene``
+entries contain semicanonical energies (PNOs and RHF TNOs/QNOs), or diagonal
+Fock expectations (LMOs, Brueckner MOs, and ROHF TNOs). The latter use the
+spin-averaged Fock matrix for open shells. Thus, the local-space files describe
+orbitals for visualization, not a density matrix or a restart wavefunction.
+
+The first export uses ``dlpno_info`` in the current working directory. If that
+directory already exists, the next export uses ``dlpno_info/run_2``, then
+``run_3``, and so on, each with the same subdirectory layout. The exact path is
+printed in the output. Previous results are preserved, and files from separate
+calculations are never mixed. Only subdirectories with available orbitals are
+created.
+
+Both pure and Cartesian orbital bases are supported through G shells, with
+Molden AO ordering and normalization. Higher angular momenta are rejected
+before the DLPNO calculation when export is requested because vibemol's Molden
+reader does not support them. The vibemol version inspected for this exporter
+(October 2026) imports G-shell metadata but its orbital-grid evaluator supports
+only S through F; G-shell files require a viewer with G-shell rendering support.
+The files use standard Molden coefficients, without viewer-specific rescaling.
+The inspected vibemol grid evaluator also appears to omit primitive and angular
+normalization factors; import compatibility alone does not establish quantitative
+agreement of plotted orbital amplitudes. This is a viewer-side limitation rather
+than a change to the exported AO coefficients.
+Writing every local space can produce many files and substantial disk output;
+files are streamed one domain at a time.
+
 One-Electron Properties
 ~~~~~~~~~~~~~~~~~~~~~~~
 

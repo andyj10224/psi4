@@ -44,6 +44,10 @@ DLPNO-MP2: Domain-Based Local Pair Natural Orbital MP2
 Introduction
 ------------
 
+Final LMOs and PNOs can be exported in AO-based Molden format with
+|dlpno__dlpno_write_orbitals|. See :ref:`sec:dlpnocc` for the directory layout
+and visualization conventions.
+
 The steep polynomial scaling (in both time and memory) of post-HF dynamic
 correlation methods prohibits calculations on large systems, even for efficient
 codes like |PSIfours| :ref:`DF-MP2 <sec:dfmp2>`. This poor scaling is in part

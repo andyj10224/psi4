@@ -300,6 +300,7 @@ double DLPNOMP2::compute_energy() {
                                                        oss * e_mp2_corr_os +
                                                        sss * e_mp2_corr_ss);
 
+    write_orbitals();
     return e_mp2_total;
 }
 
