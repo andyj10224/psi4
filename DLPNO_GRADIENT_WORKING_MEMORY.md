@@ -2,9 +2,9 @@
 
 ## RHF DLPNO-CCSD(T) analytic nuclear gradients
 
-**Current capability.** The ordinary RHF iterative (T), stationary CCSD, and combined PNO truncation corrections each report explicit Cartesian correlation-fitting derivatives for the auxiliary metric and three-center integrals. The CCSD calculation also forms internal Fock, PAO-overlap and local coefficient derivatives using the converged (T)-sourced Λ₁ and Λ₂. The total-gradient driver remains guarded.
+**Current capability.** The ordinary RHF iterative (T), stationary CCSD, combined PNO truncation corrections and LMP2 amplitude relaxation each report explicit Cartesian correlation-fitting derivatives for the auxiliary metric and three-center integrals. The CCSD calculation also forms internal Fock, PAO-overlap and local coefficient derivatives using the converged (T)-sourced Λ₁ and Λ₂. The total-gradient driver remains guarded.
 
-**Next piece.** Solve the LMP2 adjoint with the combined projector and truncation-energy sources, then propagate the stationary derivatives through the two PNO constructions, LMP2, PAOs, localization and RHF orbital relaxation. Include the remaining triples nuclear response. The scoped scaling target assumes a nonzero pair cutoff and bounded local domains.
+**Next piece.** Assemble the remaining direct local-basis sources, including the triples nuclear response, and propagate the combined derivatives through PAOs, localization and RHF orbital relaxation. The scoped scaling target assumes a nonzero pair cutoff and bounded local domains.
 
 ## Implementation history
 
@@ -115,6 +115,30 @@ The wavefunction reports the combined explicit fitting contributions as `DLPNO P
 **Regression and formal check.** The five targeted CTests passed. Coverage includes canonical-limit zero arrays, finite-rank energies, disk/in-core agreement, translation invariance, and a screened H₂ chain. Lean 4.16 verified the bilinear full-minus-projected energy variation including both moving projection factors. [Regression](tests/dlpno-grad-model/input.dat) · [Lean proof](tests/dlpno-grad-model/TriplesAdjoint.lean)
 
 **Next piece.** Solve the LMP2 adjoint on the retained pair graph with the combined projector and truncation-energy sources, then propagate its integral, overlap and local-space contributions. The explicit fitting arrays above hold the parent orbital data fixed; a total gradient still needs LMP2, PAO, localization, RHF orbital, and remaining triples nuclear response.
+
+### 2026-11-06 · Codex · Screened LMP2 adjoint
+
+Implementation commit [202e728c](https://github.com/andyj10224/psi4/commit/202e728c94c20c7f04f550d66f3ac5235b14d525).
+
+The RHF gradient model saves the converged first-space LMP2 amplitudes, pair bases, and the actual occupied Fock couplings selected by the right solve. The production LMP2 residual now gathers from the surviving pair neighbors. The adjoint scatters along the same edges in reverse, transposing the source virtual indices when the edge used ji instead of ij. The independent coordinates are unique pairs, with a symmetric block on ii. The projector and truncation-energy sources already carry the ordered-pair weights.
+
+The matrix-free solve enforces Aᵀz = −s with Jacobi/DIIS and checks the maximum pair RMS on the returned iterate. Its residual contraction supplies the relaxed exchange, occupied and virtual Fock, interpair overlap, and first-stage coefficient derivatives. Reversing the motion of the first PNO projector also supplies a semicanonical MP2 contribution. The wavefunction reports `DLPNO LMP2 RESPONSE AUXILIARY METRIC GRADIENT` and `DLPNO LMP2 RESPONSE THREE-CENTER GRADIENT` in hartree/bohr, with parent orbital data held fixed. [LMP2 solver](psi4/src/psi4/dlpno/lmp2_response.cc)
+
+**Numerical check.** Frozen-core H₂O/cc-pVDZ at first/final PNO cutoffs 10⁻⁶/10⁻⁵. The tangent check perturbs the raw fitting, Fock and PAO-overlap blocks at one geometry, rebuilds the first projector at fixed rank and solves the forward response equations. Errors below are absolute.
+
+| Localization | LMP2 couplings (rectangular) | Adjoint max pair RMS | Transpose dot error | Relaxed vs. tangent derivative error (hartree) |
+| --- | ---: | ---: | ---: | ---: |
+| Boys | 60 (44) | 9.44 × 10⁻¹³ | 1.11 × 10⁻¹⁶ | 3.53 × 10⁻¹² |
+| Pipek–Mezey | 30 (18) | 3.43 × 10⁻¹³ | 3.34 × 10⁻¹⁶ | 6.97 × 10⁻¹² |
+| IBO | 30 (22) | 2.56 × 10⁻¹³ | 1.11 × 10⁻¹⁶ | 4.27 × 10⁻¹² |
+
+Boys water converged in 11 updates. Its oxygen z LMP2 contributions were −0.000100895777 (metric) and +0.000266290752 (three-center). Four-thread disk-backed and serial in-memory Cartesian components agreed within 10⁻⁹ hartree/bohr. The zero-cutoff adjoint vanished; with all Fock couplings screened and a nonzero source, one diagonal update solved the equations. The zero-cutoff PM localization again printed a Hessian-stability warning; its fixed-space checks passed.
+
+**Screened chains.** The four-H₂ regression contains 22 couplings, including 18 rectangular overlaps. At a perturbation step of 10⁻⁶ the tangent check initially missed by 1.01 × 10⁻⁸ hartree. Halving the step reduced the discrepancy fourfold. Extrapolating the two centered differences gave 3.11 × 10⁻¹⁴ hartree against the analytic result. A separate size series with the nonzero crude pair cutoff 10⁻⁶ retained 22, 54, and 86 couplings for 4, 8, and 12 H₂ molecules, with three adjoint updates at each size. For 1, 2, and 3 separated waters the corresponding counts were 60, 120, and 180, each with 13 updates. These measurements support linear contraction work for these screened families. End-to-end gradient timing is open. [Reproduction script](tests/dlpno-grad-model/screened_counts.py)
+
+Seven targeted CTests covered the gradient model, the ordinary RHF and RO energy paths that share the LMP2 residual, the Brueckner energy, and the canonical DF gradient regression. Lean 4.16 checked the sign identity between the LMP2 adjoint and forward tangent. [Regression](tests/dlpno-grad-model/input.dat) · [Proof](tests/dlpno-grad-model/TriplesAdjoint.lean)
+
+**Next piece.** Assemble the remaining direct CCSD and triples derivatives with respect to local bases and carry their combined orbital, Fock and overlap sources through PAO construction, localization and RHF relaxation. The total nuclear gradient is still guarded.
 
 ## Updating the bank
 
