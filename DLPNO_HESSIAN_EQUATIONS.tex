@@ -295,4 +295,74 @@ The final semicanonical rotation within the retained space drops out of $A$.
 The AO coefficient-space projector is $AS$ and its derivative is $A^v S+A S^v$.
 As a sign and gauge test, changing $Y^v$ by $YK$ and $T^v$ by
 $TK-KT$ for $K=-K^{\mathsf T}$ leaves $A^v$ unchanged.
+
+\section{Starting the CCSD residual source}
+For a final CCSD frame $Y_p$, insert the final $A^v$ into the parallel
+transport formula used for the first PNO frame. Use
+\begin{equation}
+ S_{pq}^v=(Y_p^v)^{\mathsf T}SY_q+Y_p^{\mathsf T}S^vY_q+
+ Y_p^{\mathsf T}S Y_q^v .
+\end{equation}
+All residual sources in this section hold the CCSD amplitudes fixed in the
+transported frames. The eventual linear equation is $R_{,t}t^v=-b^v$;
+the following contributions to $b^v$ are implemented.
+
+\subsection{Projected Fock blocks}
+Write $o=L^{\mathsf T}FL$, $h_p=L^{\mathsf T}FY_p$,
+$f_p=Y_p^{\mathsf T}FY_p$. For any such block $M=C_l^{\mathsf T}FC_r$,
+\begin{equation}
+ M^v=(C_l^v)^{\mathsf T}FC_r+C_l^{\mathsf T}F^v C_r+
+ C_l^{\mathsf T}FC_r^v .
+\end{equation}
+Let $n_p$ contain the forward projected singles $S_{p,mm}t_m$ as rows for
+$m$ in the pair domain, and $u_p=2t_p-t_p^{\mathsf T}$.
+For the partial derivative through bare Fock blocks (hold all explicit
+overlap occurrences fixed) define
+\begin{align}
+ V_p&=f_p^v-n_p^{\mathsf T}h_{p,\mathrm{dom}}^v,\\
+ w_{kj}&=o^v_{kj}+(h^v_{jj})_{k:}\,t_j
+ \quad\text{on a retained }kj .
+\end{align}
+Outside the retained list use $w_{kj}=o^v_{kj}$ as in the forward occupied
+Fock intermediate. With $p=ij$ and $d=ii$, the sources are
+\begin{align}
+ b_{1,i}^{F}&=(h_d^v)_{i:}^{\mathsf T}+V_d t_i-
+ n_d^{\mathsf T}o^v_{\mathrm{dom},i}
+ +\sum_{k} S_{ik,d}^{\mathsf T}u_{ik}(h_{ik}^v)_{k:}^{\mathsf T},\\
+ G_{ij}&=-\sum_{k}w_{kj} S_{p,ik}t_{ik}S_{p,ik}^{\mathsf T},\\
+ b_{2,ij}^{F}&=t_{ij} V_p^{\mathsf T}+V_p t_{ij}
+                  +G_{ij}+G_{ji}^{\mathsf T}.
+\end{align}
+The sums use the same occupied neighbors as the right residual. The independent
+Lambda check compares $2\sum_i (h_{ii}^v)_{i:}t_i+\lambda_1:b_1^F+
+\tfrac12\sum_{ij}\lambda_{2,ij}:b_{2,ij}^F$ to the native Fock covectors
+contracted with the same perturbation.
+
+\subsection{Direct fitted doubles product and virtual ladder}
+On the pair auxiliary domain set $W=M^{-1/2}$ with the same filtered
+eigenspectrum as the gradient. For a raw block $q$, $B=Wq$ and
+$B^v=W^v q+W q^v$. With $M=U\operatorname{diag}(m)U^{\mathsf T}$,
+\begin{equation}
+ W^v=U\big[f^{[1]}(m_a,m_b)\circ(U^{\mathsf T}M^v U)\big]U^{\mathsf T},
+\end{equation}
+where $f^{[1]}$ is the fixed-branch divided difference of the forward
+filtered inverse square root (the same self-adjoint linear map used in the
+CCSD fitting adjoint). For each auxiliary row, let
+$n^v_{m:}=(S^v_{p,mm}t_m)^{\mathsf T}$. Using $B_o,B_h,B_f$ for the
+OO, OV and VV blocks, define for occupied $i$ in the pair
+\begin{align}
+ O_i &= (B_o)_{i:}+B_h n_{i:}^{\mathsf T},\\
+ V_i &= (B_h)_{i:}^{\mathsf T}-n^{\mathsf T}O_i+B_f n_{i:}^{\mathsf T},
+ & D &= B_f-n^{\mathsf T}B_h .
+\end{align}
+Here $O_i$ denotes a domain column. Differentiate each product, e.g.,
+$D^v=B_f^v-(n^v)^{\mathsf T}B_h-n^{\mathsf T}B_h^v$.
+Jiang Eqs.~75 and 76 then contribute to the unique doubles block
+\begin{equation}
+ b_{2,ij}^{75,76}=\sum_Q\big[
+ V_i^v V_j^{\mathsf T}+ V_i(V_j^v)^{\mathsf T}
+ + D^v t_{ij}D^{\mathsf T}+D t_{ij}(D^v)^{\mathsf T}\big]_Q .
+\end{equation}
+Other two-electron, dressed-Fock and explicit-overlap contractions are needed
+before solving for the CCSD amplitude response.
 \end{document}

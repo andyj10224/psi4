@@ -298,12 +298,17 @@ void DLPNOCCSD_T::form_lmp2_response() {
 
 DLPNOCCSD_T::PairBlocks DLPNOCCSD_T::lmp2_blocks(const std::string& block) const {
     if (lmp2_state_.X.empty()) throw PSIEXCEPTION("LMP2 response state was not retained.");
-    if (block != "FRAME" && block != "AMPLITUDE" && block != "FINAL_FRAME") throw PSIEXCEPTION("Invalid LMP2 response block.");
+    if (block != "FRAME" && block != "AMPLITUDE" && block != "FINAL_FRAME" && block != "OCC_DOMAIN") throw PSIEXCEPTION("Invalid LMP2 response block.");
     PairBlocks result;
     for (int p = 0; p < ij_to_i_j_.size(); ++p) {
         const auto ij = ij_to_i_j_[p];
         if (ij.first > ij.second) continue;
-        if (block == "AMPLITUDE") {
+        if (block == "OCC_DOMAIN") {
+            const auto& dom = lmopair_to_lmos_[p];
+            auto ids = std::make_shared<Matrix>(dom.size(), 1);
+            for (size_t k = 0; k < dom.size(); ++k) (*ids)(k, 0) = dom[k];
+            result[ij] = ids;
+        } else if (block == "AMPLITUDE") {
             result[ij] = lmp2_state_.T[p]->clone();
         } else {
             auto N = submatrix_cols(*C_pao_, lmopair_to_paos_[p]);

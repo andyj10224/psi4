@@ -89,7 +89,21 @@ def check_local_spaces(w):
     compare_values(0., w.variable('DLPNO DF ORBITAL REPLAY ERROR'), 1.e-10,
                    'reconstructed screened fit matches the forward three-center integrals')                    #TEST
 
+# The inverse-square-root kernel is shared by the CCSD Lambda and Hessian paths.
+# Rotate a filtered metric while varying both repeated positive eigenvalues.
+ev = np.diag([0., 4., 4.])
+rot = np.array([[0., .3, -.1], [-.3, 0., .2], [.1, -.2, 0.]])
+slope = np.diag([0., .4, -.2])
+direction = rot @ ev - ev @ rot + slope
+root, droot = psi4.core.dlpno_pair_metric_tangent(psi4.core.Matrix.from_array(ev),
+                                                   psi4.core.Matrix.from_array(direction))
+expected = rot @ root.np - root.np @ rot - slope / 16.
+compare_arrays(expected, droot.np, 1.e-12, 'rank-filtered repeated metric eigenvalues')                      #TEST
+
 def check_stationarity(w):
+    for block in ('R1 TANGENT', 'R2 TANGENT', 'TANGENT DUALITY'):
+        compare_values(0., w.variable('DLPNO CCSD FOCK ' + block + ' ERROR'), 1.e-8,
+                       'CCSD projected Fock source ' + block)                                                 #TEST
     check_local_spaces(w)
     check_lmp2(w)
     check_truncation(w)

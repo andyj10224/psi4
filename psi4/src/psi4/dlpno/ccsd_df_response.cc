@@ -48,7 +48,51 @@ struct PairDFBlock {
     PairDFSpace left, right;
     SharedMatrix raw, bar;
 };
+// The Frechet derivative of a real symmetric spectral function is
+// self-adjoint. Use the identical kernel for the Lambda pullback and tangent.
+struct PairMetricRoot {
+    SharedMatrix U, half;
+    SharedVector eig;
+    std::vector<double> h;
+    explicit PairMetricRoot(const SharedMatrix& J) {
+        const int nq = J->nrow();
+        U = J->clone();
+        eig = std::make_shared<Vector>(nq);
+        J->diagonalize(U, eig);
+        const double cut = 1.e-14 * std::max(std::abs((*eig)(0)), std::abs((*eig)(nq - 1)));
+        h.resize(nq);
+        auto W = U->clone();
+        for (int q = 0; q < nq; ++q) {
+            double e = (*eig)(q);
+            h[q] = e > 0. && e >= cut ? 1. / std::sqrt(e) : 0.;
+            W->scale_column(0, q, h[q]);
+        }
+        half = linalg::doublet(W, U, false, true);
+    }
+    SharedMatrix derivative(const SharedMatrix& direction) const {
+        const int nq = h.size();
+        auto z = linalg::triplet(U, direction, U, true, false, false);
+        for (int a = 0; a < nq; ++a)
+            for (int b = 0; b < nq; ++b) {
+                double f = 0.;
+                if (h[a] && h[b])
+                    f = -h[a] * h[b] / (std::sqrt((*eig)(a)) + std::sqrt((*eig)(b)));
+                else if (h[a] != h[b])
+                    f = (h[a] - h[b]) / ((*eig)(a) - (*eig)(b));
+                (*z)(a, b) *= f;
+            }
+        return linalg::triplet(U, z, U, false, false, true);
+    }
+};
 }  // namespace
+
+std::pair<SharedMatrix,SharedMatrix> pair_metric_tangent(SharedMatrix metric, SharedMatrix derivative) {
+    if (!metric || !derivative || metric->nirrep() != 1 || derivative->nirrep() != 1 ||
+        !metric->nrow() || metric->nrow() != metric->ncol() || metric->nrow() != derivative->nrow() ||
+        metric->ncol() != derivative->ncol()) throw PSIEXCEPTION("Invalid pair fitting metric tangent.");
+    PairMetricRoot root(metric);
+    return {root.half, root.derivative(derivative)};
+}
 
 SharedMatrix DLPNOCCSD_T::pair_df_response(int p, std::vector<ThreeCenterDensity>& density) {
     const auto [i, j] = ij_to_i_j_[p];
@@ -60,18 +104,8 @@ SharedMatrix DLPNOCCSD_T::pair_df_response(int p, std::vector<ThreeCenterDensity
     auto Jbar = std::make_shared<Matrix>(nq, nq);
     if (!nq || !n) return Jbar;
 
-    auto U = J->clone();
-    auto eig = std::make_shared<Vector>(nq);
-    J->diagonalize(U, eig);
-    const double cut = 1.e-14 * std::max(std::abs((*eig)(0)), std::abs((*eig)(nq - 1)));
-    std::vector<double> h(nq);
-    auto W = U->clone();
-    for (int q = 0; q < nq; ++q) {
-        double e = (*eig)(q);
-        h[q] = e > 0. && e >= cut ? 1. / std::sqrt(e) : 0.;
-        W->scale_column(0, q, h[q]);
-    }
-    auto half = linalg::doublet(W, U, false, true);
+    PairMetricRoot root(J);
+    const auto& half = root.half;
     auto half_bar = Jbar->clone();
     // DGESV contractions (mixed J/K and MP2-origin exchange) use the unfiltered inverse.
     auto inv = J->clone();
@@ -207,17 +241,7 @@ SharedMatrix DLPNOCCSD_T::pair_df_response(int p, std::vector<ThreeCenterDensity
 
     // Stable divided differences of the inverse square root, including a
     // transition between kept and discarded eigenvectors at fixed metric rank.
-    auto z = linalg::triplet(U, half_bar, U, true, false, false);
-    for (int a = 0; a < nq; ++a)
-        for (int b = 0; b < nq; ++b) {
-            double f = 0.;
-            if (h[a] && h[b])
-                f = -h[a] * h[b] / (std::sqrt((*eig)(a)) + std::sqrt((*eig)(b)));
-            else if (h[a] != h[b])
-                f = (h[a] - h[b]) / ((*eig)(a) - (*eig)(b));
-            (*z)(a, b) *= f;
-        }
-    Jbar->add(linalg::triplet(U, z, U, false, false, true));
+    Jbar->add(root.derivative(half_bar));
     Jbar->hermitivitize();
     return Jbar;
 }

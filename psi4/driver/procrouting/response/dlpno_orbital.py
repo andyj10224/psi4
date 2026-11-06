@@ -603,6 +603,19 @@ class LMP2Tangent(NamedTuple):
     amplitudes: dict
 
 
+def _transport_pno_frame(Y, selection, S, dS, ij):
+    if selection.retained_density.shape != S.shape or selection.retained_density_tangent.shape != S.shape:
+        raise ValueError(f"Invalid PNO response for {ij}.")
+    if (abs(np.sum(selection.retained_density*S)-Y.shape[1]) > 2.e-7
+            or not np.allclose(selection.retained_density @ S @ Y, Y, atol=2.e-8, rtol=0)):
+        raise ValueError(f"Retained PNO space disagrees with the forward frame for {ij}.")
+    dY = selection.retained_density_tangent @ S @ Y + .5*Y @ (Y.T @ dS @ Y)
+    motion = Y.T @ S @ dY
+    if not np.allclose(motion+motion.T+Y.T @ dS @ Y, 0., atol=2.e-8, rtol=0):
+        raise ValueError(f"Inconsistent moving PNO metric for {ij}.")
+    return dY
+
+
 def coupled_lmp2_tangent(wfn, first_pno, exchange_derivative, doverlap, dfock, doccupied_fock):
     """Differentiate the converged first-space amplitudes on the retained native graph.
 
@@ -620,17 +633,7 @@ def coupled_lmp2_tangent(wfn, first_pno, exchange_derivative, doverlap, dfock, d
     dy, dk = {}, {}
     for ij, block in frames.items():
         Y = block.np
-        first = first_pno[ij]
-        if first.retained_density.shape != S.shape or first.retained_density_tangent.shape != S.shape:
-            raise ValueError(f"Invalid first-PNO response for {ij}.")
-        if (abs(np.sum(first.retained_density*S)-Y.shape[1]) > 2.e-7
-                or not np.allclose(first.retained_density @ S @ Y, Y, atol=2.e-8, rtol=0)):
-            raise ValueError(f"First-PNO space disagrees with the forward LMP2 frame for {ij}.")
-        # In the parallel gauge, Y.T S dY = -.5 Y.T dS Y.
-        dY = first.retained_density_tangent @ S @ Y + .5*Y @ (Y.T @ doverlap @ Y)
-        overlap_motion = Y.T @ S @ dY
-        if not np.allclose(overlap_motion+overlap_motion.T+Y.T @ doverlap @ Y, 0., atol=2.e-8, rtol=0):
-            raise ValueError(f"Inconsistent moving first-PNO metric for {ij}.")
+        dY = _transport_pno_frame(Y, first_pno[ij], S, doverlap, ij)
         dy[ij] = core.Matrix.from_array(dY)
         dk[ij] = core.Matrix.from_array(exchange_derivative(ij,Y,dY))
     tangent = core.dlpno_lmp2_tangent(wfn, dy, dk, core.Matrix.from_array(doverlap),
@@ -660,3 +663,104 @@ def final_pno_tangent(wfn, lmp2):
             raise ValueError(f"Reconstructed final PNO space disagrees with the forward pair {ij}.")
         result[ij] = selection
     return result
+
+class CCSDPairFrameResponse(NamedTuple):
+    frames: dict
+    tangents: dict
+    overlap: np.ndarray
+    doverlap: np.ndarray
+
+    def overlap_tangent(self, p, q):
+        """One requested rectangular overlap; ij and ji share a virtual frame."""
+        p, q = tuple(sorted(p)), tuple(sorted(q))
+        yp, yq = self.frames[p], self.frames[q]
+        return (self.tangents[p].T @ self.overlap @ yq + yp.T @ self.doverlap @ yq
+                + yp.T @ self.overlap @ self.tangents[q])
+
+
+def ccsd_pair_frames(wfn, final, doverlap):
+    """Parallel-transport the native semicanonical CCSD frames."""
+    from psi4 import core
+    frames = {ij: m.np.copy() for ij,m in core.dlpno_lmp2_blocks(wfn,'FINAL_FRAME').items()}
+    if frames.keys() != final.keys():
+        raise ValueError("Expected one final PNO selection response per retained CCSD pair.")
+    S = wfn.reference_wavefunction().S().np
+    dy = {ij:_transport_pno_frame(y,final[ij],S,doverlap,ij) for ij,y in frames.items()}
+    return CCSDPairFrameResponse(frames,dy,S,doverlap)
+
+
+def ccsd_projected_fock_source(wfn, pair_frames, dlmo, dfock):
+    """Contribution to dR/dv through bare OO/OV/VV Fock blocks, at fixed T and overlap maps.
+
+    dlmo and dfock are the relaxed active LMO and AO Fock nuclear derivatives.
+    Returns singles by occupied index and doubles by unique occupied pair.
+    """
+    from psi4 import core
+    L = wfn.variable('DLPNO RESPONSE ACTIVE LMOS').np
+    F = wfn.reference_wavefunction().Fa().np
+    half = dlmo.T @ F @ L
+    oo = half + half.T + L.T @ dfock @ L
+    domains = core.dlpno_lmp2_blocks(wfn, "OCC_DOMAIN")
+    ov, vv = {}, {}
+    for ij,y in pair_frames.frames.items():
+        dy = pair_frames.tangents[ij]
+        dom = domains[ij].np[:,0].astype(int)
+        lm = L[:,dom]
+        ov[ij] = core.Matrix.from_array(dlmo[:,dom].T @ F @ y + lm.T @ dfock @ y + lm.T @ F @ dy)
+        half = dy.T @ F @ y
+        vv[ij] = core.Matrix.from_array(half + half.T + y.T @ dfock @ y)
+    b1,b2 = core.dlpno_ccsd_fock_source(wfn,core.Matrix.from_array(oo),ov,vv)
+    return [b.np.copy() for b in b1], {ij:b.np.copy() for ij,b in b2.items()}
+
+
+class PairDFFactors(NamedTuple):
+    oo: np.ndarray
+    ov: np.ndarray
+    vv: np.ndarray
+
+
+def ccsd_pair_df_factors(metric, dmetric, raw, draw):
+    """Whiten the three projected pair blocks and differentiate the same CCSD metric as Lambda."""
+    from psi4 import core
+    root, droot = core.dlpno_pair_metric_tangent(core.Matrix.from_array(metric), core.Matrix.from_array(dmetric))
+    values, tangents = [], []
+    for q,dq in zip(raw,draw):
+        if q.shape != dq.shape or q.shape[0] != root.np.shape[0]:
+            raise ValueError("Incompatible raw CCSD pair fitting blocks.")
+        flat = q.reshape(q.shape[0],-1)
+        values.append((root.np @ flat).reshape(q.shape))
+        tangents.append((droot.np @ flat + root.np @ dq.reshape(flat.shape)).reshape(q.shape))
+    return PairDFFactors(*values), PairDFFactors(*tangents)
+
+
+def ccsd_direct_df_source(wfn, ij, pair_frames, factors, tangent):
+    """Doubles source from Jiang Eqs. 75 (direct product) and 76 (virtual ladder).
+
+    Supply pair-local metric-whitened factors in the native auxiliary/domain
+    ordering; amplitudes are fixed. The projected singles move with S_p,mm.
+    """
+    from psi4 import core
+    i,j = ij
+    domain,singles,state = core.dlpno_ccsd_df_pair_state(wfn,i,j)
+    tn, t = state['TN'].np, state['T2'].np
+    dtn = np.stack([(pair_frames.overlap_tangent(ij,(m,m)) @ s.np).ravel()
+                    for m,s in zip(domain,singles)])
+    def dressed(m, side):
+        row = domain.index(m)
+        oi = state['O'+side].np
+        vi = state['V'+side].np
+        oo = factors.oo[:,row,:] + factors.ov @ tn[row]
+        v = factors.ov[:,row,:] - oi @ tn + factors.vv @ tn[row]
+        if not (np.allclose(oo,oi,rtol=1.e-8,atol=1.e-9)
+                and np.allclose(v,vi,rtol=1.e-8,atol=1.e-9)):
+            raise ValueError(f"DF factors disagree with native T1 dressing for {ij}.")
+        doi = tangent.oo[:,row,:] + tangent.ov @ tn[row] + factors.ov @ dtn[row]
+        dv = (tangent.ov[:,row,:] - doi @ tn - oi @ dtn +
+              tangent.vv @ tn[row] + factors.vv @ dtn[row])
+        return vi,dv
+    vi,dvi = dressed(i,'I')
+    vj,dvj = dressed(j,'J')
+    v = factors.vv - tn.T @ factors.ov
+    dv = tangent.vv - dtn.T @ factors.ov - tn.T @ tangent.ov
+    ladder = dv @ t @ v.transpose(0,2,1) + v @ t @ dv.transpose(0,2,1)
+    return dvi.T @ vj + vi.T @ dvj + ladder.sum(axis=0)

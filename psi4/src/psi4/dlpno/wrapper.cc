@@ -54,6 +54,19 @@ DLPNOCCSD_T::PairBlocks lmp2_tangent(SharedWavefunction wfn, const DLPNOCCSD_T::
     return local->lmp2_tangent(dy,dk,ds,df,dfoo);
 }
 
+std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> ccsd_fock_source(
+    SharedWavefunction wfn, SharedMatrix oo, const DLPNOCCSD::PairBlocks& ov, const DLPNOCCSD::PairBlocks& vv) {
+    auto local = std::dynamic_pointer_cast<DLPNOCCSD_T>(wfn);
+    if (!local) throw PSIEXCEPTION("CCSD residual response requires an RHF DLPNO gradient model.");
+    return local->ccsd_fock_source(oo,ov,vv);
+}
+
+DLPNOCCSD::DFPairState ccsd_df_pair_state(SharedWavefunction wfn, int i, int j) {
+    auto local = std::dynamic_pointer_cast<DLPNOCCSD_T>(wfn);
+    if (!local) throw PSIEXCEPTION("CCSD response requires an RHF DLPNO gradient model.");
+    return local->ccsd_df_pair_state(i,j);
+}
+
 SharedWavefunction dlpno(SharedWavefunction ref_wfn, Options& options) {
 
     const auto reference = options.get_str("REFERENCE");

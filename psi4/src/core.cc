@@ -185,6 +185,11 @@ SharedWavefunction dlpno(SharedWavefunction, Options&);
 SharedMatrix orbital_response_action(SharedWavefunction,const std::string&,SharedMatrix);
 using PairBlocks = std::map<std::pair<int,int>, SharedMatrix>;
 PairBlocks lmp2_blocks(SharedWavefunction,const std::string&);
+std::pair<SharedMatrix,SharedMatrix> pair_metric_tangent(SharedMatrix,SharedMatrix);
+std::tuple<std::vector<int>,std::vector<SharedMatrix>,std::map<std::string,SharedMatrix>>
+    ccsd_df_pair_state(SharedWavefunction,int,int);
+std::pair<std::vector<SharedMatrix>, PairBlocks> ccsd_fock_source(
+    SharedWavefunction,SharedMatrix,const PairBlocks&,const PairBlocks&);
 PairBlocks lmp2_tangent(SharedWavefunction,const PairBlocks&,const PairBlocks&,SharedMatrix,SharedMatrix,SharedMatrix);
 }
 namespace f12 {
@@ -1423,6 +1428,12 @@ PYBIND11_MODULE(core, core) {
     core.def("dct", py_psi_dct, "ref_wfn"_a, "Runs the density cumulant (functional) theory code.");
     core.def("dfmp2", py_psi_dfmp2, "ref_wfn"_a, "Runs the DF-MP2 code.");
     core.def("dlpno", py_psi_dlpno, "Runs the DLPNO codes.");
+    core.def("dlpno_pair_metric_tangent", &dlpno::pair_metric_tangent, "metric"_a, "direction"_a,
+             "Local inverse square root of the CCSD fitting metric and its fixed-rank derivative.");
+    core.def("dlpno_ccsd_df_pair_state", &dlpno::ccsd_df_pair_state, "wfn"_a, "i"_a, "j"_a,
+             "Local CCSD amplitudes and dressed DF intermediates for one unique retained pair.");
+    core.def("dlpno_ccsd_fock_source", &dlpno::ccsd_fock_source, "wfn"_a, "oo"_a, "ov"_a, "vv"_a,
+             "CCSD singles and doubles residual source from projected bare Fock derivatives.");
     core.def("dlpno_lmp2_blocks", &dlpno::lmp2_blocks, "wfn"_a, "block"_a,
              "First-space AO frames or converged amplitudes keyed by unique occupied pair.");
     core.def("dlpno_lmp2_tangent", &dlpno::lmp2_tangent, "wfn"_a, "frame_derivatives"_a,

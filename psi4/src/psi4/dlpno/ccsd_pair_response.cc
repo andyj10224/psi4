@@ -61,6 +61,78 @@ SharedMatrix outer(const SharedMatrix& a, const SharedMatrix& b) { return linalg
 SharedMatrix zeros_like(const SharedMatrix& m) { return std::make_shared<Matrix>(m->nrow(), m->ncol()); }
 }  // namespace
 
+DLPNOCCSD::DFPairState DLPNOCCSD::ccsd_df_pair_state(int i, int j) const {
+    if (!gradient_model_ || i < 0 || j < i || j >= T_ia_.size() || i_j_to_ij_[i][j] < 0)
+        throw PSIEXCEPTION("Expected a unique retained RHF CCSD pair.");
+    const int p = i_j_to_ij_[i][j], rev = ij_to_ji_[p];
+    const auto& dom = lmopair_to_lmos_[p];
+    std::vector<SharedMatrix> singles;
+    for (int m : dom) singles.push_back(T_ia_[m]->clone());
+    auto aux = std::make_shared<Matrix>(lmopair_to_ribfs_[p].size(),1);
+    for (int q = 0; q < aux->nrow(); ++q) (*aux)(q,0) = lmopair_to_ribfs_[p][q];
+    return {dom, singles, {{"AUX",aux}, {"TN", T_n_ij_.at(p)->clone()}, {"T2", T_iajb_.at(p)->clone()},
+                           {"OI", i_Qk_t1_.at(p)->clone()}, {"OJ", i_Qk_t1_.at(rev)->clone()},
+                           {"VI", i_Qa_t1_.at(p)->clone()}, {"VJ", i_Qa_t1_.at(rev)->clone()}}};
+}
+
+// Partial derivative with respect to the projected bare Fock blocks. The CCSD
+// amplitudes, interpair overlaps and two-electron inputs are independent here.
+std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> DLPNOCCSD::ccsd_fock_source(
+    SharedMatrix oo, const PairBlocks& ov, const PairBlocks& vv) {
+    const int no = T_ia_.size();
+    if (!gradient_model_ || !oo || oo->nirrep() != 1 || oo->nrow() != no || oo->ncol() != no)
+        throw PSIEXCEPTION("Invalid occupied Fock tangent for the RHF CCSD gradient model.");
+    auto r1 = zero_blocks(T_ia_);
+    PairBlocks r2;
+    auto kj = oo->clone();
+    for (int p = 0; p < ij_to_i_j_.size(); ++p) {
+        auto [i, j] = ij_to_i_j_[p];
+        if (i > j) continue;
+        const auto ij = std::make_pair(i, j);
+        auto valid = [&](const PairBlocks& blocks, int rows) {
+            auto it = blocks.find(ij);
+            return it != blocks.end() && it->second && it->second->nirrep() == 1 &&
+                   it->second->nrow() == rows && it->second->ncol() == n_pno_[p];
+        };
+        if (!valid(ov, lmopair_to_lmos_[p].size()) || !valid(vv, n_pno_[p]))
+            throw PSIEXCEPTION("Invalid projected Fock tangent for a retained CCSD pair.");
+        const auto& h = ov.at(ij);
+        const auto& tn = T_n_ij_.at(p);
+        auto fab = vv.at(ij)->clone();
+        fab->subtract(linalg::doublet(tn, h, true, false));
+        if (i == j) {
+            auto ti = T_ia_[i];
+            r1[i]->add(row_as_column(h, lmopair_to_lmos_dense_[p][i]));
+            r1[i]->add(linalg::doublet(fab, ti));
+            auto column = submatrix_rows_and_cols(*oo, lmopair_to_lmos_[p], {i});
+            r1[i]->subtract(linalg::doublet(tn, column, true, false));
+        }
+        auto e = linalg::doublet(T_iajb_[p], fab, false, true);
+        e->add(linalg::doublet(fab, T_iajb_[p]));
+        r2[ij] = e;
+    }
+    for (int p = 0; p < ij_to_i_j_.size(); ++p) {
+        auto [i, j] = ij_to_i_j_[p];
+        auto ij = std::make_pair(std::min(i,j), std::max(i,j));
+        auto ii = i_j_to_ij_[i][i];
+        auto h = row_as_column(ov.at(ij), lmopair_to_lmos_dense_[p][j]);
+        r1[i]->add(linalg::triplet(S_PNO(p,ii), Tt_iajb_[p], h, true, false, false));
+        (*kj)(i,j) += row_as_column(ov.at({j,j}), lmopair_to_lmos_dense_[i_j_to_ij_[j][j]][i])->vector_dot(T_ia_[j]);
+    }
+    for (int p = 0; p < ij_to_i_j_.size(); ++p) {
+        auto [i,j] = ij_to_i_j_[p];
+        auto ij = std::make_pair(std::min(i,j),std::max(i,j));
+        for (int k : lmopair_to_lmos_[i_j_to_ij_[i][i]]) {
+            auto ik = i_j_to_ij_[i][k];
+            auto s = S_PNO(p,ik);
+            auto term = linalg::triplet(s,T_iajb_[ik],s,false,false,true);
+            if (i == j) term->add(term->transpose());
+            r2.at(ij)->axpy(-(*kj)(k,j), i > j ? term->transpose() : term);
+        }
+    }
+    return {r1,r2};
+}
+
 void DLPNOCCSD::form_ccsd_pair_response() {
     CCAdjoints g(*this, lambda_ia_, lambda_iajb_);
     reverse_R1(g);
@@ -408,6 +480,9 @@ void DLPNOCCSD::check_ccsd_pair_response() {
                 vars.push_back({&slot, slot, d});
                 return d;
             };
+            std::vector<SharedMatrix> fock1, plus1, minus1, plus2, minus2;
+            PairBlocks fock2;
+            double dual = 0.;
             if (group == "INTEGRAL") {
                 for (int p = 0; p < ij_to_i_j_.size(); ++p) {
                     auto& b = ccsd_pair_response_[p];
@@ -434,6 +509,25 @@ void DLPNOCCSD::check_ccsd_pair_response() {
                     for (const auto& [j, bar] : ccsd_fov_response_[i]) analytic += (*ov)(i, j) * bar;
                 for (int i = 0; i < ccsd_fvv_response_.size(); ++i)
                     for (const auto& [j, bar] : ccsd_fvv_response_[i]) analytic += (*vv)(i, j) * bar;
+                PairBlocks hov, hvv;
+                for (int p = 0; p < ij_to_i_j_.size(); ++p) {
+                    const auto ij = ij_to_i_j_[p];
+                    if (ij.first > ij.second) continue;
+                    const auto& paos = lmopair_to_paos_[p];
+                    hov[ij] = linalg::doublet(submatrix_rows_and_cols(*ov, lmopair_to_lmos_[p], paos), X_pno_[p]);
+                    hvv[ij] = linalg::triplet(X_pno_[p], submatrix_rows_and_cols(*vv,paos,paos),
+                                              X_pno_[p],true,false,false);
+                }
+                std::tie(fock1,fock2) = ccsd_fock_source(oo,hov,hvv);
+                for (int i = 0; i < fock1.size(); ++i) {
+                    dual += lambda_ia_[i]->vector_dot(fock1[i]) +
+                            2.*T_ia_[i]->vector_dot(row_as_column(hov.at({i,i}),lmopair_to_lmos_dense_[i_j_to_ij_[i][i]][i]));
+                }
+                for (int p = 0; p < ij_to_i_j_.size(); ++p) {
+                    auto [i,j] = ij_to_i_j_[p];
+                    auto b = fock2.at({std::min(i,j),std::max(i,j)});
+                    dual += .5*lambda_iajb_[p]->vector_dot(i > j ? b->transpose() : b);
+                }
             } else {
                 auto ds = add(S_pao_, {}, true);
                 for (int i = 0; i < ccsd_overlap_response_.size(); ++i)
@@ -456,6 +550,9 @@ void DLPNOCCSD::check_ccsd_pair_response() {
                         L_iajb_[p]->subtract(K_iajb_[p]->transpose());
                     }
                 if (group == "OVERLAP") compute_pno_overlaps();
+                if (group == "FOCK")
+                    return ccsd_lagrangian(lambda_ia_, lambda_iajb_, step > 0 ? &plus1 : &minus1,
+                                           step > 0 ? &plus2 : &minus2);
                 return ccsd_lagrangian(lambda_ia_, lambda_iajb_);
             };
             double numeric;
@@ -463,6 +560,25 @@ void DLPNOCCSD::check_ccsd_pair_response() {
                 constexpr double h = 1.e-5;
                 double plus = sample(h);
                 numeric = (plus - sample(-h)) / (2 * h);
+                if (group == "FOCK") {
+                    auto diff = [h](SharedMatrix plus, SharedMatrix minus, SharedMatrix b) {
+                        plus->subtract(minus);
+                        plus->scale(.5/h);
+                        plus->subtract(b);
+                        return plus->absmax();
+                    };
+                    double e1 = 0., e2 = 0.;
+                    for (int i = 0; i < fock1.size(); ++i)
+                        e1 = std::max(e1, diff(plus1[i],minus1[i],fock1[i]));
+                    for (int p = 0; p < ij_to_i_j_.size(); ++p) {
+                        auto [i,j] = ij_to_i_j_[p];
+                        auto b = fock2.at({std::min(i,j),std::max(i,j)});
+                        e2 = std::max(e2, diff(plus2[p],minus2[p],i > j ? b->transpose() : b));
+                    }
+                    set_scalar_variable("DLPNO CCSD FOCK R1 TANGENT ERROR",e1);
+                    set_scalar_variable("DLPNO CCSD FOCK R2 TANGENT ERROR",e2);
+                    set_scalar_variable("DLPNO CCSD FOCK TANGENT DUALITY ERROR",std::abs(dual-analytic));
+                }
             } catch (...) {
                 restore();
                 throw;

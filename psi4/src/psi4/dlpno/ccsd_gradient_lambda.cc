@@ -474,7 +474,8 @@ void DLPNOCCSD::solve_gradient_lambda() {
     }
 }
 
-double DLPNOCCSD::ccsd_lagrangian(const std::vector<SharedMatrix>& z1, const std::vector<SharedMatrix>& z2) {
+double DLPNOCCSD::ccsd_lagrangian(const std::vector<SharedMatrix>& z1, const std::vector<SharedMatrix>& z2,
+                                  std::vector<SharedMatrix>* right1, std::vector<SharedMatrix>* right2) {
     std::vector<SharedMatrix> r1, r2, rn;
     for (const auto& t : T_ia_) r1.push_back(t->clone());
     for (const auto& t : T_iajb_) {
@@ -498,6 +499,8 @@ double DLPNOCCSD::ccsd_lagrangian(const std::vector<SharedMatrix>& z1, const std
         tau->add(T_iajb_[pair]);
         value += tau->vector_dot(L_iajb_[pair]) + 0.5 * z2[pair]->vector_dot(r2[pair]);
     }
+    if (right1) *right1 = std::move(r1);
+    if (right2) *right2 = std::move(r2);
     return value;
 }
 

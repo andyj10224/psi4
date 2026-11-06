@@ -748,7 +748,8 @@ class PSI_API DLPNOCCSD : public DLPNO {
     std::vector<SharedMatrix> truncation_parent_, truncation_parent_bar_;
     void form_ccsd_pair_response();
     void backtransform_ccsd_one_body();
-    double ccsd_lagrangian(const std::vector<SharedMatrix>& z1, const std::vector<SharedMatrix>& z2);
+    double ccsd_lagrangian(const std::vector<SharedMatrix>& z1, const std::vector<SharedMatrix>& z2,
+                           std::vector<SharedMatrix>* right1 = nullptr, std::vector<SharedMatrix>* right2 = nullptr);
     void check_ccsd_pair_response();
     struct CCAdjoints;
     void estimate_gradient_lambda_memory();
@@ -772,6 +773,11 @@ class PSI_API DLPNOCCSD : public DLPNO {
     void print_integral_sparsity();
 
    public:
+    using PairBlocks = std::map<std::pair<int,int>, SharedMatrix>;
+    std::pair<std::vector<SharedMatrix>, PairBlocks> ccsd_fock_source(
+        SharedMatrix oo, const PairBlocks& ov, const PairBlocks& vv);
+    using DFPairState = std::tuple<std::vector<int>, std::vector<SharedMatrix>, std::map<std::string,SharedMatrix>>;
+    DFPairState ccsd_df_pair_state(int i, int j) const;
     DLPNOCCSD(SharedWavefunction ref_wfn, Options& options);
     ~DLPNOCCSD() override;
 
@@ -1039,7 +1045,6 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     ~DLPNOCCSD_T() override;
     SharedMatrix orbital_response_action(const std::string& block, const SharedMatrix& rhs) const;
 
-    using PairBlocks = std::map<std::pair<int,int>, SharedMatrix>;
     PairBlocks lmp2_blocks(const std::string& block) const;
     PairBlocks lmp2_tangent(const PairBlocks& dy, const PairBlocks& dk, SharedMatrix ds,
                             SharedMatrix df, SharedMatrix dfoo);

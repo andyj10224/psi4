@@ -4,7 +4,8 @@ import psi4
 from scipy.optimize import linear_sum_assignment
 from scipy.sparse.linalg import LinearOperator, gmres
 from psi4.driver.procrouting.response.dlpno_orbital import (
-    boys_nuclear_tangent, first_pno_tangent, coupled_lmp2_tangent, pair_exchange_tangent, final_pno_tangent)
+    boys_nuclear_tangent, first_pno_tangent, coupled_lmp2_tangent, pair_exchange_tangent, final_pno_tangent,
+    ccsd_pair_frames, ccsd_projected_fock_source, ccsd_direct_df_source, ccsd_pair_df_factors, PairDFFactors)
 from first_pno import raw, relax_fock
 from water_hvp import BASE, STRETCH, molecule
 
@@ -43,6 +44,7 @@ def check(frozen):
             args.extend((qall[i] @ y, dqall[i] @ y + qall[i] @ dy))
         return pair_exchange_tangent(J,dJ,*args)
     frames, amplitudes = blocks(w,'FRAME'), blocks(w,'AMPLITUDE')
+    domains = blocks(w, 'OCC_DOMAIN')
     foo = L.T @ F @ L
     half = dL.T @ F @ L
     dfoo = half + half.T + L.T @ df @ L
@@ -53,6 +55,30 @@ def check(frozen):
                                        dfoo[i,i]+dfoo[j,j],np.eye(V.shape[1]),y.shape[1],i==j)
     out = coupled_lmp2_tangent(w,first,lambda ij,y,dy: exchange(ij,y,dy)[1],ds,df,dfoo)
     final = final_pno_tangent(w,out)
+    ccsd_frames = ccsd_pair_frames(w,final,ds)
+    b1,b2 = ccsd_projected_fock_source(w,ccsd_frames,dL,df)
+    edge = max(((p,q) for p in frames for q in frames if p != q and set(p) & set(q)),
+               key=lambda pq: abs(ccsd_frames.frames[pq[0]].shape[1]-ccsd_frames.frames[pq[1]].shape[1]))
+    left_pair,right_pair = edge
+    # One off-diagonal target exercises the two direct DF doubles terms.
+    target = next(ij for ij in frames if ij[0]!=ij[1])
+    dom,ts,state = psi4.core.dlpno_ccsd_df_pair_state(w,*target)
+    aux_idx = state['AUX'].np[:,0].astype(int)
+    Js, dJs = J[np.ix_(aux_idx,aux_idx)], dJ[np.ix_(aux_idx,aux_idx)]
+    target_t = state['T2'].np.copy()
+    def projected(left,dleft,right,dright):
+        value = left.T @ Q[aux_idx] @ right
+        derivative = (dleft.T @ Q[aux_idx] @ right + left.T @ dQ[aux_idx] @ right +
+                      left.T @ Q[aux_idx] @ dright)
+        return value,derivative
+    occ, docc = L[:,dom], dL[:,dom]
+    z, dz = ccsd_frames.frames[target], ccsd_frames.tangents[target]
+    blocks0,blocks1 = zip(projected(occ,docc,occ,docc),projected(occ,docc,z,dz),projected(z,dz,z,dz))
+    b,db = ccsd_pair_df_factors(Js,dJs,PairDFFactors(*blocks0),PairDFFactors(*blocks1))
+    df_direct = ccsd_direct_df_source(w,target,ccsd_frames,b,db)
+    analytic = np.concatenate([ccsd_frames.overlap_tangent(left_pair,right_pair).ravel()] +
+                              [block.ravel() for block in b1] + [b2[ij].ravel() for ij in frames] +
+                              [df_direct.ravel()])
     final_frames = blocks(w,'FINAL_FRAME')
     # Rotate each parent frame internally and compensate the amplitude derivative.
     shifted = type(out)({}, {})
@@ -143,7 +169,7 @@ def check(frozen):
         op = LinearOperator((rhs.size,rhs.size),matvec=apply,dtype=float)
         flat, info = gmres(op,rhs,rtol=3.e-14,atol=0.)
         assert info == 0 and np.max(abs(apply(flat)-rhs)) < 1.e-11
-        physical, final_densities = {}, {}
+        physical, final_densities, ov, vv, aligned = {}, {}, {}, {}, {}
         for (i,j),t in unpack(flat).items():
             parent = y[i,j]
             physical[i,j] = parent @ t @ parent.T
@@ -152,18 +178,47 @@ def check(frozen):
             _, u = np.linalg.eigh(density)
             keep = parent @ u[:,-final_frames[i,j].shape[1]:]
             final_densities[i,j] = keep @ keep.T
-        return physical, final_densities
-    at_origin, final_origin = sample(BASE)
+            # Positive polar overlap fixes parallel transport to first order at the origin.
+            a,_,bt = np.linalg.svd(keep.T @ S @ final_frames[i,j])
+            z = keep @ (a @ bt)
+            aligned[i,j] = z
+            ov[i,j] = psi4.core.Matrix.from_array(l[:,domains[i,j][:,0].astype(int)].T @ scf.Fa().np @ z)
+            vv[i,j] = psi4.core.Matrix.from_array(z.T @ scf.Fa().np @ z)
+        val1,val2 = psi4.core.dlpno_ccsd_fock_source(w,psi4.core.Matrix.from_array(f),ov,vv)
+        # Independent forward evaluation, including the instantaneous auxiliary metric.
+        vals,U = np.linalg.eigh(metric[np.ix_(aux_idx,aux_idx)])
+        W = (U/np.sqrt(vals)) @ U.T
+        bq = (W @ q[aux_idx].reshape(len(vals),-1)).reshape(len(vals),q.shape[1],q.shape[2])
+        lm, z = l[:,dom], aligned[target]
+        oo, ovf, vvf = lm.T @ bq @ lm, lm.T @ bq @ z, z.T @ bq @ z
+        tn = np.stack([(z.T @ scf.S().np @ aligned[m,m] @ s.np).ravel() for m,s in zip(dom,ts)])
+        def via(m):
+            n = dom.index(m)
+            return ovf[:,n,:] - (oo[:,n,:]+ovf@tn[n]) @ tn + vvf @ tn[n]
+        dressed = vvf - tn.T @ ovf
+        direct = via(target[0]).T @ via(target[1]) + (dressed @ target_t @ dressed.transpose(0,2,1)).sum(axis=0)
+        samples = np.concatenate([(aligned[left_pair].T @ scf.S().np @ aligned[right_pair]).ravel()]
+                                 + [m.np.ravel() for m in val1] + [val2[ij].np.ravel() for ij in frames]
+                                 + [direct.ravel()])
+        return physical, final_densities, samples
+    at_origin, final_origin, _ = sample(BASE)
     for ij,y in frames.items():
         np.testing.assert_allclose(at_origin[ij],y @ amplitudes[ij] @ y.T,atol=2.e-8,rtol=0)
         np.testing.assert_allclose(final_origin[ij],final[ij].retained_density,atol=2.e-8,rtol=0)
-    estimates, final_estimates = [], []
+    estimates, final_estimates, fock_estimates = [], [], []
     for h in (.001,.0005,.00025,.000125):
-        plus, final_plus = sample(BASE+h*STRETCH)
-        minus, final_minus = sample(BASE-h*STRETCH)
+        plus, final_plus, plus_source = sample(BASE+h*STRETCH)
+        minus, final_minus, minus_source = sample(BASE-h*STRETCH)
+        fock_estimates.append((plus_source-minus_source)/(2*h))
         final_estimates.append({ij:(final_plus[ij]-final_minus[ij])/(2*h) for ij in frames})
         estimates.append({ij:(plus[ij]-minus[ij])/(2*h) for ij in frames})
     errors = [np.max(abs(dphysical[ij]-(4*estimates[-1][ij]-estimates[-2][ij])/3)) for ij in frames]
+    discrepancy = np.abs(analytic-(4*fock_estimates[-1]-fock_estimates[-2])/3)
+    nedge = ccsd_frames.overlap_tangent(left_pair,right_pair).size
+    nsingles = sum(x.size for x in b1)
+    print('projected CCSD errors',frozen, [part.max() for part in
+          np.split(discrepancy,[nedge,nedge+nsingles,analytic.size-df_direct.size])],flush=True)
+    np.testing.assert_allclose(discrepancy,0.,atol=3.e-8)
     final_errors = [np.max(abs(final[ij].retained_density_tangent -
                                (4*final_estimates[-1][ij]-final_estimates[-2][ij])/3)) for ij in frames]
     print('final PNO', frozen, 'truncated',len(truncated),'of',len(frames),'smallest gap',
