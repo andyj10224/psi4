@@ -520,11 +520,14 @@ def pair_exchange_tangent(metric, dmetric, qi, dqi, qj, dqj):
     return fitted.T @ qj, dfitted.T @ qj + fitted.T @ dqj
 
 
-class FirstPNOTangent(NamedTuple):
+class PNOSubspaceTangent(NamedTuple):
     occupations: np.ndarray
     boundary_gap: float
     retained_density: np.ndarray
     retained_density_tangent: np.ndarray
+
+
+FirstPNOTangent = PNOSubspaceTangent
 
 
 def first_pno_tangent(pao, dpao, overlap, doverlap, fock, dfock, exchange, dexchange,
@@ -564,6 +567,15 @@ def first_pno_tangent(pao, dpao, overlap, doverlap, fock, dfock, exchange, dexch
         raise ValueError("Unresolved semicanonical MP2 denominator.")
     t = k / denom
     dt = (dk + df @ t + t @ df - doccupied_sum*t) / denom
+    return _pno_selection_tangent(Y, dY, t, dt, retained, diagonal)
+
+
+def _pno_selection_tangent(Y, dY, t, dt, retained, diagonal):
+    """Retained AO density derivative in a moving orthonormal parent."""
+    n = Y.shape[1]
+    if (not 0 < retained <= n or dY.shape != Y.shape or t.shape != (n, n)
+            or dt.shape != t.shape):
+        raise ValueError("Invalid PNO selection rank or response block dimensions.")
     tt, dtt = 2*t - t.T, 2*dt - dt.T
     factor = .5 if diagonal else 1.
     density = factor*(tt @ t.T + tt.T @ t)
@@ -578,12 +590,12 @@ def first_pno_tangent(pao, dpao, overlap, doverlap, fock, dfock, exchange, dexch
         gaps = occ[None,:retained] - occ[retained:,None]
         gap = np.min(gaps)
         if gap <= 64*np.finfo(float).eps*max(np.max(abs(occ)), np.finfo(float).tiny):
-            raise ValueError("Unresolved retained/discarded first-PNO occupation boundary.")
+            raise ValueError("Unresolved retained/discarded PNO occupation boundary.")
         mixing = (drop.T @ ddensity @ keep) / gaps
         block = drop @ mixing @ keep.T
         dproj = block + block.T
     half = dY @ proj @ Y.T
-    return FirstPNOTangent(occ, gap, Y @ proj @ Y.T, half + half.T + Y @ dproj @ Y.T)
+    return PNOSubspaceTangent(occ, gap, Y @ proj @ Y.T, half + half.T + Y @ dproj @ Y.T)
 
 
 class LMP2Tangent(NamedTuple):
@@ -625,3 +637,26 @@ def coupled_lmp2_tangent(wfn, first_pno, exchange_derivative, doverlap, dfock, d
                                       core.Matrix.from_array(dfock), core.Matrix.from_array(doccupied_fock))
     return LMP2Tangent({ij: block.np.copy() for ij, block in dy.items()},
                        {ij: block.np.copy() for ij, block in tangent.items()})
+
+def final_pno_tangent(wfn, lmp2):
+    """AO final CCSD subspace densities and tangents for all unique retained pairs.
+
+    The LMP2 frame and amplitude derivatives must describe the same direction
+    in the native first-stage frames. Read the actual final ranks from the
+    energy calculation, including its trace, energy and minimum-rank criteria.
+    """
+    from psi4 import core
+    frames = core.dlpno_lmp2_blocks(wfn, 'FRAME')
+    amplitudes = core.dlpno_lmp2_blocks(wfn, 'AMPLITUDE')
+    final = core.dlpno_lmp2_blocks(wfn, 'FINAL_FRAME')
+    if frames.keys() != lmp2.frames.keys() or frames.keys() != lmp2.amplitudes.keys():
+        raise ValueError("Expected an LMP2 response for every unique final PNO pair.")
+    result = {}
+    for ij, parent in frames.items():
+        y = final[ij].np
+        selection = _pno_selection_tangent(parent.np, lmp2.frames[ij], amplitudes[ij].np,
+                                           lmp2.amplitudes[ij], y.shape[1], ij[0] == ij[1])
+        if not np.allclose(selection.retained_density, y @ y.T, rtol=1.e-8, atol=2.e-8):
+            raise ValueError(f"Reconstructed final PNO space disagrees with the forward pair {ij}.")
+        result[ij] = selection
+    return result

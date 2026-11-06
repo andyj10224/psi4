@@ -270,4 +270,29 @@ tensor derivative in an aligned occupied-pair convention:
  (Y_pT_pY_p^{\mathsf T})^v=Y_p^v T_p Y_p^{\mathsf T}
  +Y_p T_p^v Y_p^{\mathsf T}+Y_p T_p(Y_p^v)^{\mathsf T}.
 \end{equation}
+
+\section{Final CCSD PNO subspace after coupled LMP2}
+For $p=(ij)$ use the first-stage frame $Y$ and its derivative $Y^v$ from
+the previous section. Here $T$ is the converged coupled LMP2 amplitude
+matrix in $Y$ and $T^v$ its derivative in this same gauge. Define
+$\tilde T=2T-T^{\mathsf T}$ and $\eta=(1+\delta_{ij})^{-1}$.
+The final density and its derivative in the moving parent frame are
+\begin{align}
+ D &=\eta(\tilde T T^{\mathsf T}+\tilde T^{\mathsf T}T),\\
+ D^v&=\eta\big[\tilde T^v T^{\mathsf T}+\tilde T(T^v)^{\mathsf T}
+        +(\tilde T^v)^{\mathsf T}T+\tilde T^{\mathsf T}T^v\big].
+\end{align}
+For the fixed forward rank $r$, let $P=U_rU_r^{\mathsf T}$ project onto the
+$r$ leading eigenvectors of $D$. For retained $b$ and discarded $a$,
+\begin{align}
+ Z_{ab}&=\frac{(U_d^{\mathsf T}D^vU_r)_{ab}}{n_b-n_a},&
+ P^v &= U_d Z U_r^{\mathsf T}+U_r Z^{\mathsf T} U_d^{\mathsf T},\\
+ A &=Y P Y^{\mathsf T},&
+ A^v &= Y^v P Y^{\mathsf T}+Y P^v Y^{\mathsf T}+YP(Y^v)^{\mathsf T}.
+\end{align}
+Even when $r$ equals the parent rank, $A^v$ includes parent motion.
+The final semicanonical rotation within the retained space drops out of $A$.
+The AO coefficient-space projector is $AS$ and its derivative is $A^v S+A S^v$.
+As a sign and gauge test, changing $Y^v$ by $YK$ and $T^v$ by
+$TK-KT$ for $K=-K^{\mathsf T}$ leaves $A^v$ unchanged.
 \end{document}

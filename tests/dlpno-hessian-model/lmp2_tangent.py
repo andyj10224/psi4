@@ -4,7 +4,7 @@ import psi4
 from scipy.optimize import linear_sum_assignment
 from scipy.sparse.linalg import LinearOperator, gmres
 from psi4.driver.procrouting.response.dlpno_orbital import (
-    boys_nuclear_tangent, first_pno_tangent, coupled_lmp2_tangent, pair_exchange_tangent)
+    boys_nuclear_tangent, first_pno_tangent, coupled_lmp2_tangent, pair_exchange_tangent, final_pno_tangent)
 from first_pno import raw, relax_fock
 from water_hvp import BASE, STRETCH, molecule
 
@@ -52,6 +52,36 @@ def check(frozen):
         first[i,j] = first_pno_tangent(V,dV,S,ds,F,df,k,dk,foo[i,i]+foo[j,j],
                                        dfoo[i,i]+dfoo[j,j],np.eye(V.shape[1]),y.shape[1],i==j)
     out = coupled_lmp2_tangent(w,first,lambda ij,y,dy: exchange(ij,y,dy)[1],ds,df,dfoo)
+    final = final_pno_tangent(w,out)
+    final_frames = blocks(w,'FINAL_FRAME')
+    # Rotate each parent frame internally and compensate the amplitude derivative.
+    shifted = type(out)({}, {})
+    for ij,y in frames.items():
+        rot = np.zeros((y.shape[1],)*2)
+        if len(rot) > 1:
+            rot[1,0], rot[0,1] = .23, -.23
+        shifted.frames[ij] = out.frames[ij] + y @ rot
+        t = amplitudes[ij]
+        shifted.amplitudes[ij] = out.amplitudes[ij] + t @ rot - rot @ t
+    rotated = final_pno_tangent(w, shifted)
+    for ij in frames:
+        np.testing.assert_allclose(rotated[ij].retained_density_tangent,
+                                   final[ij].retained_density_tangent, atol=2.e-8, rtol=0)
+    truncated = [ij for ij in frames if final_frames[ij].shape[1] < frames[ij].shape[1]]
+    assert truncated
+    for ij, selection in final.items():
+        p, dp = selection.retained_density, selection.retained_density_tangent
+        np.testing.assert_allclose(dp @ S @ p + p @ ds @ p + p @ S @ dp, dp, atol=2.e-8, rtol=0)
+        # The spectral projector and density commute in the moving parent.
+        y, dy, t, dt = frames[ij], out.frames[ij], amplitudes[ij], out.amplitudes[ij]
+        tt, dtt = 2*t-t.T, 2*dt-dt.T
+        den = tt @ t.T + tt.T @ t
+        dden = dtt @ t.T + tt @ dt.T + dtt.T @ t + tt.T @ dt
+        proj = y.T @ S @ p @ S @ y
+        half = dy @ proj @ y.T
+        dproj = y.T @ S @ (dp-half-half.T) @ S @ y
+        np.testing.assert_allclose(dden @ proj + den @ dproj, dproj @ den + proj @ dden,
+                                   atol=2.e-10, rtol=0)
     dphysical = {}
     for ij, y in frames.items():
         dy, t = out.frames[ij], amplitudes[ij]
@@ -111,17 +141,41 @@ def check(frozen):
             return pack(r)
         rhs = -pack(kpair)
         op = LinearOperator((rhs.size,rhs.size),matvec=apply,dtype=float)
-        flat, info = gmres(op,rhs,rtol=2.e-13,atol=0.)
+        flat, info = gmres(op,rhs,rtol=3.e-14,atol=0.)
         assert info == 0 and np.max(abs(apply(flat)-rhs)) < 1.e-11
-        return {ij:y[ij] @ t @ y[ij].T for ij,t in unpack(flat).items()}
-    at_origin = sample(BASE)
+        physical, final_densities = {}, {}
+        for (i,j),t in unpack(flat).items():
+            parent = y[i,j]
+            physical[i,j] = parent @ t @ parent.T
+            tt = 2*t - t.T
+            density = (tt @ t.T + tt.T @ t)/(1+(i==j))
+            _, u = np.linalg.eigh(density)
+            keep = parent @ u[:,-final_frames[i,j].shape[1]:]
+            final_densities[i,j] = keep @ keep.T
+        return physical, final_densities
+    at_origin, final_origin = sample(BASE)
     for ij,y in frames.items():
         np.testing.assert_allclose(at_origin[ij],y @ amplitudes[ij] @ y.T,atol=2.e-8,rtol=0)
-    estimates = []
-    for h in (.001,.0005):
-        plus, minus = sample(BASE+h*STRETCH), sample(BASE-h*STRETCH)
+        np.testing.assert_allclose(final_origin[ij],final[ij].retained_density,atol=2.e-8,rtol=0)
+    estimates, final_estimates = [], []
+    for h in (.001,.0005,.00025,.000125):
+        plus, final_plus = sample(BASE+h*STRETCH)
+        minus, final_minus = sample(BASE-h*STRETCH)
+        final_estimates.append({ij:(final_plus[ij]-final_minus[ij])/(2*h) for ij in frames})
         estimates.append({ij:(plus[ij]-minus[ij])/(2*h) for ij in frames})
-    errors = [np.max(abs(dphysical[ij]-(4*estimates[1][ij]-estimates[0][ij])/3)) for ij in frames]
+    errors = [np.max(abs(dphysical[ij]-(4*estimates[-1][ij]-estimates[-2][ij])/3)) for ij in frames]
+    final_errors = [np.max(abs(final[ij].retained_density_tangent -
+                               (4*final_estimates[-1][ij]-final_estimates[-2][ij])/3)) for ij in frames]
+    print('final PNO', frozen, 'truncated',len(truncated),'of',len(frames),'smallest gap',
+          min(final[ij].boundary_gap for ij in truncated),'max error',max(final_errors),flush=True)
+    for k in range(1,len(final_estimates)):
+        errs = {ij:np.max(abs(final[ij].retained_density_tangent -
+                              (4*final_estimates[k][ij]-final_estimates[k-1][ij])/3)) for ij in frames}
+        print('extrapolation',k,'worst',max(errs,key=errs.get),max(errs.values()),flush=True)
+    scaled = [err/max(1.,np.max(abs(final[ij].retained_density_tangent)))
+              for ij,err in zip(frames, final_errors)]
+    print('maximum scaled final PNO error',max(scaled),flush=True)
+    assert max(scaled) < 2.e-7 and max(final_errors) < 1.e-6
     rms = w.variable('DLPNO LMP2 NUCLEAR TANGENT RESIDUAL')
     print('frozen',frozen,'unique pairs',len(frames),'edges',w.variable('DLPNO LMP2 RESPONSE EDGES'),
           'rectangular',w.variable('DLPNO LMP2 RECTANGULAR RESPONSE EDGES'),'residual',rms,
@@ -133,11 +187,11 @@ def check(frozen):
 if __name__ == '__main__':
     psi4.set_num_threads(1)
     psi4.set_options(dict(basis='cc-pvdz',reference='rhf',scf_type='df',df_basis_cc='cc-pvdz-ri',
-                          df_basis_scf='cc-pvdz-jkfit',e_convergence=1.e-12,d_convergence=1.e-12,
-                          r_convergence=1.e-10,solver_convergence=1.e-11,dlpno_maxiter=600,
+                          df_basis_scf='cc-pvdz-jkfit',e_convergence=1.e-13,d_convergence=1.e-13,
+                          r_convergence=1.e-11,solver_convergence=1.e-12,dlpno_maxiter=600,
                           local_convergence=1.e-14,local_gradient_convergence=1.e-8,
                           dlpno_keep_lmp2_response=True, dlpno_gradient_model=True,
-                          dlpno_local_orbitals='BOYS',t_cut_pno_mp2=1.e-5))
+                          dlpno_local_orbitals='BOYS',t_cut_pno_mp2=1.e-5,t_cut_pno=1.e-4))
     psi4.set_options({k:0. for k in ('t_cut_do t_cut_do_pre t_cut_do_ij t_cut_do_uv t_cut_mkn '
                                       't_cut_pairs t_cut_pairs_mp2 t_cut_pre t_cut_clmo t_cut_cpao '
                                       'dlpno_ao_ints_tol').split()})

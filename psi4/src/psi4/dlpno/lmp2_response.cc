@@ -298,7 +298,7 @@ void DLPNOCCSD_T::form_lmp2_response() {
 
 DLPNOCCSD_T::PairBlocks DLPNOCCSD_T::lmp2_blocks(const std::string& block) const {
     if (lmp2_state_.X.empty()) throw PSIEXCEPTION("LMP2 response state was not retained.");
-    if (block != "FRAME" && block != "AMPLITUDE") throw PSIEXCEPTION("Invalid LMP2 response block.");
+    if (block != "FRAME" && block != "AMPLITUDE" && block != "FINAL_FRAME") throw PSIEXCEPTION("Invalid LMP2 response block.");
     PairBlocks result;
     for (int p = 0; p < ij_to_i_j_.size(); ++p) {
         const auto ij = ij_to_i_j_[p];
@@ -307,7 +307,7 @@ DLPNOCCSD_T::PairBlocks DLPNOCCSD_T::lmp2_blocks(const std::string& block) const
             result[ij] = lmp2_state_.T[p]->clone();
         } else {
             auto N = submatrix_cols(*C_pao_, lmopair_to_paos_[p]);
-            result[ij] = linalg::doublet(N, lmp2_state_.X[p]);
+            result[ij] = linalg::doublet(N, block == "FINAL_FRAME" ? X_pno_.at(p) : lmp2_state_.X[p]);
         }
     }
     return result;
