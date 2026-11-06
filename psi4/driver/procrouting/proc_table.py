@@ -196,6 +196,7 @@ procedures = {
         'cvs-adc(3)'    : proc.run_adcc,
     },
     'gradient' : {
+        'dlpno-ccsd(t)' : proc.run_dlpno_gradient,
         'hf'            : proc.select_scf_gradient,
         'scf'           : proc.select_scf_gradient,
         'cc2'           : proc.select_cc2_gradient,

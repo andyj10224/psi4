@@ -193,23 +193,23 @@ retained pairs proportional to system size, its contraction count grows
 linearly. The wavefunction reports ``DLPNO CCSD RESPONSE ORDERED PAIRS``,
 ``DLPNO CCSD RESPONSE OVERLAP BLOCKS``, and ``DLPNO CCSD RESPONSE KL CANDIDATES``
 to inspect those assumptions. These counts measure the new CCSD contractions.
-For Boys or Mulliken Pipek–Mezey localization, the experimental assembler
-returns the gradient of the selected RHF model as an (atoms, 3) NumPy array
-in hartree/bohr. Keep the density-fitted RHF reference and its JK object for
-the orbital solve. For example, with a molecule already defined::
+For Boys or Mulliken Pipek–Mezey localization, the public gradient and
+geometry optimization drivers select the RHF gradient-model functional
+automatically, retain the SCF JK object for orbital response, and restore
+the user's settings afterwards. For example, with a molecule already defined::
 
-   from psi4.driver.procrouting.response.dlpno_orbital import assemble_cartesian_gradient
-   psi4.set_options({"reference": "rhf", "scf_type": "df", "save_jk": True,
-                     "dlpno_gradient_model": True, "dlpno_local_orbitals": "BOYS"})
-   energy, wfn = psi4.energy("dlpno-ccsd(t)", return_wfn=True)
-   gradient = assemble_cartesian_gradient(wfn)
+   psi4.set_options({"reference": "rhf", "basis": "cc-pvdz",
+                     "scf_type": "df", "dlpno_local_orbitals": "BOYS"})
+   grad, wfn = psi4.gradient("dlpno-ccsd(t)", return_wfn=True)
+   optimized_energy = psi4.optimize("dlpno-ccsd(t)")
 
-Use PIPEK_MEZEY for Mulliken PM. The assembler obtains the RHF gradient
-and contracts the response using the reference JKFIT basis through the SCF
-gradient backend. It computes the derivative on the selected domain/rank
-branch and requires a consistent localization adjoint. The standard gradient
-driver still guards this experimental model. Full-gradient linear scaling
-has yet to be established.
+Use PIPEK_MEZEY for Mulliken PM. The gradient is in hartree/bohr.
+Optimization uses the energy of this same gradient model at each geometry.
+For a separate matching energy calculation, set dlpno_gradient_model to
+true explicitly. Requests for finite-difference DLPNO-CCSD(T) gradients,
+including dertype=0, raise a validation error. The analytic gradient
+assumes locally fixed domains and ranks and a consistent localization
+adjoint. Full-gradient linear scaling has yet to be established.
 
 Higher-Order DLPNO Methods
 --------------------------

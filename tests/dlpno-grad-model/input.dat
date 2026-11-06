@@ -232,13 +232,16 @@ production = energy('dlpno-ccsd(t)')
 compare_values(production, e, 1.e-8, 'finite-cutoff original right solver in matching spaces')                #TEST
 set dlpno_gradient_model true
 
-# The default derivative planner must not launch finite differences for this model.
+# The default plan is analytic even when the standalone energy model is off.
+set dlpno_gradient_model false
+assert gradient('dlpno-ccsd(t)', return_plan=True).driver == 'gradient'
 try:
-    gradient('dlpno-ccsd(t)', return_plan=True)
+    gradient('dlpno-ccsd(t)', dertype=0, return_plan=True)
 except ValidationError as exc:
-    assert 'total nuclear derivative' in str(exc)
+    assert 'must be analytic' in str(exc)
 else:
-    raise AssertionError('The incomplete model must reject a total gradient request')
+    raise AssertionError('DLPNO-CCSD(T) must reject finite-difference gradients')
+set dlpno_gradient_model true
 
 # A one-occupied-orbital reference has no triples blocks.
 molecule h2 {

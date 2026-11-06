@@ -4762,6 +4762,57 @@ def run_dlpno(name, **kwargs):
         optstash.restore()
 
 
+def run_dlpno_gradient(name, **kwargs):
+    """Analytic RHF gradient of the ordinary iterative triples gradient model."""
+    from .response.dlpno_orbital import assemble_cartesian_gradient
+
+    if core.get_global_option("REFERENCE") != "RHF":
+        raise ValidationError("DLPNO-CCSD(T) gradients require an RHF reference.")
+    if core.get_option("DLPNO", "DLPNO_LOCAL_ORBITALS") not in ("BOYS", "PIPEK_MEZEY"):
+        raise ValidationError("DLPNO-CCSD(T) gradients require Boys or Mulliken Pipek-Mezey localization.")
+    state = p4util.OptionsState(["DLPNO", "DLPNO_GRADIENT_MODEL"], ["SCF", "SAVE_JK"], ["SCF_TYPE"])
+    try:
+        if not core.has_global_option_changed("SCF_TYPE"):
+            core.set_global_option("SCF_TYPE", "DF")
+        if core.get_global_option("SCF_TYPE") not in ("DF", "MEM_DF", "DISK_DF"):
+            raise ValidationError("DLPNO-CCSD(T) gradients require density-fitted SCF.")
+        core.set_local_option("DLPNO", "DLPNO_GRADIENT_MODEL", True)
+        core.set_local_option("SCF", "SAVE_JK", True)
+        ref = kwargs.get("ref_wfn")
+        mol = kwargs.get("molecule", core.get_active_molecule())
+        if ref is not None:
+            if not isinstance(ref, core.RHF):
+                raise ValidationError("DLPNO-CCSD(T) gradients require a supplied RHF reference.")
+            if ref.nirrep() != 1 or ref.jk() is None:
+                # Work on a C1 copy so the caller's reference is left intact.
+                aux = ref.get_basisset("DF_BASIS_SCF")
+                if ref.nirrep() != 1:
+                    ref = proc_util.prepare_c1_reference(ref)
+                else:
+                    ref = ref.c1_deep_copy(ref.basisset())
+                ref.set_basisset("DF_BASIS_SCF", aux)
+                ref.initialize_jk(int(core.get_memory() * core.get_global_option("SCF_MEM_SAFETY_FACTOR") / 8))
+                kwargs["ref_wfn"] = ref
+        elif mol.schoenflies_symbol() != "c1":
+            # The CPHF solve needs the JK object on the working C1 reference.
+            mol = mol.clone()
+            mol.reset_point_group("c1")
+            mol.fix_orientation(True)
+            mol.fix_com(True)
+            mol.update_geometry()
+            kwargs["molecule"] = mol
+        wfn = run_dlpno(name, **kwargs)
+        gradient = core.Matrix.from_array(assemble_cartesian_gradient(wfn))
+        wfn.set_gradient(gradient)
+        for label in ("CURRENT GRADIENT", "DLPNO-CCSD(T) TOTAL GRADIENT"):
+            wfn.set_variable(label, gradient)
+            core.set_variable(label, gradient)
+        core.set_variable("CURRENT ENERGY", wfn.energy())
+        return wfn
+    finally:
+        state.restore()
+
+
 def run_dlpnoccsd_property(name, **kwargs):
     """Compute DLPNO-CCSD/BCCD one-electron properties through OEProp."""
     properties = kwargs.pop("properties")

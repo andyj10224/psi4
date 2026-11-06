@@ -5,6 +5,7 @@ separate reference JKFIT and correlation RIFIT. No nuclear displacements.
 """
 import numpy as np
 import psi4
+from psi4.driver.p4util.exceptions import ValidationError
 from psi4.driver.procrouting.response.dlpno_orbital import assemble_cartesian_gradient
 
 
@@ -50,7 +51,13 @@ def check(frozen, localizer='BOYS', screened=False):
     _, w = psi4.energy('dlpno-ccsd(t)', return_wfn=True)
     ref = w.reference_wavefunction()
     dense = assemble_cartesian_gradient(w, hf, fixed_density_fock(ref))
-    grad = assemble_cartesian_gradient(w)
+    # Exercise public dispatch with the energy-only settings at their defaults.
+    psi4.set_options(dict(dlpno_gradient_model=False, save_jk=False))
+    matrix, result = psi4.gradient('dlpno-ccsd(t)', return_wfn=True)
+    grad = matrix.np
+    np.testing.assert_array_equal(grad, result.gradient().np)
+    assert not psi4.core.get_option('DLPNO', 'DLPNO_GRADIENT_MODEL')
+    assert not psi4.core.get_option('SCF', 'SAVE_JK')
     print('screened JK versus dense', np.max(abs(grad-dense)), flush=True)
     np.testing.assert_allclose(grad, dense, atol=1.e-9, rtol=0)
     print(localizer, 'screened', screened, 'freeze_core', frozen, 'assembled', grad, 'canonical', reference,
@@ -66,3 +73,16 @@ if __name__ == '__main__':
         for method in ('BOYS', 'PIPEK_MEZEY'):
             for screened in (False, True):
                 check(frozen, method, screened)
+
+
+    # Exercise OptKing on the same triples-bearing molecule.
+    psi4.set_options(dict(dlpno_local_orbitals='BOYS', freeze_core=True))
+    try:
+        psi4.optimize('dlpno-ccsd(t)', dertype=0)
+    except ValidationError as exc:
+        assert 'must be analytic' in str(exc)
+    else:
+        raise AssertionError('Optimizer accepted a numerical DLPNO gradient.')
+    optimized, wfn = psi4.optimize('dlpno-ccsd(t)', return_wfn=True)
+    np.testing.assert_allclose(optimized, wfn.energy(), rtol=0, atol=1.e-10)
+    assert np.max(np.abs(wfn.gradient().np)) < 3.e-4

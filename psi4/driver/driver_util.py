@@ -200,14 +200,13 @@ def negotiate_derivative_type(
         When `method` is unavailable at all. When `user_dertype` exceeds what available for `method`.
 
     """
-    if target_dertype in ("gradient", "hessian"):
-        methods = method if isinstance(method, list) else [method]
-        if "dlpno-ccsd(t)" in methods and core.get_option("DLPNO", "DLPNO_GRADIENT_MODEL"):
-            raise ValidationError(
-                "The experimental Boys/PM total nuclear derivative is available through "
-                "psi4.driver.procrouting.response.dlpno_orbital.assemble_cartesian_gradient(wfn) "
-                "after a gradient-model RHF energy calculation with SAVE_JK enabled."
-            )
+    methods = method if isinstance(method, list) else [method]
+    dlpno_gradient = target_dertype == "gradient" and "dlpno-ccsd(t)" in methods
+    if (target_dertype == "hessian" and "dlpno-ccsd(t)" in methods
+            and core.get_option("DLPNO", "DLPNO_GRADIENT_MODEL")):
+        raise ValidationError("Hessians of the DLPNO gradient model are unavailable.")
+    if dlpno_gradient and user_dertype == 0:
+        raise ValidationError("DLPNO-CCSD(T) gradients must be analytic; finite differences are unavailable.")
 
     if target_dertype == "properties":
         if isinstance(method, list):
@@ -230,7 +229,10 @@ def negotiate_derivative_type(
         else:
             highest_analytic_dertype, proc_messages = highest_analytic_derivative_available(method, proc)
 
-        return sort_derivative_type(target_dertype, highest_analytic_dertype, user_dertype, proc_messages, verbose)
+        mode = sort_derivative_type(target_dertype, highest_analytic_dertype, user_dertype, proc_messages, verbose)
+        if dlpno_gradient and mode != (1, 1):
+            raise ValidationError("DLPNO-CCSD(T) gradients must be analytic; finite differences are unavailable.")
+        return mode
 
 
 def _alternative_methods_message(method_name: str, dertype: str, *, messages: Dict[int, Any], proc: Dict) -> str:
