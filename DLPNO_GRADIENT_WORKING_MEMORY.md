@@ -192,3 +192,18 @@ Implemented canonical occupied–virtual RHS assembly for the RHF gradient model
 The standalone [water regression](tests/dlpno-grad-model/molecular_rhs.py) solves the molecular orbital adjoint, reconstructs a trial orbital rotation with an independent dense JKFIT tensor, transports the frozen and active subspaces, and reevaluates the localized stationary functional at fixed nuclear geometry. Directional discrepancies (hartree per unit rotation) were below 8.1e-11 for frozen-core Boys, PM and IBO and all-electron Boys and PM. At the tested finite cutoffs all-electron IBO has three numerically null directions (singular values below 2e-17); the source along these directions has norm 9.02e-4. Its adjoint equation is inconsistent. A gauge convention in the forward localization or a rotationally invariant correlation model would be needed there. The regression checks the diagnostic.
 
 Canonical analytic DF-CCSD(T) oxygen z gradients at r(OH)=0.958 Å and angle 104.4776 degrees are +0.0144076115 (frozen O 1s) and +0.0137443429 (all-electron), in hartree/bohr. All Cartesian entries are checked in the water regression. DLPNO triples corrections are nonzero for both core choices. Next combine the orbital multipliers with explicit AO, reference, orthonormality and localizer integral derivatives, including IBO overlap derivatives, before comparing total nuclear gradients. [Cumulative equations](DLPNO_GRADIENT_EQUATIONS.tex)
+
+## Cartesian gradient assembly — RHF Boys and Mulliken PM
+
+The experimental Cartesian assembler combines the reference RHF gradient, five correlation fitting contributions, localization operator derivatives, the frozen–active constraint, the solved Brillouin multipliers, and overlap/density transport. Its input Fock derivative holds the AO density fixed and must use the reference SCF fit. The standalone water check supplies this derivative independently using dense JKFIT integrals. This dense reference implementation is restricted to the regression. [Assembler](psi4/driver/procrouting/response/dlpno_orbital.py) · [Water regression](tests/dlpno-grad-model/cartesian_water.py) · [Equations](DLPNO_GRADIENT_EQUATIONS.tex)
+
+Maximum absolute differences from analytic canonical DF-CCSD(T) across all nine Cartesian components (hartree/bohr), H2O/cc-pVDZ, OH 0.958 Å, HOH 104.4776 degrees:
+
+| Core | Localizer | Zero cutoffs | Normal finite cutoffs |
+| --- | --- | ---: | ---: |
+| Frozen O 1s | Boys | 3.15e-11 | 7.77e-6 |
+| Frozen O 1s | PM | 1.66e-11 | 1.31e-4 |
+| All-electron | Boys | 1.82e-11 | 6.22e-6 |
+| All-electron | PM | 8.40e-12 | 2.33e-5 |
+
+All eight gradients passed the translational sum check. The zero-cutoff comparison tests the canonical limit; the finite-cutoff differences include local-model truncation error. No DLPNO nuclear finite differences were used. Remaining work includes a screened production provider for SCF Fock derivative contractions, IBO primary/minimal metric nuclear derivatives, and the previously documented all-electron IBO gauge problem. The public gradient driver stays guarded. No complete-gradient scaling claim is made.

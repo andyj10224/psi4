@@ -228,4 +228,39 @@ the reverse equations at fixed AO metrics are
 \end{align}
 This occupied derivative applies at fixed primary and minimal overlaps;
 their explicit nuclear derivatives enter a later Cartesian contraction.
+\section{Cartesian contraction for Boys and Mulliken PM}
+Let $s=S^{A\alpha}$, $f=F^{A\alpha}|_{D}$ and $D=CC\T$. Use occupied
+transport $dC=-\tfrac12DsC$ and the corresponding virtual transport with
+occupied component $-DsV$. The reference density transport is $dD=-DsD$.
+Let $m=F_*-\bar F$ be the frozen--active multiplier and put
+\begin{align}
+ Z&=C z^{\rm RHF}V\T,& B_F&=\bar F+m+\sym Z,&
+ P_F&=2J[B_F]-K[B_F].
+\end{align}
+The metric coefficient before the explicit localization operators is
+\begin{align}
+ B_S=\bar S-\sym\big[
+ \tfrac12 C B\T CC\T + C\epsilon_{\rm occ}z^{\rm RHF}V\T
+ +\tfrac12(DFm+mFD)+DP_F D\big].
+\end{align}
+Here $B$ contains the independent occupied coefficient sources after
+localization. The Cartesian contribution of orbital, Fock and overlap terms is
+\begin{equation}
+ g_{A\alpha}^{\rm orb}=\ip{B_F}{f}+\ip{B_S}{s}
+ +\sum_K\ip{L\bar A_K L\T}{(A_K^{\rm AO})^{A\alpha}}.
+\end{equation}
+Boys uses the three AO dipole derivatives. For Mulliken PM with atom selector
+$E_K$, the last operator derivative is $(E_Ks+sE_K)/2$.
+For the water verification calculation define $Q$ as the reference JKFIT
+three-center integrals with flattened AO pair columns, $J_0$ its Coulomb
+metric and $b=J_0^{-1}Q$. The fitted ERI derivative at fixed coefficients is
+\begin{align}
+ I'&=Q'\T b+b\T Q'-b\T J_0' b,\\
+ f_{\mu\nu}&=h'_{\mu\nu}+\sum_{\lambda\sigma}D_{\lambda\sigma}
+ [2 I'_{\mu\nu,\lambda\sigma}-I'_{\mu\lambda,\nu\sigma}].
+\end{align}
+Add $g^{\rm orb}$ to the RHF nuclear gradient and the previously derived
+RIFIT metric and three-center contractions for CCSD, ordinary (T), the PNO
+projector, truncation correction and LMP2 response. The dense ERI expression
+above is restricted to the small-system verification code.
 \end{document}

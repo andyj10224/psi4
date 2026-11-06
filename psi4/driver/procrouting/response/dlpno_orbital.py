@@ -119,6 +119,11 @@ def molecular_rhf_source(wfn, panel_width=16, tol=1.e-9):
     explicit AO integral differentiation. The SCF JK settings must match the
     reference calculation.
     """
+    source, bars, _, _ = _molecular_sources(wfn, panel_width, tol)
+    return source, bars
+
+
+def _molecular_sources(wfn, panel_width, tol):
     from psi4 import core
     ref = wfn.reference_wavefunction()
     if not isinstance(ref, core.RHF) or ref.nirrep() != 1:
@@ -208,7 +213,7 @@ def molecular_rhf_source(wfn, panel_width=16, tol=1.e-9):
             jk.C_clear()
     finally:
         jk.finalize()
-    return source, bars
+    return source, bars, occupied_bar, mixed
 
 def _iao_occupied_bar(C, S, cross, metric, cutoff, iaos, iao_bar):
     """Differentiate full-rank Knizia IAOs at fixed AO and minimal-basis metrics."""
@@ -241,3 +246,96 @@ def _iao_occupied_bar(C, S, cross, metric, cutoff, iaos, iao_bar):
     Dtbar = 2*S @ D @ Pbar - Pbar
     Xbar = (Dtbar + Dtbar.T) @ X @ gram_inv
     return (Dbar + Dbar.T) @ C + mapping.T @ (Xbar - S @ Dt @ Xbar)
+
+def cartesian_orbital_terms(wfn, fock_derivatives, panel_width=16, tol=1.e-9):
+    """Contract Cartesian sources for Boys/PM; yield one atom (three scalars) at a time.
+
+    fock_derivatives(atom) returns three AO Fock derivatives at fixed AO
+    density, including the derivative of the *reference* Coulomb/exchange fit.
+    """
+    from psi4 import core
+    if not (wfn.variable('DLPNO RESPONSE BOYS') or wfn.variable('DLPNO RESPONSE MULLIKEN PM')):
+        raise NotImplementedError("Explicit primary/minimal overlap derivatives are needed for IBO.")
+    rhs, bars, occupied_bar, mixed = _molecular_sources(wfn, panel_width, tol)
+    ref = wfn.reference_wavefunction()
+    z = constrained_rhf_adjoint(ref, rhs, tol)
+    C = ref.Ca_subset('AO', 'OCC').np
+    V = ref.Ca_subset('AO', 'VIR').np
+    L = wfn.variable('DLPNO RESPONSE ACTIVE LMOS').np
+    eps = ref.epsilon_a().np[:C.shape[1]]
+    D = C @ C.T
+    # Core-active constraints and occupied-virtual Brillouin multiplier.
+    Z = C @ z @ V.T
+    fextra = mixed + .5*(Z + Z.T)
+    metric = -.5*C @ (occupied_bar.T @ C) @ C.T
+    metric -= (C*eps) @ z @ V.T
+    F = ref.Fa().np
+    metric -= .5*(D @ F @ mixed + mixed @ F @ D)
+    basis = ref.basisset()
+    mints = core.MintsHelper(basis)
+    # The density-transport term needs only C.T @ G[Fbar] @ C.
+    potential = np.zeros((C.shape[1], C.shape[1]))
+    jk = core.JK.build(basis, aux=ref.get_basisset('DF_BASIS_SCF'), do_wK=False,
+                       memory=int(core.get_memory()*.1))
+    jk.initialize()
+    try:
+        Sdim = basis.nbf()
+        for first in range(0, Sdim, panel_width):
+            stop = min(first + panel_width, Sdim)
+            E = np.zeros((Sdim, stop-first))
+            E[np.arange(first,stop), np.arange(stop-first)] = 1.
+            right = core.Matrix.from_array(E)
+            raw = core.dlpno_orbital_response_action(wfn, 'FOCK', right).np
+            jk.C_left_add(core.Matrix.from_array(raw + fextra[:,first:stop]))
+            jk.C_right_add(right)
+            jk.compute()
+            potential += C.T @ (2*jk.J()[0].np - jk.K()[0].np) @ C
+            jk.C_clear()
+    finally:
+        jk.finalize()
+    metric -= C @ potential @ C.T
+    boys = bool(wfn.variable('DLPNO RESPONSE BOYS'))
+    if not boys:
+        centers = np.array([basis.function_to_center(mu) for mu in range(basis.nbf())])
+        for atom, bar in enumerate(bars):
+            metric += (centers == atom)[:,None] * (L @ bar @ L.T)
+    for atom in range(ref.molecule().natom()):
+        ds = [m.np for m in mints.ao_oei_deriv1('OVERLAP', atom)]
+        df = np.asarray(fock_derivatives(atom))
+        if df.shape != (3, Sdim, Sdim):
+            raise ValueError("Expected three Cartesian AO Fock derivative matrices per atom.")
+        result = np.array([np.sum(metric*s) + np.sum(fextra*f) for s,f in zip(ds,df)])
+        if boys:
+            dip = mints.ao_elec_dip_deriv1(atom)
+            for k,bar in enumerate(bars):
+                for xyz in range(3):
+                    result[xyz] += np.sum(bar*(L.T @ dip[3*k+xyz].np @ L))
+        for first in range(0, Sdim, panel_width):
+            stop = min(first+panel_width, Sdim)
+            E = np.zeros((Sdim, stop-first))
+            E[np.arange(first,stop), np.arange(stop-first)] = 1.
+            panel = core.Matrix.from_array(E)
+            for block, directions in [('FOCK', df), ('OVERLAP', ds)]:
+                bar = core.dlpno_orbital_response_action(wfn, block, panel).np
+                for xyz in range(3):
+                    result[xyz] += np.sum(bar*directions[xyz][:,first:stop])
+        yield result
+
+
+def assemble_cartesian_gradient(wfn, reference_gradient, fock_derivatives, panel_width=16, tol=1.e-9):
+    """Assemble a gradient-model Cartesian array, including reference and DF correlation.
+
+    reference_gradient includes the RHF electronic and nuclear gradients in
+    the wavefunction's orientation. fock_derivatives uses the same SCF reference.
+    """
+    refgrad = np.asarray(reference_gradient, dtype=float)
+    shape = (wfn.molecule().natom(), 3)
+    if refgrad.shape != shape:
+        raise ValueError("Expected an RHF nuclear gradient with one Cartesian row per atom.")
+    gradient = refgrad.copy()
+    for atom, contribution in enumerate(cartesian_orbital_terms(wfn, fock_derivatives, panel_width, tol)):
+        gradient[atom] += contribution
+    for source in ('CCSD', '(T)', 'PNO PROJECTOR', 'PNO TRUNCATION', 'LMP2 RESPONSE'):
+        for term in ('AUXILIARY METRIC', 'THREE-CENTER'):
+            gradient += wfn.variable(f'DLPNO {source} {term} GRADIENT').np
+    return gradient
