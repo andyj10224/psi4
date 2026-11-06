@@ -67,6 +67,9 @@ def check_stationarity(w):
     compare_values(-2*w.variable('(T) CORRECTION ENERGY'),
                    w.variable('DLPNO (T) AUXILIARY METRIC SCALE DERIVATIVE'),
                    1.e-8, 'RHF (T) derivative under uniform metric scaling')                                    #TEST
+    for group in ('INTEGRAL', 'FOCK', 'OVERLAP', 'PNO COEFFICIENT'):
+        compare_values(0., w.variable(f'DLPNO CCSD {group} DIRECTION ERROR'), 1.e-8,
+                       f'stationary CCSD derivative with respect to {group}')                                  #TEST
     for rank in (1, 2):
         compare_values(0., w.variable(f'DLPNO CCSD(T) LAMBDA{rank} RESIDUAL'), 1.e-10,
                        f'converged sourced Lambda{rank}')                                                      #TEST
@@ -96,6 +99,14 @@ for loc in ('BOYS', 'PIPEK_MEZEY', 'IBO'):
     compare_arrays(metric_ref, w.variable(metric_key).np, 1.e-8, loc + ' RI metric derivative')                #TEST
     compare_arrays(three_ref, w.variable(three_key).np, 1.e-8, loc + ' RI three-center derivative')            #TEST
 
+    ccsd_metric = np.array([[0., 0., -0.0235532256], [0., -0.0153418357, 0.0117766128],
+                            [0., 0.0153418357, 0.0117766128]])
+    ccsd_three = np.array([[0., 0., 0.0627802928], [0., 0.0351161237, -0.0313901464],
+                           [0., -0.0351161237, -0.0313901464]])
+    for label, ref in [('AUXILIARY METRIC', ccsd_metric), ('THREE-CENTER', ccsd_three)]:
+        compare_arrays(ref, w.variable('DLPNO CCSD ' + label + ' GRADIENT').np, 1.e-8,
+                       loc + ' canonical CCSD ' + label)                                                       #TEST
+
 # Different TNO ranks exercise rectangular projections and the transpose scatter.
 # Compare the disk generations at four threads with the serial in-memory solution.
 set t_cut_pno_mp2 1.e-6
@@ -110,6 +121,8 @@ mem_metric = w.variable(metric_key).np.copy()
 mem_three = w.variable(three_key).np.copy()
 lambda_keys = ['DLPNO CCSD(T) LAMBDA1 T1 CONTRACTION', 'DLPNO CCSD(T) LAMBDA2 T2 CONTRACTION']
 mem_lambda = [w.variable(key) for key in lambda_keys]
+cc_keys = ['DLPNO CCSD ' + label + ' GRADIENT' for label in ('AUXILIARY METRIC', 'THREE-CENTER')]
+mem_cc = [w.variable(key).np.copy() for key in cc_keys]
 assert abs(w.variable('DLPNO (T) L2 TNO SOURCE DIRECTION')) > 1.e-8
 assert abs(e - e_df) > 1.e-6
 set write_qia_pno true
@@ -125,7 +138,9 @@ for key, ref in zip(lambda_keys, mem_lambda):
 compare_values(e, edisk, 1.e-9, 'single-space disk energy')                                                   #TEST
 compare_arrays(mem_metric, wdisk.variable(metric_key).np, 1.e-9, 'single-space disk metric gradient')           #TEST
 compare_arrays(mem_three, wdisk.variable(three_key).np, 1.e-9, 'single-space disk three-center gradient')       #TEST
-for term in (mem_metric, mem_three):
+for key, ref in zip(cc_keys, mem_cc):
+    compare_arrays(ref, wdisk.variable(key).np, 1.e-9, 'disk and semi-direct ' + key)                         #TEST
+for term in (mem_metric, mem_three, *mem_cc):
     compare_arrays(np.zeros(3), term.sum(axis=0), 1.e-9, 'translation invariance of each RI term')              #TEST
 
 # Match the ordinary right-hand solver with both T0 and iterative (T) in

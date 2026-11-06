@@ -1,6 +1,6 @@
 """Regenerate the Cartesian components and amplitude response references in input.dat (optional PySCF + SciPy).
 
-At one RHF geometry, solve canonical CCSD once. In the canonical (T) functional,
+At one RHF geometry, solve canonical CCSD once. In the canonical (T) functional and stationary CCSD part,
 vary either its two-center metric J or its three-center integrals Q by +/- h
 times the corresponding analytic nuclear integral derivative. Keep the other
 integrals, the orbital coefficients, orbital energies, Fock matrix and CCSD
@@ -77,19 +77,36 @@ def main():
             return ccw.ccsd_t(u1, u2, eris=eris)
         print("Triples scale derivative, rank", rank, (rescale(h)-rescale(-h))/(2*h))
 
+    # Recover the physical right residual from PySCF's Jacobi update.
+    # The fixed diagonal orbital-energy denominators are preconditioners.
+    gaps = eris.mo_energy[:t1.shape[0], None] - eris.mo_energy[t1.shape[0]:]
+    gaps2 = gaps[:, None, :, None] + gaps[None, :, None, :]
+    def ccsd_part(metric, raw):
+        set_integrals(metric, raw)
+        perturbed = ccw.ao2mo()
+        u1, u2 = ccw.update_amps(t1, t2, perturbed)
+        return (ccw.energy(t1, t2, perturbed)
+                + 2*np.vdot(l1, (u1-t1)*gaps)
+                + np.vdot(2*l2-l2.swapaxes(2, 3), (u2-t2)*gaps2))
+
     def triples(metric, raw):
         set_integrals(metric, raw)
         return ccw.ccsd_t(t1, t2, eris=ccw.ao2mo())
 
     print("Canonical (T)", triples(J, Q))
-    for h in (5e-5, 1e-5):
-        metric_grad, three_grad = [], []
-        for atom in range(mol.natom()):
-            dJ = mints.ao_metric_deriv1(atom, "DF_BASIS_CC")
-            dQ = mints.ao_3center_deriv1(atom, "DF_BASIS_CC")
-            metric_grad.append([(triples(J + h*d.np, Q) - triples(J - h*d.np, Q))/(2*h) for d in dJ])
-            three_grad.append([(triples(J, Q + h*to_mo(d.np)) - triples(J, Q - h*to_mo(d.np)))/(2*h) for d in dQ])
-        print("h =", h, "\nMetric\n", np.array(metric_grad), "\nThree-center\n", np.array(three_grad))
+    for name, functional in (("CCSD", ccsd_part), ("(T)", triples)):
+        estimates = []
+        for h in (5e-5, 1e-5):
+            metric_grad, three_grad = [], []
+            for atom in range(mol.natom()):
+                dJ = mints.ao_metric_deriv1(atom, "DF_BASIS_CC")
+                dQ = mints.ao_3center_deriv1(atom, "DF_BASIS_CC")
+                metric_grad.append([(functional(J + h*d.np, Q) - functional(J - h*d.np, Q))/(2*h) for d in dJ])
+                three_grad.append([(functional(J, Q + h*to_mo(d.np)) - functional(J, Q - h*to_mo(d.np)))/(2*h) for d in dQ])
+            estimates.append(np.array([metric_grad, three_grad]))
+            print(name, "h =", h, "\nMetric\n", np.array(metric_grad), "\nThree-center\n", np.array(three_grad))
+
+        print(name, "extrapolated metric and three-center", (25*estimates[1] - estimates[0])/24)
 
 
 if __name__ == "__main__":

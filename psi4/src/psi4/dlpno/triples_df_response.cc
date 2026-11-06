@@ -277,8 +277,9 @@ void DLPNOCCSD_T::accumulate_three_center(int r, const TriplesDFBlocks& bar, std
     }
 }
 
-SharedMatrix DLPNOCCSD_T::contract_three_center(const std::vector<ThreeCenterDensity>& density) {
-    auto grad = std::make_shared<Matrix>("DLPNO (T) THREE-CENTER GRADIENT", molecule_->natom(), 3);
+SharedMatrix DLPNOCCSD_T::contract_three_center(const std::vector<ThreeCenterDensity>& density,
+                                                const std::string& name) {
+    auto grad = std::make_shared<Matrix>(name, molecule_->natom(), 3);
     auto zero = BasisSet::zero_ao_basis_set();
     IntegralFactory factory(ribasis_, zero, basisset_, basisset_);
     auto values = factory.eri();

@@ -2713,7 +2713,7 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
             Promotes surviving pairs to strong, retains both PNO corrections, omits
             crude/dipole pair energies and uses one TNO space for all retained triplets.
             Solves the triples adjoint and the ordinary (T)-sourced CCSD Lambda equations.
-            Evaluates the explicit triples auxiliary metric and three-center contributions
+            Evaluates the explicit CCSD and triples auxiliary metric and three-center contributions
             to the nuclear gradient. !expert -*/
         options.add_bool("DLPNO_GRADIENT_MODEL", false);
         /*- How much to damp T1 updates in DLPNO-CCSD -*/

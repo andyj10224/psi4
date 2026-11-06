@@ -142,9 +142,23 @@ give the largest domain RMS at the converged left amplitudes. For small
 validation systems, setting the DLPNO module's ``DEBUG`` option to 1 compares
 each source and residual transpose with fixed-geometry amplitude variations.
 
-A total gradient still requires contracting the stationary CCSD Lagrangian
-with integral derivatives, as well as the orbital, PNO, TNO and PNO-correction
-responses to nuclear displacement. The total-gradient driver rejects the
+The wavefunction also reports ``DLPNO CCSD AUXILIARY METRIC GRADIENT`` and
+``DLPNO CCSD THREE-CENTER GRADIENT`` in hartree/bohr. These are the explicit
+correlation-fitting terms from :math:`E_{\rm CCSD}+\Lambda R_{\rm CCSD}`,
+using the ordinary (T)-sourced multipliers. The Fock operator, local
+coefficients and overlap matrices are held fixed in these two arrays.
+Internally, the solver also accumulates derivatives with respect to the
+bare occupied and PAO Fock blocks, the PAO overlap and the pair coefficients.
+With module ``DEBUG`` these derivatives are checked at fixed geometry.
+
+The response traverses the retained pair graph. With bounded occupied
+neighbor counts, PNO, PAO and auxiliary domain sizes, and a number of
+retained pairs proportional to system size, its contraction count grows
+linearly. The wavefunction reports ``DLPNO CCSD RESPONSE ORDERED PAIRS``,
+``DLPNO CCSD RESPONSE OVERLAP BLOCKS``, and ``DLPNO CCSD RESPONSE KL CANDIDATES``
+to inspect those assumptions. These counts measure the new CCSD contractions.
+A total gradient still requires the nuclear Fock and overlap response,
+orbital relaxation, and the PNO, TNO and PNO-correction responses. The total-gradient driver rejects the
 development model until these terms are implemented.
 
 Higher-Order DLPNO Methods

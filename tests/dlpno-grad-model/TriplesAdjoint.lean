@@ -1,6 +1,7 @@
 import Mathlib.LinearAlgebra.Matrix.DotProduct
 import Mathlib.Data.Real.Basic
 import Mathlib.Tactic.Ring
+import Mathlib.Tactic.FieldSimp
 
 /- Run with Lean 4.16.0 and mathlib v4.16.0. These finite-dimensional
 identities use the Euclidean inner product on the stored triplet coordinates.
@@ -73,5 +74,13 @@ theorem tno_gap_source (nk nd g dD dθ : ℝ) (gap : nk - nd ≠ 0)
     (tangent : (nk - nd) * dθ = dD) :
     (g / (nk - nd)) * dD = g * dθ := by
   rw [← tangent, ← mul_assoc, div_mul_cancel₀ g gap]
+
+-- The kept-kept inverse-square-root divided difference can be evaluated
+-- without dividing by the difference of nearly equal metric eigenvalues.
+-- a,b are their positive square roots.
+theorem half_metric_factor (a b : ℝ) (ha : a ≠ 0) (hb : b ≠ 0) (hs : a+b ≠ 0) :
+    (1/a - 1/b) = (-(1/a)*(1/b)/(a+b)) * (a^2-b^2) := by
+  field_simp
+  ring
 
 end DLPNO

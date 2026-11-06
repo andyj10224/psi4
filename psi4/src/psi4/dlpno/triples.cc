@@ -1994,6 +1994,7 @@ void DLPNOCCSD_T::post_ccsd_correction(DLPNOCCSDPhase phase) {
         try {
             compute_gradient_model_triples();
             solve_gradient_lambda();
+            contract_ccsd_df_response();
         } catch (...) {
             close_pair_files();
             throw;

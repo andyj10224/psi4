@@ -26,7 +26,7 @@
  * @END LICENSE
  */
 
-#include "dlpno.h"
+#include "ccsd_reverse.h"
 #include "psi4/libdiis/diismanager.h"
 #include "psi4/libpsi4util/process.h"
 #include "psi4/libmints/matrix.h"
@@ -38,54 +38,9 @@
 
 namespace psi {
 namespace dlpno {
-namespace {
-
-std::vector<SharedMatrix> zero_blocks(const std::vector<SharedMatrix>& shapes) {
-    std::vector<SharedMatrix> blocks(shapes.size());
-    for (size_t p = 0; p < shapes.size(); ++p)
-        if (shapes[p]) blocks[p] = std::make_shared<Matrix>(shapes[p]->nrow(), shapes[p]->ncol());
-    return blocks;
-}
-
-SharedMatrix row_as_column(const SharedMatrix& m, int row) {
-    auto v = submatrix_rows(*m, {row});
-    v->reshape(m->ncol(), 1);
-    return v;
-}
-
-void add_row(const SharedMatrix& m, int row, const SharedMatrix& v, double factor = 1.0) {
-    if (m->ncol()) C_DAXPY(m->ncol(), factor, v->get_pointer(), 1, &(*m)(row, 0), 1);
-}
-
-}  // namespace
-
-// Covectors of the intermediates in the implemented t1-transformed residual.
-// The PNOs and overlap maps are fixed for this amplitude transpose. In
-// particular, never insert another PNO projector when reversing a product.
-struct DLPNOCCSD::CCAdjoints {
-    const std::vector<SharedMatrix>& z1;
-    const std::vector<SharedMatrix>& z2;
-    std::vector<SharedMatrix> t1, t2, u, tn, qa, qk, beta, gamma, delta, fab, fkc, fkc_bar;
-    std::vector<double> fkj, fij_bar;
-
-    CCAdjoints(const DLPNOCCSD& w, const std::vector<SharedMatrix>& z1, const std::vector<SharedMatrix>& z2)
-        : z1(z1),
-          z2(z2),
-          t1(zero_blocks(w.T_ia_)),
-          t2(zero_blocks(w.T_iajb_)),
-          u(zero_blocks(w.Tt_iajb_)),
-          tn(zero_blocks(w.T_n_ij_)),
-          qa(zero_blocks(w.i_Qa_t1_)),
-          qk(zero_blocks(w.i_Qk_t1_)),
-          beta(zero_blocks(w.beta_)),
-          gamma(zero_blocks(w.gamma_)),
-          delta(zero_blocks(w.delta_)),
-          fab(zero_blocks(w.Fab_)),
-          fkc(zero_blocks(w.Fkc_)),
-          fkc_bar(zero_blocks(w.Fkc_bar_)),
-          fkj(w.ij_to_i_j_.size()),
-          fij_bar(w.ij_to_i_j_.size()) {}
-};
+using ccsd_detail::add_row;
+using ccsd_detail::row_as_column;
+using ccsd_detail::zero_blocks;
 
 void DLPNOCCSD::estimate_gradient_lambda_memory() {
     // CCSD resident state, reverse intermediates, residuals/amplitudes/DIIS
@@ -94,14 +49,30 @@ void DLPNOCCSD::estimate_gradient_lambda_memory() {
     size_t words = ccsd_baseline_memory_doubles_ + no * no;
     size_t amp = 0, scratch = 0;
     for (auto& t : T_ia_) amp += t->nrow();
+    size_t response = 0, df_scratch = 0;
     for (int p = 0; p < T_iajb_.size(); ++p) {
         const size_t n = n_pno_[p], m = lmopair_to_lmos_[p].size(), q = lmopair_to_ribfs_[p].size();
+        const size_t nv = lmopair_to_paos_[p].size();
+        response += 3 * n * n + 3 * m * n + n * n * n + q * (m + n) + nv * n;
+        size_t widest = n;
+        for (const auto& block : J_ikac_non_proj_[p]) {
+            response += 2 * size_t(block->nrow()) * block->ncol();
+            widest = std::max(widest, size_t(block->ncol()));
+        }
+        if (ij_to_i_j_[p].first <= ij_to_i_j_[p].second) response += q * (m * n + n * n);
+        // Largest pair-local raw factors, eigensystem and simultaneous pullbacks.
+        df_scratch = std::max(df_scratch, 10 * q * q + 6 * q * (m * n + n * n + n * widest + m + 2 * n + 1));
         amp += n * n;
         words += 2 * m * m + 5 * n * n + 2 * m * n + n + q * (n + m);
         scratch = std::max(scratch,
                            n * n * n + 8 * n * n + (write_qia_pno_ ? q * m * n : 0) + (write_qab_pno_ ? q * n * n : 0));
     }
     words += (10 + 2 * options_.get_int("DIIS_MAX_VECS")) * amp + scratch;
+    ccsd_response_words_ = words + response + df_scratch;
+    outfile->Printf("    CCSD response memory estimate before sparse overlaps: %.3f GiB\n",
+                    ccsd_response_words_ * 8.0 / (1ULL << 30));
+    if (toggle_memory_ && ccsd_response_words_ * sizeof(double) > 0.9 * memory_)
+        throw PSIEXCEPTION("Insufficient memory for the RHF gradient integral response.");
     outfile->Printf("    RHF gradient Lambda memory estimate: %.3f GiB\n", words * 8.0 / (1ULL << 30));
     if (toggle_memory_ && words * sizeof(double) > 0.9 * memory_)
         throw PSIEXCEPTION("Insufficient memory for the RHF gradient Lambda solve.");
@@ -484,7 +455,39 @@ void DLPNOCCSD::solve_gradient_lambda() {
     set_scalar_variable("DLPNO CCSD(T) LAMBDA2 T2 CONTRACTION", l2t2);
     set_scalar_variable("DLPNO (T) T1 SCALE DERIVATIVE", eta1);
     set_scalar_variable("DLPNO (T) T2 SCALE DERIVATIVE", eta2);
-    if (debug_) check_ccsd_adjoint();
+    form_ccsd_pair_response();
+    backtransform_ccsd_one_body();
+    if (debug_) {
+        check_ccsd_adjoint();
+        check_ccsd_pair_response();
+    }
+}
+
+double DLPNOCCSD::ccsd_lagrangian(const std::vector<SharedMatrix>& z1, const std::vector<SharedMatrix>& z2) {
+    std::vector<SharedMatrix> r1, r2, rn;
+    for (const auto& t : T_ia_) r1.push_back(t->clone());
+    for (const auto& t : T_iajb_) {
+        r2.push_back(t->clone());
+        rn.push_back(t->clone());
+    }
+    const int nth = Process::environment.get_n_threads();
+    std::vector<std::vector<SharedMatrix>> buffers(nth);
+    for (auto& buffer : buffers)
+        for (const auto& t : T_ia_) buffer.push_back(t->clone());
+    prepare_ccsd_residual();
+    compute_R_ia(r1, buffers);
+    compute_R_iajb(r2, rn);
+    double value = singles_fock_energy();
+    for (int i = 0; i < r1.size(); ++i) value += z1[i]->vector_dot(r1[i]);
+    for (int pair = 0; pair < r2.size(); ++pair) {
+        const auto [i, j] = ij_to_i_j_[pair];
+        auto ti = linalg::doublet(S_PNO(pair, i_j_to_ij_[i][i]), T_ia_[i]);
+        auto tj = linalg::doublet(S_PNO(pair, i_j_to_ij_[j][j]), T_ia_[j]);
+        auto tau = linalg::doublet(ti, tj, false, true);
+        tau->add(T_iajb_[pair]);
+        value += tau->vector_dot(L_iajb_[pair]) + 0.5 * z2[pair]->vector_dot(r2[pair]);
+    }
+    return value;
 }
 
 // The probe respects t_{ji}^{ba}=t_{ij}^{ab}, including diagonal-pair symmetry.
@@ -549,33 +552,7 @@ void DLPNOCCSD::check_ccsd_adjoint() {
     const auto z1 = amplitude_probe(true, 3), z2 = amplitude_probe(false, 4);
     std::vector<SharedMatrix> l1(z1.size()), l2(z2.size());
     gradient_lambda_residual(z1, z2, l1, l2);
-    std::vector<SharedMatrix> r1, r2, rn;
-    for (const auto& t : T_ia_) r1.push_back(t->clone());
-    for (const auto& t : T_iajb_) {
-        r2.push_back(t->clone());
-        rn.push_back(t->clone());
-    }
-    const int nth = Process::environment.get_n_threads();
-    std::vector<std::vector<SharedMatrix>> buffers(nth);
-    for (auto& buffer : buffers)
-        for (const auto& t : T_ia_) buffer.push_back(t->clone());
-    auto lagrangian = [&]() {
-        prepare_ccsd_residual();
-        compute_R_ia(r1, buffers);
-        compute_R_iajb(r2, rn);
-        double value = singles_fock_energy();
-        for (int i = 0; i < r1.size(); ++i) value += z1[i]->vector_dot(r1[i]);
-        for (int pair = 0; pair < r2.size(); ++pair) {
-            const auto [i, j] = ij_to_i_j_[pair];
-            auto ti = linalg::doublet(S_PNO(pair, i_j_to_ij_[i][i]), T_ia_[i]);
-            auto tj = linalg::doublet(S_PNO(pair, i_j_to_ij_[j][j]), T_ia_[j]);
-            auto tau = linalg::doublet(ti, tj, false, true);
-            tau->add(T_iajb_[pair]);
-            value += tau->vector_dot(L_iajb_[pair]) + 0.5 * z2[pair]->vector_dot(r2[pair]);
-        }
-        return value;
-    };
-
+    auto lagrangian = [&]() { return ccsd_lagrangian(z1, z2); };
     for (bool singles : {true, false}) {
         const auto probe = amplitude_probe(singles);
         const auto& l = singles ? l1 : l2;

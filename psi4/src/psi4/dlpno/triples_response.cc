@@ -386,21 +386,7 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only) {
         w_bar->add(v_bar);  // V = W + the singles and F_ov terms.
         auto g = triples_df_response(r, w_bar, v_bar, three_center, x_bar[r]);
         if (x_bar[r]) tno_direction += add_tno_density_source(r, x_bar[r], probe);
-        const auto& aux = lmotriplet_to_ribfs_[r];
-        for (int u = 0; u < aux.size(); ++u) {
-            const int P = ribasis_->function_to_shell(aux[u]);
-            const int p = aux[u] - ribasis_->shell_to_basis_function(P);
-            for (int v = 0; v < aux.size(); ++v) {
-                metric_scale += (*g)(u, v) * (*full_metric_)(aux[u], aux[v]);
-                const int Q = ribasis_->function_to_shell(aux[v]);
-                if (Q > P) continue;
-                auto& block = density[P][Q];
-                if (!block)
-                    block = std::make_shared<Matrix>(ribasis_->shell(P).nfunction(), ribasis_->shell(Q).nfunction());
-                const int q = aux[v] - ribasis_->shell_to_basis_function(Q);
-                (*block)(p, q) += (P == Q ? 1.0 : 2.0) * (*g)(u, v);
-            }
-        }
+        metric_scale += add_metric_density(density, lmotriplet_to_ribfs_[r], g);
     }
 
     if (debug_) set_scalar_variable("DLPNO (T) L2 TNO SOURCE DIRECTION", tno_direction);
@@ -416,7 +402,34 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only) {
         if (ij != ji) triples_source2_[ji] = g->transpose();
     }
 
-    auto gradient = std::make_shared<Matrix>("DLPNO (T) AUXILIARY METRIC GRADIENT", molecule_->natom(), 3);
+    auto gradient = contract_metric(density, "DLPNO (T) AUXILIARY METRIC GRADIENT");
+    set_array_variable("DLPNO (T) AUXILIARY METRIC GRADIENT", gradient);
+    set_array_variable("DLPNO (T) THREE-CENTER GRADIENT",
+                       contract_three_center(three_center, "DLPNO (T) THREE-CENTER GRADIENT"));
+    set_scalar_variable("DLPNO (T) AUXILIARY METRIC SCALE DERIVATIVE", metric_scale);
+}
+
+double DLPNOCCSD_T::add_metric_density(MetricShellBlocks& density, const std::vector<int>& aux, const SharedMatrix& g) {
+    double metric_scale = 0.;
+    for (int u = 0; u < aux.size(); ++u) {
+        const int P = ribasis_->function_to_shell(aux[u]);
+        const int p = aux[u] - ribasis_->shell_to_basis_function(P);
+        for (int v = 0; v < aux.size(); ++v) {
+            metric_scale += (*g)(u, v) * (*full_metric_)(aux[u], aux[v]);
+            const int Q = ribasis_->function_to_shell(aux[v]);
+            if (Q > P) continue;
+            auto& block = density[P][Q];
+            if (!block)
+                block = std::make_shared<Matrix>(ribasis_->shell(P).nfunction(), ribasis_->shell(Q).nfunction());
+            const int q = aux[v] - ribasis_->shell_to_basis_function(Q);
+            (*block)(p, q) += (P == Q ? 1.0 : 2.0) * (*g)(u, v);
+        }
+    }
+    return metric_scale;
+}
+
+SharedMatrix DLPNOCCSD_T::contract_metric(const MetricShellBlocks& density, const std::string& name) {
+    auto gradient = std::make_shared<Matrix>(name, molecule_->natom(), 3);
     // Each shell derivative is evaluated once for the complete set of nuclei.
     auto zero = BasisSet::zero_ao_basis_set();
     IntegralFactory factory(ribasis_, zero, ribasis_, zero);
@@ -434,9 +447,7 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only) {
             }
         }
     }
-    set_array_variable("DLPNO (T) AUXILIARY METRIC GRADIENT", gradient);
-    set_array_variable("DLPNO (T) THREE-CENTER GRADIENT", contract_three_center(three_center));
-    set_scalar_variable("DLPNO (T) AUXILIARY METRIC SCALE DERIVATIVE", metric_scale);
+    return gradient;
 }
 
 // Derivative of <z,S^(tensor 3) x> with respect to S. Move each

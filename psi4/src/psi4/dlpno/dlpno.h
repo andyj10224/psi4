@@ -638,7 +638,7 @@ class PSI_API DLPNOCCSD : public DLPNO {
     /// A function to estimate integral memory costs
     void estimate_memory();
     /// Compute PNO integrals for CC computations
-    void compute_pno_integrals();
+    void compute_pno_integrals(bool reuse_files = false);
 
     // => CCSD intermediates <= //
 
@@ -697,6 +697,25 @@ class PSI_API DLPNOCCSD : public DLPNO {
                             const std::function<double()>& evaluate);
     void check_ccsd_adjoint();
     std::vector<SharedMatrix> triples_source1_, triples_source2_;
+    // Independent leaves of E_CCSD + Lambda R_CCSD at fixed T and fixed local bases.
+    // Occupied Fock elements may connect an absent pair in the G term of R2.
+    struct CCSDPairResponse {
+        SharedMatrix fov, fvv, exchange, ooov_j, ooov_k, ovvv, qi_occ, qi_vir;
+        std::vector<SharedMatrix> qma, qab, mixed_j, mixed_k;
+        std::unordered_map<int, SharedMatrix> overlap;
+    };
+    std::vector<CCSDPairResponse> ccsd_pair_response_;
+    std::vector<std::unordered_map<int, double>> ccsd_foo_response_;
+    // Sparse adjoints in the underlying LMO/PAO indices. X adjoints use the
+    // forward orientation; ij and ji share coefficients and must be summed.
+    using SparseResponseRows = std::vector<std::unordered_map<int, double>>;
+    SparseResponseRows ccsd_fov_response_, ccsd_fvv_response_, ccsd_overlap_response_;
+    std::vector<SharedMatrix> ccsd_pno_coefficient_response_;
+    size_t ccsd_response_words_ = 0;  ///< estimated peak, extended as sparse overlap blocks are discovered
+    void form_ccsd_pair_response();
+    void backtransform_ccsd_one_body();
+    double ccsd_lagrangian(const std::vector<SharedMatrix>& z1, const std::vector<SharedMatrix>& z2);
+    void check_ccsd_pair_response();
     struct CCAdjoints;
     void estimate_gradient_lambda_memory();
     void solve_gradient_lambda();
@@ -910,7 +929,13 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     SharedMatrix triples_df_response(int ijk, const SharedMatrix& w_bar, const SharedMatrix& v_bar,
                                      std::vector<ThreeCenterDensity>& three_center, const SharedMatrix& x_bar);
     void accumulate_three_center(int ijk, const TriplesDFBlocks& bar, std::vector<ThreeCenterDensity>& density, const SharedMatrix& x_bar);
-    SharedMatrix contract_three_center(const std::vector<ThreeCenterDensity>& density);
+    using MetricShellBlocks = std::vector<std::map<int, SharedMatrix>>;
+    double add_metric_density(MetricShellBlocks& density, const std::vector<int>& aux, const SharedMatrix& bar);
+    SharedMatrix contract_metric(const MetricShellBlocks& density, const std::string& name);
+    SharedMatrix contract_three_center(const std::vector<ThreeCenterDensity>& density, const std::string& name);
+    void contract_ccsd_df_response();
+    void check_ccsd_coefficient_response();
+    SharedMatrix pair_df_response(int p, std::vector<ThreeCenterDensity>& density);
     /// Create TNOs (Triplet Natural Orbitals) for DLPNO-(T)
     void tno_transform(double tno_tolerance, bool use_tuple_cutoffs = false, const std::vector<int>* fixed_ranks = nullptr);
     /// Sort triplets to split between "strong" and "weak" triplets (for (T) iterations)

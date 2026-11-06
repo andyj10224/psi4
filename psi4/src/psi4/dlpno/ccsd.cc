@@ -1415,7 +1415,7 @@ template<bool crude> void DLPNOCCSD::pair_prescreening() {
     }
 }
 
-void DLPNOCCSD::compute_pno_integrals() {
+void DLPNOCCSD::compute_pno_integrals(bool reuse_files) {
     outfile->Printf("    Computing integrals in the PNO basis from PAO integrals...\n\n");
 
     int n_lmo_pairs = ij_to_i_j_.size();
@@ -1457,8 +1457,10 @@ void DLPNOCCSD::compute_pno_integrals() {
     i_Qa_ij_.resize(n_lmo_pairs);
     i_Qk_ij_.resize(n_lmo_pairs);
 
-    psio_->open(PSIF_DLPNO_QIA_PNO, PSIO_OPEN_NEW);
-    psio_->open(PSIF_DLPNO_QAB_PNO, PSIO_OPEN_NEW);
+    if (!reuse_files) {
+        psio_->open(PSIF_DLPNO_QIA_PNO, PSIO_OPEN_NEW);
+        psio_->open(PSIF_DLPNO_QAB_PNO, PSIO_OPEN_NEW);
+    }
 
     std::time_t time_start = std::time(nullptr);
     std::time_t time_lap = std::time(nullptr);
@@ -1950,8 +1952,14 @@ void DLPNOCCSD::t1_fock() {
 
         // \overline{F}_{ab} = f_{ab} + [2(ab|me) - (ae|mb)] T_{m}^{e}
         // In canonical PNO representation, f_{ab} is diagonal
-        Fab_bar[ij] = std::make_shared<Matrix>(npno_ij, npno_ij);
-        Fab_bar[ij]->set_diagonal(e_pno_[ij]);
+        if (gradient_model_) {
+            // Keep the full operator for variations away from the semicanonical point.
+            auto f = submatrix_rows_and_cols(*F_pao_, lmopair_to_paos_[ij], lmopair_to_paos_[ij]);
+            Fab_bar[ij] = linalg::triplet(X_pno_[ij], f, X_pno_[ij], true, false, false);
+        } else {
+            Fab_bar[ij] = std::make_shared<Matrix>(npno_ij, npno_ij);
+            Fab_bar[ij]->set_diagonal(e_pno_[ij]);
+        }
 
         auto qma_ij = QIA_PNO(ij);
         auto qab_ij = QAB_PNO(ij);
@@ -2679,9 +2687,9 @@ void DLPNOCCSD::compute_R_iajb(std::vector<SharedMatrix>& R_iajb, std::vector<Sh
         auto G_ij = std::make_shared<Matrix>(npno_ij, npno_ij);
         G_ij->zero();
 
-        for (int k = 0; k < naocc; ++k) {
+        // The ii domain lists precisely the retained ik pairs.
+        for (int k : lmopair_to_lmos_[i_j_to_ij_[i][i]]) {
             int ik = i_j_to_ij_[i][k];
-            if (ik == -1) continue;
 
             // (a_{ik}, b_{ik}) -> (a_{ij}, b_{ij})
             auto T_ik = linalg::triplet(S_PNO(ij, ik), T_iajb_[ik], S_PNO(ik, ij), false, false, false);

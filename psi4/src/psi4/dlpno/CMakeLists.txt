@@ -5,6 +5,8 @@ list(APPEND sources
   ccsd.cc
   ccsd_lambda.cc
   ccsd_gradient_lambda.cc
+  ccsd_pair_response.cc
+  ccsd_df_response.cc
   triples.cc
   triples_response.cc
   triples_df_response.cc
