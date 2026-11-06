@@ -581,6 +581,11 @@ def energy(name, **kwargs):
         return core.variable('CURRENT ENERGY')
 
 
+def _print_dlpno_completion(name):
+    if isinstance(name, str) and name.lower().split("/", 1)[0] == "dlpno-ccsd(t)":
+        core.print_out("\n  Today is where your book begins! The rest is still unwritten :) —Natasha Bedingfield\n")
+
+
 def gradient(name, **kwargs):
     r"""Function complementary to :py:func:`~psi4.driver.optimize()`. Carries out one gradient pass,
     deciding analytic or finite difference.
@@ -607,6 +612,8 @@ def gradient(name, **kwargs):
 
     basisstash = p4util.OptionsState(['BASIS'])
     return_wfn = kwargs.pop('return_wfn', False)
+
+    optimization_step = kwargs.pop("_optimization_step", False)
 
     # Make sure the molecule the user provided is the active one
     molecule = kwargs.pop('molecule', core.get_active_molecule())
@@ -677,6 +684,8 @@ def gradient(name, **kwargs):
     optstash.restore()
 
     driver_findif.gradient_write(wfn)
+    if not optimization_step:
+        _print_dlpno_completion(lowername)
 
     if return_wfn:
         return (wfn.gradient(), wfn)
@@ -870,7 +879,7 @@ def optimize_geometric(name, **kwargs):
             self.p4_mol.set_geometry(core.Matrix.from_array(coords.reshape(-1,3)))
             self.p4_mol.update_geometry()
             # always collect wfn - can discard it later
-            g, wfn = gradient(self.p4_name, return_wfn=True, molecule=self.p4_mol, **self.p4_kwargs)
+            g, wfn = gradient(self.p4_name, return_wfn=True, molecule=self.p4_mol, _optimization_step=True, **self.p4_kwargs)
             self.p4_wfn = wfn
             e = core.variable('CURRENT ENERGY')
             return {'energy': e, 'gradient': g.np.ravel()}
@@ -1016,6 +1025,7 @@ def optimize_geometric(name, **kwargs):
     if return_wfn:
         wfn = engine.p4_wfn
 
+    _print_dlpno_completion(name)
     if return_wfn and return_history:
         return (return_energy, wfn, history)
     elif return_wfn and not return_history:
@@ -1286,7 +1296,7 @@ def optimize(name, **kwargs):
         opt_calcs = opt_object.calculations_needed() # tuple of strings ('energy', 'gradient', etc)
 
         # Compute the gradient - no longer need to worry about opt_data being wiped
-        G, wfn = gradient(lowername, return_wfn=True, molecule=molecule, **kwargs)
+        G, wfn = gradient(lowername, return_wfn=True, molecule=molecule, _optimization_step=True, **kwargs)
         thisenergy = core.variable('CURRENT ENERGY')
         opt_object.E = thisenergy
         opt_object.gX = G.np
@@ -1367,6 +1377,7 @@ def optimize(name, **kwargs):
                 with open(f"{core.get_writer_file_prefix(molecule.name())}.opt.json", 'w+') as f:
                     json.dump(opt_data, f, indent=2)
 
+            _print_dlpno_completion(lowername)
             if return_wfn and return_history:
                 return (thisenergy, wfn, history)
             elif return_wfn and not return_history:
