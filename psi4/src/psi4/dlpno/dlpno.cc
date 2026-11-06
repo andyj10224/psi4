@@ -960,6 +960,15 @@ void DLPNO::setup_orbitals() {
             localizer.set_condition(options_.get_double("LOCAL_IBO_CONDITION"));
             localizer.set_power(options_.get_int("LOCAL_IBO_POWER"));
             localizer.localize();
+            if (gradient_model_) {
+                set_array_variable("DLPNO RESPONSE IAOS", localizer.A());
+                const auto& indices = localizer.active_iao_indices();
+                auto selected = std::make_shared<Matrix>(indices.size(), 1);
+                for (size_t p = 0; p < indices.size(); ++p) (*selected)(p, 0) = indices[p];
+                set_array_variable("DLPNO RESPONSE IAO INDICES", selected);
+                set_scalar_variable("DLPNO RESPONSE IAO POWER", options_.get_int("LOCAL_IBO_POWER"));
+                set_scalar_variable("DLPNO RESPONSE IAO CONDITION", options_.get_double("LOCAL_IBO_CONDITION"));
+            }
             L = localizer.L();
         } else if (options_.get_str("DLPNO_LOCAL_ORBITALS") == "ER") {
             // The LS-THC AO collocation and coupling factors are invariant under
@@ -1069,6 +1078,9 @@ void DLPNO::setup_orbitals() {
             if (C_lmo_->ncol() + C_core->ncol() != nalpha_)
                 throw PSIEXCEPTION("Incomplete occupied space in the RHF DLPNO gradient projector.");
             gradient_frozen_occ_ = C_core;
+            set_array_variable("DLPNO RESPONSE ACTIVE LMOS", C_lmo_);
+            set_scalar_variable("DLPNO RESPONSE BOYS", options_.get_str("DLPNO_LOCAL_ORBITALS") == "BOYS");
+            set_scalar_variable("DLPNO RESPONSE MULLIKEN PM", options_.get_str("DLPNO_LOCAL_ORBITALS") == "PIPEK_MEZEY");
         }
         if (C_core->ncol()) C_pao_->subtract(linalg::triplet(C_core, C_core, reference_wavefunction_->S(), false, true, false));
     }

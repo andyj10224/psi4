@@ -270,6 +270,7 @@ class PSI_API IBOLocalizer : public PMLocalizer {
     void print_charges(double scale = 2.0);
 
     std::shared_ptr<Matrix> A() const { return A_; }
+    const std::vector<int>& active_iao_indices() const { return true_iaos_; }
     std::shared_ptr<Matrix> Q() const;
 
     void set_use_ghosts(bool use_ghosts) {

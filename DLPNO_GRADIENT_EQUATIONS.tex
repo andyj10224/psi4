@@ -182,7 +182,50 @@ in these same coordinates the adjoint satisfies
  H_{\rm RHF}z^{\rm RHF}=-b^{\rm RHF},\qquad
  r=H_{\rm RHF}z^{\rm RHF}+b^{\rm RHF}.
 \end{equation}
-All occupied rows participate, including frozen occupied rows. Complete
-assembly of $b^{\rm RHF}$ from the Fock, orbital, frozen-active
-partition and dependent operator sources is still open.
+All occupied rows participate, including frozen occupied rows.
+\section{Molecular canonical RHF source}
+Let $C=[C_{\rm c},C_{\rm o}]$ contain the canonical frozen and active
+occupied orbitals, $V$ all virtual orbitals, and $U=C_{\rm o}\T SL$.
+Return the localization-relaxed source to canonical active columns as
+$B_{\rm o}=\bar L U\T$ and write $B_{\rm c}=\bar C^{\rm c}$.
+For a core--active rotation $dC_{\rm c}=C_{\rm o}k$,
+$dC_{\rm o}=-C_{\rm c}k\T$, maintain the canonical off-block constraint:
+\begin{align}
+ k_{ic}&=-\frac{(C_{\rm o}\T dF C_{\rm c})_{ic}}{\epsilon_i-\epsilon_c},&
+ M_{ic}&=\frac{(C_{\rm o}\T B_{\rm c}-B_{\rm o}\T C_{\rm c})_{ic}}
+ {\epsilon_i-\epsilon_c},\\
+ F_*&=\bar F-\sym(C_{\rm o} M C_{\rm c}\T).
+\end{align}
+At fixed geometry $dC=-Vx\T$ in the Psi4 CPHF convention. Let
+$B=[B_{\rm c},B_{\rm o}]+B_{\rm IAO}$ with the last source present for IBO.
+For the spatial density $D=CC\T$ the Fock derivative is
+$dF=2J[dD]-K[dD]$. Self-adjointness of the Coulomb and exchange maps gives
+\begin{equation}
+ b^{\rm RHF}=-B\T V-2C\T(2J[F_*]-K[F_*])V .
+\end{equation}
+When no core is frozen, the mixed block is empty.
+\subsection{Occupied dependence of IAO operators}
+With primary--minimal overlaps $S_{12}$ and minimal metric $S_{22}$,
+define the following full-rank intermediates:
+\begin{align}
+ T&=S^{-1}S_{12}S_{22}^{-1}S_{12}\T,& X&=TC,&
+ H&=(X\T S X)^{-1},& D_t&=XHX\T,\\
+ P&=S^{-1}+2DSD_t-D-D_t,& Y&=PS_{12},&
+ N&=(Y\T S Y)^{-1/2},& I&=YN.
+\end{align}
+For atom $A$ let $I_A$ be its selected IAO columns; the forward operator
+is $S I_A I_A\T S$. The localization operator multiplier $\bar A$ gives
+$\bar I_A=2SL\bar A L\T S I_A$. For $Y\T S Y=W\operatorname{diag}(r_i^2)W\T$,
+the reverse equations at fixed AO metrics are
+\begin{align}
+ E_{ij}&=-1/[r_i r_j(r_i+r_j)],\\
+ Q&=W\big[E\circ(W\T\sym(Y\T\bar I)W)\big]W\T,\\
+ \bar P&=(\bar I N+2SYQ)S_{12}\T,\\
+ \bar D&=2\bar P D_t S-\bar P,&
+ \bar D_t&=2SD\bar P-\bar P,\\
+ B_{\rm IAO}&=(\bar D+\bar D\T)C+
+ T\T(1-SD_t)(\bar D_t+\bar D_t\T)XH .
+\end{align}
+This occupied derivative applies at fixed primary and minimal overlaps;
+their explicit nuclear derivatives enter a later Cartesian contraction.
 \end{document}
