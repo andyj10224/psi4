@@ -81,7 +81,31 @@ using namespace psi;
 namespace psi {
 namespace scfgrad {
 
-std::shared_ptr<Matrix> RSCFDeriv::hessian_response() {
+SharedMatrix RSCFDeriv::hessian_response() {
+    return response_impl(nullptr);
+}
+
+SharedMatrix RSCFDeriv::occupied_tangent(const SharedMatrix& direction) {
+    if (!direction || direction->nirrep() != 1 || direction->nrow() != molecule_->natom() || direction->ncol() != 3)
+        throw PSIEXCEPTION("Expected a natom by 3 RHF nuclear displacement.");
+    const auto scf_type = options_.get_str("SCF_TYPE");
+    if (nirrep_ != 1 || functional_->needs_xc() || functional_->x_alpha() != 1.0 || functional_->is_x_lrc() ||
+        (scf_type != "DF" && scf_type != "MEM_DF" && scf_type != "DISK_DF"))
+        throw PSIEXCEPTION("Occupied nuclear response requires a C1 density-fitted RHF reference.");
+    if (psio_->open_check(PSIF_HESS)) throw PSIEXCEPTION("SCF Hessian scratch file is already in use.");
+    auto saved_jk = rhf_wfn_->jk();
+    try {
+        auto tangent = response_impl(direction);
+        rhf_wfn_->set_jk(saved_jk);
+        return tangent;
+    } catch (...) {
+        rhf_wfn_->set_jk(saved_jk);
+        if (psio_->open_check(PSIF_HESS)) psio_->close(PSIF_HESS, 0);
+        throw;
+    }
+}
+
+SharedMatrix RSCFDeriv::response_impl(const SharedMatrix& direction) {
     // => Control Parameters <= //
 
     std::shared_ptr<Vector> eps = epsilon_a_subset("AO", "ALL");
@@ -110,7 +134,7 @@ std::shared_ptr<Matrix> RSCFDeriv::hessian_response() {
 
     // => Target <= //
 
-    auto response = std::make_shared<Matrix>("RHF Response", 3 * natom, 3 * natom);
+    auto response = direction ? nullptr : std::make_shared<Matrix>("RHF Response", 3 * natom, 3 * natom);
 
     // => Response Utility File <= //
 
@@ -2253,6 +2277,7 @@ std::shared_ptr<Matrix> RSCFDeriv::hessian_response() {
 #ifdef USING_BrianQC
     brianCPHFLeftSideFlag = false;
 #endif
+            if (direction && !rhf_wfn_->cphf_converged()) throw PSIEXCEPTION("RHF nuclear CPHF did not converge.");
             // Result in x
             for (int a = 0; a < nA; a++) {
                 std::stringstream ss;
@@ -2308,8 +2333,10 @@ std::shared_ptr<Matrix> RSCFDeriv::hessian_response() {
             pdip_grad[A][2] += 4 * mu_z.vector_dot(Upi);
         }
     }
-    rhf_wfn_->set_array_variable("SCF DIPOLE GRADIENT", dipole_gradient);
-    rhf_wfn_->set_array_variable("CURRENT DIPOLE GRADIENT", dipole_gradient);
+    if (!direction) {
+        rhf_wfn_->set_array_variable("SCF DIPOLE GRADIENT", dipole_gradient);
+        rhf_wfn_->set_array_variable("CURRENT DIPOLE GRADIENT", dipole_gradient);
+    }
 
     // => Qpi <= //
     {
@@ -2377,6 +2404,40 @@ std::shared_ptr<Matrix> RSCFDeriv::hessian_response() {
         }
     }
     jk.reset();
+
+    if (direction) {
+        auto contract = [&](const char* key) {
+            auto term = std::make_shared<Matrix>(nmo, nocc);
+            auto sum = std::make_shared<Matrix>(nmo, nocc);
+            const size_t bytes = size_t(nmo) * nocc * sizeof(double);
+            for (int a = 0; a < 3 * natom; ++a) {
+                const double weight = (*direction)(a / 3, a % 3);
+                if (weight == 0.) continue;
+                auto address = psio_get_address(PSIO_ZERO, a * bytes);
+                psio_->read(PSIF_HESS, key, (char*)term->pointer()[0], bytes, address, &address);
+                sum->axpy(weight, term);
+            }
+            return sum;
+        };
+        auto U = contract("Upi^A");
+        const int nc = frzcpi_[0];
+        if (nc && nc < nocc) {
+            auto F = contract("Fpi^A");
+            F->add(contract("Qpi^A"));
+            for (int c = 0; c < nc; ++c) {
+                for (int i = nc; i < nocc; ++i) {
+                    const double gap = eop[i] - eop[c];
+                    if (std::abs(gap) < 1.e-10) throw PSIEXCEPTION("Unresolved frozen-active orbital gap.");
+                    // Canonicalize the frozen-active block of the moving Fock matrix.
+                    const double k = -((*F)(i, c) + eop[i] * (*U)(i, c) + eop[c] * (*U)(c, i)) / gap;
+                    (*U)(i, c) += k;
+                    (*U)(c, i) -= k;
+                }
+            }
+        }
+        psio_->close(PSIF_HESS, 0);
+        return linalg::doublet(C, U);
+    }
 
     // => Zipper <= //
     {

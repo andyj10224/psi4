@@ -83,4 +83,36 @@ $T(0.008;v)$ in bohr; the former is the reported reference. Check
 \end{equation}
 No mass weighting or projection is applied. A directional curvature at
 this test geometry has units of hartree/bohr$^2$.
+
+\section{Reusing the restricted SCF nuclear response}
+Psi4's restricted Hessian routine forms the nuclear CPHF right-hand sides,
+solves the coupled equations, and writes $U_{pi}^{A}$ for all occupied
+columns (including frozen columns). Here $C$ contains all reference MOs and
+$C_o$ contains all occupied columns. Contract the Cartesian records with
+$v_A$ and use the native occupied gauge
+\begin{equation}
+ U_{ij}^{v}=-\tfrac12(C_o^{\mathsf T}S^v C_o)_{ij},\qquad
+ C_o^v=CU^v,\qquad D^v=C_o^v C_o^{\mathsf T}+C_o(C_o^v)^{\mathsf T}.
+\end{equation}
+The native virtual--occupied record already includes the sign conversion
+from Psi4's CPHF unknown to the coefficient derivative. With $D=C_o C_o^{\mathsf T}$,
+the projected relaxed Fock derivative (at fixed external MO columns) is
+\begin{equation}
+ f^v=C^{\mathsf T}\left(F_{\rm explicit}^{v}+2J[D^v]-K[D^v]\right)C_o.
+\end{equation}
+The native records are Fpi for the explicit derivative and Qpi for the
+induced term. For active occupied $i$ and frozen $c$, rotate these blocks by
+\begin{align}
+ k_{ic}&=-\frac{f^v_{ic}+\epsilon_i U^v_{ic}+\epsilon_c U^v_{ci}}
+                   {\epsilon_i-\epsilon_c},&
+ U^v_{ic}&\gets U^v_{ic}+k_{ic},&
+ U^v_{ci}&\gets U^v_{ci}-k_{ic}.
+\end{align}
+This maintains zero mixed canonical Fock element to first order. It preserves
+$D^v$ and changes the separate core and active coefficient derivatives.
+With $C_v$ the virtual columns, the verification conditions are
+\begin{align}
+ (C_o^v)^{\mathsf T}SC_o+C_o^{\mathsf T}SC_o^v+C_o^{\mathsf T}S^v C_o&=0,\\
+ C_v^{\mathsf T}\big[F^v C_o+FC_o^v-(S^v C_o+SC_o^v)\epsilon_o\big]&=0 .
+\end{align}
 \end{document}

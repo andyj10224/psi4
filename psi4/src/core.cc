@@ -219,6 +219,7 @@ SharedMatrix scfgrad(std::shared_ptr<scf::HF>, Options&);
 }
 namespace scfgrad {
 SharedMatrix scfhess(std::shared_ptr<scf::HF>, Options&);
+SharedMatrix rhf_occupied_tangent(std::shared_ptr<scf::HF>, SharedMatrix);
 }
 
 // Does not create a wavefunction
@@ -1413,6 +1414,8 @@ PYBIND11_MODULE(core, core) {
         return result;
     }, "mints"_a, "factors"_a, "Fixed-density RHF two-electron energy gradient for D = factors factors^T.");
     core.def("scfgrad", py_psi_scfgrad, "ref_wfn"_a, "Run scfgrad, which is a specialized DF-SCF gradient program.");
+    core.def("rhf_occupied_tangent", &scfgrad::rhf_occupied_tangent, "ref_wfn"_a, "direction"_a,
+             "Directional AO occupied coefficient derivative for C1 DF-RHF, partitioned at the frozen core.");
     core.def("scfhess", py_psi_scfhess, "ref_wfn"_a, "Run scfhess, which is a specialized DF-SCF hessian program.");
     core.def("dct", py_psi_dct, "ref_wfn"_a, "Runs the density cumulant (functional) theory code.");
     core.def("dfmp2", py_psi_dfmp2, "ref_wfn"_a, "Runs the DF-MP2 code.");

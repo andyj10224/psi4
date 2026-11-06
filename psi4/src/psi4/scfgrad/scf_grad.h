@@ -68,9 +68,11 @@ public:
 class RSCFDeriv : public SCFDeriv {
 protected:
     std::shared_ptr<scf::RHF> rhf_wfn_;
+    SharedMatrix response_impl(const SharedMatrix& direction);
 public:
     RSCFDeriv(std::shared_ptr<scf::RHF> rhf_wfn, Options& options): SCFDeriv(std::static_pointer_cast<scf::HF>(rhf_wfn), options), rhf_wfn_(rhf_wfn) {}
     ~RSCFDeriv() override {}
+    SharedMatrix occupied_tangent(const SharedMatrix& direction);
     virtual SharedMatrix hessian_response() override;
 };
 

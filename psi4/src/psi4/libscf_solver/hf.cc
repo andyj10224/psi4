@@ -398,6 +398,10 @@ void HF::finalize() {
 }
 
 void HF::set_jk(std::shared_ptr<JK> jk) {
+    if (!jk) {
+        jk_.reset();
+        return;
+    }
     // Cheap basis check
     int jk_nbf = jk->basisset()->nbf();
     int hf_nbf = basisset_->nbf();
