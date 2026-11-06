@@ -4,7 +4,7 @@
 
 **Current capability.** The ordinary RHF iterative (T) and stationary CCSD contributions each report explicit Cartesian correlation-fitting derivatives for the auxiliary metric and three-center integrals. The CCSD calculation also forms internal Fock, PAO-overlap and local coefficient derivatives using the converged (T)-sourced Λ₁ and Λ₂. The total-gradient driver remains guarded.
 
-**Next piece.** Propagate the stationary derivatives through the two PNO constructions, LMP2, PAOs, localization and RHF orbital relaxation. Include the remaining triples nuclear response. The scoped scaling target assumes a nonzero pair cutoff and bounded local domains.
+**Next piece.** Feed the final-PNO projector source into the LMP2 response and propagate the stationary derivatives through the two PNO constructions, LMP2, PAOs, localization and RHF orbital relaxation. Include the remaining triples nuclear response. The scoped scaling target assumes a nonzero pair cutoff and bounded local domains.
 
 ## Implementation history
 
@@ -87,6 +87,12 @@ An interacting H₂ chain (0.74 Å bonds perpendicular to the chain, 3.5 Å cent
 The kl count is the sum of squared occupied-domain sizes over unique pairs. With bounded pair degree, bounded PAO/PNO and RI domains and a linear number of retained pairs, the new response costs O(N). Each active fitting shell derivative is evaluated once across all displaced coordinates. The counts above are a contraction-level measurement on these two series. Pre-existing dense maps, reference Fock work, the orbital-response solve, and wall-clock scaling of the complete gradient remain outside this measurement.
 
 **Next piece.** Use the Fock, PAO-overlap and coefficient derivatives to drive orbital and local-space response, including both PNO constructions, the LMP2 correction and the nuclear portion of the TNO response. Add these contributions to the RHF and explicit correlation-fitting terms before comparing a total gradient with canonical DF-CCSD(T).
+
+### 2026-11-06 · Codex · Final PNO retained/discarded response
+
+The stationary CCSD pair coefficient derivative now feeds the last PNO selection. For each truncated unique pair, the gradient model saves the parent basis, LMP2 amplitudes, occupation eigenvectors and final semicanonical rotation. It sums both ordered coefficient derivatives and pulls the retained/discarded rotations through the pair density to the LMP2 amplitudes. Full-rank pairs require no projector source. The procedure uses pair-local matrices and diagnoses an unresolved occupation gap.
+
+At fixed geometry, finite-cutoff water with first and second PNO thresholds of 10⁻⁷ and 10⁻⁵ had ten truncated unique pairs. Perturbing the parent LMP2 amplitudes and rediagonalizing gave an absolute directional discrepancy of 8.0 × 10⁻¹⁰ hartree. This isolates motion of the final retained subspace, holding its internal frame fixed. LMP2 adjoint propagation, first-stage PNOs, the truncation energy, complementary triples and orbital response remain open. [Implementation](psi4/src/psi4/dlpno/ccsd_df_response.cc)
 
 ## Updating the bank
 

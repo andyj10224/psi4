@@ -237,7 +237,77 @@ void DLPNOCCSD_T::contract_ccsd_df_response() {
                        contract_metric(metric, "DLPNO CCSD AUXILIARY METRIC GRADIENT"));
     set_array_variable("DLPNO CCSD THREE-CENTER GRADIENT",
                        contract_three_center(density, "DLPNO CCSD THREE-CENTER GRADIENT"));
+    form_final_pno_projector_response();
     if (debug_) check_ccsd_coefficient_response();
+}
+
+// Fixed-rank projector contribution from the CCSD part of the Lagrangian.
+void DLPNOCCSD::form_final_pno_projector_response() {
+    ccsd_lmp2_projector_source_.assign(final_pno_selection_.size(), {});
+    double analytic = 0., numeric = 0.;
+    int splits = 0;
+    for (int p = 0; p < final_pno_selection_.size(); ++p) {
+        const auto& s = final_pno_selection_[p];
+        if (!s.parent) continue;
+        ++splits;
+        const int n = s.eigenvectors->nrow(), k = s.canonical_rotation->nrow();
+        auto bar = ccsd_pno_coefficient_response_[p]->clone();
+        if (p != ij_to_ji_[p]) bar->add(ccsd_pno_coefficient_response_[ij_to_ji_[p]]);
+        auto cov = linalg::triplet(s.parent, bar, s.canonical_rotation, true, false, true);
+        auto g = linalg::doublet(s.eigenvectors, cov, true, false);
+        auto eigbar = std::make_shared<Matrix>(n, n);
+        for (int a = k; a < n; ++a)
+            for (int b = 0; b < k; ++b) {
+                double gap = (*s.occupations)(b) - (*s.occupations)(a);
+                if (gap <= 64 * std::numeric_limits<double>::epsilon() * std::abs((*s.occupations)(0)))
+                    throw PSIEXCEPTION("Final PNO selection has an unresolved retained/discarded occupation gap.");
+                (*eigbar)(a, b) = (*eigbar)(b, a) = 0.5 * (*g)(a, b) / gap;
+            }
+        auto d = linalg::triplet(s.eigenvectors, eigbar, s.eigenvectors, false, false, true);
+        auto [i, j] = ij_to_i_j_[p];
+        if (i == j) d->scale(0.5);
+        // D = U T^T + U^T T, U = 2T - T^T.
+        const auto& t = s.amplitudes;
+        auto u = t->clone();
+        u->scale(2.);
+        u->subtract(t->transpose());
+        auto du = linalg::doublet(d, t);
+        du->add(linalg::doublet(t, d));
+        auto dt = linalg::doublet(d, u);
+        dt->add(linalg::doublet(u, d));
+        dt->axpy(2., du);
+        dt->subtract(du->transpose());
+        ccsd_lmp2_projector_source_[p] = dt;
+        if (debug_) {
+            auto direction = t->clone();
+            for (int a = 0; a < n; ++a)
+                for (int b = 0; b < n; ++b) (*direction)(a, b) = std::sin(.31 * (a + 1) + .49 * (b + 1) + p) / n;
+            if (i == j) direction->hermitivitize();
+            analytic += direction->vector_dot(dt);
+            auto sample = [&](double step) {
+                auto v = t->clone();
+                v->axpy(step, direction);
+                auto w = v->clone();
+                w->scale(2.);
+                w->subtract(v->transpose());
+                auto den = linalg::doublet(w, v, false, true);
+                den->add(linalg::doublet(w, v, true, false));
+                if (i == j) den->scale(.5);
+                auto eig = den->clone();
+                Vector occ(n);
+                den->diagonalize(*eig, occ, descending);
+                Dimension zero(1), kept(1);
+                kept.fill(k);
+                auto basis = eig->get_block({zero, eig->rowspi()}, {zero, kept});
+                auto orig = s.eigenvectors->get_block({zero, eig->rowspi()}, {zero, kept});
+                return cov->vector_dot(linalg::triplet(basis, basis, orig, false, true, false));
+            };
+            constexpr double h = 1.e-7;
+            numeric += (sample(h) - sample(-h)) / (2 * h);
+        }
+    }
+    set_scalar_variable("DLPNO CCSD FINAL PNO SPLITS", splits);
+    if (debug_) set_scalar_variable("DLPNO CCSD FINAL PNO PROJECTOR DIRECTION ERROR", std::abs(analytic - numeric));
 }
 
 // Vary the shared ij/ji coefficients in an arbitrary rectangular direction,

@@ -1083,6 +1083,7 @@ void DLPNOCCSD::recompute_pnos() {
 
     outfile->Printf("\n  ==> Forming Pair Natural Orbitals (for LCCSD) <==\n");
 
+    if (gradient_model_) final_pno_selection_.assign(n_lmo_pairs, {});
     std::vector<double> de_pno_singles(n_lmo_pairs, 0.0);
 
 #pragma omp parallel for schedule(dynamic, 1)
@@ -1156,6 +1157,14 @@ void DLPNOCCSD::recompute_pnos() {
         Dimension dim_final(1);
         dim_final.fill(nvir_ij_final);
 
+        if (gradient_model_ && nvir_ij_final < nvir_ij) {
+            auto& sel = final_pno_selection_[ij];
+            sel.parent = X_pno_[ij];
+            sel.amplitudes = T_iajb_[ij];
+            sel.eigenvectors = X_pno_ij;
+            sel.occupations = std::make_shared<Vector>(pno_occ);
+        }
+
         // This transformation gives orbitals that are orthonormal but not canonical
         X_pno_ij = X_pno_ij->get_block({zero, X_pno_ij->rowspi()}, {zero, dim_final});
         pno_occ = pno_occ.get_block({zero, dim_final});
@@ -1163,6 +1172,9 @@ void DLPNOCCSD::recompute_pnos() {
         SharedMatrix pno_canon;
         SharedVector e_pno_ij;
         std::tie(pno_canon, e_pno_ij) = canonicalizer(X_pno_ij, F_pno_ij_init);
+
+        if (gradient_model_ && final_pno_selection_[ij].parent)
+            final_pno_selection_[ij].canonical_rotation = pno_canon;
 
         // This transformation gives orbitals that are orthonormal and canonical
         X_pno_ij = linalg::doublet(X_pno_ij, pno_canon, false, false);

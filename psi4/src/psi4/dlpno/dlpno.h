@@ -712,6 +712,14 @@ class PSI_API DLPNOCCSD : public DLPNO {
     SparseResponseRows ccsd_fov_response_, ccsd_fvv_response_, ccsd_overlap_response_;
     std::vector<SharedMatrix> ccsd_pno_coefficient_response_;
     size_t ccsd_response_words_ = 0;  ///< estimated peak, extended as sparse overlap blocks are discovered
+    // Second PNO selection, in the first-stage PNO basis, unique pairs only.
+    struct PairSelection {
+        SharedMatrix parent, eigenvectors, canonical_rotation, amplitudes;
+        SharedVector occupations;
+    };
+    std::vector<PairSelection> final_pno_selection_;
+    std::vector<SharedMatrix> ccsd_lmp2_projector_source_;
+    void form_final_pno_projector_response();
     void form_ccsd_pair_response();
     void backtransform_ccsd_one_body();
     double ccsd_lagrangian(const std::vector<SharedMatrix>& z1, const std::vector<SharedMatrix>& z2);

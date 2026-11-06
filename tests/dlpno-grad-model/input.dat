@@ -67,6 +67,8 @@ def check_stationarity(w):
     compare_values(-2*w.variable('(T) CORRECTION ENERGY'),
                    w.variable('DLPNO (T) AUXILIARY METRIC SCALE DERIVATIVE'),
                    1.e-8, 'RHF (T) derivative under uniform metric scaling')                                    #TEST
+    compare_values(0., w.variable('DLPNO CCSD FINAL PNO PROJECTOR DIRECTION ERROR'), 1.e-7,
+                   'final PNO projector derivative through LMP2 amplitudes')                                   #TEST
     for group in ('INTEGRAL', 'FOCK', 'OVERLAP', 'PNO COEFFICIENT'):
         compare_values(0., w.variable(f'DLPNO CCSD {group} DIRECTION ERROR'), 1.e-8,
                        f'stationary CCSD derivative with respect to {group}')                                  #TEST
@@ -117,6 +119,7 @@ set dlpno_local_orbitals boys
 psi4.set_num_threads(1)
 e, w = energy('dlpno-ccsd(t)', return_wfn=True)
 check_stationarity(w)
+assert w.variable("DLPNO CCSD FINAL PNO SPLITS") > 0
 mem_metric = w.variable(metric_key).np.copy()
 mem_three = w.variable(three_key).np.copy()
 lambda_keys = ['DLPNO CCSD(T) LAMBDA1 T1 CONTRACTION', 'DLPNO CCSD(T) LAMBDA2 T2 CONTRACTION']
