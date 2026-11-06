@@ -115,4 +115,38 @@ With $C_v$ the virtual columns, the verification conditions are
  (C_o^v)^{\mathsf T}SC_o+C_o^{\mathsf T}SC_o^v+C_o^{\mathsf T}S^v C_o&=0,\\
  C_v^{\mathsf T}\big[F^v C_o+FC_o^v-(S^v C_o+SC_o^v)\epsilon_o\big]&=0 .
 \end{align}
+
+\section{Nuclear tangent of Boys-localized active occupied orbitals}
+Let $C_a$ contain the active occupied columns and $L$ the actual forward
+Boys LMOs. Let $U=C_a^{\mathsf T}SL$. Along the nuclear direction $v$
+define the transported coefficients $T=C_a^v U$. In the final LMO frame,
+the unknown additional rotation $K=-K^{\mathsf T}$ gives
+\begin{equation}
+ L^v=T+LK,\qquad K_{ji}=k_{ij}=-K_{ij}\quad (i<j).
+\end{equation}
+For each of the three AO electronic dipole operators $d_m$, put
+$A_m=L^{\mathsf T}d_m L$. At fixed localization rotation its derivative is
+\begin{equation}
+ B_m=T^{\mathsf T}d_m L+L^{\mathsf T}d_m T+L^{\mathsf T}d_m^v L,\qquad
+ (A_m)^v=B_m+A_mK-KA_m .
+\end{equation}
+Write $\Delta_{ij}A=A_{ii}-A_{jj}$. Differentiating the objective
+$\sum_{mi}(A_m)_{ii}^2$ with respect to $k_{ij}$ gives the stationary
+equations and their driving term
+\begin{align}
+ g_{ij}&=4\sum_m\Delta_{ij}A_m (A_m)_{ij}=0,\\
+ b_{ij}^v&=4\sum_m [\Delta_{ij}B_m (A_m)_{ij}
+                      +\Delta_{ij}A_m (B_m)_{ij}],\\
+ H_{\rm Boys} k&=-b^v .
+\end{align}
+Here $H_{\rm Boys}$ is the same exponential-coordinate rotation Hessian used
+by the gradient adjoint. Require a stationary, locally determined maximum.
+For each column $l_i$ verify
+\begin{equation}
+ (l_i l_i^{\mathsf T})^v=l_i^v l_i^{\mathsf T}+l_i(l_i^v)^{\mathsf T}.
+\end{equation}
+The rank-one AO density factors are sign-invariant. The coefficient-space
+projector acting in the AO metric would have an additional right factor
+$S$, which is itself differentiated. Independently converged displaced
+solutions are matched by maximizing absolute cross-geometry overlaps.
 \end{document}

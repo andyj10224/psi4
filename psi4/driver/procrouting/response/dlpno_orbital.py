@@ -1,22 +1,11 @@
 """Fixed-geometry orbital adjoints for the RHF DLPNO gradient model."""
 import numpy as np
-from scipy.sparse.linalg import LinearOperator, minres
+from scipy.sparse.linalg import LinearOperator, eigsh, minres
 
 
-def localization_adjoint(operators, power, orbitals, orbital_source, tol=1.e-9):
-    """Return occupied rotation multipliers and sources on localized population operators.
-
-    operators are symmetric L.T @ A_K @ L in the final active LMO frame.
-    A positive angle has K[j,i]=+1 for i<j. The source is d(correlation L)/dL.
-    """
-    L = np.asarray(orbitals)
-    n = L.shape[1]
+def _solve_localization_rotations(operators, power, rhs, tol, require_unique=False):
+    n = operators[0].shape[0]
     i, j = np.triu_indices(n, 1)
-    operators = [np.asarray(A) for A in operators]
-    if power not in (2, 4) or not operators or any(
-        A.shape != (n, n) or not np.allclose(A, A.T) for A in operators
-    ):
-        raise ValueError("Expected symmetric localized operators and power 2 or 4.")
     def generator(v):
         K = np.zeros((n, n))
         K[j, i], K[i, j] = v, -v
@@ -39,24 +28,51 @@ def localization_adjoint(operators, power, orbitals, orbital_source, tol=1.e-9):
             result += (K @ grad - grad @ K)[i,j]
         return result
 
-    M = L.T @ np.asarray(orbital_source)
-    rhs = M[i,j] - M[j,i]
     z = np.zeros_like(rhs)
-    if np.linalg.norm(rhs):
+    if rhs.size and (require_unique or np.linalg.norm(rhs)):
         H = LinearOperator((rhs.size, rhs.size), matvec=action, dtype=float)
         if rhs.size <= 64:
             # Resolve near-null rotations in small occupied spaces. Require
             # the residual check below even when a gauge mode is discarded.
             dense = np.column_stack([action(v) for v in np.eye(rhs.size)])
-            z = np.linalg.lstsq(dense, rhs, rcond=None)[0]
+            z, _, rank, _ = np.linalg.lstsq(dense, rhs, rcond=None)
+            if require_unique and (rank < rhs.size or np.linalg.eigvalsh(dense)[-1] >= 0.):
+                raise RuntimeError("Boys rotation tangent requires a nonsingular localization maximum.")
             info = 0
         else:
+            if require_unique:
+                largest = eigsh(H, k=1, which="LA", return_eigenvectors=False, tol=tol)[0]
+                scale = max(1., sum(np.linalg.norm(A)**power for A in operators))
+                if largest >= -np.finfo(float).eps * rhs.size * scale:
+                    raise RuntimeError("Boys rotation tangent requires a nonsingular localization maximum.")
             z, info = minres(H, rhs, rtol=max(np.finfo(float).eps, tol * 1.e-3))
         if info or np.linalg.norm(action(z)-rhs) > tol*max(1., np.linalg.norm(rhs)):
-            raise RuntimeError(f"Localization adjoint residual {np.linalg.norm(action(z)-rhs):.3e} exceeds tolerance.")
+            label = "Boys tangent" if require_unique else "Localization adjoint"
+            raise RuntimeError(f"{label} residual {np.linalg.norm(action(z)-rhs):.3e} exceeds tolerance.")
+    return z
+
+
+def localization_adjoint(operators, power, orbitals, orbital_source, tol=1.e-9):
+    """Return occupied rotation multipliers and sources on localized population operators.
+
+    operators are symmetric L.T @ A_K @ L in the final active LMO frame.
+    A positive angle has K[j,i]=+1 for i<j. The source is d(correlation L)/dL.
+    """
+    L = np.asarray(orbitals)
+    n = L.shape[1]
+    i, j = np.triu_indices(n, 1)
+    operators = [np.asarray(A) for A in operators]
+    if power not in (2, 4) or not operators or any(
+        A.shape != (n, n) or not np.allclose(A, A.T) for A in operators
+    ):
+        raise ValueError("Expected symmetric localized operators and power 2 or 4.")
+    M = L.T @ np.asarray(orbital_source)
+    rhs = M[i,j] - M[j,i]
+    z = _solve_localization_rotations(operators, power, rhs, tol)
     bars = []
     for A in operators:
-        w, wp = weights(A)
+        diag = A.diagonal()
+        w, wp = power*diag**(power-1), power*(power-1)*diag**(power-2)
         bar = np.zeros_like(A, dtype=float)
         bar[i,j] = bar[j,i] = z*(w[i]-w[j])
         delta = 2*z*A[i,j]
@@ -374,3 +390,46 @@ def assemble_cartesian_gradient(wfn, reference_gradient=None, fock_derivatives=N
         for term in ('AUXILIARY METRIC', 'THREE-CENTER'):
             gradient += wfn.variable(f'DLPNO {source} {term} GRADIENT').np
     return gradient
+
+def boys_nuclear_tangent(wfn, direction, tol=1.e-9):
+    """AO active-LMO coefficient derivative in a stationary Boys frame."""
+    from psi4 import core
+    if not wfn.variable('DLPNO RESPONSE BOYS'):
+        raise ValueError("Expected a Boys-localized RHF DLPNO gradient model.")
+    ref = wfn.reference_wavefunction()
+    v = np.asarray(direction, dtype=float)
+    if v.shape != (ref.molecule().natom(), 3) or not np.isfinite(v).all():
+        raise ValueError("Expected a finite Cartesian direction with one row per atom.")
+    L = wfn.variable('DLPNO RESPONSE ACTIVE LMOS').np
+    nc = ref.Ca_subset('AO', 'FROZEN_OCC').np.shape[1]
+    C = ref.Ca_subset('AO', 'OCC').np[:,nc:]
+    U = C.T @ ref.S().np @ L
+    dC = core.rhf_occupied_tangent(ref, core.Matrix.from_array(v)).np
+    transported = dC[:,nc:] @ U
+    mints = core.MintsHelper(ref)
+    dip = [m.np for m in mints.ao_dipole()]
+    ddip = [np.zeros_like(d) for d in dip]
+    for atom in range(v.shape[0]):
+        if np.any(v[atom]):
+            derivatives = mints.ao_elec_dip_deriv1(atom)
+            for k in range(3):
+                for xyz in range(3):
+                    ddip[k] += v[atom,xyz]*derivatives[3*k+xyz].np
+    i,j = np.triu_indices(L.shape[1], 1)
+    operators = []
+    source = np.zeros(i.size)
+    gradient = np.zeros(i.size)
+    for d, dd in zip(dip, ddip):
+        A = L.T @ d @ L
+        operators.append(A)
+        motion = transported.T @ d @ L
+        dA = motion + motion.T + L.T @ dd @ L
+        delta = A.diagonal()[i]-A.diagonal()[j]
+        gradient += 4*delta*A[i,j]
+        source += 4*((dA.diagonal()[i]-dA.diagonal()[j])*A[i,j] + delta*dA[i,j])
+    if np.max(abs(gradient), initial=0.) > max(tol, core.get_option('DLPNO','LOCAL_GRADIENT_CONVERGENCE'))*1.01:
+        raise RuntimeError("Boys tangent requires a stationary forward localization.")
+    rotation = _solve_localization_rotations(operators, 2, -source, tol, require_unique=True)
+    K = np.zeros((L.shape[1], L.shape[1]))
+    K[j,i], K[i,j] = rotation, -rotation
+    return transported + L @ K
