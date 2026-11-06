@@ -2,9 +2,9 @@
 
 ## RHF DLPNO-CCSD(T) analytic nuclear gradients
 
-**Current capability.** The ordinary RHF iterative (T) and stationary CCSD contributions each report explicit Cartesian correlation-fitting derivatives for the auxiliary metric and three-center integrals. The CCSD calculation also forms internal Fock, PAO-overlap and local coefficient derivatives using the converged (T)-sourced Λ₁ and Λ₂. The total-gradient driver remains guarded.
+**Current capability.** The ordinary RHF iterative (T), stationary CCSD, and combined PNO truncation corrections each report explicit Cartesian correlation-fitting derivatives for the auxiliary metric and three-center integrals. The CCSD calculation also forms internal Fock, PAO-overlap and local coefficient derivatives using the converged (T)-sourced Λ₁ and Λ₂. The total-gradient driver remains guarded.
 
-**Next piece.** Combine the direct first-stage projector source with the source from solving the LMP2 adjoint and propagate the stationary derivatives through the two PNO constructions, LMP2, PAOs, localization and RHF orbital relaxation. Include the remaining triples nuclear response. The scoped scaling target assumes a nonzero pair cutoff and bounded local domains.
+**Next piece.** Solve the LMP2 adjoint with the combined projector and truncation-energy sources, then propagate the stationary derivatives through the two PNO constructions, LMP2, PAOs, localization and RHF orbital relaxation. Include the remaining triples nuclear response. The scoped scaling target assumes a nonzero pair cutoff and bounded local domains.
 
 ## Implementation history
 
@@ -101,6 +101,20 @@ For each truncated first-stage pair, the RHF gradient model retains the semicano
 For frozen-core cc-pVDZ water at first/final thresholds 10⁻⁶/10⁻⁵, ten first-stage pairs were truncated. A simultaneous fixed-geometry perturbation of the exchange blocks and occupied/virtual energies, followed by rediagonalization at fixed rank, agreed with the analytic derivative to 2.8 × 10⁻¹⁰ hartree (four threads, disk-backed pair factors and semi-direct overlaps). At 10⁻⁷/10⁻⁵, one first-stage pair was truncated and the error was 1.1 × 10⁻¹⁰ hartree. [Regression](tests/dlpno-grad-model/input.dat)
 
 Still required for a nuclear gradient: add the implicit LMP2 and truncation-energy sources, complete orbital and local-basis response, and combine the first-stage exchange/energy derivatives with the other integral and Fock derivatives.
+
+### 2026-11-06 · Codex · Both RHF PNO truncation-energy responses
+
+Implementation commit [6d64c701](https://github.com/andyj10224/psi4/commit/6d64c701910517bbdcf22a603654eb8eeabf604e).
+
+The first loss differentiates the semicanonical MP2 energy in the orthonormal PAO pair domain minus its projection into the first retained PNO space. The final loss uses the converged LMP2 amplitudes in that first space and subtracts the energy in the final PNO space. Both include the diagonal-pair singles energy with the forward denominator screen. An off-diagonal unique pair contributes twice. A full-rank stage contributes zero. The final-stage coefficient derivative feeds back through the first selection. The response holds ranks fixed and transports the LMP2 tensor with its first retained space.
+
+The wavefunction reports the combined explicit fitting contributions as `DLPNO PNO TRUNCATION AUXILIARY METRIC GRADIENT` and `DLPNO PNO TRUNCATION THREE-CENTER GRADIENT` in hartree/bohr. The implementation adds the amplitude source from the final loss to the pending LMP2 adjoint RHS. It accumulates the occupied and virtual Fock derivatives, the occupied–virtual singles derivative and the parent coefficient derivatives for later orbital response. Work is local to the truncated unique pairs; each active derivative shell block is contracted once per array. [Implementation](psi4/src/psi4/dlpno/pno_truncation_response.cc)
+
+**Finite-cutoff water.** Frozen core, cc-pVDZ, Boys, first/final PNO cutoffs of 10⁻⁶/10⁻⁵. With four threads, disk-backed pair factors and semi-direct overlaps, the reconstructed energy losses were −0.000044112039044 and −0.001074584005998 hartree. Their sum agreed with the forward correction to within 1.1 × 10⁻¹³ hartree. Maximum per-pair directional errors were 1.8 × 10⁻¹⁰ and 2.0 × 10⁻⁹ hartree, respectively. A separate nonzero singles-Fock probe exercised terms suppressed by the RHF Brillouin condition. Perturbing the primitive fitting integrals and rebuilding both selections gave a maximum error of 3.2 × 10⁻¹⁰ hartree. First-only and final-only truncations gave corresponding errors of 1.5 × 10⁻¹⁰ and 5.2 × 10⁻¹¹ hartree. These probes all use one nuclear geometry.
+
+**Regression and formal check.** The five targeted CTests passed. Coverage includes canonical-limit zero arrays, finite-rank energies, disk/in-core agreement, translation invariance, and a screened H₂ chain. Lean 4.16 verified the bilinear full-minus-projected energy variation including both moving projection factors. [Regression](tests/dlpno-grad-model/input.dat) · [Lean proof](tests/dlpno-grad-model/TriplesAdjoint.lean)
+
+**Next piece.** Solve the LMP2 adjoint on the retained pair graph with the combined projector and truncation-energy sources, then propagate its integral, overlap and local-space contributions. The explicit fitting arrays above hold the parent orbital data fixed; a total gradient still needs LMP2, PAO, localization, RHF orbital, and remaining triples nuclear response.
 
 ## Updating the bank
 
