@@ -176,4 +176,57 @@ $n=b/\sqrt m$ have derivatives
 Use the same fixed zero-column branch as the energy for $m\le10^{-20}$.
 Differentiated idempotency $B^vB+BB^v=B^v$ and column normalization
 $2(n^v)^{\mathsf T}Sn+n^{\mathsf T}S^vn=0$ give additional checks.
+
+\section{First retained PNO space of one pair}
+Hold the AO, PAO and fitting domains, parent pivots, AO shell screening
+mask and forward retained rank of pair $ij$ fixed. On each fitting center
+let $l,r$ denote the left and right AO index lists. For LMO $i$ and the
+normalized pair PAO columns $N$, the fitted LMO coefficients and transformed
+three-center integrals obey (one auxiliary index $Q$ is implicit)
+\begin{align}
+ S_{ll}c &= S_{l,:}L_i, &
+ S_{ll}c^v&=S_{l,:}^vL_i+S_{l,:}L_i^v-S_{ll}^v c,\\
+ q_i&=c^{\mathsf T} I_{lr}N_r,&
+ q_i^v&=(c^v)^{\mathsf T}I_{lr}N_r+c^{\mathsf T}I_{lr}^vN_r+c^{\mathsf T}I_{lr}N_r^v .
+\end{align}
+Stack the rows in pair auxiliary order. With the local RIFIT metric $M$,
+\begin{align}
+ M b_i=q_i,\quad M b_i^v=q_i^v-M^v b_i,\qquad
+ K=b_i^{\mathsf T}q_j,\quad K^v=(b_i^v)^{\mathsf T}q_j+b_i^{\mathsf T}q_j^v .
+\end{align}
+Use the forward semicanonical PAO transform $X$, padded outside its fixed
+pivots. The present tangent requires its nonzero rows to span the full pivot
+space. Put $Y=NX$, $W=N^vX$. A metric-preserving frame is
+\begin{align}
+ G&=-\tfrac12(W^{\mathsf T}SY+Y^{\mathsf T}SW+Y^{\mathsf T}S^vY),&
+ Y^v&=W+YG .
+\end{align}
+Thus $f=Y^{\mathsf T}FY$, $k=X^{\mathsf T}KX$, with derivatives
+\begin{align}
+ f^v&=(Y^v)^{\mathsf T}FY+Y^{\mathsf T}F^vY+Y^{\mathsf T}FY^v,\\
+ k^v&=X^{\mathsf T}K^v X+G^{\mathsf T}k+kG .
+\end{align}
+At the origin $f_{ab}=\epsilon_a\delta_{ab}$. Write $s=F_{ii}+F_{jj}$
+in the active LMO basis, so that $s^v$ includes the LMO derivatives and
+the relaxed AO Fock derivative. Differentiating $s t-ft-t f=k$ yields
+\begin{equation}
+ t_{ab}=\frac{k_{ab}}{s-\epsilon_a-\epsilon_b},\qquad
+ t^v_{ab}=\frac{[k^v+f^v t+t f^v-s^v t]_{ab}}{s-\epsilon_a-\epsilon_b}.
+\end{equation}
+For $\tilde t=2t-t^{\mathsf T}$ and $\eta=(1+\delta_{ij})^{-1}$,
+\begin{align}
+ D&=\eta(\tilde t t^{\mathsf T}+\tilde t^{\mathsf T}t),\\
+ D^v&=\eta(\tilde t^v t^{\mathsf T}+\tilde t (t^v)^{\mathsf T}
+              +(\tilde t^v)^{\mathsf T}t+\tilde t^{\mathsf T}t^v).
+\end{align}
+Let $U_r,U_d$ be the retained and discarded eigenvectors of $D$ with
+occupations $n_p,n_a$. In the transported frame,
+\begin{align}
+ Z_{ap}&=(U_d^{\mathsf T}D^vU_r)_{ap}/(n_p-n_a),\\
+ P&=U_r U_r^{\mathsf T},\qquad P^v=U_d Z U_r^{\mathsf T}+U_r Z^{\mathsf T}U_d^{\mathsf T},\\
+ A&=YPY^{\mathsf T},\quad
+ A^v=Y^v P Y^{\mathsf T}+YP^vY^{\mathsf T}+YP(Y^v)^{\mathsf T}.
+\end{align}
+$A$ is the AO contravariant subspace density; $AS$ acts on AO coefficients.
+Differentiating $ASA=A$ supplies a metric diagnostic.
 \end{document}

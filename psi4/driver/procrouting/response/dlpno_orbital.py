@@ -494,3 +494,93 @@ def pao_nuclear_tangent(wfn, direction, tol=1.e-9):
     scale[keep] = 1./np.sqrt(norm2[keep])
     normalized = draw*scale - .5*raw*(dnorm2*scale**3)
     return PAOTangent(draw, normalized, error)
+
+
+def pair_three_center_tangent(overlap, doverlap, lmo, dlmo, pao, dpao, left, right, eri, deri):
+    """Transform one auxiliary-center block in its actual AO domains.
+
+    eri and deri must contain the same retained shell pairs on both legs.
+    The LMO is refitted in left; the PAO coefficients are sliced on right.
+    """
+    local = np.ix_(left, left)
+    fitted = np.linalg.solve(overlap[local], overlap[left] @ lmo)
+    dfitted = np.linalg.solve(overlap[local], doverlap[left] @ lmo + overlap[left] @ dlmo
+                              - doverlap[local] @ fitted)
+    n = pao[right]
+    contracted = fitted @ eri
+    q = contracted @ n
+    dq = (dfitted @ eri + fitted @ deri) @ n + contracted @ dpao[right]
+    return q, dq
+
+
+def pair_exchange_tangent(metric, dmetric, qi, dqi, qj, dqj):
+    """Exchange and derivative from the pair's local metric and refitted three-center blocks."""
+    fitted = np.linalg.solve(metric, qi)
+    dfitted = np.linalg.solve(metric, dqi - dmetric @ fitted)
+    return fitted.T @ qj, dfitted.T @ qj + fitted.T @ dqj
+
+
+class FirstPNOTangent(NamedTuple):
+    occupations: np.ndarray
+    boundary_gap: float
+    retained_density: np.ndarray
+    retained_density_tangent: np.ndarray
+
+
+def first_pno_tangent(pao, dpao, overlap, doverlap, fock, dfock, exchange, dexchange,
+                      occupied_sum, doccupied_sum, parent, retained, diagonal=False):
+    """AO contravariant retained-subspace density and its directional derivative for one pair.
+
+    pao contains the normalized AO columns in the pair domain. exchange and
+    dexchange are in this PAO basis. parent is the forward semicanonical
+    transform, including the selected Cholesky pivots; retained is the actual
+    forward rank, including minimum, energy and trace selection criteria.
+    """
+    X = np.asarray(parent)
+    n = X.shape[1]
+    if not 0 < retained <= n:
+        raise ValueError("Invalid first-PNO retained rank.")
+    if np.count_nonzero(np.any(X != 0., axis=1)) != n:
+        raise ValueError("The first-PNO tangent requires a full-rank selected pivot span.")
+    Y = pao @ X
+    if not np.allclose(Y.T @ overlap @ Y, np.eye(n), atol=1.e-9, rtol=0):
+        raise ValueError("First-PNO parent disagrees with the PAO metric.")
+    # Parallel transport the fixed pivot span; the virtual Fock need only be
+    # diagonal at the base geometry. Within-parent rotations drop out of the result.
+    motion = dpao @ X
+    half = motion.T @ overlap @ Y
+    gauge = -.5*(half + half.T + Y.T @ doverlap @ Y)
+    dY = motion + Y @ gauge
+    f = Y.T @ fock @ Y
+    eps = f.diagonal()
+    if not np.allclose(f, np.diag(eps), atol=1.e-8, rtol=0):
+        raise ValueError("First-PNO reference parent must be semicanonical.")
+    half = dY.T @ fock @ Y
+    df = half + half.T + Y.T @ dfock @ Y
+    k = X.T @ exchange @ X
+    dk = X.T @ dexchange @ X + gauge.T @ k + k @ gauge
+    denom = occupied_sum - eps[:,None] - eps[None,:]
+    if np.min(abs(denom)) < 1.e-12:
+        raise ValueError("Unresolved semicanonical MP2 denominator.")
+    t = k / denom
+    dt = (dk + df @ t + t @ df - doccupied_sum*t) / denom
+    tt, dtt = 2*t - t.T, 2*dt - dt.T
+    factor = .5 if diagonal else 1.
+    density = factor*(tt @ t.T + tt.T @ t)
+    ddensity = factor*(dtt @ t.T + tt @ dt.T + dtt.T @ t + tt.T @ dt)
+    occ, orbitals = np.linalg.eigh(density)
+    occ, orbitals = occ[::-1], orbitals[:,::-1]
+    keep, drop = orbitals[:,:retained], orbitals[:,retained:]
+    proj = keep @ keep.T
+    dproj = np.zeros_like(proj)
+    gap = np.inf
+    if retained < n:
+        gaps = occ[None,:retained] - occ[retained:,None]
+        gap = np.min(gaps)
+        if gap <= 64*np.finfo(float).eps*max(np.max(abs(occ)), np.finfo(float).tiny):
+            raise ValueError("Unresolved retained/discarded first-PNO occupation boundary.")
+        mixing = (drop.T @ ddensity @ keep) / gaps
+        block = drop @ mixing @ keep.T
+        dproj = block + block.T
+    half = dY @ proj @ Y.T
+    return FirstPNOTangent(occ, gap, Y @ proj @ Y.T, half + half.T + Y @ dproj @ Y.T)

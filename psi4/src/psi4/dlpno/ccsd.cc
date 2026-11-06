@@ -791,6 +791,23 @@ template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
     } // end for (ij pairs)
 
     if constexpr (!crude) {
+        if (gradient_model_ && debug_) {
+            // Retain a single truncated off-diagonal pair for the Hessian regression.
+            for (int ij = 0; ij < n_lmo_pairs; ++ij) {
+                const auto [i, j] = ij_to_i_j_[ij];
+                const auto& selection = initial_pno_selection_[ij];
+                if (i >= j || !selection.parent) continue;
+                set_scalar_variable("DLPNO FIRST PNO PROBE I", i);
+                set_scalar_variable("DLPNO FIRST PNO PROBE J", j);
+                const auto& domain = lmopair_to_paos_[ij];
+                auto indices = std::make_shared<Matrix>(domain.size(), 1);
+                for (size_t a = 0; a < domain.size(); ++a) (*indices)(a, 0) = domain[a];
+                set_array_variable("DLPNO FIRST PNO PROBE DOMAIN", indices);
+                set_array_variable("DLPNO FIRST PNO PROBE PARENT", selection.parent);
+                set_array_variable("DLPNO FIRST PNO PROBE RETAINED", X_pno_[ij]);
+                break;
+            }
+        }
         // Print out PNO domain information
         int pno_count_total = 0, pno_count_min = nbf, pno_count_max = 0;
         double occ_number_total = 0.0, occ_number_min = 2.0, occ_number_max = 0.0;
