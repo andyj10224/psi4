@@ -1337,7 +1337,7 @@ template<bool crude> double DLPNOCCSD::filter_pairs(const std::vector<double>& e
         // require the integral/amplitude tensors allocated for strong pairs.
         // Until weak-pair Lambda approximations are implemented, promote every
         // pair surviving the initial screening whenever Lambda is requested.
-        const bool force_strong = lambda_requested_ || brueckner_orbs_;
+        const bool force_strong = lambda_requested_ || brueckner_orbs_ || gradient_model_;
         int ij_strong = 0, ij_weak = 0;
         for (int ij = 0; ij < n_lmo_pairs; ++ij) {
             auto &[i, j] = ij_to_i_j_[ij];
@@ -3028,6 +3028,13 @@ double DLPNOCCSD::compute_dlpno_ccsd_energy() {
     timer_on("Refined Pair Prescreening");
     pair_prescreening<false>();
     timer_off("Refined Pair Prescreening");
+
+    // Prescreening still defines the surviving pairs. The phase-one functional
+    // includes their PNO correction, but omits energy estimates for excluded pairs.
+    if (gradient_model_) {
+        de_lmp2_eliminated_ = 0.0;
+        de_dipole_ = 0.0;
+    }
 
     // Set variables from LMP2
     const double e_scf = reference_energy_;

@@ -200,6 +200,15 @@ def negotiate_derivative_type(
         When `method` is unavailable at all. When `user_dertype` exceeds what available for `method`.
 
     """
+    if target_dertype in ("gradient", "hessian"):
+        methods = method if isinstance(method, list) else [method]
+        if "dlpno-ccsd(t)" in methods and core.get_option("DLPNO", "DLPNO_GRADIENT_MODEL"):
+            raise ValidationError(
+                "The DLPNO gradient model currently provides the two explicit triples DF contributions. "
+                "Use energy('dlpno-ccsd(t)', return_wfn=True) to inspect them. "
+                "A total nuclear derivative requires additional response terms."
+            )
+
     if target_dertype == "properties":
         if isinstance(method, list):
             # untested

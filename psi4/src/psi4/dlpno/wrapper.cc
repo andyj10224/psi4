@@ -47,6 +47,17 @@ SharedWavefunction dlpno(SharedWavefunction ref_wfn, Options& options) {
     if (orbital_rank > energy_rank)
         throw PSIEXCEPTION("DLPNO_REFERENCE_ORBITALS cannot exceed the final iterative CC rank.");
     const bool lambda = options.get_bool("DLPNO_DO_LAMBDA") || options.get_bool("DLPNO_DO_ONEPDM");
+    if (options.get_bool("DLPNO_GRADIENT_MODEL")) {
+        if (reference != "RHF" || ref_wfn->nalpha() != ref_wfn->nbeta() || !ref_wfn->same_a_b_orbs() ||
+            algorithm != "CCSD(T)" || orbital_rank || lambda || options.get_bool("T0_APPROXIMATION"))
+            throw PSIEXCEPTION("DLPNO_GRADIENT_MODEL requires closed-shell RHF DLPNO-CCSD(T) with HF orbitals and ordinary iterative triples.");
+        const auto scf_type = options.get_str("SCF_TYPE");
+        if (scf_type != "DF" && scf_type != "DISK_DF" && scf_type != "MEM_DF")
+            throw PSIEXCEPTION("DLPNO_GRADIENT_MODEL requires a density-fitted RHF reference.");
+        const auto localizer = options.get_str("DLPNO_LOCAL_ORBITALS");
+        if (localizer != "BOYS" && localizer != "PIPEK_MEZEY" && localizer != "IBO")
+            throw PSIEXCEPTION("DLPNO_GRADIENT_MODEL supports Boys, Pipek-Mezey, and IBO localization.");
+    }
     if (lambda && (reference != "RHF" || energy_rank != 2))
         throw PSIEXCEPTION("DLPNO Lambda/OPDM is available only for RHF CCSD and CCSD(T).");
     if (reference == "ROHF" && (orbital_rank > 2 || energy_rank != 2))

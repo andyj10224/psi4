@@ -1,0 +1,141 @@
+#! Test the explicit RI contributions to the single-TNO RHF (T) gradient.
+#! The references are fixed-geometry canonical DF-CCSD(T) derivatives with
+#! only the specified fitting integral varied. See canonical_reference.py.
+
+import numpy as np
+from psi4.driver.p4util.exceptions import ValidationError
+
+memory 1 GB
+molecule h2o {
+0 1
+O
+H 1 0.958
+H 1 0.958 2 104.4776
+symmetry c1
+}
+
+set {
+    basis cc-pvdz
+    reference rhf
+    freeze_core true
+    scf_type df
+    cc_type df
+    df_basis_scf cc-pvdz-jkfit
+    df_basis_cc cc-pvdz-ri
+    e_convergence 1.0e-11
+    r_convergence 1.0e-10
+    d_convergence 1.0e-11
+    dlpno_maxiter 120
+    dlpno_ao_ints_tol 1.0e-14
+    t_cut_pno 0
+    t_cut_pno_mp2 0
+    t_cut_do 0
+    t_cut_do_pre 0
+    t_cut_do_ij 0
+    t_cut_do_uv 0
+    t_cut_mkn 0
+    t_cut_pairs 0
+    t_cut_pairs_mp2 0
+    t_cut_pre 0
+    t_cut_clmo 0
+    t_cut_cpao 0
+    f_cut 0
+    t_cut_tno 0
+    t_cut_do_triples 0
+    t_cut_mkn_triples 0
+    f_cut_t 0
+    dlpno_gradient_model true
+}
+set dlpno debug 1
+
+metric_key = 'DLPNO (T) AUXILIARY METRIC GRADIENT'
+three_key = 'DLPNO (T) THREE-CENTER GRADIENT'
+# Values obtained by symmetric matrix perturbations of 1.e-5 bohr.
+metric_ref = np.array([[0., 0., 0.00043616262],
+                       [0., 0.00017544919, -0.00021808131],
+                       [0., -0.00017544919, -0.00021808131]])
+three_ref = np.array([[0., 0., 0.00190046913],
+                      [0., 0.00114142153, -0.00095023456],
+                      [0., -0.00114142153, -0.00095023456]])
+
+def check_stationarity(w):
+    compare_values(0., w.variable('DLPNO (T) TRANSPOSE DOT ERROR'), 1.e-12, 'packed B transpose')            #TEST
+    compare_values(0., w.variable('DLPNO (T) RIGHT RESIDUAL'), 1.e-10, 'T3 residual')                         #TEST
+    compare_values(0., w.variable('DLPNO (T) ADJOINT RESIDUAL'), 1.e-10, 'Z3 residual')                      #TEST
+    compare_values(w.variable('(T) CORRECTION ENERGY'), w.variable('DLPNO (T) ADJOINT ENERGY'),
+                   1.e-9, 'right and left triples energy')                                                     #TEST
+    compare_values(-2*w.variable('(T) CORRECTION ENERGY'),
+                   w.variable('DLPNO (T) AUXILIARY METRIC SCALE DERIVATIVE'),
+                   1.e-8, 'RHF (T) derivative under uniform metric scaling')                                    #TEST
+    assert not w.has_variable('CURRENT GRADIENT')
+
+e_df = energy('ccsd(t)')
+for loc in ('BOYS', 'PIPEK_MEZEY', 'IBO'):
+    psi4.set_options({'dlpno_local_orbitals': loc})
+    e, w = energy('dlpno-ccsd(t)', return_wfn=True)
+    compare_values(e_df, e, 1.e-7, loc + ' zero-cutoff DF-CCSD(T) energy')                                               #TEST
+    compare_values(-0.00304081137850, w.variable('(T) CORRECTION ENERGY'), 1.e-9, loc + ' canonical (T)')       #TEST
+    check_stationarity(w)
+    compare_arrays(metric_ref, w.variable(metric_key).np, 1.e-8, loc + ' RI metric derivative')                #TEST
+    compare_arrays(three_ref, w.variable(three_key).np, 1.e-8, loc + ' RI three-center derivative')            #TEST
+
+# Different TNO ranks exercise rectangular projections and the transpose scatter.
+# Compare the disk generations at four threads with the serial in-memory solution.
+set t_cut_tno 1.e-5
+set min_tnos 3
+set dlpno_local_orbitals boys
+psi4.set_num_threads(1)
+e, w = energy('dlpno-ccsd(t)', return_wfn=True)
+check_stationarity(w)
+mem_metric = w.variable(metric_key).np.copy()
+mem_three = w.variable(three_key).np.copy()
+assert abs(e - e_df) > 1.e-6
+set write_triples_amplitudes true
+set write_triples_intermediates true
+psi4.set_num_threads(4)
+edisk, wdisk = energy('dlpno-ccsd(t)', return_wfn=True)
+check_stationarity(wdisk)
+compare_values(e, edisk, 1.e-9, 'single-space disk energy')                                                   #TEST
+compare_arrays(mem_metric, wdisk.variable(metric_key).np, 1.e-9, 'single-space disk metric gradient')           #TEST
+compare_arrays(mem_three, wdisk.variable(three_key).np, 1.e-9, 'single-space disk three-center gradient')       #TEST
+for term in (mem_metric, mem_three):
+    compare_arrays(np.zeros(3), term.sum(axis=0), 1.e-9, 'translation invariance of each RI term')              #TEST
+
+# Match the ordinary right-hand solver with both T0 and iterative (T) in
+# the same truncated space, all pairs strong and triplet energy screening off.
+psi4.set_num_threads(1)
+psi4.set_options({'dlpno_gradient_model': False, 't_cut_triples_weak': 0., 't_cut_iter': 0.,
+                  't_cut_tno_strong': 1.e-5, 't_cut_tno_weak': 1.e-5,
+                  'write_triples_amplitudes': False, 'write_triples_intermediates': False})
+production = energy('dlpno-ccsd(t)')
+compare_values(production, e, 1.e-8, 'finite-cutoff original right solver in matching spaces')                #TEST
+set dlpno_gradient_model true
+
+# The default derivative planner must not launch finite differences for this model.
+try:
+    gradient('dlpno-ccsd(t)', return_plan=True)
+except ValidationError as exc:
+    assert 'total nuclear derivative' in str(exc)
+else:
+    raise AssertionError('The incomplete model must reject a total gradient request')
+
+# A one-occupied-orbital reference has no triples blocks.
+molecule h2 {
+H
+H 1 0.74
+symmetry c1
+}
+_, empty = energy('dlpno-ccsd(t)', return_wfn=True)
+check_stationarity(empty)
+compare_values(0., empty.variable('(T) CORRECTION ENERGY'), 1.e-14, 'empty triples energy')                    #TEST
+for key in (metric_key, three_key):
+    compare_arrays(np.zeros((2, 3)), empty.variable(key).np, 1.e-14, 'empty triples derivative')               #TEST
+
+# An explicitly selected energy model must reject other triples functionals.
+for name in ('dlpno-ccsd(t0)', 'dlpno-ccsd(t)_l', 'dlpno-bccd(t)'):
+    try:
+        energy(name)
+    except RuntimeError as exc:
+        assert 'DLPNO_GRADIENT_MODEL requires closed-shell RHF DLPNO-CCSD(T)' in str(exc)
+    else:
+        raise AssertionError('Unexpected acceptance of ' + name)

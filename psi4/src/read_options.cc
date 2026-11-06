@@ -2709,6 +2709,12 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
             coefficients as Molden files under dlpno_info. Only retained spaces
             are written. Supports orbital basis shells through G. -*/
         options.add_bool("DLPNO_WRITE_ORBITALS", false);
+        /*- Experimental RHF DLPNO-CCSD(T) energy functional for gradient development.
+            Promotes surviving pairs to strong, retains both PNO corrections, omits
+            crude/dipole pair energies and uses one TNO space for all retained triplets.
+            Solves the triples adjoint and evaluates the explicit auxiliary metric and
+            three-center contributions to the nuclear gradient. !expert -*/
+        options.add_bool("DLPNO_GRADIENT_MODEL", false);
         /*- How much to damp T1 updates in DLPNO-CCSD -*/
         options.add_double("DLPNO_T1_DAMPING", 0.0);
         /*- How much to damp T2 updates in DLPNO-CCSD -*/

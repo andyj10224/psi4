@@ -104,6 +104,32 @@ An example input file for a DLPNO-CCSD(T) computation is::
    
    energy('dlpno-ccsd(t)') # dlpno-ccsd(t0) for the semicanonical (T0) computation
 
+RHF gradient development
+------------------------
+
+|dlpno__dlpno_gradient_model| selects the experimental, closed-shell RHF energy
+functional for gradient development. Every surviving pair is strong. Its energy
+includes both stages of the PNO truncation correction. Crude eliminated-pair and
+dipole energy estimates are omitted. All triplets allowed by the surviving pair
+graph use the same |dlpno__t_cut_tno| cutoff and the ordinary iterative triples
+equations. Boys, Mulliken Pipek–Mezey, and IBO localization are supported for this
+energy calculation. For example::
+
+   set scf_type df
+   set dlpno_gradient_model true
+   e, wfn = energy('dlpno-ccsd(t)', return_wfn=True)
+   metric = wfn.variable('DLPNO (T) AUXILIARY METRIC GRADIENT')
+   three_center = wfn.variable('DLPNO (T) THREE-CENTER GRADIENT')
+
+Both arrays have shape (atoms, 3) and units of hartree/bohr. They contain the
+explicit derivatives of the two- and three-center correlation fitting integrals
+in the triples energy, with the converged triples amplitudes relaxed through
+their adjoint. The reference, CCSD amplitudes, Fock matrix, coefficient refits,
+localized orbitals, PNOs and TNOs are held fixed in these two contributions.
+A total gradient also requires the responses of those quantities and the
+derivative of the PNO correction. The total-gradient driver rejects the
+development model until these terms are implemented.
+
 Higher-Order DLPNO Methods
 --------------------------
 

@@ -5,6 +5,8 @@ list(APPEND sources
   ccsd.cc
   ccsd_lambda.cc
   triples.cc
+  triples_response.cc
+  triples_df_response.cc
   ro_triples.cc
   wrapper.cc
   sparse.cc

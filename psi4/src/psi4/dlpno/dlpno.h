@@ -151,14 +151,17 @@ class DLPNOOrbitalWriter;
 
 class DLPNO : public Wavefunction {
    private:
-    /// Auxiliary-metric shell diagonal used in AO ERI screening.
-    std::vector<double> J_metric_shell_diag_;
     /// Atoms carrying the auxiliary functions in each LMO-pair domain.
     SparseMap lmopair_to_riatoms_;
     /// Atoms carrying the PAOs in each LMO-pair domain.
     SparseMap lmopair_to_paoatoms_;
 
    protected:
+    /// Auxiliary-metric shell diagonal used in forward and derivative AO ERI screening.
+    std::vector<double> J_metric_shell_diag_;
+    bool gradient_model_ = false; ///< RHF single-TNO energy and iterative triples response
+    std::vector<SharedMatrix> gradient_lmo_slices_; ///< auxiliary-atom coefficient refits
+    SharedMatrix fitted_lmo_slice(const SharedMatrix& SC, int center);
     /// what quantum chemistry module are we running
     DLPNOMethod algorithm_;
     /// Using Brueckner orbitals?
@@ -868,7 +871,22 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     double de_tno_ = 0.0; ///< semicanonical TNO truncation correction
 
     /// Create sparsity maps for triples
-    void triples_sparsity(bool prescreening);
+    enum class TripletStage { Prescreen, Refine, SingleSpace };
+    void triples_sparsity(TripletStage stage);
+    void compute_gradient_model_triples();
+    void solve_gradient_model_triples();
+    struct TriplesDFBlocks {
+        std::array<SharedMatrix, 3> ov, oo;
+        SharedMatrix vv;
+    };
+    TriplesDFBlocks triples_df_blocks(int ijk);
+    struct ThreeCenterDensity {
+        SharedMatrix oo, ov, vv;  ///< one auxiliary function in its local LMO/PAO bases
+    };
+    SharedMatrix triples_df_response(int ijk, const SharedMatrix& w_bar, const SharedMatrix& v_bar,
+                                     std::vector<ThreeCenterDensity>& three_center);
+    void accumulate_three_center(int ijk, const TriplesDFBlocks& bar, std::vector<ThreeCenterDensity>& density);
+    SharedMatrix contract_three_center(const std::vector<ThreeCenterDensity>& density);
     /// Create TNOs (Triplet Natural Orbitals) for DLPNO-(T)
     void tno_transform(double tno_tolerance, bool use_tuple_cutoffs = false);
     /// Sort triplets to split between "strong" and "weak" triplets (for (T) iterations)

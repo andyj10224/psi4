@@ -172,7 +172,8 @@ SharedMatrix DLPNOCCSD_T::matmul_3d(SharedMatrix A, SharedMatrix X, int dim_old,
     return A_new;
 }
 
-void DLPNOCCSD_T::triples_sparsity(bool prescreening) {
+void DLPNOCCSD_T::triples_sparsity(TripletStage stage) {
+    const bool prescreening = stage == TripletStage::Prescreen;
     /*
     In the prescreening step, this generates the initial list of triplets from
     strong and weak pairs ijk from strong and weak pairs ij, jk, and ik
@@ -189,7 +190,7 @@ void DLPNOCCSD_T::triples_sparsity(bool prescreening) {
     int n_lmo_pairs = ij_to_i_j_.size();
     int MAX_WEAK_PAIRS = options_.get_int("TRIPLES_MAX_WEAK_PAIRS");
 
-    if (prescreening) {
+    if (stage != TripletStage::Refine) {
         int ijk = 0;
         for (int ij = 0; ij < n_lmo_pairs; ij++) {
             int i, j;
@@ -576,14 +577,15 @@ void DLPNOCCSD_T::estimate_triples_memory() {
     size_t tno_total_memory = 0;
 #pragma omp parallel for reduction(+ : tno_total_memory)
     for (int ijk = 0; ijk < n_lmo_triplets; ++ijk) {
-        tno_total_memory += n_tno_[ijk] * n_tno_[ijk] * n_tno_[ijk];
+        tno_total_memory += static_cast<size_t>(n_tno_[ijk]) * n_tno_[ijk] * n_tno_[ijk];
     }
 
     // Depending on which intermediates are written to disk, the RAM usage varies
     double W3_memory = tno_total_memory;
     double V3_memory = tno_total_memory;
     double L3_memory = lambda_requested_ ? tno_total_memory : 0.0;
-    double T3_memory = tno_total_memory;
+    // The response solve holds T3, Z3 and the next Jacobi generation.
+    double T3_memory = (gradient_model_ ? 3.0 : 1.0) * tno_total_memory;
 
     // Write W and V intermediates to disk (this is more efficient than writing amplitudes)
     write_intermediates_ = options_.get_bool("WRITE_TRIPLES_INTERMEDIATES");
@@ -593,7 +595,23 @@ void DLPNOCCSD_T::estimate_triples_memory() {
     write_amplitudes_ = options_.get_bool("WRITE_TRIPLES_AMPLITUDES");
     if (write_amplitudes_) T3_memory = 0.0;
 
-    size_t total_memory = qij_memory_ + qia_memory_ + qab_memory_ + W3_memory + V3_memory + L3_memory + T3_memory;
+    size_t resident = qij_memory_ + qia_memory_ + qab_memory_;
+    if (gradient_model_) {
+        // Retain the CCSD state. Each participating auxiliary function can also
+        // carry an oo, ov and vv block on its own fitted domain.
+        resident = std::max(resident, ccsd_baseline_memory_doubles_);
+        for (int atom = 0; atom < molecule_->natom(); ++atom) {
+            const size_t no = riatom_to_lmos_ext_[atom].size(), nv = riatom_to_paos_ext_[atom].size();
+            resident += atom_to_ribf_[atom].size() * (no * no + no * nv + nv * nv);
+            resident += riatom_to_bfs1_[atom].size() * no;
+        }
+        // A conservative bound on the accumulated shell-pair density. Domains
+        // that share auxiliary functions actually reuse the same blocks.
+        size_t metric_words = 0;
+        for (const auto& domain : lmotriplet_to_ribfs_) metric_words += domain.size() * domain.size();
+        resident += std::min(metric_words, static_cast<size_t>(ribasis_->nbf()) * ribasis_->nbf());
+    }
+    size_t total_memory = resident + W3_memory + V3_memory + L3_memory + T3_memory;
 
     // 1 GB = 1000^3 = 10^9 Bytes
     const double DOUBLES_TO_GB = pow(10.0, -9) * sizeof(double);
@@ -673,6 +691,51 @@ void DLPNOCCSD_T::estimate_triples_memory() {
     }
 }
 
+DLPNOCCSD_T::TriplesDFBlocks DLPNOCCSD_T::triples_df_blocks(int ijk) {
+    const auto [i, j, k] = ijk_to_i_j_k_[ijk];
+    const auto& paos = lmotriplet_to_paos_[ijk];
+    const auto& lmos = lmotriplet_to_lmos_[ijk];
+    const auto& aux = lmotriplet_to_ribfs_[ijk];
+    const int n = n_tno_[ijk];
+    TriplesDFBlocks blocks;
+    for (int p = 0; p < 3; ++p) {
+        blocks.ov[p] = std::make_shared<Matrix>(aux.size(), paos.size());
+        blocks.oo[p] = std::make_shared<Matrix>(aux.size(), lmos.size());
+    }
+    blocks.vv = std::make_shared<Matrix>(aux.size(), n * n);
+
+    for (int row = 0; row < aux.size(); ++row) {
+        const int q = aux[row], atom = ribasis_->function_to_center(q);
+        const auto& li = riatom_to_lmos_ext_dense_[atom];
+        const auto& vi = riatom_to_paos_ext_dense_[atom];
+        const std::array<int, 3> occ{li[i], li[j], li[k]};
+        for (int p = 0; p < 3; ++p) {
+            // The triplet domain can reach beyond the support of an individual
+            // fitted factor. Only available entries contribute to its contraction.
+            if (occ[p] < 0) continue;
+            for (int l = 0; l < lmos.size(); ++l) {
+                int m = li[lmos[l]];
+                if (m >= 0) (*blocks.oo[p])(row, l) = (*qij_[q])(occ[p], m);
+            }
+            for (int u = 0; u < paos.size(); ++u) {
+                int a = vi[paos[u]];
+                if (a >= 0) (*blocks.ov[p])(row, u) = (*qia_[q])(occ[p], a);
+            }
+        }
+        auto vv = std::make_shared<Matrix>(paos.size(), paos.size());
+        for (int u = 0; u < paos.size(); ++u) {
+            for (int v = 0; v < paos.size(); ++v) {
+                int uv = riatom_to_pao_pairs_dense_[atom][paos[u]][paos[v]];
+                if (uv >= 0) (*vv)(u, v) = (*qab_[q])(uv, 0);
+            }
+        }
+        vv = linalg::triplet(X_tno_[ijk], vv, X_tno_[ijk], true, false, false);
+        std::copy_n(vv->get_pointer(), static_cast<size_t>(n) * n, &(*blocks.vv)(row, 0));
+    }
+    for (auto& ov : blocks.ov) ov = linalg::doublet(ov, X_tno_[ijk]);
+    return blocks;
+}
+
 std::pair<double, double> DLPNOCCSD_T::compute_lccsd_t0(bool save_memory) {
     // Form the semicanonical right triples numerator W, the ordinary energy
     // moment V, and, when requested, the left triples moment L. The Toth et al.
@@ -746,68 +809,10 @@ std::pair<double, double> DLPNOCCSD_T::compute_lccsd_t0(bool save_memory) {
 
         if (thread == 0) timer_on("LCCSD(T0): Setup Integrals");
 
-        // => Step 1: Compute all necessary integrals
-
-        // number of LMOs in the triplet domain
-        const int nlmo_ijk = lmotriplet_to_lmos_[ijk].size();
-        // number of PAOs in the triplet domain (before removing linear dependencies)
-        const int npao_ijk = lmotriplet_to_paos_[ijk].size();
-        // number of auxiliary functions in the triplet domain
-        const int naux_ijk = lmotriplet_to_ribfs_[ijk].size();
-
-        /// => Build (i a_ijk | b_ijk d_jk) and (k c_ijk | j l) integrals <= ///
-
-        auto q_iv = std::make_shared<Matrix>(naux_ijk, npao_ijk); // (Q_{ijk} | i u_{ijk})
-        auto q_jv = std::make_shared<Matrix>(naux_ijk, npao_ijk); // (Q_{ijk} | j u_{ijk})
-        auto q_kv = std::make_shared<Matrix>(naux_ijk, npao_ijk); // (Q_{ijk} | k u_{ijk})
-
-        auto q_io = std::make_shared<Matrix>(naux_ijk, nlmo_ijk); // (Q_{ijk} | m_{ijk} i)
-        auto q_jo = std::make_shared<Matrix>(naux_ijk, nlmo_ijk); // (Q_{ijk} | m_{ijk} j)
-        auto q_ko = std::make_shared<Matrix>(naux_ijk, nlmo_ijk); // (Q_{ijk} | m_{ijk} k)
-
-        auto q_vv = std::make_shared<Matrix>(naux_ijk, ntno_ijk * ntno_ijk); // (Q_{ijk} | a_{ijk} b_{ijk})
-
-        for (int q_ijk = 0; q_ijk < naux_ijk; q_ijk++) {
-            const int q = lmotriplet_to_ribfs_[ijk][q_ijk];
-            const int centerq = ribasis_->function_to_center(q);
-
-            for (int l_ijk = 0; l_ijk < nlmo_ijk; ++l_ijk) {
-                int l = lmotriplet_to_lmos_[ijk][l_ijk];
-                (*q_io)(q_ijk, l_ijk) = (*qij_[q])(riatom_to_lmos_ext_dense_[centerq][i], riatom_to_lmos_ext_dense_[centerq][l]);
-                (*q_jo)(q_ijk, l_ijk) = (*qij_[q])(riatom_to_lmos_ext_dense_[centerq][j], riatom_to_lmos_ext_dense_[centerq][l]);
-                (*q_ko)(q_ijk, l_ijk) = (*qij_[q])(riatom_to_lmos_ext_dense_[centerq][k], riatom_to_lmos_ext_dense_[centerq][l]);
-            }
-
-            for (int u_ijk = 0; u_ijk < npao_ijk; ++u_ijk) {
-                int u = lmotriplet_to_paos_[ijk][u_ijk];
-                (*q_iv)(q_ijk, u_ijk) = (*qia_[q])(riatom_to_lmos_ext_dense_[centerq][i], riatom_to_paos_ext_dense_[centerq][u]);
-                (*q_jv)(q_ijk, u_ijk) = (*qia_[q])(riatom_to_lmos_ext_dense_[centerq][j], riatom_to_paos_ext_dense_[centerq][u]);
-                (*q_kv)(q_ijk, u_ijk) = (*qia_[q])(riatom_to_lmos_ext_dense_[centerq][k], riatom_to_paos_ext_dense_[centerq][u]);
-            }
-
-            auto q_vv_tmp = std::make_shared<Matrix>(npao_ijk, npao_ijk);
-            q_vv_tmp->zero();
-
-            for (int u_ijk = 0; u_ijk < npao_ijk; ++u_ijk) {
-                int u = lmotriplet_to_paos_[ijk][u_ijk];
-                for (int v_ijk = 0; v_ijk < npao_ijk; ++v_ijk) {
-                    int v = lmotriplet_to_paos_[ijk][v_ijk];
-                    int uv_idx = riatom_to_pao_pairs_dense_[centerq][u][v];
-                    if (uv_idx == -1) continue;
-                    (*q_vv_tmp)(u_ijk, v_ijk) = (*qab_[q])(uv_idx, 0);
-                } // end v_ijk
-            } // end u_ijk
-
-            // naux_{ijk} * npao_{ijk}^{2} * ntno_{ijk} (this is the most expensive operation in this loop)
-            q_vv_tmp = linalg::triplet(X_tno_[ijk], q_vv_tmp, X_tno_[ijk], true, false, false);
-            ::memcpy(&(*q_vv)(q_ijk, 0), &(*q_vv_tmp)(0, 0), ntno_ijk * ntno_ijk * sizeof(double));
-
-            // naux_ijk * npao_ijk^2 * ntno_{ijk}
-        } // end q_ijk
-
-        q_iv = linalg::doublet(q_iv, X_tno_[ijk]); // (Q_{ijk} | i u_{ijk}) -> (Q_{ijk} | i a_{ijk})
-        q_jv = linalg::doublet(q_jv, X_tno_[ijk]); // (Q_{ijk} | j u_{ijk}) -> (Q_{ijk} | j a_{ijk})
-        q_kv = linalg::doublet(q_kv, X_tno_[ijk]); // (Q_{ijk} | k u_{ijk}) -> (Q_{ijk} | k a_{ijk})
+        auto blocks = triples_df_blocks(ijk);
+        auto& [q_iv, q_jv, q_kv] = blocks.ov;
+        auto& [q_io, q_jo, q_ko] = blocks.oo;
+        auto& q_vv = blocks.vv;
 
         auto q_iv_clone = q_iv->clone();
         auto q_jv_clone = q_jv->clone();
@@ -1777,7 +1782,7 @@ void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
     outfile->Printf("     T_CUT_DO  set to %6.3e \n", options_.get_double("T_CUT_DO_TRIPLES_PRE"));
     outfile->Printf("     T_CUT_MKN set to %6.3e \n\n", options_.get_double("T_CUT_MKN_TRIPLES_PRE"));
 
-    triples_sparsity(true);
+    triples_sparsity(TripletStage::Prescreen);
     tno_transform(t_cut_tno_pre);
     compute_lccsd_t0();
 
@@ -1785,7 +1790,7 @@ void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
     outfile->Printf("\n   Continuing computation with surviving triplets...\n");
     outfile->Printf("     Eliminated all triples with energy less than %6.3e Eh... \n\n",
                     options_.get_double("T_CUT_TRIPLES_WEAK"));
-    triples_sparsity(false);
+    triples_sparsity(TripletStage::Refine);
     outfile->Printf("    * Ordinary Energy From Screened Triplets:   %.12f \n", de_lccsd_t_screened_);
     if (lambda_requested_) {
         outfile->Printf("    * Asymmetric Energy From Screened Triplets: %.12f \n", de_lccsd_t_l_screened_);
@@ -1960,6 +1965,10 @@ void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
 }
 
 void DLPNOCCSD_T::post_ccsd_correction(DLPNOCCSDPhase phase) {
+    if (gradient_model_) {
+        compute_gradient_model_triples();
+        return;
+    }
     DLPNOCCSD::post_ccsd_correction(phase);
     compute_triples_correction(phase);
 }

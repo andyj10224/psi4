@@ -148,6 +148,7 @@ DLPNO::DLPNO(SharedWavefunction ref_wfn, Options& options) : Wavefunction(option
 }
 DLPNO::~DLPNO() {}
 void DLPNO::common_init() {
+    gradient_model_ = options_.get_bool("DLPNO_GRADIENT_MODEL");
     print_ = options_.get_int("PRINT");
     debug_ = options_.get_int("DEBUG");
 
@@ -1758,6 +1759,14 @@ void DLPNO::prep_sparsity(bool initial, bool final) {
     }
 }
 
+SharedMatrix DLPNO::fitted_lmo_slice(const SharedMatrix& SC, int center) {
+    const auto& bfs = riatom_to_bfs1_[center];
+    auto C = submatrix_rows_and_cols(*SC, bfs, riatom_to_lmos_ext_[center]);
+    auto S = submatrix_rows_and_cols(*reference_wavefunction_->S(), bfs, bfs);
+    C_DGESV_wrapper(S, C);
+    return C;
+}
+
 void DLPNO::compute_qij() {
     timer_on("(mn|K)->(ij|K)");
 
@@ -1782,6 +1791,13 @@ void DLPNO::compute_qij() {
     outfile->Printf("\n  ==> Transforming 3-Index Integrals to LMO/LMO basis <==\n");
 
     auto SC_lmo = linalg::doublet(reference_wavefunction_->S(), C_lmo_, false, false);
+
+    if (gradient_model_) {
+        gradient_lmo_slices_.resize(molecule_->natom());
+        for (int atom = 0; atom < molecule_->natom(); ++atom) {
+            gradient_lmo_slices_[atom] = fitted_lmo_slice(SC_lmo, atom);
+        }
+    }
 
     qij_.clear();
     qij_.resize(naux);
@@ -1861,9 +1877,7 @@ void DLPNO::compute_qij() {
             } // N loop
         } // M loop
 
-        auto C_lmo_slice = submatrix_rows_and_cols(*SC_lmo, riatom_to_bfs1_[centerQ], riatom_to_lmos_ext_[centerQ]);
-        auto S_aa = submatrix_rows_and_cols(*reference_wavefunction_->S(), riatom_to_bfs1_[centerQ], riatom_to_bfs1_[centerQ]);
-        C_DGESV_wrapper(S_aa, C_lmo_slice);
+        auto C_lmo_slice = gradient_model_ ? gradient_lmo_slices_[centerQ] : fitted_lmo_slice(SC_lmo, centerQ);
 
         // (mn|Q) C_mi C_nj ->(ij|Q)
         for (size_t q = 0; q < nq; q++) {
@@ -1983,11 +1997,7 @@ void DLPNO::compute_qia() {
         //// Boughton and Pulay 1992 JCC, Equation 3
 
         // Solve for C_lmo_slice such that S[local,local] @ C_lmo_slice ~= S[local,all] @ C_lmo_
-        auto C_lmo_slice =
-            submatrix_rows_and_cols(*SC_lmo, riatom_to_bfs1_[centerQ], riatom_to_lmos_ext_[centerQ]);
-        auto S_aa =
-            submatrix_rows_and_cols(*reference_wavefunction_->S(), riatom_to_bfs1_[centerQ], riatom_to_bfs1_[centerQ]);
-        C_DGESV_wrapper(S_aa, C_lmo_slice);
+        auto C_lmo_slice = fitted_lmo_slice(SC_lmo, centerQ);
 
         // (mn|Q) C_mi C_nu -> (iu|Q)
         for (size_t q = 0; q < nq; q++) {
