@@ -251,6 +251,7 @@ class DLPNO : public Wavefunction {
 
     /// projected atomic orbitals (PAOs)
     SharedMatrix C_pao_;
+    SharedMatrix gradient_frozen_occ_;  ///< frozen columns actually used by the RHF gradient projector
     std::vector<double> gradient_pao_inv_norm_;  ///< forward normalization of the projected AO columns
     SharedMatrix F_pao_;
     SharedMatrix F_pao_a_;
@@ -957,6 +958,7 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     double df_coefficient_error_ = 0., df_replay_error_ = 0.;
     void finish_df_refit_response();
     void reverse_pao_normalization();
+    void check_occupied_projection();
     // B is the occupied-projected AO matrix before normalizing its columns.
     // Seeds for L^T F B, B^T F B, B^T S B, and the remaining DF coefficient B.
     struct UnnormalizedPAOResponse {
@@ -1035,6 +1037,7 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
    public:
     DLPNOCCSD_T(SharedWavefunction ref_wfn, Options& options);
     ~DLPNOCCSD_T() override;
+    SharedMatrix orbital_response_action(const std::string& block, const SharedMatrix& rhs) const;
 
     double compute_energy() override;
 };

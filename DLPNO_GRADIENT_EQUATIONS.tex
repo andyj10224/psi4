@@ -1,0 +1,107 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,hyperref}
+\newcommand{\T}{^{\mathsf T}}
+\newcommand{\sym}{\operatorname{sym}}
+\newcommand{\ip}[2]{\langle #1,#2\rangle}
+\title{Working equations for the RHF DLPNO-CCSD(T) nuclear gradient}
+\author{Quantum Chemistry Grand Battleplan}
+\date{Occupied-space projection and frozen-core response}
+\begin{document}
+\maketitle
+This is a cumulative implementation record. Equation labels identify new
+derivative rules. The forward energy, amplitudes, local transformations and
+published Lambda equations retain the definitions of Jiang et al.\ (2024)
+and T\'oth et al.\ (2026). This edition covers propagation from the raw PAO
+and occupied-operator sources to the AO and orbital inputs. All differentials
+hold pair lists, ranks, and the identities of the frozen orbitals fixed.
+\section{Indices and derivative convention}
+As in Jiang, $\mu,\nu,\lambda,\sigma$ label AOs, $\tilde\nu$ a PAO
+identified by its parent AO $\nu$, $i,j,k,l$ active occupied LMOs, and $a,b$
+virtual orbitals. We reserve $i_{\rm c}$ for a frozen occupied orbital.
+A bar denotes a coefficient of the stationary correlation Lagrangian
+differential. For real matrices we use
+\begin{equation}\label{eq:pairing}
+ \ip{X}{Y}=\sum_{pq}X_{pq}Y_{pq},\qquad
+ \sym X=(X+X\T)/2,\qquad d\mathcal L=\sum_X\ip{\bar X}{dX}.
+\end{equation}
+In particular, off-diagonal elements of a symmetric input occur twice in
+this pairing. Let $L_{\mu i}$ be active localized coefficients, $C^{\rm c}_{\mu i_{\rm c}}$
+the reference frozen coefficients, and $O=[L\;C^{\rm c}]$. $S,F$ denote
+the AO overlap and RHF Fock matrices.
+\section{Unnormalized projected AO}
+For a spatial RHF occupied projector each occupied column occurs once.
+Define $P=OO\T$. In the AO coefficient representation the raw PAO and its
+variation are
+\begin{align}
+ B_{\mu\tilde\nu}
+ &=\delta_{\mu\nu}-\sum_{p\in\mathrm{occ}}\sum_\lambda
+ O_{\mu p}O_{\lambda p}S_{\lambda\nu},\label{eq:raw}\\
+ dB&=-(dO\,O\T+O\,dO\T)S-P\,dS.\label{eq:db}
+\end{align}
+For $O\T S O=I$, $O\T S B=0$. The overlap in the rightmost position
+matters because $B$ is generally nonsymmetric. If $b$ is one raw column
+and $x=b/n$, $n^2=b\T S b>0$, a normalized-column source $g$ gives
+\begin{equation}\label{eq:normal}
+ \bar b=g/n-Sb(g\T b)/n^3,\qquad
+ \bar S_{\rm norm}=-bb\T(g\T b)/(2n^3).
+\end{equation}
+Apply the actual forward zero-column convention before this rule.
+When normalization is differentiated using the diagonal of $B\T S B$,
+its source enters the metric block below and must be counted once.
+\section{Inputs from the pair and triplet contractions}
+Let $U,W,V,H,D,R,Z$ denote the accumulated sources for, respectively,
+$L\T F L$, $L\T F B$, $B\T F B$, $B\T S B$, $B$, $S$, and $SL$.
+The last two include the local occupied density-fitting refits.
+These definitions specify their normalization by the following scalar
+differential, with the sources held fixed:
+\begin{align}
+ d\mathcal L_{\rm loc}
+ &=\ip U{d(L\T F L)}+\ip W{d(L\T F B)}
+   +\ip V{d(B\T F B)}+\ip H{d(B\T S B)}\notag\\
+ &\quad+\ip D{dB}+\ip R{dS}+\ip Z{d(SL)}.\label{eq:sources}
+\end{align}
+Thus the total source on the raw PAO coefficients at fixed $L,F,S$ is
+\begin{equation}\label{eq:g}
+ G=D+FLW+FB(V+V\T)+SB(H+H\T).
+\end{equation}
+\section{Occupied, frozen, Fock and metric derivatives}
+Substitution of Eq.~\eqref{eq:db} in Eq.~\eqref{eq:sources} gives
+\begin{align}
+ \bar L&=-GSL-SG\T L+FL(U+U\T)+FBW\T+SZ,\label{eq:l}\\
+ \bar C^{\rm c}&=-GSC^{\rm c}-SG\T C^{\rm c},\label{eq:c}\\
+ \bar F&=\sym(LUL\T+LWB\T+BVB\T),\label{eq:f}\\
+ \bar S&=\sym(BHB\T+R+ZL\T-PG).\label{eq:s}
+\end{align}
+For example the individual frozen-column equation reads
+\begin{equation}\label{eq:coreindex}
+ \bar C^{\rm c}_{\mu i_{\rm c}}
+ =-\sum_{\nu\lambda}
+ \left(G_{\mu\tilde\nu}S_{\nu\lambda}
+ +S_{\mu\nu}G_{\lambda\tilde\nu}\right)
+ C^{\rm c}_{\lambda i_{\rm c}}.
+\end{equation}
+With no frozen orbitals this is an AO-by-zero block. For an infinitesimal
+rotation $dC^{\rm c}_{\mu i_{\rm c}}=C_{\mu a}\,d\kappa_{a i_{\rm c}}$
+at fixed active LMOs and AO inputs, the source is
+\begin{equation}\label{eq:kappa}
+ \frac{\partial\mathcal L_{\rm loc}}{\partial\kappa_{a i_{\rm c}}}
+ =\sum_\mu C_{\mu a}\bar C^{\rm c}_{\mu i_{\rm c}}.
+\end{equation}
+This orbital source is an input to the constrained RHF response problem.
+A rotation within the frozen block, $dC^{\rm c}=C^{\rm c}K$ with $K=-K\T$,
+leaves its projector invariant by Eq.~\eqref{eq:db}.
+\section{Implementation and verification}
+\texttt{occupied\_projection.cc} applies Eqs.~\eqref{eq:l}--\eqref{eq:s}
+to a supplied column panel. For example $BX=X-O(O\T SX)$ and
+$B\T X=X-SO(O\T X)$. The sources $U,W,V,H,D,R,Z$ correspond in order
+to \texttt{ccsd\_foo\_response\_}, the raw \texttt{fov}, \texttt{fvv},
+\texttt{overlap}, \texttt{coefficients}, \texttt{df\_refit\_overlap\_bar\_},
+and \texttt{df\_sclmo\_bar\_}. The debug probe perturbs one independent
+input at fixed geometry and reevaluates all seven products of
+Eq.~\eqref{eq:sources}. The separate canonical test rotates the frozen
+orbital toward a virtual direction and evaluates the stationary DF-CCSD(T)
+correlation Lagrangian. The final nuclear derivative additionally requires
+the localization and RHF constraints and the remaining explicit integral
+derivatives.
+\end{document}

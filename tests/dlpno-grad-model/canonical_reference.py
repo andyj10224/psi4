@@ -11,7 +11,7 @@ import numpy as np
 import psi4
 from pyscf import ao2mo, cc, gto, lib, scf
 from pyscf.cc import ccsd_t_lambda
-from scipy.linalg import solve
+from scipy.linalg import expm, solve
 
 
 def main():
@@ -104,6 +104,21 @@ def main():
     def triples(metric, raw):
         set_integrals(metric, raw)
         return ccw.ccsd_t(t1, t2, eris=ccw.ao2mo())
+
+    # Mix the frozen 1s with a virtual direction defined in AO coordinates.
+    # The antisymmetric rotation preserves orthonormality. Its first-order
+    # Fock change lies wholly in the frozen/virtual block excluded from CC.
+    ao_trial = np.sin(.37*np.arange(1,n+1))/np.sqrt(n)
+    v = C.T @ w.S().np @ ao_trial
+    rotation = np.zeros((n,n))
+    rotation[no:, :1] = np.outer(v[no:], v[:1])
+    rotation[:1, no:] = -rotation[no:, :1].T
+    def core_rotation(step):
+        U = expm(step*rotation)
+        rotated = np.einsum("mp,Qmn,nr->Qpr", U, Q, U, optimize=True)
+        return ccsd_part(J, rotated) + triples(J, rotated)
+    for step in (1.e-4, 2.e-5):
+        print("Frozen-core rotation", step, (core_rotation(step)-core_rotation(-step))/(2*step))
 
     print("Canonical (T)", triples(J, Q))
     for name, functional in (("CCSD", ccsd_part), ("(T)", triples)):

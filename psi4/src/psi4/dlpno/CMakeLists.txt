@@ -10,6 +10,7 @@ list(APPEND sources
   pno_truncation_response.cc
   lmp2_response.cc
   local_basis_response.cc
+  occupied_projection.cc
   triples.cc
   triples_response.cc
   triples_df_response.cc

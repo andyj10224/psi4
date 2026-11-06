@@ -170,3 +170,11 @@ On those runs the largest combined first-PNO operator check was 2.55 × 10⁻¹�
 ## Updating the bank
 
 Append a dated entry for each implementation piece. Record the contributor, implementation commit, changes, checks actually run, discrepancies, and next open item. Keep earlier measurements tied to their original commits. Use canonical DF-CCSD(T) as the nuclear-gradient comparison. Reserve any frozen-structure DLPNO nuclear finite-difference check for zero-cutoff DLPNO-CCSD.
+
+## 2026-11-06 — Occupied PAO projection and frozen-core correlation source
+
+Codex propagated the raw PAO coefficient, Fock and metric sources through the occupied projector using the active LMOs and the reference wavefunction's actual frozen occupied columns. The new panel interface also includes the direct occupied-Fock and local DF-refit contributions. An empty frozen subspace returns an AO-by-panel zero. [Implementation](psi4/src/psi4/dlpno/occupied_projection.cc) · [Cumulative LaTeX equation record](DLPNO_GRADIENT_EQUATIONS.tex)
+
+On finite-cutoff frozen-core water the frozen-column probe gave −0.00498059336 hartree. At zero cutoffs a frozen O 1s–virtual rotation gave −0.00003018030227 hartree/radian with Boys, versus −0.00003018029576 from an independent canonical PySCF DF-CCSD(T) stationary correlation calculation. Boys, PM and IBO passed the canonical rotation test, and the empty-core panel passed. Six energy/canonical regression cases passed in the first run. A two-point debug probe exceeded its tolerance on the gradient-model test. Switching to a five-point fixed-input derivative resolved that discrepancy and the whole gradient-model test passed on rerun.
+
+The implementation keeps the local sources sparse and applies dense AO or occupied factors to a supplied panel. Dense AO applications cost quadratic work at fixed panel width. A linear bound for a complete displaced-coordinate calculation has yet to be established. The frozen-core result is an orbital source. The localization and constrained RHF adjoints and remaining explicit AO derivatives are still needed for a relaxed nuclear gradient. Preserve the total-gradient guard.

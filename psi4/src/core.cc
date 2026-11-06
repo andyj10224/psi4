@@ -180,6 +180,7 @@ SharedWavefunction dfmp2(SharedWavefunction, Options&);
 }
 namespace dlpno {
 SharedWavefunction dlpno(SharedWavefunction, Options&);
+SharedMatrix orbital_response_action(SharedWavefunction,const std::string&,SharedMatrix);
 }
 namespace f12 {
 SharedWavefunction f12(SharedWavefunction, Options&);
@@ -1390,6 +1391,8 @@ PYBIND11_MODULE(core, core) {
     core.def("dct", py_psi_dct, "ref_wfn"_a, "Runs the density cumulant (functional) theory code.");
     core.def("dfmp2", py_psi_dfmp2, "ref_wfn"_a, "Runs the DF-MP2 code.");
     core.def("dlpno", py_psi_dlpno, "Runs the DLPNO codes.");
+    core.def("dlpno_orbital_response_action", &dlpno::orbital_response_action, py::arg("wfn"), py::arg("block"),
+             py::arg("rhs"), "Apply an RHF DLPNO correlation orbital or AO operator derivative to a C1 column panel.");
     core.def("f12", py_psi_f12, "Runs the F12 codes.");
     core.def("mcscf", py_psi_mcscf, "Runs the MCSCF code, (N.B. restricted to certain active spaces).");
     core.def("mrcc_generate_input", py_psi_mrcc_generate_input, "Generates an input for Kallay's MRCC code.");

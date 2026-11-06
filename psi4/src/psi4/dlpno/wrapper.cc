@@ -34,6 +34,12 @@
 namespace psi {
 namespace dlpno {
 
+SharedMatrix orbital_response_action(SharedWavefunction wfn, const std::string& block, SharedMatrix rhs) {
+    auto local = std::dynamic_pointer_cast<DLPNOCCSD_T>(wfn);
+    if (!local) throw PSIEXCEPTION("Orbital response requires a gradient-model RHF DLPNO-CCSD(T) wavefunction.");
+    return local->orbital_response_action(block,rhs);
+}
+
 SharedWavefunction dlpno(SharedWavefunction ref_wfn, Options& options) {
 
     const auto reference = options.get_str("REFERENCE");

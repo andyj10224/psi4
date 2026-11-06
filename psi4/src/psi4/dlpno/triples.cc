@@ -2028,6 +2028,8 @@ void DLPNOCCSD_T::post_ccsd_correction(DLPNOCCSDPhase phase) {
             finish_local_basis_response();
             finish_df_refit_response();
             reverse_pao_normalization();
+            set_scalar_variable("DLPNO PROJECTOR FROZEN ORBITALS", gradient_frozen_occ_->ncol());
+            if (debug_) check_occupied_projection();
         } catch (...) {
             close_pair_files();
             throw;

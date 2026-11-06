@@ -1063,9 +1063,14 @@ void DLPNO::setup_orbitals() {
     C_pao_ = std::make_shared<Matrix>("Projected Atomic Orbitals", nbf, nbf);
     C_pao_->identity();
     C_pao_->subtract(linalg::triplet(C_lmo_, C_lmo_, reference_wavefunction_->S(), false, true, false));
-    if (ncore_ == 0) {
+    if (gradient_model_ || ncore_ == 0) {
         auto C_core = reference_wavefunction_->Ca_subset("AO", "FROZEN_OCC");
-        C_pao_->subtract(linalg::triplet(C_core, C_core, reference_wavefunction_->S(), false, true, false));
+        if (gradient_model_) {
+            if (C_lmo_->ncol() + C_core->ncol() != nalpha_)
+                throw PSIEXCEPTION("Incomplete occupied space in the RHF DLPNO gradient projector.");
+            gradient_frozen_occ_ = C_core;
+        }
+        if (C_core->ncol()) C_pao_->subtract(linalg::triplet(C_core, C_core, reference_wavefunction_->S(), false, true, false));
     }
     S_pao_ = linalg::triplet(C_pao_, reference_wavefunction_->S(), C_pao_, true, false, false);
 

@@ -75,6 +75,9 @@ def check_lmp2(w):
         compare_values(0., w.variable('DLPNO LMP2 ' + key), tol, 'first-space LMP2 ' + key)                    #TEST
 
 def check_local_spaces(w):
+    for label in ('ACTIVE', 'FROZEN', 'FOCK', 'OVERLAP'):
+        compare_values(0., w.variable(f'DLPNO {label} PROJECTOR DIRECTION ERROR'), 1.e-8,
+                       f'{label} orbital response from occupied projection')                                  #TEST
     for label in ('PNO COEFFICIENT', 'FOCK', 'PAO OVERLAP'):
         compare_values(0., w.variable(f'DLPNO (T) {label} DIRECTION ERROR'), 1.e-8,
                        f'iterative triples local {label} derivative')                                          #TEST
@@ -126,6 +129,16 @@ for loc in ('BOYS', 'PIPEK_MEZEY', 'IBO'):
     compare_values(e_df, e, 1.e-7, loc + ' zero-cutoff DF-CCSD(T) energy')                                               #TEST
     compare_values(-0.00304081137850, w.variable('(T) CORRECTION ENERGY'), 1.e-9, loc + ' canonical (T)')       #TEST
     check_stationarity(w)
+    # Phase-independent rotation of the frozen O 1s toward a virtual direction.
+    ref = w.reference_wavefunction()
+    Cv = ref.Ca_subset('AO','VIR').np
+    Cf = ref.Ca_subset('AO','FROZEN_OCC').np
+    v = ref.S().np @ (np.sin(.37*np.arange(1,Cv.shape[0]+1))/np.sqrt(Cv.shape[0]))
+    rhs = psi4.core.Matrix.from_array((Cf.T @ v)[:,None])
+    frozen_bar = psi4.core.dlpno_orbital_response_action(w,'FROZEN',rhs)
+    compare_values(1., w.variable('DLPNO PROJECTOR FROZEN ORBITALS'), 1.e-12, 'one frozen O 1s')              #TEST
+    compare_values(-3.018030e-5, (Cv @ (Cv.T @ v)) @ frozen_bar.np[:,0], 1.e-9,
+                   loc + ' canonical frozen-core/virtual rotation')                                           #TEST
     for label, reference in [('OCCUPIED', -0.00145663518474), ('VIRTUAL', 0.00145663518476)]:
         compare_values(reference, w.variable(f'DLPNO (T) {label} FOCK SHIFT DERIVATIVE'), 1.e-9,
                        loc + ' canonical triples Fock shift ' + label)                                         #TEST
@@ -235,6 +248,9 @@ symmetry c1
 }
 _, empty = energy('dlpno-ccsd(t)', return_wfn=True)
 check_stationarity(empty)
+compare_values(0., empty.variable('DLPNO PROJECTOR FROZEN ORBITALS'), 1.e-12, 'empty frozen subspace')       #TEST
+zero_core = psi4.core.dlpno_orbital_response_action(empty, 'FROZEN', psi4.core.Matrix(0,2))
+compare_arrays(np.zeros((empty.basisset().nbf(),2)), zero_core.np, 1.e-14, 'empty frozen source action')     #TEST
 compare_values(0., empty.variable('(T) CORRECTION ENERGY'), 1.e-14, 'empty triples energy')                    #TEST
 for key in (metric_key, three_key):
     compare_arrays(np.zeros((2, 3)), empty.variable(key).np, 1.e-14, 'empty triples derivative')               #TEST
