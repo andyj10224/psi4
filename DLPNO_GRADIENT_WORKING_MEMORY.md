@@ -4,7 +4,7 @@
 
 **Current capability.** The ordinary RHF iterative (T) and stationary CCSD contributions each report explicit Cartesian correlation-fitting derivatives for the auxiliary metric and three-center integrals. The CCSD calculation also forms internal Fock, PAO-overlap and local coefficient derivatives using the converged (T)-sourced Λ₁ and Λ₂. The total-gradient driver remains guarded.
 
-**Next piece.** Feed the final-PNO projector source into the LMP2 response and propagate the stationary derivatives through the two PNO constructions, LMP2, PAOs, localization and RHF orbital relaxation. Include the remaining triples nuclear response. The scoped scaling target assumes a nonzero pair cutoff and bounded local domains.
+**Next piece.** Combine the direct first-stage projector source with the source from solving the LMP2 adjoint and propagate the stationary derivatives through the two PNO constructions, LMP2, PAOs, localization and RHF orbital relaxation. Include the remaining triples nuclear response. The scoped scaling target assumes a nonzero pair cutoff and bounded local domains.
 
 ## Implementation history
 
@@ -93,6 +93,14 @@ The kl count is the sum of squared occupied-domain sizes over unique pairs. With
 The stationary CCSD pair coefficient derivative now feeds the last PNO selection. For each truncated unique pair, the gradient model saves the parent basis, LMP2 amplitudes, occupation eigenvectors and final semicanonical rotation. It sums both ordered coefficient derivatives and pulls the retained/discarded rotations through the pair density to the LMP2 amplitudes. Full-rank pairs require no projector source. The procedure uses pair-local matrices and diagnoses an unresolved occupation gap.
 
 At fixed geometry, finite-cutoff water with first and second PNO thresholds of 10⁻⁷ and 10⁻⁵ had ten truncated unique pairs. Perturbing the parent LMP2 amplitudes and rediagonalizing gave an absolute directional discrepancy of 8.0 × 10⁻¹⁰ hartree. This isolates motion of the final retained subspace, holding its internal frame fixed. LMP2 adjoint propagation, first-stage PNOs, the truncation energy, complementary triples and orbital response remain open. [Implementation](psi4/src/psi4/dlpno/ccsd_df_response.cc)
+
+### 2026-11-06 · Codex · Direct first-stage PNO projector response
+
+For each truncated first-stage pair, the RHF gradient model retains the semicanonical PAO eigensystem data needed to differentiate the MP2 pair density. The CCSD coefficient derivative is propagated through the final pair transformation to the first retained subspace, and from there to the semicanonical exchange integral, occupied Fock energy sum and virtual energies. The downstream LMP2 amplitudes and internal semicanonical rotations are held fixed for this direct contribution. The calculation uses the pair's actual kept rank and diagnoses an unresolved occupation gap. [Response](psi4/src/psi4/dlpno/ccsd_df_response.cc)
+
+For frozen-core cc-pVDZ water at first/final thresholds 10⁻⁶/10⁻⁵, ten first-stage pairs were truncated. A simultaneous fixed-geometry perturbation of the exchange blocks and occupied/virtual energies, followed by rediagonalization at fixed rank, agreed with the analytic derivative to 2.8 × 10⁻¹⁰ hartree (four threads, disk-backed pair factors and semi-direct overlaps). At 10⁻⁷/10⁻⁵, one first-stage pair was truncated and the error was 1.1 × 10⁻¹⁰ hartree. [Regression](tests/dlpno-grad-model/input.dat)
+
+Still required for a nuclear gradient: add the implicit LMP2 and truncation-energy sources, complete orbital and local-basis response, and combine the first-stage exchange/energy derivatives with the other integral and Fock derivatives.
 
 ## Updating the bank
 

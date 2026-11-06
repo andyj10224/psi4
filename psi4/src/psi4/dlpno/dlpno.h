@@ -717,9 +717,15 @@ class PSI_API DLPNOCCSD : public DLPNO {
         SharedMatrix parent, eigenvectors, canonical_rotation, amplitudes;
         SharedVector occupations;
     };
-    std::vector<PairSelection> final_pno_selection_;
+    std::vector<PairSelection> initial_pno_selection_, final_pno_selection_;
+    struct InitialPNOResponse {
+        SharedMatrix final_transform, exchange;
+        SharedVector virtual_energy, energy_bar;
+        double occupied_sum_bar = 0.;
+    };
+    std::vector<InitialPNOResponse> initial_pno_response_;
     std::vector<SharedMatrix> ccsd_lmp2_projector_source_;
-    void form_final_pno_projector_response();
+    void form_pno_projector_response();
     void form_ccsd_pair_response();
     void backtransform_ccsd_one_body();
     double ccsd_lagrangian(const std::vector<SharedMatrix>& z1, const std::vector<SharedMatrix>& z2);

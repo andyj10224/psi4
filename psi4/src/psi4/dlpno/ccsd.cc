@@ -562,6 +562,10 @@ template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
     }
 
     if constexpr (!crude) {
+        if (gradient_model_) {
+            initial_pno_selection_.assign(n_lmo_pairs, {});
+            initial_pno_response_.assign(n_lmo_pairs, {});
+        }
         outfile->Printf("\n  ==> Forming Pair Natural Orbitals (for LMP2) <==\n");
 
         K_iajb_.resize(n_lmo_pairs);
@@ -715,6 +719,15 @@ template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
             Dimension dim_final(1);
             dim_final.fill(nvir_ij_final);
 
+            if (gradient_model_ && nvir_ij_final < nvir_ij) {
+                auto& sel = initial_pno_selection_[ij];
+                sel.parent = X_pao_ij;
+                sel.amplitudes = T_pao_ij;
+                sel.eigenvectors = X_pno_ij;
+                sel.occupations = std::make_shared<Vector>(pno_occ);
+                initial_pno_response_[ij].virtual_energy = e_pao_ij;
+            }
+
             // This transformation gives orbitals that are orthonormal but not canonical
             X_pno_ij = X_pno_ij->get_block({zero, X_pno_ij->rowspi()}, {zero, dim_final});
             pno_occ = pno_occ.get_block({zero, dim_final});
@@ -722,6 +735,9 @@ template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
             SharedMatrix pno_canon;
             SharedVector e_pno_ij;
             std::tie(pno_canon, e_pno_ij) = canonicalizer(X_pno_ij, F_pao_ij);
+
+            if (gradient_model_ && initial_pno_selection_[ij].parent)
+                initial_pno_selection_[ij].canonical_rotation = pno_canon;
 
             // This transformation gives orbitals that are orthonormal and canonical
             X_pno_ij = linalg::doublet(X_pno_ij, pno_canon, false, false);
@@ -1178,6 +1194,9 @@ void DLPNOCCSD::recompute_pnos() {
 
         // This transformation gives orbitals that are orthonormal and canonical
         X_pno_ij = linalg::doublet(X_pno_ij, pno_canon, false, false);
+
+        if (gradient_model_ && initial_pno_selection_[ij].parent)
+            initial_pno_response_[ij].final_transform = X_pno_ij;
 
         auto K_pno_ij = linalg::triplet(X_pno_ij, K_iajb_[ij], X_pno_ij, true, false, false);
         auto T_pno_ij = linalg::triplet(X_pno_ij, T_iajb_[ij], X_pno_ij, true, false, false);
