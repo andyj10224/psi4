@@ -2,9 +2,9 @@
 
 ## RHF DLPNO-CCSD(T) analytic nuclear gradients
 
-**Current capability.** The ordinary RHF iterative (T), stationary CCSD, combined PNO truncation corrections and LMP2 amplitude relaxation each report explicit Cartesian correlation-fitting derivatives for the auxiliary metric and three-center integrals. The CCSD calculation also forms internal Fock, PAO-overlap and local coefficient derivatives using the converged (T)-sourced Λ₁ and Λ₂. The total-gradient driver remains guarded.
+**Current capability.** The ordinary RHF iterative (T), stationary CCSD, direct PNO projectors, PNO truncation corrections, and LMP2 relaxation report explicit correlation-fitting derivatives in Cartesian coordinates. The model combines the local Fock, overlap, and orbital coefficient derivatives, including moving TNOs, local LMO refits and PAO normalization. The total-gradient driver remains guarded.
 
-**Next piece.** Assemble the remaining direct local-basis sources, including the triples nuclear response, and propagate the combined derivatives through PAOs, localization and RHF orbital relaxation. The scoped scaling target assumes a nonzero pair cutoff and bounded local domains.
+**Next piece.** Reverse the occupied-space projector defining the unnormalized PAOs. Assemble its AO and occupied-orbital sources with the fitted-LMO and Fock derivatives, then handle localization and RHF orbital relaxation. The scaling target assumes a nonzero pair cutoff and bounded local domains.
 
 ## Implementation history
 
@@ -139,6 +139,33 @@ Boys water converged in 11 updates. Its oxygen z LMP2 contributions were −0.00
 Seven targeted CTests covered the gradient model, the ordinary RHF and RO energy paths that share the LMP2 residual, the Brueckner energy, and the canonical DF gradient regression. Lean 4.16 checked the sign identity between the LMP2 adjoint and forward tangent. [Regression](tests/dlpno-grad-model/input.dat) · [Proof](tests/dlpno-grad-model/TriplesAdjoint.lean)
 
 **Next piece.** Assemble the remaining direct CCSD and triples derivatives with respect to local bases and carry their combined orbital, Fock and overlap sources through PAO construction, localization and RHF relaxation. The total nuclear gradient is still guarded.
+
+### 2026-11-06 · Codex · Triples local spaces, DF orbital refits and PAO normalization
+
+Implementation commit [dc7db3b3](https://github.com/andyj10224/psi4/commit/dc7db3b313d532f74363ec96d8ca3d69d534b906).
+
+| Change | Result |
+| --- | --- |
+| Ordinary iterative (T) | Reversed both endpoints and the metric of pair–triplet and triplet–triplet overlaps, including projected singles, doubles, and the dependence of the TNO density on the pair basis. Added occupied, occupied–virtual and full virtual Fock derivatives, with multiplicities for repeated occupied labels. The triplet parent metric responds even at full TNO rank. [Triples response](psi4/src/psi4/dlpno/triples_response.cc) |
+| Pair spaces | Combined the CCSD and direct (T) coefficient sources, included the direct (T) source in the final PNO projector and LMP2 adjoint, and differentiated the first PNO projector through the semicanonical exchange and Fock blocks. The explicit fitting pieces from that last step are `DLPNO PNO PROJECTOR AUXILIARY METRIC GRADIENT` and `DLPNO PNO PROJECTOR THREE-CENTER GRADIENT`, in hartree/bohr. The truncation-energy and LMP2 fitting terms remain separate. [Local basis response](psi4/src/psi4/dlpno/local_basis_response.cc) |
+| Orbital coefficients in the fit | Applied all correlation three-center densities to the screened AO integrals, retaining coefficient derivatives on the actual local supports. Reversed the LMO refit `S_bb L = (S C_lmo)_b` into separate derivatives with respect to its metric and right-hand side. Same-center integral values contribute to orbital motion. [DF response](psi4/src/psi4/dlpno/triples_df_response.cc) |
+| PAOs | Combined parent overlap derivatives on the fixed, full-rank Cholesky pivot spans. Reversed the normalization of each occupied-projected AO, including the normalization derivative on the raw PAO metric diagonal. The internal results are sparse derivatives with respect to the unnormalized PAO coefficients and Fock/overlap blocks. The forward zero-column rule also applies in the reverse pass. |
+
+**Fixed-geometry verification.** Frozen-core H₂O/cc-pVDZ, first/final PNO thresholds 10⁻⁶/10⁻⁵, TNO threshold 10⁻⁵. The (T) check perturbs each family separately, rebuilds the TNO selection on the fixed parent span and ranks, and re-solves the right triples equations. Absolute directional errors are in hartree.
+
+| Localization | Final PNO coefficients | Fock blocks | PAO overlap |
+| --- | ---: | ---: | ---: |
+| Boys | 1.70 × 10⁻¹² | 5.2 × 10⁻¹⁴ | 1.56 × 10⁻¹² |
+| Pipek–Mezey (four threads, disk-backed factors and amplitudes) | 9.83 × 10⁻¹³ | 1.54 × 10⁻¹⁴ | 8.20 × 10⁻¹³ |
+| IBO | 2.17 × 10⁻¹² | 9.59 × 10⁻¹³ | 5.43 × 10⁻¹³ |
+
+On those runs the largest combined first-PNO operator check was 2.55 × 10⁻¹⁰ hartree. The parent PAO metric, AO coefficient, LMO refit, and PAO normalization checks gave maxima of 2.04 × 10⁻¹², 1.62 × 10⁻¹¹, 8.52 × 10⁻¹² and 2.49 × 10⁻¹¹ hartree, respectively. Reconstructing the fitted forward integral contractions from AO shell values agreed to 2.23 × 10⁻¹⁶ hartree. The four-H₂ screened chain also passed. No nuclear geometry displacements were used for these probes.
+
+**Canonical check.** At zero cutoffs, uniform shifts of the occupied and virtual Fock levels gave canonical PySCF (T) derivatives of −0.001456635184737 and +0.001456635184758, respectively (dimensionless). Boys and PM agreed to within 1.6 × 10⁻¹³; the maximum over all three localizers was 6.0 × 10⁻¹³. The new direct-projector Cartesian arrays were zero at full first PNO rank. Seven targeted CTests cover the gradient model, ordinary RHF and RO energy paths, the Brueckner energy, and the canonical DF gradient. Lean checked the moving-overlap identity, the linear LMO refit pullback, and the PAO normalization factor. The existing PM localization stability warning occurred in the zero-cutoff water run; fixed-basis derivative agreement does not validate a localization Hessian. [Regression](tests/dlpno-grad-model/input.dat) · [PySCF reference](tests/dlpno-grad-model/canonical_reference.py) · [Lean proof](tests/dlpno-grad-model/TriplesAdjoint.lean)
+
+**Screened work.** With `T_CUT_PAIRS_MP2 = 10⁻⁶`, 1, 2, and 3 separated waters gave 132, 264, and 396 triples couplings and 1,824, 3,648, and 5,472 stored raw PAO response entries. At 4, 8, and 12 interacting H₂ molecules the corresponding counts were 12, 28, and 44 couplings and 4,100, 11,020, and 17,940 entries. These are structural counts; the timing of a complete gradient is still open. [Reproduction script](tests/dlpno-grad-model/screened_counts.py)
+
+**Next piece.** Propagate the unnormalized PAO operator and coefficient derivatives through the occupied-space projection, including the actual frozen-core convention. Combine them with the fitted-LMO right-hand-side and AO metric derivatives, then assemble the localization and RHF orbital adjoints and the remaining AO integral derivatives. The total-gradient driver remains guarded.
 
 ## Updating the bank
 
