@@ -54,4 +54,24 @@ theorem local_fit_variation (M dM : Matrix I I ℝ) (a u v da db dv : I → ℝ)
   rw [← h]
   ring
 
+-- In the ordered pairs, reversing an occupied pair transposes its virtual
+-- indices. A physical doubles direction is invariant under that permutation.
+omit [Fintype J] in
+theorem ordered_source (rev : Equiv.Perm I) (s d : I → ℝ)
+    (physical : ∀ i, d (rev i) = d i) :
+    ((s + fun i => s (rev i)) ⬝ᵥ d) / 2 = s ⬝ᵥ d := by
+  have h : (fun i => s (rev i)) ⬝ᵥ d = s ⬝ᵥ d := by
+    change (∑ i, s (rev i) * d i) = ∑ i, s i * d i
+    calc
+      _ = ∑ i, s (rev i) * d (rev i) := Finset.sum_congr rfl (fun i _ => by rw [physical])
+      _ = ∑ i, s i * d i := Equiv.sum_comp rev (fun i => s i * d i)
+  rw [add_dotProduct, h]
+  ring
+
+-- Off-diagonal differentiated eigenproblem on a fixed separated TNO split.
+theorem tno_gap_source (nk nd g dD dθ : ℝ) (gap : nk - nd ≠ 0)
+    (tangent : (nk - nd) * dθ = dD) :
+    (g / (nk - nd)) * dD = g * dθ := by
+  rw [← tangent, ← mul_assoc, div_mul_cancel₀ g gap]
+
 end DLPNO

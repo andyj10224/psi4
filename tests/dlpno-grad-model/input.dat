@@ -1,4 +1,4 @@
-#! Test the explicit RI contributions to the single-TNO RHF (T) gradient.
+#! Test the explicit RI gradient terms and ordinary (T)-sourced RHF Lambda equations.
 #! The references are fixed-geometry canonical DF-CCSD(T) derivatives with
 #! only the specified fitting integral varied. See canonical_reference.py.
 
@@ -67,6 +67,18 @@ def check_stationarity(w):
     compare_values(-2*w.variable('(T) CORRECTION ENERGY'),
                    w.variable('DLPNO (T) AUXILIARY METRIC SCALE DERIVATIVE'),
                    1.e-8, 'RHF (T) derivative under uniform metric scaling')                                    #TEST
+    for rank in (1, 2):
+        compare_values(0., w.variable(f'DLPNO CCSD(T) LAMBDA{rank} RESIDUAL'), 1.e-10,
+                       f'converged sourced Lambda{rank}')                                                      #TEST
+        compare_values(0., w.variable(f'DLPNO CCSD L{rank} DIRECTION ERROR'), 1.e-8,
+                       f'CCSD rank {rank} transpose against right residual')                                   #TEST
+        compare_values(0., w.variable(f'DLPNO (T) L{rank} SOURCE DIRECTION ERROR'), 1.e-8,
+                       f'ordinary (T) rank {rank} source with responding TNOs')                                #TEST
+    compare_values(0., w.variable('DLPNO (T) L2 TNO DIRECTION ERROR'), 1.e-8,
+                   'kept/discarded TNO contribution to Lambda2')                                               #TEST
+    compare_values(2*w.variable('(T) CORRECTION ENERGY'),
+                   w.variable('DLPNO (T) T1 SCALE DERIVATIVE') + w.variable('DLPNO (T) T2 SCALE DERIVATIVE'),
+                   1.e-9, 'homogeneous triples energy under joint amplitude scaling')                          #TEST
     assert not w.has_variable('CURRENT GRADIENT')
 
 e_df = energy('ccsd(t)')
@@ -76,11 +88,18 @@ for loc in ('BOYS', 'PIPEK_MEZEY', 'IBO'):
     compare_values(e_df, e, 1.e-7, loc + ' zero-cutoff DF-CCSD(T) energy')                                               #TEST
     compare_values(-0.00304081137850, w.variable('(T) CORRECTION ENERGY'), 1.e-9, loc + ' canonical (T)')       #TEST
     check_stationarity(w)
+    for key, ref in [('DLPNO (T) T1 SCALE DERIVATIVE', 0.00008531657979),
+                     ('DLPNO (T) T2 SCALE DERIVATIVE', -0.00616693933676),
+                     ('DLPNO CCSD(T) LAMBDA1 T1 CONTRACTION', 0.00044402383150),
+                     ('DLPNO CCSD(T) LAMBDA2 T2 CONTRACTION', 0.05763646059833)]:
+        compare_values(ref, w.variable(key), 1.e-9, loc + ' canonical ' + key)                                 #TEST
     compare_arrays(metric_ref, w.variable(metric_key).np, 1.e-8, loc + ' RI metric derivative')                #TEST
     compare_arrays(three_ref, w.variable(three_key).np, 1.e-8, loc + ' RI three-center derivative')            #TEST
 
 # Different TNO ranks exercise rectangular projections and the transpose scatter.
 # Compare the disk generations at four threads with the serial in-memory solution.
+set t_cut_pno_mp2 1.e-6
+set t_cut_pno 1.e-5
 set t_cut_tno 1.e-5
 set min_tnos 3
 set dlpno_local_orbitals boys
@@ -89,12 +108,20 @@ e, w = energy('dlpno-ccsd(t)', return_wfn=True)
 check_stationarity(w)
 mem_metric = w.variable(metric_key).np.copy()
 mem_three = w.variable(three_key).np.copy()
+lambda_keys = ['DLPNO CCSD(T) LAMBDA1 T1 CONTRACTION', 'DLPNO CCSD(T) LAMBDA2 T2 CONTRACTION']
+mem_lambda = [w.variable(key) for key in lambda_keys]
+assert abs(w.variable('DLPNO (T) L2 TNO SOURCE DIRECTION')) > 1.e-8
 assert abs(e - e_df) > 1.e-6
+set write_qia_pno true
+set write_qab_pno true
+set low_memory_overlap true
 set write_triples_amplitudes true
 set write_triples_intermediates true
 psi4.set_num_threads(4)
 edisk, wdisk = energy('dlpno-ccsd(t)', return_wfn=True)
 check_stationarity(wdisk)
+for key, ref in zip(lambda_keys, mem_lambda):
+    compare_values(ref, wdisk.variable(key), 1.e-9, 'disk and semi-direct ' + key)                              #TEST
 compare_values(e, edisk, 1.e-9, 'single-space disk energy')                                                   #TEST
 compare_arrays(mem_metric, wdisk.variable(metric_key).np, 1.e-9, 'single-space disk metric gradient')           #TEST
 compare_arrays(mem_three, wdisk.variable(three_key).np, 1.e-9, 'single-space disk three-center gradient')       #TEST
@@ -106,7 +133,8 @@ for term in (mem_metric, mem_three):
 psi4.set_num_threads(1)
 psi4.set_options({'dlpno_gradient_model': False, 't_cut_triples_weak': 0., 't_cut_iter': 0.,
                   't_cut_tno_strong': 1.e-5, 't_cut_tno_weak': 1.e-5,
-                  'write_triples_amplitudes': False, 'write_triples_intermediates': False})
+                  'write_triples_amplitudes': False, 'write_triples_intermediates': False,
+                  'write_qia_pno': False, 'write_qab_pno': False, 'low_memory_overlap': False})
 production = energy('dlpno-ccsd(t)')
 compare_values(production, e, 1.e-8, 'finite-cutoff original right solver in matching spaces')                #TEST
 set dlpno_gradient_model true

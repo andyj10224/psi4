@@ -40,6 +40,7 @@
 #include "psi4/psifiles.h"
 
 #include <cstddef>
+#include <functional>
 #include <limits>
 #include <map>
 #include <array>
@@ -690,6 +691,21 @@ class PSI_API DLPNOCCSD : public DLPNO {
     std::vector<SharedMatrix> compute_alpha_ijkl();
     /// Solve the Lambda equations for the current converged right-hand CCSD state.
     void solve_lambda(bool include_singles);
+    void prepare_ccsd_residual();
+    std::vector<SharedMatrix> amplitude_probe(bool singles, int seed = 1) const;
+    double probe_amplitudes(bool singles, const std::vector<SharedMatrix>& direction, double step,
+                            const std::function<double()>& evaluate);
+    void check_ccsd_adjoint();
+    std::vector<SharedMatrix> triples_source1_, triples_source2_;
+    struct CCAdjoints;
+    void estimate_gradient_lambda_memory();
+    void solve_gradient_lambda();
+    void gradient_lambda_residual(const std::vector<SharedMatrix>& z1, const std::vector<SharedMatrix>& z2,
+                                  std::vector<SharedMatrix>& l1, std::vector<SharedMatrix>& l2);
+    void reverse_R1(CCAdjoints& g);
+    void reverse_R2(CCAdjoints& g);
+    void reverse_pair_intermediates(CCAdjoints& g);
+    void reverse_t1_transform(CCAdjoints& g);
     /// Form local blocks of the unrelaxed correlated one-particle density matrix (Toth Eqs. A2--A5).
     void compute_opdm();
     /// Assemble and publish the spin-summed AO one-particle density for OEProp.
@@ -874,7 +890,15 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     enum class TripletStage { Prescreen, Refine, SingleSpace };
     void triples_sparsity(TripletStage stage);
     void compute_gradient_model_triples();
-    void solve_gradient_model_triples();
+    void solve_gradient_model_triples(bool right_only = false);
+    struct TNOSelection {
+        SharedMatrix natural, canonical;  ///< all natural orbitals (PAO coefficients), then kept-to-canonical rotation
+        SharedVector occupations;
+    };
+    std::vector<TNOSelection> tno_selection_;
+    double add_tno_density_source(int r, const SharedMatrix& x_bar, const std::vector<SharedMatrix>& probe);
+    SharedMatrix triplet_pao_vv(int r, int q);
+    SharedMatrix tno_overlap_adjoint(const SharedMatrix& S, const SharedMatrix& x, const SharedMatrix& z);
     struct TriplesDFBlocks {
         std::array<SharedMatrix, 3> ov, oo;
         SharedMatrix vv;
@@ -884,11 +908,11 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
         SharedMatrix oo, ov, vv;  ///< one auxiliary function in its local LMO/PAO bases
     };
     SharedMatrix triples_df_response(int ijk, const SharedMatrix& w_bar, const SharedMatrix& v_bar,
-                                     std::vector<ThreeCenterDensity>& three_center);
-    void accumulate_three_center(int ijk, const TriplesDFBlocks& bar, std::vector<ThreeCenterDensity>& density);
+                                     std::vector<ThreeCenterDensity>& three_center, const SharedMatrix& x_bar);
+    void accumulate_three_center(int ijk, const TriplesDFBlocks& bar, std::vector<ThreeCenterDensity>& density, const SharedMatrix& x_bar);
     SharedMatrix contract_three_center(const std::vector<ThreeCenterDensity>& density);
     /// Create TNOs (Triplet Natural Orbitals) for DLPNO-(T)
-    void tno_transform(double tno_tolerance, bool use_tuple_cutoffs = false);
+    void tno_transform(double tno_tolerance, bool use_tuple_cutoffs = false, const std::vector<int>* fixed_ranks = nullptr);
     /// Sort triplets to split between "strong" and "weak" triplets (for (T) iterations)
     void sort_triplets(double e_total);
 

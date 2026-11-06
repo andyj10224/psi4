@@ -33,6 +33,7 @@
 #include "psi4/libmints/matrix.h"
 #include "psi4/libmints/molecule.h"
 #include "psi4/libmints/twobody.h"
+#include "psi4/liboptions/liboptions.h"
 #include "psi4/libpsi4util/PsiOutStream.h"
 
 #include <algorithm>
@@ -103,18 +104,59 @@ void DLPNOCCSD_T::compute_gradient_model_triples() {
     tno_transform(options_.get_double("T_CUT_TNO"));
     estimate_triples_memory();
 
-    psio_->open(PSIF_DLPNO_TRIPLES, PSIO_OPEN_NEW);
-    try {
-        // The T0 amplitudes provide a starting guess in exactly the final TNO space.
-        const double t0 = compute_lccsd_t0(true).first;
-        set_scalar_variable("DLPNO SEMICANONICAL (T0) ENERGY", t0);
-        solve_gradient_model_triples();
-    } catch (...) {
+    auto evaluate = [&](bool right_only) {
+        psio_->open(PSIF_DLPNO_TRIPLES, PSIO_OPEN_NEW);
+        try {
+            const double t0 = compute_lccsd_t0(true).first;
+            if (!right_only) set_scalar_variable("DLPNO SEMICANONICAL (T0) ENERGY", t0);
+            solve_gradient_model_triples(right_only);
+        } catch (...) {
+            psio_->close(PSIF_DLPNO_TRIPLES, 0);
+            throw;
+        }
         psio_->close(PSIF_DLPNO_TRIPLES, 0);
-        throw;
-    }
-    psio_->close(PSIF_DLPNO_TRIPLES, 0);
+        return E_T_;
+    };
 
+    std::array<double, 2> numerical{};
+    double frozen2 = 0.;
+    if (debug_) {
+        const auto ranks = n_tno_;
+        constexpr double h = 3.e-6;
+        auto fixed = [&]() { return evaluate(true); };
+        numerical[0] = probe_amplitudes(true, amplitude_probe(true), h, fixed);
+        const auto direction = amplitude_probe(false);
+        frozen2 = probe_amplitudes(false, direction, h, fixed);
+        numerical[1] = frozen2;
+        if (std::any_of(tno_selection_.begin(), tno_selection_.end(), [](const auto& s) { return bool(s.natural); })) {
+            numerical[1] = probe_amplitudes(false, direction, h, [&]() {
+                tno_transform(options_.get_double("T_CUT_TNO"), false, &ranks);
+                return evaluate(true);
+            });
+            tno_transform(options_.get_double("T_CUT_TNO"));
+        }
+    }
+
+    evaluate(false);
+    if (debug_) {
+        const double tno_error =
+            std::abs(scalar_variable("DLPNO (T) L2 TNO SOURCE DIRECTION") - (numerical[1] - frozen2));
+        set_scalar_variable("DLPNO (T) L2 TNO DIRECTION ERROR", tno_error);
+        for (int k = 0; k < 2; ++k) {
+            const auto probe = amplitude_probe(k == 0);
+            const auto& source = k == 0 ? triples_source1_ : triples_source2_;
+            double analytic = 0.;
+            for (int m = 0; m < probe.size(); ++m) analytic += source[m]->vector_dot(probe[m]);
+            if (k == 1) analytic *= 0.5;
+            const double err = std::abs(analytic - numerical[k]);
+            outfile->Printf("    (T) source %d: analytic % .12e, numerical % .12e, error %.3e\n", k + 1, analytic,
+                            numerical[k], err);
+            set_scalar_variable(k == 0 ? "DLPNO (T) L1 SOURCE DIRECTION ERROR" : "DLPNO (T) L2 SOURCE DIRECTION ERROR",
+                                err);
+        }
+    }
+
+    tno_selection_.clear();  // its doubles source has been accumulated
     e_lccsd_t_ = e_lccsd_ + E_T_;
     const double corr = scalar_variable("CCSD CORRELATION ENERGY") + E_T_;
     const double total = reference_energy_ + corr;
@@ -131,7 +173,7 @@ void DLPNOCCSD_T::compute_gradient_model_triples() {
     outfile->Printf("    RHF DLPNO-CCSD(T) gradient-model total energy: %20.12f\n", total);
 }
 
-void DLPNOCCSD_T::solve_gradient_model_triples() {
+void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only) {
     const int count = n_tno_.size(), naocc = nalpha_ - nfrzc();
     const double f_cut = options_.get_double("F_CUT_T");
     const int maxiter = options_.get_int("DLPNO_MAXITER");
@@ -176,7 +218,7 @@ void DLPNOCCSD_T::solve_gradient_model_triples() {
         return matmul_3d(triples_permuter(x, p[0], p[1], p[2]), S, ns, nr);
     };
 
-    if (debug_) {
+    if (debug_ && !right_only) {
         // Probe the actual packed operator on unrestricted test vectors. Checking
         // just the converged physical tensors can hide an inverse-permutation error.
         auto probe = [&](int row, int seed) {
@@ -264,7 +306,14 @@ void DLPNOCCSD_T::solve_gradient_model_triples() {
         throw PSIEXCEPTION(std::string("Single-space DLPNO ") + (left ? "Z3" : "T3") + " equations did not converge.");
     };
 
-    set_scalar_variable("DLPNO (T) RIGHT RESIDUAL", solve(T, false));
+    const double right_residual = solve(T, false);
+    if (right_only) {
+        E_T_ = 0.;
+        for (int r = 0; r < count; ++r)
+            if (n_tno_[r]) E_T_ += energy_moment(r, V.read(r), false)->vector_dot(T.read(r));
+        return;
+    }
+    set_scalar_variable("DLPNO (T) RIGHT RESIDUAL", right_residual);
     for (int r = 0; r < count; ++r) {
         int n = n_tno_[r];
         if (n) Z.write(r, std::make_shared<Matrix>(n, n * n));
@@ -285,18 +334,57 @@ void DLPNOCCSD_T::solve_gradient_model_triples() {
     }
     set_scalar_variable("DLPNO (T) ADJOINT ENERGY", dual_energy);
 
+    triples_source1_.clear();
+    triples_source2_.clear();
+    for (const auto& t : T_ia_) triples_source1_.push_back(std::make_shared<Matrix>(t->nrow(), 1));
+    for (const auto& t : T_iajb_) triples_source2_.push_back(std::make_shared<Matrix>(t->nrow(), t->ncol()));
+
+    std::vector<SharedMatrix> x_bar(count);
+    for (int r = 0; r < count; ++r) {
+        if (!tno_selection_[r].natural) continue;  // full kept spaces have zero projector response
+        auto t = T.read(r), z = Z.read(r);
+        auto f_bar = linalg::doublet(z, t, false, true);
+        // All three virtual Fock legs. Retaining off-diagonal variations here
+        // permits differentiating the subspace in an arbitrary kept-orbital gauge.
+        for (auto perm : {std::array<int, 3>{1, 0, 2}, std::array<int, 3>{2, 1, 0}}) {
+            auto zp = triples_permuter(z, perm[0], perm[1], perm[2]);
+            auto tp = triples_permuter(t, perm[0], perm[1], perm[2]);
+            f_bar->add(linalg::doublet(zp, tp, false, true));
+        }
+        f_bar->hermitivitize();
+        f_bar->scale(2.);
+        auto F = submatrix_rows_and_cols(*F_pao_, lmotriplet_to_paos_[r], lmotriplet_to_paos_[r]);
+        x_bar[r] = linalg::triplet(F, X_tno_[r], f_bar);
+    }
+    for (int r = 0; r < count; ++r) {
+        for (const auto& edge : forward[r]) {
+            int s = edge.source;
+            if (!x_bar[r] && !x_bar[s]) continue;
+            const auto& p = edge.ordered_source;
+            auto t = triples_permuter(T.read(s), p[0], p[1], p[2]);
+            auto g = tno_overlap_adjoint(overlap(edge), t, Z.read(r));
+            g->scale(-(*F_lmo_)(edge.l, edge.m));
+            auto M = submatrix_rows_and_cols(*S_pao_, lmotriplet_to_paos_[r], lmotriplet_to_paos_[s]);
+            if (x_bar[r]) x_bar[r]->add(linalg::triplet(M, X_tno_[s], g, false, false, true));
+            if (x_bar[s]) x_bar[s]->add(linalg::triplet(M, X_tno_[r], g, true, false, false));
+        }
+    }
+
     // Accumulate dL/dJ once per auxiliary shell pair. Local domains may overlap.
     // Store the true derivative (including its sign), with both PQ and QP
     // contributions folded into each off-diagonal shell block.
     std::vector<std::map<int, SharedMatrix>> density(ribasis_->nshell());
     std::vector<ThreeCenterDensity> three_center(ribasis_->nbf());
+    const auto probe = debug_ ? amplitude_probe(false) : std::vector<SharedMatrix>{};
+    double tno_direction = 0.;
     double metric_scale = 0.0;
     for (int r = 0; r < count; ++r) {
         if (!n_tno_[r]) continue;
         auto v_bar = energy_moment(r, T.read(r), true);
         auto w_bar = Z.read(r)->clone();
         w_bar->add(v_bar);  // V = W + the singles and F_ov terms.
-        auto g = triples_df_response(r, w_bar, v_bar, three_center);
+        auto g = triples_df_response(r, w_bar, v_bar, three_center, x_bar[r]);
+        if (x_bar[r]) tno_direction += add_tno_density_source(r, x_bar[r], probe);
         const auto& aux = lmotriplet_to_ribfs_[r];
         for (int u = 0; u < aux.size(); ++u) {
             const int P = ribasis_->function_to_shell(aux[u]);
@@ -312,6 +400,19 @@ void DLPNOCCSD_T::solve_gradient_model_triples() {
                 (*block)(p, q) += (P == Q ? 1.0 : 2.0) * (*g)(u, v);
             }
         }
+    }
+
+    if (debug_) set_scalar_variable("DLPNO (T) L2 TNO SOURCE DIRECTION", tno_direction);
+
+    // Stored CC Lambda2 is dual to half the ordered-pair residual sum.
+    // Including both orientations (also for ii) gives its source.
+    for (int ij = 0; ij < triples_source2_.size(); ++ij) {
+        int ji = ij_to_ji_[ij];
+        if (ij > ji) continue;
+        auto g = triples_source2_[ij]->clone();
+        g->add(triples_source2_[ji]->transpose());
+        triples_source2_[ij] = g;
+        if (ij != ji) triples_source2_[ji] = g->transpose();
     }
 
     auto gradient = std::make_shared<Matrix>("DLPNO (T) AUXILIARY METRIC GRADIENT", molecule_->natom(), 3);
@@ -335,6 +436,66 @@ void DLPNOCCSD_T::solve_gradient_model_triples() {
     set_array_variable("DLPNO (T) AUXILIARY METRIC GRADIENT", gradient);
     set_array_variable("DLPNO (T) THREE-CENTER GRADIENT", contract_three_center(three_center));
     set_scalar_variable("DLPNO (T) AUXILIARY METRIC SCALE DERIVATIVE", metric_scale);
+}
+
+// Derivative of <z,S^(tensor 3) x> with respect to S. Move each
+// differentiated leg to the first axis and project only the other two.
+SharedMatrix DLPNOCCSD_T::tno_overlap_adjoint(const SharedMatrix& S, const SharedMatrix& x, const SharedMatrix& z) {
+    const int nr = S->nrow(), ns = S->ncol();
+    auto g = std::make_shared<Matrix>(nr, ns);
+    for (auto perm : {std::array<int, 3>{0, 1, 2}, std::array<int, 3>{1, 0, 2}, std::array<int, 3>{2, 1, 0}}) {
+        auto y = triples_permuter(x, perm[0], perm[1], perm[2]);
+        auto zp = triples_permuter(z, perm[0], perm[1], perm[2]);
+        auto partial = std::make_shared<Matrix>(ns, nr * nr);
+        auto slab = std::make_shared<Matrix>(ns, ns);
+        for (int a = 0; a < ns; ++a) {
+            std::copy_n(&(*y)(a, 0), ns * ns, slab->get_pointer());
+            auto proj = linalg::triplet(S, slab, S, false, false, true);
+            std::copy_n(proj->get_pointer(), nr * nr, &(*partial)(a, 0));
+        }
+        g->add(linalg::doublet(zp, partial, false, true));
+    }
+    return g;
+}
+
+double DLPNOCCSD_T::add_tno_density_source(int r, const SharedMatrix& x_bar, const std::vector<SharedMatrix>& probe) {
+    double directional = 0.;
+    const auto& sel = tno_selection_[r];
+    const int kept = n_tno_[r], n = sel.natural->ncol();
+    Dimension zero(1), k(1), all(1);
+    k.fill(kept);
+    all.fill(n);
+    auto C = sel.natural->get_block({zero, sel.natural->rowspi()}, {zero, k});
+    auto X = sel.natural->get_block({zero, sel.natural->rowspi()}, {k, all});
+    auto multiplier = linalg::triplet(X, x_bar, sel.canonical, true, false, true);
+    double occ_scale = std::max(std::abs((*sel.occupations)(0)), std::abs((*sel.occupations)(n - 1)));
+    for (int d = 0; d < n - kept; ++d)
+        for (int a = 0; a < kept; ++a) {
+            double gap = (*sel.occupations)(a) - (*sel.occupations)(kept + d);
+            if (std::abs(gap) <= 32. * std::numeric_limits<double>::epsilon() * occ_scale)
+                throw PSIEXCEPTION("Undefined DLPNO TNO response: the retained rank splits a degenerate occupation.");
+            (*multiplier)(d, a) /= gap;
+        }
+    const auto [i, j, l] = ijk_to_i_j_k_[r];
+    for (int ij : {i_j_to_ij_[i][j], i_j_to_ij_[j][l], i_j_to_ij_[i][l]}) {
+        auto metric = submatrix_rows_and_cols(*S_pao_, lmopair_to_paos_[ij], lmotriplet_to_paos_[r]);
+        auto P = linalg::doublet(X_pno_[ij], metric, true, false);
+        auto H = linalg::triplet(linalg::doublet(P, X), multiplier, linalg::doublet(P, C), false, false, true);
+        H->hermitivitize();
+        const auto [p, q] = ij_to_i_j_[ij];
+        H->scale(p == q ? 1. / 6. : 1. / 3.);
+        // D = U t^T + U^T t, U = 2t - t^T.
+        auto u_bar = linalg::doublet(H, T_iajb_[ij]);
+        u_bar->add(linalg::doublet(T_iajb_[ij], H));
+        auto dt = u_bar->transpose();
+        dt->scale(-1.);
+        dt->axpy(2., u_bar);
+        dt->add(linalg::doublet(H, Tt_iajb_[ij]));
+        dt->add(linalg::doublet(Tt_iajb_[ij], H));
+        triples_source2_[ij]->add(dt);
+        if (!probe.empty()) directional += probe[ij]->vector_dot(dt);
+    }
+    return directional;
 }
 
 }  // namespace dlpno

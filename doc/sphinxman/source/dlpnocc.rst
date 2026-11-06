@@ -122,12 +122,29 @@ energy calculation. For example::
    three_center = wfn.variable('DLPNO (T) THREE-CENTER GRADIENT')
 
 Both arrays have shape (atoms, 3) and units of hartree/bohr. They contain the
-explicit derivatives of the two- and three-center correlation fitting integrals
-in the triples energy, with the converged triples amplitudes relaxed through
-their adjoint. The reference, CCSD amplitudes, Fock matrix, coefficient refits,
-localized orbitals, PNOs and TNOs are held fixed in these two contributions.
-A total gradient also requires the responses of those quantities and the
-derivative of the PNO correction. The total-gradient driver rejects the
+explicit derivatives of the correlation fitting integrals in the triples
+energy. The triples amplitudes respond through their adjoint. The CCSD
+amplitudes, Fock matrix, coefficient refits, and orbital spaces are held
+fixed when evaluating these two arrays.
+
+The same calculation then solves the ordinary (T)-sourced CCSD Lambda
+equations in the retained pair domains. The singles source differentiates
+the triples energy with respect to :math:`t_1`. The doubles source also
+includes the rotation of kept TNOs into discarded TNOs as :math:`t_2`
+changes. The retained rank is fixed and the occupations must be separated
+across its boundary. In the ordered-pair representation the Lagrangian
+contains :math:`\tfrac12\sum_{ij}\lambda_{ij}\!:\!R_{ij}`. The residuals
+use the transpose of the projections in the implemented right-hand CCSD
+equations. The asymmetric triples energy retains its separate Lambda procedure.
+
+``DLPNO CCSD(T) LAMBDA1 RESIDUAL`` and ``DLPNO CCSD(T) LAMBDA2 RESIDUAL``
+give the largest domain RMS at the converged left amplitudes. For small
+validation systems, setting the DLPNO module's ``DEBUG`` option to 1 compares
+each source and residual transpose with fixed-geometry amplitude variations.
+
+A total gradient still requires contracting the stationary CCSD Lagrangian
+with integral derivatives, as well as the orbital, PNO, TNO and PNO-correction
+responses to nuclear displacement. The total-gradient driver rejects the
 development model until these terms are implemented.
 
 Higher-Order DLPNO Methods

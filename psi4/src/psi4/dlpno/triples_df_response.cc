@@ -33,6 +33,7 @@
 #include "psi4/libmints/matrix.h"
 #include "psi4/libmints/molecule.h"
 #include "psi4/libmints/twobody.h"
+#include "psi4/liboptions/liboptions.h"
 #include "psi4/libpsi4util/PsiOutStream.h"
 
 #include <algorithm>
@@ -43,13 +44,60 @@
 namespace psi {
 namespace dlpno {
 SharedMatrix DLPNOCCSD_T::triples_df_response(int r, const SharedMatrix& w_bar, const SharedMatrix& v_bar,
-                                              std::vector<ThreeCenterDensity>& three_center) {
+                                              std::vector<ThreeCenterDensity>& three_center,
+                                              const SharedMatrix& x_bar) {
     const auto [i, j, k] = ijk_to_i_j_k_[r];
     const std::array<int, 3> occ{i, j, k};
     const int n = n_tno_[r];
     const auto& lmos = lmotriplet_to_lmos_[r];
     const auto& aux = lmotriplet_to_ribfs_[r];
-    if (aux.empty()) return std::make_shared<Matrix>(0, 0);
+    struct PairProjection {
+        SharedMatrix map, overlap, t, seed;
+    };
+    std::map<int, PairProjection> pairs;
+    auto pair = [&](int ij) -> PairProjection& {
+        auto& p = pairs[ij];
+        if (!p.overlap) {
+            auto metric = submatrix_rows_and_cols(*S_pao_, lmopair_to_paos_[ij], lmotriplet_to_paos_[r]);
+            p.map = linalg::doublet(X_pno_[ij], metric, true, false);
+            p.overlap = linalg::doublet(p.map, X_tno_[r]);
+            p.t = linalg::triplet(p.overlap, T_iajb_[ij], p.overlap, true, false, false);
+            p.seed = std::make_shared<Matrix>(n, n);
+        }
+        return p;
+    };
+    auto pull_back_pairs = [&]() {
+        for (auto& [ij, p] : pairs) {
+            triples_source2_[ij]->add(linalg::triplet(p.overlap, p.seed, p.overlap, false, false, true));
+            if (x_bar) {
+                auto ds = linalg::triplet(T_iajb_[ij], p.overlap, p.seed, false, false, true);
+                ds->add(linalg::triplet(T_iajb_[ij], p.overlap, p.seed, true, false, false));
+                x_bar->add(linalg::doublet(p.map, ds, true, false));
+            }
+        }
+    };
+    // The forward V also contains f_i^a t_jk^bc and its two permutations.
+    // The (i,k) pair for the middle term occurs in precisely that order.
+    for (int p = 0; p < 3; ++p) {
+        const int q = p == 0 ? 1 : 0, s = p == 2 ? 1 : 2;
+        auto& block = pair(i_j_to_ij_[occ[q]][occ[s]]);
+        auto fp = submatrix_rows_and_cols(*F_lmo_pao_, {occ[p]}, lmotriplet_to_paos_[r]);
+        auto f = linalg::doublet(fp, X_tno_[r]);
+        auto df = std::make_shared<Matrix>(1, n);
+        for (int a = 0; a < n; ++a)
+            for (int b = 0; b < n; ++b)
+                for (int c = 0; c < n; ++c) {
+                    const std::array<int, 3> x{a, b, c};
+                    const double v = (*v_bar)(a, b * n + c);
+                    (*block.seed)(x[q], x[s]) += v * (*f)(0, x[p]);
+                    (*df)(0, x[p]) += v * (*block.t)(x[q], x[s]);
+                }
+        if (x_bar) x_bar->add(linalg::doublet(fp, df, true, false));
+    }
+    if (aux.empty()) {
+        pull_back_pairs();
+        return std::make_shared<Matrix>(0, 0);
+    }
     auto raw = triples_df_blocks(r);
     auto full_bar = std::make_shared<Matrix>(aux.size(), aux.size());
     auto cutoff_bar = full_bar->clone();
@@ -83,15 +131,6 @@ SharedMatrix DLPNOCCSD_T::triples_df_response(int r, const SharedMatrix& w_bar, 
 
     // Accumulate adjoints of the full inverse used by (ia|bd), and of the
     // rank-filtered inverse used by the symmetric half transforms, separately.
-    auto pair_overlap = [&](int pair) {
-        auto S = submatrix_rows_and_cols(*S_pao_, lmopair_to_paos_[pair], lmotriplet_to_paos_[r]);
-        return linalg::triplet(X_pno_[pair], S, X_tno_[r], true, false, false);
-    };
-    auto doubles = [&](int p, int q) {
-        const int pair = i_j_to_ij_[p][q];
-        auto S = pair_overlap(pair);
-        return linalg::triplet(S, T_iajb_[pair], S, true, false, false);
-    };
     // Undo the six explicit permutations of W (Eq. 109). They act on
     // virtual slots even when two occupied labels are identical.
     std::array<int, 3> perm{0, 1, 2};
@@ -105,15 +144,24 @@ SharedMatrix DLPNOCCSD_T::triples_df_response(int r, const SharedMatrix& w_bar, 
                     (*g)(x[p] * n + x[q], x[s]) = (*w_bar)(a, b * n + c);
                 }
 
-        auto ovvv = linalg::doublet(g, doubles(occ[s], occ[q]));
+        auto& kj = pair(i_j_to_ij_[occ[s]][occ[q]]);
+        auto K = linalg::doublet(full_ov[p], raw.vv, true, false);
+        K->reshape(n * n, n);
+        kj.seed->add(linalg::doublet(g, K, true, false));
+        auto ovvv = linalg::doublet(g, kj.t);
         ovvv->reshape(n, n * n);
         full_bar->add(linalg::triplet(raw.ov[p], ovvv, raw.vv, false, false, true));
         bar.ov[p]->add(linalg::doublet(full_vv, ovvv, false, true));
         bar.vv->add(linalg::doublet(full_ov[p], ovvv));
 
         auto ooov = std::make_shared<Matrix>(lmos.size(), n);
+        auto Klc = linalg::doublet(raw.oo[q], fitted.ov[s], true, false);
         for (int l = 0; l < lmos.size(); ++l) {
-            auto t = doubles(occ[p], lmos[l]);
+            auto& il = pair(i_j_to_ij_[occ[p]][lmos[l]]);
+            auto grad = linalg::doublet(g, submatrix_rows(*Klc, {l}), false, true);
+            grad->reshape(n, n);
+            il.seed->subtract(grad);
+            auto t = il.t->clone();
             t->reshape(1, n * n);
             auto row = linalg::doublet(t, g);
             for (int c = 0; c < n; ++c) (*ooov)(l, c) = -(*row)(0, c);
@@ -127,20 +175,27 @@ SharedMatrix DLPNOCCSD_T::triples_df_response(int r, const SharedMatrix& w_bar, 
     // of this auxiliary metric when the Fock matrix and orbital bases are fixed.
     for (int p = 0; p < 3; ++p) {
         const int q = (p + 1) % 3, s = (p + 2) % 3;
-        auto singles = linalg::doublet(pair_overlap(i_j_to_ij_[occ[p]][occ[p]]), T_ia_[occ[p]], true, false);
+        auto& ii = pair(i_j_to_ij_[occ[p]][occ[p]]);
+        auto singles = linalg::doublet(ii.overlap, T_ia_[occ[p]], true, false);
+        auto ds = std::make_shared<Matrix>(n, 1);
+        auto K = linalg::doublet(raw.ov[q], fitted.ov[s], true, false);
         auto ovov = std::make_shared<Matrix>(n, n);
         for (int a = 0; a < n; ++a)
             for (int b = 0; b < n; ++b)
                 for (int c = 0; c < n; ++c) {
                     const std::array<int, 3> x{a, b, c};
                     (*ovov)(x[q], x[s]) += (*singles)(x[p], 0) * (*v_bar)(a, b * n + c);
+                    (*ds)(x[p], 0) += (*K)(x[q], x[s]) * (*v_bar)(a, b * n + c);
                 }
+        triples_source1_[occ[p]]->add(linalg::doublet(ii.overlap, ds));
+        if (x_bar) x_bar->add(linalg::triplet(ii.map, T_ia_[occ[p]], ds, true, false, true));
         cutoff_bar->add(linalg::triplet(raw.ov[q], ovov, raw.ov[s], false, false, true));
         bar.ov[q]->add(linalg::doublet(fitted.ov[s], ovov, false, true));
         bar.ov[s]->add(linalg::doublet(fitted.ov[q], ovov));
     }
 
-    accumulate_three_center(r, bar, three_center);
+    pull_back_pairs();
+    accumulate_three_center(r, bar, three_center, x_bar);
     auto full = linalg::triplet(U, full_bar, U, true, false, false);
     auto filtered = linalg::triplet(U, cutoff_bar, U, true, false, false);
     // Matrix::power(-0.5, 1.e-14) retains positive metric eigenvalues
@@ -164,7 +219,8 @@ SharedMatrix DLPNOCCSD_T::triples_df_response(int r, const SharedMatrix& w_bar, 
     return density;
 }
 
-void DLPNOCCSD_T::accumulate_three_center(int r, const TriplesDFBlocks& bar, std::vector<ThreeCenterDensity>& density) {
+void DLPNOCCSD_T::accumulate_three_center(int r, const TriplesDFBlocks& bar, std::vector<ThreeCenterDensity>& density,
+                                          const SharedMatrix& x_bar) {
     const auto [i, j, k] = ijk_to_i_j_k_[r];
     const std::array<int, 3> occ{i, j, k};
     const auto& paos = lmotriplet_to_paos_[r];
@@ -195,13 +251,20 @@ void DLPNOCCSD_T::accumulate_three_center(int r, const TriplesDFBlocks& bar, std
             }
             for (int u = 0; u < paos.size(); ++u) {
                 const int a = vi[paos[u]];
-                if (a >= 0) (*d.ov)(mu, a) += (*ov[p])(q, u);
+                if (a >= 0) {
+                    (*d.ov)(mu, a) += (*ov[p])(q, u);
+                    if (x_bar) C_DAXPY(n, (*qia_[aux[q]])(mu, a), &(*bar.ov[p])(q, 0), 1, &(*x_bar)(u, 0), 1);
+                }
             }
         }
 
         auto vv_tno = std::make_shared<Matrix>(n, n);
         std::copy_n(&(*bar.vv)(q, 0), static_cast<size_t>(n) * n, vv_tno->get_pointer());
         auto vv = linalg::triplet(X_tno_[r], vv_tno, X_tno_[r], false, false, true);
+        if (x_bar) {
+            vv_tno->add(vv_tno->transpose());
+            x_bar->add(linalg::triplet(triplet_pao_vv(r, aux[q]), X_tno_[r], vv_tno));
+        }
         for (int u = 0; u < paos.size(); ++u) {
             for (int v = 0; v < paos.size(); ++v) {
                 const int pair = riatom_to_pao_pairs_dense_[atom][paos[u]][paos[v]];

@@ -4,6 +4,7 @@ list(APPEND sources
   mp2.cc
   ccsd.cc
   ccsd_lambda.cc
+  ccsd_gradient_lambda.cc
   triples.cc
   triples_response.cc
   triples_df_response.cc

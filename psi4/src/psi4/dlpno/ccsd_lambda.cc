@@ -232,34 +232,7 @@ void DLPNOCCSD::compute_lambda_intermediates() {
 
     std::time_t time_start = std::time(nullptr);
 
-    // Step 1: Create T_n intermediate (Jiang Eq. 70)
-    // T_{n_{ij}}^{a_{ij}} = S(a_{ij}, a_{nn}) T_{n}^{a_{nn}}
-    // n_{ij} is all n such that in and jn form valid pairs
-#pragma omp parallel for schedule(dynamic, 1)
-    for (int ij = 0; ij < n_lmo_pairs; ++ij) {
-        auto &[i, j] = ij_to_i_j_[ij];
-
-        int nlmo_ij = lmopair_to_lmos_[ij].size();
-        int npno_ij = n_pno_[ij];
-        
-        T_n_ij_[ij] = std::make_shared<Matrix>(nlmo_ij, npno_ij);
-
-        for (int n_ij = 0; n_ij < nlmo_ij; ++n_ij) {
-            int n = lmopair_to_lmos_[ij][n_ij];
-            int nn = i_j_to_ij_[n][n];
-
-            // (a_{ij}, a_{nn}) (a_{nn}, 1) -> (a_{ij}, 1)
-            auto T_n_temp = linalg::doublet(S_PNO(ij, nn), T_ia_[n], false, false);
-            
-            for (int a_ij = 0; a_ij < npno_ij; ++a_ij) {
-                (*T_n_ij_[ij])(n_ij, a_ij) = (*T_n_temp)(a_ij, 0);
-            } // end a_ij
-        } // end n_ij
-    } // end ij
-
-    // Step 2: T1-dress integrals and Fock matrices
-    t1_ints();
-    t1_fock();
+    prepare_ccsd_residual();
 
     std::time_t time_stop = std::time(nullptr);
     outfile->Printf("   %3d seconds\n\n", (int) time_stop - (int) time_start);

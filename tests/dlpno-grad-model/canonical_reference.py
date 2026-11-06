@@ -1,4 +1,4 @@
-"""Regenerate the two component references in input.dat (optional PySCF + SciPy).
+"""Regenerate the Cartesian components and amplitude response references in input.dat (optional PySCF + SciPy).
 
 At one RHF geometry, solve canonical CCSD once. In the canonical (T) functional,
 vary either its two-center metric J or its three-center integrals Q by +/- h
@@ -10,6 +10,7 @@ amplitudes fixed. This isolates exactly one explicit fitting contribution.
 import numpy as np
 import psi4
 from pyscf import ao2mo, cc, gto, lib, scf
+from pyscf.cc import ccsd_t_lambda
 from scipy.linalg import solve
 
 
@@ -60,6 +61,21 @@ def main():
     ccw.max_cycle = 200
     _, t1, t2 = ccw.kernel()
     assert ccw.converged
+
+    # PySCF uses spin-free amplitudes. In the local solver the singles
+    # multiplier is 2*l1; the ordered doubles sum contracts (2*l2-l2^T).
+    eris = ccw.ao2mo()
+    ok, l1, l2 = ccsd_t_lambda.kernel(ccw, eris, t1, t2, max_cycle=200, tol=1e-12)
+    assert ok
+    print("Lambda1.T1", 2*np.vdot(l1, t1))
+    print("Lambda2.T2 (ordered half-weight)", np.vdot(2*l2 - l2.swapaxes(2, 3), t2))
+    h = 1.e-4
+    for rank in (1, 2):
+        def rescale(step):
+            u1 = (1+step)*t1 if rank == 1 else t1
+            u2 = (1+step)*t2 if rank == 2 else t2
+            return ccw.ccsd_t(u1, u2, eris=eris)
+        print("Triples scale derivative, rank", rank, (rescale(h)-rescale(-h))/(2*h))
 
     def triples(metric, raw):
         set_integrals(metric, raw)

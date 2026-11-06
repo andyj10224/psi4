@@ -410,7 +410,7 @@ void DLPNOCCSD_T::sort_triplets(double e_total) {
     timer_off("Sort Triplets");
 }
 
-void DLPNOCCSD_T::tno_transform(double t_cut_tno, bool use_tuple_cutoffs) {
+void DLPNOCCSD_T::tno_transform(double t_cut_tno, bool use_tuple_cutoffs, const std::vector<int>* fixed_ranks) {
     // Computes TNOs from converged LCCSD densities of triplets ij, jk, and ik
 
     timer_on("TNO transform");
@@ -430,6 +430,7 @@ void DLPNOCCSD_T::tno_transform(double t_cut_tno, bool use_tuple_cutoffs) {
     X_tno_.resize(n_lmo_triplets);
     e_tno_.resize(n_lmo_triplets);
     n_tno_.resize(n_lmo_triplets);
+    if (gradient_model_) tno_selection_.assign(n_lmo_triplets, {});
 
     if (n_lmo_triplets == 0) {
         outfile->Printf("    Number of (Unique) Local MO triplets: 0\n\n");
@@ -524,19 +525,25 @@ void DLPNOCCSD_T::tno_transform(double t_cut_tno, bool use_tuple_cutoffs) {
             }
         }
 
-        nvir_ijk_final = std::max(1, nvir_ijk_final);
+        nvir_ijk_final = fixed_ranks ? (*fixed_ranks)[ijk] : std::max(1, nvir_ijk_final);
 
         Dimension zero(1);
         Dimension dim_final(1);
         dim_final.fill(nvir_ijk_final);
 
         // This transformation gives orbitals that are orthonormal but not canonical
+        if (gradient_model_ && nvir_ijk_final < nvir_ijk) {
+            tno_selection_[ijk].natural = linalg::doublet(X_pao_ijk, X_tno_ijk);
+            tno_selection_[ijk].occupations = tno_occ.shared_clone();
+        }
         X_tno_ijk = X_tno_ijk->get_block({zero, X_tno_ijk->rowspi()}, {zero, dim_final});
         tno_occ = tno_occ.get_block({zero, dim_final});
 
         SharedMatrix tno_canon;
         SharedVector e_tno_ijk;
         std::tie(tno_canon, e_tno_ijk) = canonicalizer(X_tno_ijk, F_pao_ijk);
+
+        if (gradient_model_ && tno_selection_[ijk].natural) tno_selection_[ijk].canonical = tno_canon;
 
         X_tno_ijk = linalg::doublet(X_tno_ijk, tno_canon, false, false);
         X_tno_ijk = linalg::doublet(X_pao_ijk, X_tno_ijk, false, false);
@@ -607,6 +614,14 @@ void DLPNOCCSD_T::estimate_triples_memory() {
         }
         // A conservative bound on the accumulated shell-pair density. Domains
         // that share auxiliary functions actually reuse the same blocks.
+        for (int r = 0; r < tno_selection_.size(); ++r) {
+            const auto& sel = tno_selection_[r];
+            if (!sel.natural) continue;
+            const size_t rows = sel.natural->nrow(), n = sel.natural->ncol(), kept = n_tno_[r];
+            resident += rows * (n + kept) + kept * kept + n;  // full eigenvectors, X adjoint, rotation, occupations
+        }
+        for (size_t np : n_pno_) resident += np * np;
+        for (int i = 0; i < nalpha_ - nfrzc(); ++i) resident += n_pno_[i_j_to_ij_[i][i]];
         size_t metric_words = 0;
         for (const auto& domain : lmotriplet_to_ribfs_) metric_words += domain.size() * domain.size();
         resident += std::min(metric_words, static_cast<size_t>(ribasis_->nbf()) * ribasis_->nbf());
@@ -691,6 +706,18 @@ void DLPNOCCSD_T::estimate_triples_memory() {
     }
 }
 
+SharedMatrix DLPNOCCSD_T::triplet_pao_vv(int r, int q) {
+    const auto& paos = lmotriplet_to_paos_[r];
+    const int atom = ribasis_->function_to_center(q);
+    auto vv = std::make_shared<Matrix>(paos.size(), paos.size());
+    for (int u = 0; u < paos.size(); ++u)
+        for (int v = 0; v < paos.size(); ++v) {
+            int uv = riatom_to_pao_pairs_dense_[atom][paos[u]][paos[v]];
+            if (uv >= 0) (*vv)(u, v) = (*qab_[q])(uv, 0);
+        }
+    return vv;
+}
+
 DLPNOCCSD_T::TriplesDFBlocks DLPNOCCSD_T::triples_df_blocks(int ijk) {
     const auto [i, j, k] = ijk_to_i_j_k_[ijk];
     const auto& paos = lmotriplet_to_paos_[ijk];
@@ -722,13 +749,7 @@ DLPNOCCSD_T::TriplesDFBlocks DLPNOCCSD_T::triples_df_blocks(int ijk) {
                 if (a >= 0) (*blocks.ov[p])(row, u) = (*qia_[q])(occ[p], a);
             }
         }
-        auto vv = std::make_shared<Matrix>(paos.size(), paos.size());
-        for (int u = 0; u < paos.size(); ++u) {
-            for (int v = 0; v < paos.size(); ++v) {
-                int uv = riatom_to_pao_pairs_dense_[atom][paos[u]][paos[v]];
-                if (uv >= 0) (*vv)(u, v) = (*qab_[q])(uv, 0);
-            }
-        }
+        auto vv = triplet_pao_vv(ijk, q);
         vv = linalg::triplet(X_tno_[ijk], vv, X_tno_[ijk], true, false, false);
         std::copy_n(vv->get_pointer(), static_cast<size_t>(n) * n, &(*blocks.vv)(row, 0));
     }
@@ -1966,7 +1987,18 @@ void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
 
 void DLPNOCCSD_T::post_ccsd_correction(DLPNOCCSDPhase phase) {
     if (gradient_model_) {
-        compute_gradient_model_triples();
+        auto close_pair_files = [&]() {
+            if (write_qia_pno_) psio_->close(PSIF_DLPNO_QIA_PNO, 0);
+            if (write_qab_pno_) psio_->close(PSIF_DLPNO_QAB_PNO, 0);
+        };
+        try {
+            compute_gradient_model_triples();
+            solve_gradient_lambda();
+        } catch (...) {
+            close_pair_files();
+            throw;
+        }
+        close_pair_files();
         return;
     }
     DLPNOCCSD::post_ccsd_correction(phase);
