@@ -1,0 +1,86 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb}
+\usepackage[margin=1in]{geometry}
+\title{Working equations for the RHF DLPNO-CCSD(T) nuclear Hessian}
+\author{Quantum Chemistry Grand Battleplan}
+\date{6 November 2026}
+\begin{document}
+\maketitle
+
+\section{Target and differentiability}
+Use the ordinary iterative (T) gradient-model energy with the conventions of
+the companion gradient equation record. Indices $i,j,k$ label active occupied
+LMOs, $\mu,\nu$ AOs; $A,B$ below index Cartesian nuclear coordinates in bohr.
+For a branch $\sigma$ with fixed pair and triplet membership, domain and pivot
+lists, and retained PNO/TNO ranks, define
+\begin{equation}
+ g_A=\partial_A E_\sigma,\qquad H_{AB}=\partial_B g_A,\qquad
+ (Hv)_A=\left.\frac{d}{ds}g_A(\mathbf X+s v)\right|_{s=0}.
+ \label{eq:target}
+\end{equation}
+The orbital coefficients, subspace projectors and amplitudes relax. Assume
+a twice differentiable solution with separated retained/discarded spaces
+and a locally determined response after removing redundant rotations.
+
+\section{Constrained curvature}
+Let $q$ denote independent real electronic coordinates after fixing gauges,
+$R$ their defining residuals, and $\lambda$ their multipliers. Contractions
+in vector notation include the ordered-pair weights of the gradient record.
+The scalar Lagrangian and stationary equations are
+\begin{equation}
+ \mathcal L=E(q,\mathbf X)+\lambda^{\mathsf T}R(q,\mathbf X),\qquad
+ R=0,\qquad E_q+R_q^{\mathsf T}\lambda=0 .
+\end{equation}
+Use column gradients; subscripts on $\mathcal L$ below are partial derivatives
+at the reference solution. For dimensionless directions $u,v$ write
+$\partial_v=\sum_A v_A\partial_A$. First-order tangents satisfy
+\begin{equation}
+ R_q q^v=-R_v .
+ \label{eq:tangent}
+\end{equation}
+Since $R$ vanishes along the solution, its contraction with a multiplier held
+at the reference value adds zero along the entire local branch. Differentiating
+that scalar twice leaves
+\begin{align}
+ u^{\mathsf T}Hv
+ &=\mathcal L_{uv}+\mathcal L_{uq}q^v+(q^u)^{\mathsf T}\mathcal L_{qv}
+   +(q^u)^{\mathsf T}\mathcal L_{qq}q^v . \label{eq:curvature}
+\end{align}
+The coefficient of $q^{uv}$ is $\mathcal L_q=0$.
+Alternatively, to obtain the entire column for one tangent $q^v$, solve the
+differentiated left stationarity equation and differentiate the analytic gradient:
+\begin{align}
+ R_q^{\mathsf T}\lambda^v&=-\mathcal L_{qv}-\mathcal L_{qq}q^v,\\
+ (Hv)_A&=\mathcal L_{Av}+\mathcal L_{Aq}q^v+R_A^{\mathsf T}\lambda^v .
+ \label{eq:column}
+\end{align}
+Equation~\eqref{eq:column} avoids a separate right solve for each output row.
+Multiplying its last term by $u_A$ and summing, then using
+Eq.~\eqref{eq:tangent}, recovers Eq.~\eqref{eq:curvature}.
+These identities specify the analytic target; local residual contractions
+will be expanded as each block is derived and tested.
+
+\section{Canonical verification at one geometry}
+Put O at the origin, H1 on $+z$, and H2 in the $yz$ plane with positive $y$.
+Use $r=0.958$ angstrom and $\theta=104.4776$ degrees:
+\begin{equation}
+ \mathbf X_{\rm H1}=r(0,0,1),\qquad
+ \mathbf X_{\rm H2}=r(0,\sin\theta,\cos\theta),\quad
+ v=e_{{\rm H1},z},\quad u=e_{{\rm O},y}.
+\end{equation}
+Convert $r$ to bohr before displacement. Hold the laboratory frame fixed.
+For an analytic canonical gradient $g$, define
+\begin{align}
+ C(h;v)&=\frac{g(\mathbf X+h v)-g(\mathbf X-h v)}{2h}
+       =Hv+O(h^2),\\
+ T(h;v)&=\frac{4C(h/2;v)-C(h;v)}{3}=Hv+O(h^4).
+\end{align}
+The orders assume sufficient smoothness. Compare $T(0.004;v)$ with
+$T(0.008;v)$ in bohr; the former is the reported reference. Check
+\begin{equation}
+ u^{\mathsf T}Hv=v^{\mathsf T}Hu,\qquad
+ \sum_{\text{atoms }K}(Hv)_{K\alpha}=0\quad(\alpha=x,y,z).
+\end{equation}
+No mass weighting or projection is applied. A directional curvature at
+this test geometry has units of hartree/bohr$^2$.
+\end{document}
