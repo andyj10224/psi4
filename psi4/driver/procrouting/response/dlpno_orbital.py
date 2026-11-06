@@ -1,4 +1,6 @@
 """Fixed-geometry orbital adjoints for the RHF DLPNO gradient model."""
+from typing import NamedTuple
+
 import numpy as np
 from scipy.sparse.linalg import LinearOperator, eigsh, minres
 
@@ -393,6 +395,11 @@ def assemble_cartesian_gradient(wfn, reference_gradient=None, fock_derivatives=N
 
 def boys_nuclear_tangent(wfn, direction, tol=1.e-9):
     """AO active-LMO coefficient derivative in a stationary Boys frame."""
+    v, dC = _boys_reference_tangent(wfn, direction)
+    return _boys_lmo_tangent(wfn, v, dC, tol)
+
+
+def _boys_reference_tangent(wfn, direction):
     from psi4 import core
     if not wfn.variable('DLPNO RESPONSE BOYS'):
         raise ValueError("Expected a Boys-localized RHF DLPNO gradient model.")
@@ -400,11 +407,16 @@ def boys_nuclear_tangent(wfn, direction, tol=1.e-9):
     v = np.asarray(direction, dtype=float)
     if v.shape != (ref.molecule().natom(), 3) or not np.isfinite(v).all():
         raise ValueError("Expected a finite Cartesian direction with one row per atom.")
+    return v, core.rhf_occupied_tangent(ref, core.Matrix.from_array(v)).np
+
+
+def _boys_lmo_tangent(wfn, v, dC, tol):
+    from psi4 import core
+    ref = wfn.reference_wavefunction()
     L = wfn.variable('DLPNO RESPONSE ACTIVE LMOS').np
     nc = ref.Ca_subset('AO', 'FROZEN_OCC').np.shape[1]
     C = ref.Ca_subset('AO', 'OCC').np[:,nc:]
     U = C.T @ ref.S().np @ L
-    dC = core.rhf_occupied_tangent(ref, core.Matrix.from_array(v)).np
     transported = dC[:,nc:] @ U
     mints = core.MintsHelper(ref)
     dip = [m.np for m in mints.ao_dipole()]
@@ -433,3 +445,52 @@ def boys_nuclear_tangent(wfn, direction, tol=1.e-9):
     K = np.zeros((L.shape[1], L.shape[1]))
     K[j,i], K[i,j] = rotation, -rotation
     return transported + L @ K
+
+class PAOTangent(NamedTuple):
+    raw: np.ndarray
+    normalized: np.ndarray
+    rotation_error: float
+
+
+def pao_nuclear_tangent(wfn, direction, tol=1.e-9):
+    """Raw and column-normalized PAO coefficient derivatives for a Boys model.
+
+    rotation_error is the largest component difference between the raw PAO
+    tangent from moving localized orbitals and from canonical occupied orbitals.
+    """
+    from psi4 import core
+    v, dC = _boys_reference_tangent(wfn, direction)
+    dL = _boys_lmo_tangent(wfn, v, dC, tol)
+    ref = wfn.reference_wavefunction()
+    C = ref.Ca_subset('AO', 'OCC').np
+    S = ref.S().np
+    L = wfn.variable('DLPNO RESPONSE ACTIVE LMOS').np
+    nc = ref.Ca_subset('AO', 'FROZEN_OCC').np.shape[1]
+    O = np.column_stack((C[:,:nc], L))
+    dO = np.column_stack((dC[:,:nc], dL))
+    dS = np.zeros_like(S)
+    mints = core.MintsHelper(ref)
+    for atom in range(v.shape[0]):
+        if np.any(v[atom]):
+            for weight, derivative in zip(v[atom], mints.ao_oei_deriv1('OVERLAP', atom)):
+                dS += weight * derivative.np
+
+    def projector_tangent(occ, docc):
+        return -(docc @ (occ.T @ S) + occ @ (docc.T @ S + occ.T @ dS))
+
+    raw = np.eye(S.shape[0]) - O @ (O.T @ S)
+    draw = projector_tangent(O, dO)
+    canonical = projector_tangent(C, dC)
+    error = float(np.max(np.abs(draw-canonical)))
+    if not error <= tol * max(1., np.max(abs(canonical))):
+        raise RuntimeError(f"PAO occupied-rotation cancellation error {error:.3e} exceeds tolerance.")
+
+    Sraw = S @ raw
+    norm2 = np.sum(raw*Sraw, axis=0)
+    dnorm2 = 2*np.sum(draw*Sraw, axis=0) + np.sum(raw*(dS @ raw), axis=0)
+    # Match the energy's fixed zero-column branch.
+    keep = norm2 > 1.e-20
+    scale = np.zeros_like(norm2)
+    scale[keep] = 1./np.sqrt(norm2[keep])
+    normalized = draw*scale - .5*raw*(dnorm2*scale**3)
+    return PAOTangent(draw, normalized, error)

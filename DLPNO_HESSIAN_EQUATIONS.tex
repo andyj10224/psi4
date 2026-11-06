@@ -149,4 +149,31 @@ The rank-one AO density factors are sign-invariant. The coefficient-space
 projector acting in the AO metric would have an additional right factor
 $S$, which is itself differentiated. Independently converged displaced
 solutions are matched by maximizing absolute cross-geometry overlaps.
+
+\section{Raw PAO projector and normalized PAO coefficients}
+Let $O=[C_{\rm c},L]$ contain frozen and localized active orbitals. Their
+metric is $O^{\mathsf T}SO=I$. With PAO columns indexed by their parent AOs,
+\begin{align}
+ B &= I-OO^{\mathsf T}S,\\
+ B^v &=-O^v O^{\mathsf T}S-O(O^v)^{\mathsf T}S-OO^{\mathsf T}S^v .
+\end{align}
+For $L^v=T+LK$, the internal rotation contributes exactly
+\begin{equation}
+ -L(K+K^{\mathsf T})L^{\mathsf T}S=0 .
+\end{equation}
+Compute $B^v_{\rm loc}$ using the Boys and frozen derivatives, and
+$B^v_{\rm can}$ using all canonical occupied coefficients with their RHF
+derivatives. Define the diagnostic by the largest elementwise difference,
+\begin{equation}
+ e_{\rm rot}=\max_{\mu\nu}|(B^v_{\rm loc}-B^v_{\rm can})_{\mu\nu}|.
+\end{equation}
+The per-column squared norm $m=b^{\mathsf T}Sb$ and normalized coefficient
+$n=b/\sqrt m$ have derivatives
+\begin{align}
+ m^v &=2(b^v)^{\mathsf T}Sb+b^{\mathsf T}S^v b,\\
+ n^v &=m^{-1/2}b^v-\tfrac12 b\,m^{-3/2}m^v .
+\end{align}
+Use the same fixed zero-column branch as the energy for $m\le10^{-20}$.
+Differentiated idempotency $B^vB+BB^v=B^v$ and column normalization
+$2(n^v)^{\mathsf T}Sn+n^{\mathsf T}S^vn=0$ give additional checks.
 \end{document}
