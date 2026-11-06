@@ -104,4 +104,85 @@ orbital toward a virtual direction and evaluates the stationary DF-CCSD(T)
 correlation Lagrangian. The final nuclear derivative additionally requires
 the localization and RHF constraints and the remaining explicit integral
 derivatives.
+
+\section{Backfill: stationary local correlation intermediates}
+In the equations below $R_m$ denotes the implemented residual in its own
+retained domain, $t_m$ its independent amplitudes, and subscripts on
+functions denote partial derivatives. Use the stored ordered doubles
+pairing $\tfrac12\sum_{ij}\langle\lambda^{ij},R^{ij}\rangle$ when
+converting between independent coordinates and stored multipliers.
+For ordinary iterative (T), first eliminate triples, then singles/doubles:
+\begin{align}
+ R_{3,t_3}\T z_3&=-E_{,t_3},\\
+ R_{12,t_{12}}\T z_{12}&=-E_{,t_{12}}-R_{3,t_{12}}\T z_3,\\
+ d\mathcal L|_{t}&=dE|_t+\ip{z_3}{dR_3|_t}+\ip{z_{12}}{dR_{12}|_t}.
+\end{align}
+For a retained projection edge $Y=S_{ij,kl}T^{kl}S_{ij,kl}\T$,
+write $S_e=S_{ij,kl}$. Its incoming source $D$ contributes
+\begin{align}
+ \bar T^{kl}&\mathrel{+}=S_e\T D S_e,&
+ \bar S_e&\mathrel{+}=D S_e T^{kl\mathsf T}+D\T S_e T^{kl}.
+\end{align}
+Transpose the increment on edges that read the transposed amplitude.
+For $S_e=X_{ij}\T S_{\rm PAO}X_{kl}$ the three increments are
+$S_{\rm PAO}X_{kl}\bar S_e\T$, $X_{ij}\bar S_e X_{kl}\T$ and
+$S_{\rm PAO}\T X_{ij}\bar S_e$ respectively.
+For a local DF solve $Mb=b_0$, the reverse solve gives
+\begin{equation}
+ y=M^{-\mathsf T}\bar b,\qquad \bar b_0\mathrel{+}=y,\qquad
+ \bar M\mathrel{+}=-\sym(y b\T).
+\end{equation}
+Apply the same rule to an occupied refit with its actual local overlap metric.
+For a fixed-rank spectral projector in an orthonormal parent frame,
+$D u_p=n_p u_p$, the mixed retained--discarded variation is
+\begin{equation}
+ dP=\sum_{p\in r,q\notin r}
+ (u_q u_p\T+u_p u_q\T)
+ \frac{u_q\T(dD)u_p}{n_p-n_q}.
+\end{equation}
+This assumes a separated boundary and applies independently at each
+selection stage. For any full-minus-retained correction, both energy
+derivatives carry their respective forward signs. Accumulate the resulting
+sources and projector sources on the first-space LMP2 amplitudes $t^{(2)}$.
+With $A=R_{2,t^{(2)}}^{\rm LMP2}$ and their combined source $s$,
+\begin{equation}
+ A\T z=-s,\qquad d\mathcal L_{\rm LMP2}|_t
+ =dE_{\rm explicit}+\ip z{dR^{\rm LMP2}_2|_t}.
+\end{equation}
+
+\section{Localization and constrained RHF response}
+Use $L\mapsto L\exp K$, $K_{ji}=k_{ij}=-K_{ij}$ for $i<j$.
+For each localized operator $A=L\T A^{\rm AO}L$ put
+$w_i=p A_{ii}^{p-1}$, with $p=2$ or $4$ as in the forward objective.
+The stationarity residual and correlation source are
+\begin{equation}
+ g_{ij}=2\sum_A(w_i-w_j)A_{ij},\qquad
+ b_{ij}=(L\T\bar L)_{ji}-(L\T\bar L)_{ij}.
+\end{equation}
+For one operator let $D=AK-KA$, $v_i=p(p-1)A_{ii}^{p-2}D_{ii}$,
+$G_{ij}=(w_i-w_j)A_{ij}$. Its exponential-coordinate Hessian action is
+\begin{equation}
+ (Hk)_{ij}=2(v_i-v_j)A_{ij}+2(w_i-w_j)D_{ij}+(KG-GK)_{ij}.
+\end{equation}
+Sum over operators and solve $Hz=-b$ at a stationary localization.
+For each $i<j$, add $z_{ij}(w_i-w_j)$ to both off-diagonal elements of
+$\bar A$. Add $2z_{ij}A_{ij}w'_i$ to diagonal $i$ and subtract
+$2z_{ij}A_{ij}w'_j$ from diagonal $j$, where $w'_i=p(p-1)A_{ii}^{p-2}$.
+Consequently
+\begin{equation}
+ \bar L\mathrel{+}=2\sum_A A^{\rm AO}L\bar A,\qquad
+ \bar A^{\rm AO}=L\bar A L\T .
+\end{equation}
+A dependent AO operator (in particular an IAO population operator) requires
+its own further pullback. In Psi4's canonical occupied-by-virtual CPHF
+coordinates define the constraint Jacobian as the implemented
+\texttt{cphf\_Hx} action $H_{\rm RHF}$. For a source $b^{\rm RHF}$
+in these same coordinates the adjoint satisfies
+\begin{equation}
+ H_{\rm RHF}z^{\rm RHF}=-b^{\rm RHF},\qquad
+ r=H_{\rm RHF}z^{\rm RHF}+b^{\rm RHF}.
+\end{equation}
+All occupied rows participate, including frozen occupied rows. Complete
+assembly of $b^{\rm RHF}$ from the Fock, orbital, frozen-active
+partition and dependent operator sources is still open.
 \end{document}

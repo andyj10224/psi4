@@ -20,3 +20,5 @@ foreach(py ${sources})
     install(TARGETS ${py}
             LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}${PYMOD_INSTALL_LIBDIR}/psi4/driver/procrouting/response)
 endforeach()
+
+install(FILES dlpno_orbital.py DESTINATION ${CMAKE_INSTALL_LIBDIR}${PYMOD_INSTALL_LIBDIR}/psi4/driver/procrouting/response)
