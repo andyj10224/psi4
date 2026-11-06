@@ -33,6 +33,7 @@
 #include "psi4/liboptions/liboptions.h"
 #include "psi4/libpsi4util/PsiOutStream.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace psi {
