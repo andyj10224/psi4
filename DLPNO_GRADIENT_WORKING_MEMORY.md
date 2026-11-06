@@ -2,9 +2,9 @@
 
 ## RHF DLPNO-CCSD(T) analytic nuclear gradients
 
-**Current capability.** The `dlpno_gradients` branch solves the ordinary iterative (T) triples adjoint and the (T)-sourced CCSD Λ₁ and Λ₂ equations in the retained pair spaces. It reports the two explicit triples DF contributions in Cartesian coordinates. The total nuclear gradient is still pending and the gradient driver stops before scheduling displacements.
+**Current capability.** The ordinary RHF iterative (T) and stationary CCSD contributions each report explicit Cartesian correlation-fitting derivatives for the auxiliary metric and three-center integrals. The CCSD calculation also forms internal Fock, PAO-overlap and local coefficient derivatives using the converged (T)-sourced Λ₁ and Λ₂. The total-gradient driver remains guarded.
 
-**Next piece.** Use the converged multipliers to form the derivatives of the CCSD Lagrangian with respect to the bare integral, Fock, and overlap intermediates. Check those contractions before propagating them through the two PNO constructions, LMP2, PAOs, localization, and RHF orbital relaxation. The TNO response to doubles amplitudes is complete for a fixed, separated rank. The remaining nuclear response also involves motion of the underlying orbitals and metric.
+**Next piece.** Propagate the stationary derivatives through the two PNO constructions, LMP2, PAOs, localization and RHF orbital relaxation. Include the remaining triples nuclear response. The scoped scaling target assumes a nonzero pair cutoff and bounded local domains.
 
 ## Implementation history
 
@@ -52,6 +52,41 @@ Implementation commit [2d3cc920](https://github.com/andyj10224/psi4/commit/2d3cc
 **Finite-cutoff check.** On water with Pipek–Mezey localization, the TNO rotation contributed 1.13 × 10⁻⁴ hartree along the chosen doubles direction, within 1.8 × 10⁻¹¹ hartree of the difference between rebuilt-TNO and frozen-TNO amplitude probes. On a separated water dimer with 32 of 112 possible triplets, the CCSD transpose checks agreed to within 7 × 10⁻¹² hartree. All probes held the nuclei fixed.
 
 The five targeted CTests (`dlpno-grad-model`, `dfccsd-t-grad1`, `dlpnocc-1`, `dlpnocc-2`, and `dlpnobcc-1`) passed. Coverage includes finite PNO and TNO ranks, semi-direct overlaps, four-thread disk-backed runs, and the empty triples space. Lean checked the ordered-pair source normalization and the separated-occupation TNO multiplier. The touched response and CCSD translation units also compiled individually. The follow-up with this entry adds the direct includes for the standalone build. The separate `dlpnoprop-1` test reproduced the parent’s 2.44 × 10⁻⁵ hartree energy discrepancy. End-to-end scaling has yet to be measured. [Regression](tests/dlpno-grad-model/input.dat) · [Lean proof](tests/dlpno-grad-model/TriplesAdjoint.lean)
+
+### 2026-11-06 · Codex · Stationary CCSD integral, Fock and overlap derivatives
+
+Implementation commit [80b897b2](https://github.com/andyj10224/psi4/commit/80b897b2f85238668a90e11a5a2564bf0f95c087).
+
+| Change | Result |
+| --- | --- |
+| Stationary CCSD contribution | Reversed the bare integral, Fock, and pair-overlap occurrences in the implemented right residual and correlation energy with the converged ordinary (T)-sourced Λ. The reverse includes mixed-domain Coulomb/exchange blocks, overlap factors on both ends, and bare occupied Fock elements that couple through a missing pair. The virtual Fock block retains its off-diagonal variations. [Pair response](psi4/src/psi4/dlpno/ccsd_pair_response.cc) |
+| Explicit correlation fitting | Distinguished the unfiltered metric solves in the exchange and mixed-domain terms from the rank-filtered symmetric whitening of the other factors. Reused the triples shell contraction to report `DLPNO CCSD AUXILIARY METRIC GRADIENT` and `DLPNO CCSD THREE-CENTER GRADIENT` in hartree/bohr. [DF response](psi4/src/psi4/dlpno/ccsd_df_response.cc) |
+| One-body and local-basis response | Backtransformed the occupied/virtual Fock and overlap derivatives into sparse LMO/PAO rows and accumulated both endpoints of each pair coefficient derivative. These internal covectors feed the next orbital-response step. |
+| Storage and traversal | Traversed retained occupied neighbors for the G term and accumulated only visited pair overlaps. Extended the memory estimate for the response. Released the pair intermediates after contraction. Added counters for ordered pairs, overlap blocks and candidate kl couplings. |
+
+**Accuracy.** For frozen-core H₂O/cc-pVDZ at zero cutoffs, all nine Cartesian entries in each new array passed the 10⁻⁸ hartree/bohr comparison with the independent canonical calculation. The oxygen z components were −0.0235532256 (metric) and +0.0627802928 (three-center). The PySCF reference holds the geometry and amplitudes fixed, perturbs one fitting integral family along analytic nuclear integral derivatives and evaluates the CCSD Lagrangian with canonical (T)-sourced Λ. Two central step sizes allow extrapolation. [Reference calculation](tests/dlpno-grad-model/canonical_reference.py)
+
+**Finite cutoffs.** On Pipek–Mezey water with semi-direct overlaps and disk-backed pair factors, the absolute directional errors were 2.11 × 10⁻¹² (integral), 1.42 × 10⁻¹² (Fock), 1.23 × 10⁻¹² (overlap), and 6.67 × 10⁻¹² hartree (PNO coefficients). The last check varies arbitrary rectangular coefficients and rebuilds both the correlation integrals and the overlap maps. Five targeted CTests passed. The gradient regression also passed after the memory-estimate update. Lean 4.16 checked the stable kept–kept inverse-square-root metric factor in addition to the prior local-solve variation. The zero-cutoff water PM run printed its existing Hessian-stability warning; its fixed-basis comparisons passed. This checkpoint does not establish localization response at that solution. [Regression](tests/dlpno-grad-model/input.dat) · [Lean proof](tests/dlpno-grad-model/TriplesAdjoint.lean)
+
+**Screened scaling.** Frozen-core waters were placed 17 Å apart with a nonzero crude pair cutoff (`T_CUT_PAIRS_MP2 = 10⁻⁶` hartree). All surviving pairs are promoted to strong in this model. [Reproduce the counts](tests/dlpno-grad-model/screened_counts.py)
+
+| Waters | Ordered pairs | Overlap blocks | kl candidates |
+| ---: | ---: | ---: | ---: |
+| 1 | 16 | 232 | 160 |
+| 2 | 32 | 464 | 320 |
+| 3 | 48 | 696 | 480 |
+
+An interacting H₂ chain (0.74 Å bonds perpendicular to the chain, 3.5 Å center spacing, same screening settings) retained nearest-neighbor intermolecular pairs. The four-molecule chain also exercised occupied Fock couplings between absent pairs; all four fixed-geometry derivative checks agreed within 1.2 × 10⁻¹⁰ hartree.
+
+| H₂ molecules | Ordered pairs | Overlap blocks | kl candidates |
+| ---: | ---: | ---: | ---: |
+| 4 | 10 | 50 | 38 |
+| 8 | 22 | 118 | 90 |
+| 12 | 34 | 186 | 142 |
+
+The kl count is the sum of squared occupied-domain sizes over unique pairs. With bounded pair degree, bounded PAO/PNO and RI domains and a linear number of retained pairs, the new response costs O(N). Each active fitting shell derivative is evaluated once across all displaced coordinates. The counts above are a contraction-level measurement on these two series. Pre-existing dense maps, reference Fock work, the orbital-response solve, and wall-clock scaling of the complete gradient remain outside this measurement.
+
+**Next piece.** Use the Fock, PAO-overlap and coefficient derivatives to drive orbital and local-space response, including both PNO constructions, the LMP2 correction and the nuclear portion of the TNO response. Add these contributions to the RHF and explicit correlation-fitting terms before comparing a total gradient with canonical DF-CCSD(T).
 
 ## Updating the bank
 

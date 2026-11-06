@@ -182,3 +182,29 @@ for name in ('dlpno-ccsd(t0)', 'dlpno-ccsd(t)_l', 'dlpno-bccd(t)'):
         assert 'DLPNO_GRADIENT_MODEL requires closed-shell RHF DLPNO-CCSD(T)' in str(exc)
     else:
         raise AssertionError('Unexpected acceptance of ' + name)
+
+# The screened graph of this interacting chain has retained ik and ij edges
+# for which kj is absent. R2 still depends on that bare occupied Fock element.
+molecule chain {
+0 1
+H 0   0 -.37
+H 0   0  .37
+H 3.5 0 -.37
+H 3.5 0  .37
+H 7   0 -.37
+H 7   0  .37
+H 10.5 0 -.37
+H 10.5 0  .37
+units angstrom
+symmetry c1
+no_com
+no_reorient
+}
+set t_cut_pairs_mp2 1.e-6
+set low_memory_overlap true
+_, chain_wfn = energy('dlpno-ccsd(t)', return_wfn=True)
+compare_values(10., chain_wfn.variable('DLPNO CCSD RESPONSE ORDERED PAIRS'), 1.e-12,
+               'screened H2 chain includes nearest-neighbor pairs')                                            #TEST
+for group in ('INTEGRAL', 'FOCK', 'OVERLAP', 'PNO COEFFICIENT'):
+    compare_values(0., chain_wfn.variable(f'DLPNO CCSD {group} DIRECTION ERROR'), 1.e-8,
+                   'screened chain ' + group)                                                                  #TEST
