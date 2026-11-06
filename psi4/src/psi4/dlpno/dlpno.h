@@ -251,6 +251,7 @@ class DLPNO : public Wavefunction {
 
     /// projected atomic orbitals (PAOs)
     SharedMatrix C_pao_;
+    std::vector<double> gradient_pao_inv_norm_;  ///< forward normalization of the projected AO columns
     SharedMatrix F_pao_;
     SharedMatrix F_pao_a_;
     SharedMatrix F_pao_b_;
@@ -711,6 +712,7 @@ class PSI_API DLPNOCCSD : public DLPNO {
     using SparseResponseRows = std::vector<std::unordered_map<int, double>>;
     SparseResponseRows ccsd_fov_response_, ccsd_fvv_response_, ccsd_overlap_response_;
     std::vector<SharedMatrix> ccsd_pno_coefficient_response_;
+    size_t triples_local_response_words_ = 0;  ///< resident local triples response in doubles
     size_t ccsd_response_words_ = 0;  ///< estimated peak, extended as sparse overlap blocks are discovered
     // Second PNO selection, in the first-stage PNO basis, unique pairs only.
     struct PairSelection {
@@ -719,9 +721,8 @@ class PSI_API DLPNOCCSD : public DLPNO {
     };
     std::vector<PairSelection> initial_pno_selection_, final_pno_selection_;
     struct InitialPNOResponse {
-        SharedMatrix final_transform, exchange;
-        SharedVector virtual_energy, energy_bar;
-        double occupied_sum_bar = 0.;
+        SharedMatrix final_transform;
+        SharedVector virtual_energy;
     };
     std::vector<InitialPNOResponse> initial_pno_response_;
     // All LMP2 response variables use one independent block per i <= j.
@@ -741,7 +742,7 @@ class PSI_API DLPNOCCSD : public DLPNO {
     std::vector<SharedMatrix> solve_lmp2_system(const std::vector<SharedMatrix>& source, bool transpose,
                                              double& rms, int& iterations);
     static SharedMatrix projector_amplitude_bar(const PairSelection& s, const SharedMatrix& cov, bool diagonal);
-    void form_pno_projector_response();
+    void form_pno_projector_response(const std::vector<SharedMatrix>& coefficients, bool triples = false);
     // Pair-local covectors of the underlying orthonormal parent orbitals.
     std::vector<SharedMatrix> truncation_parent_, truncation_parent_bar_;
     void form_ccsd_pair_response();
@@ -941,12 +942,31 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     enum class TripletStage { Prescreen, Refine, SingleSpace };
     void triples_sparsity(TripletStage stage);
     void compute_gradient_model_triples();
-    void solve_gradient_model_triples(bool right_only = false);
+    void solve_gradient_model_triples(bool right_only, const SharedMatrix& screen);
     struct TNOSelection {
         SharedMatrix natural, canonical;  ///< all natural orbitals (PAO coefficients), then kept-to-canonical rotation
         SharedVector occupations;
     };
     std::vector<TNOSelection> tno_selection_;
+    std::vector<SharedMatrix> triples_pair_bar_;
+    SparseResponseRows triples_foo_bar_, triples_fov_bar_, triples_fvv_bar_, triples_overlap_bar_;
+    void reverse_pair_triplet_overlap(int p, int r, const SharedMatrix& triplet_basis, const SharedMatrix& bar);
+    void finish_local_basis_response();
+    std::vector<SharedMatrix> fitted_coefficient_bar_;
+    SparseResponseRows df_pao_coefficient_bar_, df_sclmo_bar_, df_refit_overlap_bar_;
+    double df_coefficient_error_ = 0., df_replay_error_ = 0.;
+    void finish_df_refit_response();
+    void reverse_pao_normalization();
+    // B is the occupied-projected AO matrix before normalizing its columns.
+    // Seeds for L^T F B, B^T F B, B^T S B, and the remaining DF coefficient B.
+    struct UnnormalizedPAOResponse {
+        SparseResponseRows fov, fvv, overlap, coefficients;
+    } raw_pao_response_;
+    void check_triples_local_basis(const std::function<double()>& evaluate, bool measure);
+    std::array<double, 3> triples_local_probe_{};
+    static void add_local_block(SparseResponseRows& dest, const std::vector<int>& rows, const std::vector<int>& cols,
+                                const SharedMatrix& block);
+    static SharedMatrix parent_overlap_bar(const SharedMatrix& parent, const SharedMatrix& bar);
     double add_tno_density_source(int r, const SharedMatrix& x_bar, const std::vector<SharedMatrix>& probe);
     SharedMatrix triplet_pao_vv(int r, int q);
     SharedMatrix tno_overlap_adjoint(const SharedMatrix& S, const SharedMatrix& x, const SharedMatrix& z);
@@ -980,7 +1000,9 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     void check_ccsd_coefficient_response();
     SharedMatrix pair_df_response(int p, std::vector<ThreeCenterDensity>& density);
     /// Create TNOs (Triplet Natural Orbitals) for DLPNO-(T)
-    void tno_transform(double tno_tolerance, bool use_tuple_cutoffs = false, const std::vector<int>* fixed_ranks = nullptr);
+    void tno_transform(double tno_tolerance, bool use_tuple_cutoffs = false,
+                       const std::vector<int>* fixed_ranks = nullptr,
+                       const std::vector<SharedMatrix>* fixed_parent = nullptr);
     /// Sort triplets to split between "strong" and "weak" triplets (for (T) iterations)
     void sort_triplets(double e_total);
 

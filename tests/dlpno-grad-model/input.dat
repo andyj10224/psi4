@@ -74,7 +74,20 @@ def check_lmp2(w):
                      ('TRANSPOSE DOT ERROR', 1.e-10), ('TANGENT DIRECTION ERROR', 1.e-8)]:
         compare_values(0., w.variable('DLPNO LMP2 ' + key), tol, 'first-space LMP2 ' + key)                    #TEST
 
+def check_local_spaces(w):
+    for label in ('PNO COEFFICIENT', 'FOCK', 'PAO OVERLAP'):
+        compare_values(0., w.variable(f'DLPNO (T) {label} DIRECTION ERROR'), 1.e-8,
+                       f'iterative triples local {label} derivative')                                          #TEST
+    for label in ('INITIAL', 'FINAL'):
+        compare_values(0., w.variable(f'DLPNO (T) {label} PNO PROJECTOR DIRECTION ERROR'), 1.e-7,
+                       f'ordinary triples {label} PNO projector')                                              #TEST
+    for label in ('PNO PROJECTOR OPERATOR', 'PARENT PAO METRIC', 'DF ORBITAL COEFFICIENT', 'DF LMO REFIT', 'PAO NORMALIZATION'):
+        compare_values(0., w.variable(f'DLPNO {label} DIRECTION ERROR'), 1.e-7, label)                          #TEST
+    compare_values(0., w.variable('DLPNO DF ORBITAL REPLAY ERROR'), 1.e-10,
+                   'reconstructed screened fit matches the forward three-center integrals')                    #TEST
+
 def check_stationarity(w):
+    check_local_spaces(w)
     check_lmp2(w)
     check_truncation(w)
     compare_values(0., w.variable('DLPNO (T) TRANSPOSE DOT ERROR'), 1.e-12, 'packed B transpose')            #TEST
@@ -113,8 +126,13 @@ for loc in ('BOYS', 'PIPEK_MEZEY', 'IBO'):
     compare_values(e_df, e, 1.e-7, loc + ' zero-cutoff DF-CCSD(T) energy')                                               #TEST
     compare_values(-0.00304081137850, w.variable('(T) CORRECTION ENERGY'), 1.e-9, loc + ' canonical (T)')       #TEST
     check_stationarity(w)
+    for label, reference in [('OCCUPIED', -0.00145663518474), ('VIRTUAL', 0.00145663518476)]:
+        compare_values(reference, w.variable(f'DLPNO (T) {label} FOCK SHIFT DERIVATIVE'), 1.e-9,
+                       loc + ' canonical triples Fock shift ' + label)                                         #TEST
     compare_values(0., w.variable('DLPNO LMP2 ADJOINT NORM'), 1.e-12, loc + ' full-rank LMP2 source')         #TEST
     for label in ('AUXILIARY METRIC', 'THREE-CENTER'):
+        compare_arrays(np.zeros((3, 3)), w.variable('DLPNO PNO PROJECTOR ' + label + ' GRADIENT').np,
+                       1.e-12, loc + ' full-rank PNO projector derivative')                                    #TEST
         compare_arrays(np.zeros((3, 3)), w.variable('DLPNO LMP2 RESPONSE ' + label + ' GRADIENT').np,
                        1.e-12, loc + ' full-rank LMP2 relaxation')                                             #TEST
         compare_arrays(np.zeros((3, 3)), w.variable('DLPNO PNO TRUNCATION ' + label + ' GRADIENT').np,
@@ -153,13 +171,14 @@ lambda_keys = ['DLPNO CCSD(T) LAMBDA1 T1 CONTRACTION', 'DLPNO CCSD(T) LAMBDA2 T2
 mem_lambda = [w.variable(key) for key in lambda_keys]
 cc_keys = ['DLPNO CCSD ' + label + ' GRADIENT' for label in ('AUXILIARY METRIC', 'THREE-CENTER')]
 cc_keys.extend(['DLPNO PNO TRUNCATION ' + label + ' GRADIENT' for label in ('AUXILIARY METRIC', 'THREE-CENTER')])
+cc_keys.extend(['DLPNO PNO PROJECTOR ' + label + ' GRADIENT' for label in ('AUXILIARY METRIC', 'THREE-CENTER')])
 cc_keys.extend(['DLPNO LMP2 RESPONSE ' + label + ' GRADIENT' for label in ('AUXILIARY METRIC', 'THREE-CENTER')])
 assert w.variable('DLPNO LMP2 RECTANGULAR RESPONSE EDGES') > 0
 assert abs(w.variable('DLPNO LMP2 RELAXED DIRECTION')) > 1.e-8
 assert w.variable('DLPNO LMP2 ADJOINT NORM') > 1.e-5
 mem_cc = [w.variable(key).np.copy() for key in cc_keys]
 assert all(abs(w.variable(f'DLPNO {stage} PNO TRUNCATION ENERGY')) > 1.e-7 for stage in ('INITIAL', 'FINAL'))
-assert all(np.max(np.abs(x)) > 1.e-8 for x in mem_cc[-4:])
+assert all(np.max(np.abs(x)) > 1.e-8 for x in mem_cc[-6:])
 assert abs(w.variable('DLPNO (T) L2 TNO SOURCE DIRECTION')) > 1.e-8
 assert abs(e - e_df) > 1.e-6
 set write_qia_pno true
@@ -251,6 +270,7 @@ set low_memory_overlap true
 _, chain_wfn = energy('dlpno-ccsd(t)', return_wfn=True)
 check_truncation(chain_wfn)
 check_lmp2(chain_wfn)
+check_local_spaces(chain_wfn)
 compare_values(10., chain_wfn.variable('DLPNO CCSD RESPONSE ORDERED PAIRS'), 1.e-12,
                'screened H2 chain includes nearest-neighbor pairs')                                            #TEST
 for group in ('INTEGRAL', 'FOCK', 'OVERLAP', 'PNO COEFFICIENT'):

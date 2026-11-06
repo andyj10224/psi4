@@ -1070,10 +1070,12 @@ void DLPNO::setup_orbitals() {
     S_pao_ = linalg::triplet(C_pao_, reference_wavefunction_->S(), C_pao_, true, false, false);
 
     // normalize PAOs
+    if (gradient_model_) gradient_pao_inv_norm_.resize(C_pao_->ncol());
     for (size_t i = 0; i < C_pao_->ncol(); ++i) {
         const double norm2 = S_pao_->get(i, i);
-        if (norm2 > 1.0e-20) C_pao_->scale_column(0, i, 1.0 / std::sqrt(norm2));
-        else C_pao_->scale_column(0, i, 0.0);
+        const double scale = norm2 > 1.0e-20 ? 1.0 / std::sqrt(norm2) : 0.;
+        C_pao_->scale_column(0, i, scale);
+        if (gradient_model_) gradient_pao_inv_norm_[i] = scale;
     }
     S_pao_ = linalg::triplet(C_pao_, reference_wavefunction_->S(), C_pao_, true, false, false);
     F_pao_ = linalg::triplet(C_pao_, F_ao_, C_pao_, true, false, false);

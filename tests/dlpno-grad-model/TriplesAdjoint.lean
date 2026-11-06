@@ -102,4 +102,27 @@ theorem lmp2_relaxation (A : Matrix I I ℝ) (s z r dt : I → ℝ)
   rw [tangent, adjoint, dotProduct_neg, neg_dotProduct] at h
   exact (neg_inj.mp h).symm
 
+-- Both endpoints of a rectangular pair/triplet overlap can move.
+theorem orbital_overlap_variation (M dM : Matrix I J ℝ) (x dx : I → ℝ) (y dy : J → ℝ) :
+    dx ⬝ᵥ (M *ᵥ y) + x ⬝ᵥ (dM *ᵥ y + M *ᵥ dy) =
+    (M *ᵥ y) ⬝ᵥ dx + x ⬝ᵥ (dM *ᵥ y) + (M.transpose *ᵥ x) ⬝ᵥ dy := by
+  rw [dotProduct_add, pullback M x dy, dotProduct_comm dx, add_assoc]
+
+-- The fitted LMO columns solve S L = b in the selected AO rows.
+theorem lmo_refit_variation (S dS : Matrix I I ℝ) (g z l db dl : I → ℝ)
+    (adjoint : S.transpose *ᵥ z = g) (tangent : S *ᵥ dl = db - dS *ᵥ l) :
+    g ⬝ᵥ dl = z ⬝ᵥ db - z ⬝ᵥ (dS *ᵥ l) := by
+  have h := pullback S z dl
+  rw [adjoint, tangent, dotProduct_sub] at h
+  exact h.symm
+
+-- On an active PAO column n² = <B,S B>, P = B/n. dpop is the
+-- contraction of the coefficient seed with dB/n and pop with P.
+theorem pao_normalization_variation (n dnorm ds pop dpop : ℝ)
+    (hn : n ≠ 0) (tangent : ds = 2*n*dnorm) :
+    dpop - pop*dnorm/n = dpop - pop*ds/(2*n^2) := by
+  rw [tangent]
+  field_simp
+  ring
+
 end DLPNO

@@ -46,7 +46,7 @@ void DLPNOCCSD::estimate_gradient_lambda_memory() {
     // CCSD resident state, reverse intermediates, residuals/amplitudes/DIIS
     // and the largest local transpose workspace. No amplitude Jacobian is stored.
     const size_t no = T_ia_.size();
-    size_t words = ccsd_baseline_memory_doubles_ + no * no;
+    size_t words = ccsd_baseline_memory_doubles_ + triples_local_response_words_ + no * no;
     size_t amp = 0, scratch = 0;
     for (auto& t : T_ia_) amp += t->nrow();
     size_t response = 0, df_scratch = 0;

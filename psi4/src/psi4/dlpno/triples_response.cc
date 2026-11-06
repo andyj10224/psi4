@@ -105,12 +105,13 @@ void DLPNOCCSD_T::compute_gradient_model_triples() {
     tno_transform(options_.get_double("T_CUT_TNO"));
     estimate_triples_memory();
 
+    const auto screen = F_lmo_;  // keep the forward Fock screen fixed for response probes
     auto evaluate = [&](bool right_only) {
         psio_->open(PSIF_DLPNO_TRIPLES, PSIO_OPEN_NEW);
         try {
             const double t0 = compute_lccsd_t0(true).first;
             if (!right_only) set_scalar_variable("DLPNO SEMICANONICAL (T0) ENERGY", t0);
-            solve_gradient_model_triples(right_only);
+            solve_gradient_model_triples(right_only, screen);
         } catch (...) {
             psio_->close(PSIF_DLPNO_TRIPLES, 0);
             throw;
@@ -138,7 +139,9 @@ void DLPNOCCSD_T::compute_gradient_model_triples() {
         }
     }
 
+    if (debug_) check_triples_local_basis([&]() { return evaluate(true); }, true);
     evaluate(false);
+    if (debug_) check_triples_local_basis({}, false);
     if (debug_) {
         const double tno_error =
             std::abs(scalar_variable("DLPNO (T) L2 TNO SOURCE DIRECTION") - (numerical[1] - frozen2));
@@ -174,7 +177,7 @@ void DLPNOCCSD_T::compute_gradient_model_triples() {
     outfile->Printf("    RHF DLPNO-CCSD(T) gradient-model total energy: %20.12f\n", total);
 }
 
-void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only) {
+void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only, const SharedMatrix& screen) {
     const int count = n_tno_.size(), naocc = nalpha_ - nfrzc();
     const double f_cut = options_.get_double("F_CUT_T");
     const int maxiter = options_.get_int("DLPNO_MAXITER");
@@ -190,7 +193,7 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only) {
             // This pair domain contains every occupied l that can form the new triplet.
             for (int l : lmopair_to_lmos_[pair]) {
                 const int m = occ[slot];
-                if (l == m || std::abs((*F_lmo_)(l, m)) < f_cut) continue;
+                if (l == m || std::abs((*screen)(l, m)) < f_cut) continue;
                 auto ordered = occ;
                 ordered[slot] = l;
                 auto it = i_j_k_to_ijk_.find(triplet_key(ordered[0], ordered[1], ordered[2], naocc));
@@ -340,9 +343,16 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only) {
     for (const auto& t : T_ia_) triples_source1_.push_back(std::make_shared<Matrix>(t->nrow(), 1));
     for (const auto& t : T_iajb_) triples_source2_.push_back(std::make_shared<Matrix>(t->nrow(), t->ncol()));
 
+    triples_pair_bar_.resize(X_pno_.size());
+    for (int p = 0; p < X_pno_.size(); ++p)
+        triples_pair_bar_[p] = std::make_shared<Matrix>(X_pno_[p]->nrow(), X_pno_[p]->ncol());
+    triples_foo_bar_.assign(F_lmo_->nrow(), {});
+    triples_fov_bar_.assign(F_lmo_pao_->nrow(), {});
+    triples_fvv_bar_.assign(F_pao_->nrow(), {});
+    triples_overlap_bar_.assign(S_pao_->nrow(), {});
     std::vector<SharedMatrix> x_bar(count);
     for (int r = 0; r < count; ++r) {
-        if (!tno_selection_[r].natural) continue;  // full kept spaces have zero projector response
+        if (!n_tno_[r]) continue;
         auto t = T.read(r), z = Z.read(r);
         auto f_bar = linalg::doublet(z, t, false, true);
         // All three virtual Fock legs. Retaining off-diagonal variations here
@@ -353,6 +363,10 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only) {
             f_bar->add(linalg::doublet(zp, tp, false, true));
         }
         f_bar->hermitivitize();
+        const auto [i, j, k] = ijk_to_i_j_k_[r];
+        for (int o : {i, j, k}) triples_foo_bar_[o][o] -= t->vector_dot(z);
+        const auto& paos = lmotriplet_to_paos_[r];
+        add_local_block(triples_fvv_bar_, paos, paos, linalg::triplet(X_tno_[r], f_bar, X_tno_[r], false, false, true));
         f_bar->scale(2.);
         auto F = submatrix_rows_and_cols(*F_pao_, lmotriplet_to_paos_[r], lmotriplet_to_paos_[r]);
         x_bar[r] = linalg::triplet(F, X_tno_[r], f_bar);
@@ -360,14 +374,17 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only) {
     for (int r = 0; r < count; ++r) {
         for (const auto& edge : forward[r]) {
             int s = edge.source;
-            if (!x_bar[r] && !x_bar[s]) continue;
             const auto& p = edge.ordered_source;
             auto t = triples_permuter(T.read(s), p[0], p[1], p[2]);
-            auto g = tno_overlap_adjoint(overlap(edge), t, Z.read(r));
+            auto S = overlap(edge), z = Z.read(r);
+            triples_foo_bar_[edge.l][edge.m] -= z->vector_dot(matmul_3d(t, S, n_tno_[s], n_tno_[r]));
+            auto g = tno_overlap_adjoint(S, t, z);
             g->scale(-(*F_lmo_)(edge.l, edge.m));
             auto M = submatrix_rows_and_cols(*S_pao_, lmotriplet_to_paos_[r], lmotriplet_to_paos_[s]);
-            if (x_bar[r]) x_bar[r]->add(linalg::triplet(M, X_tno_[s], g, false, false, true));
-            if (x_bar[s]) x_bar[s]->add(linalg::triplet(M, X_tno_[r], g, true, false, false));
+            add_local_block(triples_overlap_bar_, lmotriplet_to_paos_[r], lmotriplet_to_paos_[s],
+                            linalg::triplet(X_tno_[r], g, X_tno_[s], false, false, true));
+            x_bar[r]->add(linalg::triplet(M, X_tno_[s], g, false, false, true));
+            x_bar[s]->add(linalg::triplet(M, X_tno_[r], g, true, false, false));
         }
     }
 
@@ -385,10 +402,27 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only) {
         auto w_bar = Z.read(r)->clone();
         w_bar->add(v_bar);  // V = W + the singles and F_ov terms.
         auto g = triples_df_response(r, w_bar, v_bar, three_center, x_bar[r]);
-        if (x_bar[r]) tno_direction += add_tno_density_source(r, x_bar[r], probe);
+        if (tno_selection_[r].natural)
+            tno_direction += add_tno_density_source(r, x_bar[r], probe);
+        else {
+            const auto& paos = lmotriplet_to_paos_[r];
+            add_local_block(triples_overlap_bar_, paos, paos, parent_overlap_bar(X_tno_[r], x_bar[r]));
+        }
         metric_scale += add_metric_density(density, lmotriplet_to_ribfs_[r], g);
     }
 
+    size_t couplings = 0;
+    for (const auto& edges : forward) couplings += edges.size();
+    set_scalar_variable("DLPNO (T) LOCAL RESPONSE COUPLINGS", couplings);
+    double occupied_shift = 0., virtual_shift = 0.;
+    for (int i = 0; i < triples_foo_bar_.size(); ++i) {
+        auto it = triples_foo_bar_[i].find(i);
+        if (it != triples_foo_bar_[i].end()) occupied_shift += it->second;
+    }
+    for (int u = 0; u < triples_fvv_bar_.size(); ++u)
+        for (const auto& [v, g] : triples_fvv_bar_[u]) virtual_shift += g * (*S_pao_)(u, v);
+    set_scalar_variable("DLPNO (T) OCCUPIED FOCK SHIFT DERIVATIVE", occupied_shift);
+    set_scalar_variable("DLPNO (T) VIRTUAL FOCK SHIFT DERIVATIVE", virtual_shift);
     if (debug_) set_scalar_variable("DLPNO (T) L2 TNO SOURCE DIRECTION", tno_direction);
 
     // Stored CC Lambda2 is dual to half the ordered-pair residual sum.
@@ -407,6 +441,13 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only) {
     set_array_variable("DLPNO (T) THREE-CENTER GRADIENT",
                        contract_three_center(three_center, "DLPNO (T) THREE-CENTER GRADIENT"));
     set_scalar_variable("DLPNO (T) AUXILIARY METRIC SCALE DERIVATIVE", metric_scale);
+    triples_local_response_words_ = 0;
+    for (const auto& b : triples_pair_bar_) triples_local_response_words_ += b->size();
+    for (const auto& b : fitted_coefficient_bar_)
+        if (b) triples_local_response_words_ += b->size();
+    for (const auto* rows :
+         {&triples_foo_bar_, &triples_fov_bar_, &triples_fvv_bar_, &triples_overlap_bar_, &df_pao_coefficient_bar_})
+        for (const auto& row : *rows) triples_local_response_words_ += 4 * row.size();
 }
 
 double DLPNOCCSD_T::add_metric_density(MetricShellBlocks& density, const std::vector<int>& aux, const SharedMatrix& g) {
@@ -488,6 +529,8 @@ double DLPNOCCSD_T::add_tno_density_source(int r, const SharedMatrix& x_bar, con
                 throw PSIEXCEPTION("Undefined DLPNO TNO response: the retained rank splits a degenerate occupation.");
             (*multiplier)(d, a) /= gap;
         }
+    auto kept_bar = linalg::doublet(x_bar, sel.canonical, false, true);
+    auto discarded_bar = std::make_shared<Matrix>(X->nrow(), X->ncol());
     const auto [i, j, l] = ijk_to_i_j_k_[r];
     for (int ij : {i_j_to_ij_[i][j], i_j_to_ij_[j][l], i_j_to_ij_[i][l]}) {
         auto metric = submatrix_rows_and_cols(*S_pao_, lmopair_to_paos_[ij], lmotriplet_to_paos_[r]);
@@ -496,6 +539,15 @@ double DLPNOCCSD_T::add_tno_density_source(int r, const SharedMatrix& x_bar, con
         H->hermitivitize();
         const auto [p, q] = ij_to_i_j_[ij];
         H->scale(p == q ? 1. / 6. : 1. / 3.);
+        auto D = linalg::doublet(Tt_iajb_[ij], T_iajb_[ij], false, true);
+        D->add(linalg::doublet(Tt_iajb_[ij], T_iajb_[ij], true, false));
+        D->scale(p == q ? 1. / 6. : 1. / 3.);
+        auto g_discarded = linalg::triplet(D, linalg::doublet(P, C), multiplier, false, false, true);
+        auto g_kept = linalg::triplet(D, linalg::doublet(P, X), multiplier, true, false, false);
+        reverse_pair_triplet_overlap(ij, r, C, g_kept);
+        reverse_pair_triplet_overlap(ij, r, X, g_discarded);
+        kept_bar->add(linalg::doublet(P, g_kept, true, false));
+        discarded_bar->add(linalg::doublet(P, g_discarded, true, false));
         // D = U t^T + U^T t, U = 2t - t^T.
         auto u_bar = linalg::doublet(H, T_iajb_[ij]);
         u_bar->add(linalg::doublet(T_iajb_[ij], H));
@@ -507,6 +559,13 @@ double DLPNOCCSD_T::add_tno_density_source(int r, const SharedMatrix& x_bar, con
         triples_source2_[ij]->add(dt);
         if (!probe.empty()) directional += probe[ij]->vector_dot(dt);
     }
+    auto natural_bar = sel.natural->clone();
+    for (int u = 0; u < natural_bar->nrow(); ++u) {
+        std::copy_n(&(*kept_bar)(u, 0), kept, &(*natural_bar)(u, 0));
+        std::copy_n(&(*discarded_bar)(u, 0), n - kept, &(*natural_bar)(u, kept));
+    }
+    const auto& paos = lmotriplet_to_paos_[r];
+    add_local_block(triples_overlap_bar_, paos, paos, parent_overlap_bar(sel.natural, natural_bar));
     return directional;
 }
 

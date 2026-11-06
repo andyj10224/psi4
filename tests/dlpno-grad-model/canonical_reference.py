@@ -77,6 +77,18 @@ def main():
             return ccw.ccsd_t(u1, u2, eris=eris)
         print("Triples scale derivative, rank", rank, (rescale(h)-rescale(-h))/(2*h))
 
+    # Shift occupied or virtual Fock energies uniformly. With the amplitudes,
+    # fitting integrals and orbitals fixed, these perturb only the (T) operator.
+    original_eps = eris.mo_energy.copy()
+    for label, indices in (("occupied", slice(0,t1.shape[0])), ("virtual", slice(t1.shape[0],None))):
+        def shift(step):
+            eris.mo_energy = original_eps.copy()
+            eris.mo_energy[indices] += step
+            return ccw.ccsd_t(t1,t2,eris=eris)
+        h_shift = 1.e-5
+        print("Triples Fock shift", label, (shift(h_shift)-shift(-h_shift))/(2*h_shift))
+    eris.mo_energy = original_eps
+
     # Recover the physical right residual from PySCF's Jacobi update.
     # The fixed diagonal orbital-energy denominators are preconditioners.
     gaps = eris.mo_energy[:t1.shape[0], None] - eris.mo_energy[t1.shape[0]:]

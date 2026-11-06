@@ -266,10 +266,10 @@ SharedMatrix DLPNOCCSD::projector_amplitude_bar(const PairSelection& s, const Sh
     return dt;
 }
 
-// Direct fixed-rank projector terms from the CCSD coefficient derivative.
+// Direct fixed-rank projector terms from one stationary coefficient derivative.
 // The first-stage seed holds the downstream rotation and LMP2 amplitudes fixed.
-void DLPNOCCSD::form_pno_projector_response() {
-    ccsd_lmp2_projector_source_.assign(final_pno_selection_.size(), {});
+void DLPNOCCSD::form_pno_projector_response(const std::vector<SharedMatrix>& coefficients, bool triples) {
+    if (!triples) ccsd_lmp2_projector_source_.assign(final_pno_selection_.size(), {});
     for (bool initial : {false, true}) {
         double analytic = 0., numeric = 0.;
         int splits = 0;
@@ -277,43 +277,50 @@ void DLPNOCCSD::form_pno_projector_response() {
             const auto& s = initial ? initial_pno_selection_[p] : final_pno_selection_[p];
             if (!s.parent) continue;
             ++splits;
+            // The initial-stage operator pullback is formed once from the sum of
+            // the CCSD and triples coefficient seeds in finish_local_basis_response.
+            if (initial && !debug_) continue;
             const int n = s.eigenvectors->nrow(), k = s.canonical_rotation->nrow();
-            auto bar = ccsd_pno_coefficient_response_[p]->clone();
-            if (p != ij_to_ji_[p]) bar->add(ccsd_pno_coefficient_response_[ij_to_ji_[p]]);
+            auto bar = coefficients[p]->clone();
+            if (p != ij_to_ji_[p]) bar->add(coefficients[ij_to_ji_[p]]);
             if (initial) bar = linalg::doublet(bar, initial_pno_response_[p].final_transform, false, true);
             auto cov = linalg::triplet(s.parent, bar, s.canonical_rotation, true, false, true);
             auto dt = projector_amplitude_bar(s, cov, ij_to_i_j_[p].first == ij_to_i_j_[p].second);
             auto [i, j] = ij_to_i_j_[p];
             const auto& t = s.amplitudes;
+            SharedMatrix exchange;
+            SharedVector energies;
+            double occupied = 0.;
             if (initial) {
                 // T_ab = K_ab / (f_ii + f_jj - eps_a - eps_b).
                 auto& r = initial_pno_response_[p];
-                r.exchange = dt->clone();
-                r.energy_bar = std::make_shared<Vector>(n);
-                r.occupied_sum_bar = 0.;
+                exchange = dt->clone();
+                energies = std::make_shared<Vector>(n);
                 for (int a = 0; a < n; ++a)
                     for (int b = 0; b < n; ++b) {
                         const double gap =
                             (*F_lmo_)(i, i) + (*F_lmo_)(j, j) - (*r.virtual_energy)(a) - (*r.virtual_energy)(b);
                         double dk = (*dt)(a, b) / gap, de = (*t)(a, b) * dk;
-                        (*r.exchange)(a, b) = dk;
-                        (*r.energy_bar)(a) += de;
-                        (*r.energy_bar)(b) += de;
-                        r.occupied_sum_bar -= de;
+                        (*exchange)(a, b) = dk;
+                        (*energies)(a) += de;
+                        (*energies)(b) += de;
+                        occupied -= de;
                     }
-            } else
+            } else if (triples)
+                ccsd_lmp2_projector_source_[p]->add(dt);
+            else
                 ccsd_lmp2_projector_source_[p] = dt;
             if (debug_) {
                 auto direction = t->clone();
                 for (int a = 0; a < n; ++a)
                     for (int b = 0; b < n; ++b) (*direction)(a, b) = std::sin(.31 * (a + 1) + .49 * (b + 1) + p) / n;
                 if (i == j) direction->hermitivitize();
-                analytic += direction->vector_dot(initial ? initial_pno_response_[p].exchange : dt);
+                analytic += direction->vector_dot(initial ? exchange : dt);
                 // Perturb the exchange, occupied energy sum and individual virtual energies.
                 auto deps = [](int a) { return std::cos(.61 * (a + 1)); };
                 if (initial) {
-                    analytic += initial_pno_response_[p].occupied_sum_bar;
-                    for (int a = 0; a < n; ++a) analytic += deps(a) * (*initial_pno_response_[p].energy_bar)(a);
+                    analytic += occupied;
+                    for (int a = 0; a < n; ++a) analytic += deps(a) * (*energies)(a);
                 }
                 auto sample = [&](double step) {
                     auto v = t->clone();
@@ -346,7 +353,8 @@ void DLPNOCCSD::form_pno_projector_response() {
                 numeric += (sample(h) - sample(-h)) / (2 * h);
             }
         }
-        const std::string prefix = initial ? "DLPNO CCSD INITIAL PNO" : "DLPNO CCSD FINAL PNO";
+        const std::string prefix =
+            std::string(triples ? "DLPNO (T)" : "DLPNO CCSD") + (initial ? " INITIAL PNO" : " FINAL PNO");
         set_scalar_variable(prefix + " SPLITS", splits);
         if (debug_) set_scalar_variable(prefix + " PROJECTOR DIRECTION ERROR", std::abs(analytic - numeric));
     }

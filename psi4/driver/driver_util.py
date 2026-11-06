@@ -205,7 +205,7 @@ def negotiate_derivative_type(
         if "dlpno-ccsd(t)" in methods and core.get_option("DLPNO", "DLPNO_GRADIENT_MODEL"):
             raise ValidationError(
                 "The DLPNO gradient model solves the ordinary (T)-sourced Lambda equations and provides "
-                "the explicit CCSD, triples, PNO truncation, and LMP2 relaxation DF contributions. "
+                "the explicit CCSD, triples, PNO projector, PNO truncation, and LMP2 relaxation DF contributions. "
                 "Use energy('dlpno-ccsd(t)', return_wfn=True) to inspect them. "
                 "A total nuclear derivative requires additional response terms."
             )

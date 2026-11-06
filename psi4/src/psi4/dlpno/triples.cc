@@ -410,7 +410,8 @@ void DLPNOCCSD_T::sort_triplets(double e_total) {
     timer_off("Sort Triplets");
 }
 
-void DLPNOCCSD_T::tno_transform(double t_cut_tno, bool use_tuple_cutoffs, const std::vector<int>* fixed_ranks) {
+void DLPNOCCSD_T::tno_transform(double t_cut_tno, bool use_tuple_cutoffs, const std::vector<int>* fixed_ranks,
+                                const std::vector<SharedMatrix>* fixed_parent) {
     // Computes TNOs from converged LCCSD densities of triplets ij, jk, and ik
 
     timer_on("TNO transform");
@@ -459,7 +460,15 @@ void DLPNOCCSD_T::tno_transform(double t_cut_tno, bool use_tuple_cutoffs, const 
 
         SharedMatrix X_pao_ijk;
         SharedVector e_pao_ijk;
-        std::tie(X_pao_ijk, e_pao_ijk) = orthocanonicalizer(S_pao_ijk, F_pao_ijk);
+        if (fixed_parent) {
+            // Diagnostic displacement on the reference partial-Cholesky pivot set.
+            const auto& B = (*fixed_parent)[ijk];
+            auto norm = linalg::triplet(B, S_pao_ijk, B, true, false, false);
+            norm->power(-.5);
+            X_pao_ijk = linalg::doublet(B, norm);
+        } else {
+            std::tie(X_pao_ijk, e_pao_ijk) = orthocanonicalizer(S_pao_ijk, F_pao_ijk);
+        }
 
         F_pao_ijk = linalg::triplet(X_pao_ijk, F_pao_ijk, X_pao_ijk, true, false, false);
 
@@ -607,16 +616,29 @@ void DLPNOCCSD_T::estimate_triples_memory() {
         // Retain the CCSD state. Each participating auxiliary function can also
         // carry an oo, ov and vv block on its own fitted domain.
         resident = std::max(resident, ccsd_baseline_memory_doubles_);
+        size_t shell_work = 0;
         for (int atom = 0; atom < molecule_->natom(); ++atom) {
             const size_t no = riatom_to_lmos_ext_[atom].size(), nv = riatom_to_paos_ext_[atom].size();
+            const size_t n1 = riatom_to_bfs1_[atom].size(), n2 = riatom_to_bfs2_[atom].size();
             resident += atom_to_ribf_[atom].size() * (no * no + no * nv + nv * nv);
-            resident += riatom_to_bfs1_[atom].size() * no;
+            resident += 2 * n1 * no;  // cached LMO refit and its covector
+            // Sparse PAO-coefficient and AO-overlap rows, before merging centers.
+            resident += 4 * (n1 * no + n2 * nv + n1 * n1);
+            size_t max_q = 0;
+            for (int shell : atom_to_rishell_[atom])
+                max_q = std::max(max_q, size_t(ribasis_->shell(shell).nfunction()));
+            shell_work = std::max(shell_work, (n1 + n2) * (n1 + n2) * (2 * max_q + 4));
         }
+        resident += shell_work;
+        for (const auto& X : X_pno_) resident += size_t(X->nrow()) * X->ncol();
         // A conservative bound on the accumulated shell-pair density. Domains
         // that share auxiliary functions actually reuse the same blocks.
         for (int r = 0; r < tno_selection_.size(); ++r) {
             const auto& sel = tno_selection_[r];
-            if (!sel.natural) continue;
+            if (!sel.natural) {
+                resident += size_t(X_tno_[r]->nrow()) * n_tno_[r];
+                continue;
+            }
             const size_t rows = sel.natural->nrow(), n = sel.natural->ncol(), kept = n_tno_[r];
             resident += rows * (n + kept) + kept * kept + n;  // full eigenvectors, X adjoint, rotation, occupations
         }
@@ -1992,13 +2014,20 @@ void DLPNOCCSD_T::post_ccsd_correction(DLPNOCCSDPhase phase) {
             if (write_qab_pno_) psio_->close(PSIF_DLPNO_QAB_PNO, 0);
         };
         try {
+            fitted_coefficient_bar_.assign(molecule_->natom(), {});
+            df_pao_coefficient_bar_.assign(C_pao_->nrow(), {});
+            df_coefficient_error_ = df_replay_error_ = 0.;
             compute_gradient_model_triples();
             solve_gradient_lambda();
             contract_ccsd_df_response();
-            form_pno_projector_response();
+            form_pno_projector_response(ccsd_pno_coefficient_response_);
             if (debug_) check_ccsd_coefficient_response();
+            form_pno_projector_response(triples_pair_bar_, true);
             form_pno_truncation_response();
             form_lmp2_response();
+            finish_local_basis_response();
+            finish_df_refit_response();
+            reverse_pao_normalization();
         } catch (...) {
             close_pair_files();
             throw;

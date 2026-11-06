@@ -173,14 +173,28 @@ the first retained projector with the underlying parent orbitals held fixed.
 ``DEBUG`` compares a relaxed directional derivative with a forward tangent
 solve and checks the transpose on trial amplitudes.
 
+Both endpoints of the pair–triplet and triplet–triplet overlaps contribute to
+the ordinary triples response. The solver differentiates the TNO selection
+on a fixed-rank branch, combines the resulting pair coefficient derivatives
+with the CCSD sources, and passes them through the PNO selections and LMP2
+adjoint. The direct first-PNO fitting contributions are reported as
+``DLPNO PNO PROJECTOR AUXILIARY METRIC GRADIENT`` and
+``DLPNO PNO PROJECTOR THREE-CENTER GRADIENT`` in hartree/bohr. They vanish
+when every first PNO space has full rank. The underlying PAO pivot lists
+are fixed. For three-center integrals the coefficient response includes
+both the normalized PAO coefficients and the AO-metric refit of the LMOs
+on each auxiliary center's domain. The reverse pass through PAO normalization
+accumulates the norm derivative on the diagonal of the unnormalized PAO
+overlap, using the same zero-column cutoff as the energy.
+
 The response traverses the retained pair graph. With bounded occupied
 neighbor counts, PNO, PAO and auxiliary domain sizes, and a number of
 retained pairs proportional to system size, its contraction count grows
 linearly. The wavefunction reports ``DLPNO CCSD RESPONSE ORDERED PAIRS``,
 ``DLPNO CCSD RESPONSE OVERLAP BLOCKS``, and ``DLPNO CCSD RESPONSE KL CANDIDATES``
 to inspect those assumptions. These counts measure the new CCSD contractions.
-A total gradient still requires the nuclear Fock and overlap response,
-orbital relaxation and remaining local-space and triples response. The total-gradient driver rejects the
+A total gradient still requires the occupied-space projector that constructs the PAOs, localization,
+RHF orbital relaxation, and the remaining AO integral derivatives. The total-gradient driver rejects the
 development model until these terms are implemented.
 
 Higher-Order DLPNO Methods

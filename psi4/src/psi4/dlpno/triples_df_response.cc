@@ -69,11 +69,10 @@ SharedMatrix DLPNOCCSD_T::triples_df_response(int r, const SharedMatrix& w_bar, 
     auto pull_back_pairs = [&]() {
         for (auto& [ij, p] : pairs) {
             triples_source2_[ij]->add(linalg::triplet(p.overlap, p.seed, p.overlap, false, false, true));
-            if (x_bar) {
-                auto ds = linalg::triplet(T_iajb_[ij], p.overlap, p.seed, false, false, true);
-                ds->add(linalg::triplet(T_iajb_[ij], p.overlap, p.seed, true, false, false));
-                x_bar->add(linalg::doublet(p.map, ds, true, false));
-            }
+            auto ds = linalg::triplet(T_iajb_[ij], p.overlap, p.seed, false, false, true);
+            ds->add(linalg::triplet(T_iajb_[ij], p.overlap, p.seed, true, false, false));
+            x_bar->add(linalg::doublet(p.map, ds, true, false));
+            reverse_pair_triplet_overlap(ij, r, X_tno_[r], ds);
         }
     };
     // The forward V also contains f_i^a t_jk^bc and its two permutations.
@@ -92,7 +91,9 @@ SharedMatrix DLPNOCCSD_T::triples_df_response(int r, const SharedMatrix& w_bar, 
                     (*block.seed)(x[q], x[s]) += v * (*f)(0, x[p]);
                     (*df)(0, x[p]) += v * (*block.t)(x[q], x[s]);
                 }
-        if (x_bar) x_bar->add(linalg::doublet(fp, df, true, false));
+        x_bar->add(linalg::doublet(fp, df, true, false));
+        add_local_block(triples_fov_bar_, {occ[p]}, lmotriplet_to_paos_[r],
+                        linalg::doublet(df, X_tno_[r], false, true));
     }
     if (aux.empty()) {
         pull_back_pairs();
@@ -188,7 +189,9 @@ SharedMatrix DLPNOCCSD_T::triples_df_response(int r, const SharedMatrix& w_bar, 
                     (*ds)(x[p], 0) += (*K)(x[q], x[s]) * (*v_bar)(a, b * n + c);
                 }
         triples_source1_[occ[p]]->add(linalg::doublet(ii.overlap, ds));
-        if (x_bar) x_bar->add(linalg::triplet(ii.map, T_ia_[occ[p]], ds, true, false, true));
+        auto overlap_bar = linalg::doublet(T_ia_[occ[p]], ds, false, true);
+        x_bar->add(linalg::doublet(ii.map, overlap_bar, true, false));
+        reverse_pair_triplet_overlap(i_j_to_ij_[occ[p]][occ[p]], r, X_tno_[r], overlap_bar);
         cutoff_bar->add(linalg::triplet(raw.ov[q], ovov, raw.ov[s], false, false, true));
         bar.ov[q]->add(linalg::doublet(fitted.ov[s], ovov, false, true));
         bar.ov[s]->add(linalg::doublet(fitted.ov[q], ovov));
@@ -253,7 +256,7 @@ void DLPNOCCSD_T::accumulate_three_center(int r, const TriplesDFBlocks& bar, std
                 const int a = vi[paos[u]];
                 if (a >= 0) {
                     (*d.ov)(mu, a) += (*ov[p])(q, u);
-                    if (x_bar) C_DAXPY(n, (*qia_[aux[q]])(mu, a), &(*bar.ov[p])(q, 0), 1, &(*x_bar)(u, 0), 1);
+                    C_DAXPY(n, (*qia_[aux[q]])(mu, a), &(*bar.ov[p])(q, 0), 1, &(*x_bar)(u, 0), 1);
                 }
             }
         }
@@ -261,10 +264,8 @@ void DLPNOCCSD_T::accumulate_three_center(int r, const TriplesDFBlocks& bar, std
         auto vv_tno = std::make_shared<Matrix>(n, n);
         std::copy_n(&(*bar.vv)(q, 0), static_cast<size_t>(n) * n, vv_tno->get_pointer());
         auto vv = linalg::triplet(X_tno_[r], vv_tno, X_tno_[r], false, false, true);
-        if (x_bar) {
-            vv_tno->add(vv_tno->transpose());
-            x_bar->add(linalg::triplet(triplet_pao_vv(r, aux[q]), X_tno_[r], vv_tno));
-        }
+        vv_tno->add(vv_tno->transpose());
+        x_bar->add(linalg::triplet(triplet_pao_vv(r, aux[q]), X_tno_[r], vv_tno));
         for (int u = 0; u < paos.size(); ++u) {
             for (int v = 0; v < paos.size(); ++v) {
                 const int pair = riatom_to_pao_pairs_dense_[atom][paos[u]][paos[v]];
@@ -296,7 +297,7 @@ SharedMatrix DLPNOCCSD_T::contract_three_center(const std::vector<ThreeCenterDen
         auto pao = submatrix_rows_and_cols(*C_pao_, bfs2, riatom_to_paos_ext_[atomQ]);
         auto bfs = merge_lists(bfs1, bfs2);
         const auto i1 = index_list(bfs, bfs1), i2 = index_list(bfs, bfs2);
-        std::vector<SharedMatrix> blocks(nq);
+        std::vector<SharedMatrix> blocks(nq), raw(nq);
         for (int q = 0; q < nq; ++q) {
             const auto& d = density[q0 + q];
             auto oo = linalg::triplet(lmo, d.oo, lmo, false, false, true);
@@ -311,6 +312,7 @@ SharedMatrix DLPNOCCSD_T::contract_three_center(const std::vector<ThreeCenterDen
             scatter(ov, i1, i2);
             scatter(vv, i2, i2);
             blocks[q] = std::move(D);
+            raw[q] = std::make_shared<Matrix>(bfs.size(), bfs.size());
         }
 
         // No global Q-by-AO-pair density. Each shell triplet is differentiated
@@ -322,10 +324,19 @@ SharedMatrix DLPNOCCSD_T::contract_three_center(const std::vector<ThreeCenterDen
             for (int N : shells) {
                 if (N > M) break;
                 const int atomN = basisset_->shell_to_center(N), nn = basisset_->shell(N).nfunction();
-                if (atomQ == atomM && atomM == atomN) continue;
                 if (J_metric_shell_diag_[Q] * values->shell_pair_value(M, N) < tol * tol) continue;
                 const int n0 =
                     std::lower_bound(bfs.begin(), bfs.end(), basisset_->shell(N).function_index()) - bfs.begin();
+                // Coefficient motion contributes even if all shells have one center.
+                values->compute_shell(Q, 0, M, N);
+                const auto* ints = values->buffer();
+                for (int q = 0, index = 0; q < nq; ++q)
+                    for (int m = 0; m < nm; ++m)
+                        for (int n = 0; n < nn; ++n, ++index) {
+                            (*raw[q])(m0 + m, n0 + n) = ints[index];
+                            if (M != N) (*raw[q])(n0 + n, m0 + m) = ints[index];
+                        }
+                if (atomQ == atomM && atomM == atomN) continue;
                 deriv->compute_shell_deriv1(Q, 0, M, N);
                 const auto& buf = deriv->buffers();
                 for (int q = 0, index = 0; q < nq; ++q)
@@ -341,6 +352,68 @@ SharedMatrix DLPNOCCSD_T::contract_three_center(const std::vector<ThreeCenterDen
                         }
             }
         }
+        auto refit_bar = std::make_shared<Matrix>(lmo->nrow(), lmo->ncol());
+        auto pao_bar = std::make_shared<Matrix>(pao->nrow(), pao->ncol());
+        SharedMatrix dl, dp;
+        if (debug_) {
+            auto probe = [](const SharedMatrix& x, int salt) {
+                auto d = x->clone();
+                for (int a = 0; a < d->nrow(); ++a)
+                    for (int b = 0; b < d->ncol(); ++b)
+                        (*d)(a, b) = std::sin(.51 * (1 + a) + .37 * (1 + b) + salt) /
+                                     std::sqrt(1. + double(d->nrow()) * d->ncol());
+                return d;
+            };
+            dl = probe(lmo, 1 + atomQ);
+            dp = probe(pao, 3 + atomQ);
+        }
+        double numeric = 0.;
+        for (int q = 0; q < nq; ++q) {
+            const auto& d = density[q0 + q];
+            auto oo = submatrix_rows_and_cols(*raw[q], i1, i1), ov = submatrix_rows_and_cols(*raw[q], i1, i2),
+                 vv = submatrix_rows_and_cols(*raw[q], i2, i2);
+            auto zoo = d.oo->clone();
+            zoo->add(d.oo->transpose());
+            auto zvv = d.vv->clone();
+            zvv->add(d.vv->transpose());
+            refit_bar->add(linalg::triplet(oo, lmo, zoo));
+            refit_bar->add(linalg::triplet(ov, pao, d.ov, false, false, true));
+            pao_bar->add(linalg::triplet(vv, pao, zvv));
+            pao_bar->add(linalg::triplet(ov, lmo, d.ov, true, false, false));
+            if (debug_) {
+                auto sample = [&](double h) {
+                    auto c = lmo->clone(), p = pao->clone();
+                    c->axpy(h, dl);
+                    p->axpy(h, dp);
+                    return d.oo->vector_dot(linalg::triplet(c, oo, c, true, false, false)) +
+                           d.ov->vector_dot(linalg::triplet(c, ov, p, true, false, false)) +
+                           d.vv->vector_dot(linalg::triplet(p, vv, p, true, false, false));
+                };
+                const int Qfun = q0 + q;
+                double forward = d.oo->vector_dot(qij_[Qfun]) + d.ov->vector_dot(qia_[Qfun]);
+                const auto& pset = riatom_to_paos_ext_[atomQ];
+                for (int u = 0; u < pset.size(); ++u)
+                    for (int v = 0; v < pset.size(); ++v) {
+                        int uv = riatom_to_pao_pairs_dense_[atomQ][pset[u]][pset[v]];
+                        if (uv >= 0) forward += (*d.vv)(u, v) * (*qab_[Qfun])(uv, 0);
+                    }
+                const double replay = std::abs(sample(0.) - forward);
+                if (!std::isfinite(replay)) throw PSIEXCEPTION("Nonfinite three-center transform replay.");
+                df_replay_error_ = std::max(df_replay_error_, replay);
+                constexpr double h = 1.e-5;
+                numeric += (sample(h) - sample(-h)) / (2 * h);
+            }
+        }
+        if (debug_) {
+            double err = std::abs(numeric - refit_bar->vector_dot(dl) - pao_bar->vector_dot(dp));
+            if (!std::isfinite(err)) throw PSIEXCEPTION("Nonfinite DF orbital coefficient probe.");
+            df_coefficient_error_ = std::max(df_coefficient_error_, err);
+        }
+        if (!fitted_coefficient_bar_[atomQ])
+            fitted_coefficient_bar_[atomQ] = refit_bar;
+        else
+            fitted_coefficient_bar_[atomQ]->add(refit_bar);
+        add_local_block(df_pao_coefficient_bar_, bfs2, riatom_to_paos_ext_[atomQ], pao_bar);
     }
     return grad;
 }
