@@ -183,6 +183,9 @@ SharedWavefunction dfmp2(SharedWavefunction, Options&);
 namespace dlpno {
 SharedWavefunction dlpno(SharedWavefunction, Options&);
 SharedMatrix orbital_response_action(SharedWavefunction,const std::string&,SharedMatrix);
+using PairBlocks = std::map<std::pair<int,int>, SharedMatrix>;
+PairBlocks lmp2_blocks(SharedWavefunction,const std::string&);
+PairBlocks lmp2_tangent(SharedWavefunction,const PairBlocks&,const PairBlocks&,SharedMatrix,SharedMatrix,SharedMatrix);
 }
 namespace f12 {
 SharedWavefunction f12(SharedWavefunction, Options&);
@@ -1420,6 +1423,11 @@ PYBIND11_MODULE(core, core) {
     core.def("dct", py_psi_dct, "ref_wfn"_a, "Runs the density cumulant (functional) theory code.");
     core.def("dfmp2", py_psi_dfmp2, "ref_wfn"_a, "Runs the DF-MP2 code.");
     core.def("dlpno", py_psi_dlpno, "Runs the DLPNO codes.");
+    core.def("dlpno_lmp2_blocks", &dlpno::lmp2_blocks, "wfn"_a, "block"_a,
+             "First-space AO frames or converged amplitudes keyed by unique occupied pair.");
+    core.def("dlpno_lmp2_tangent", &dlpno::lmp2_tangent, "wfn"_a, "frame_derivatives"_a,
+             "pair_exchange_derivatives"_a, "overlap_derivative"_a, "ao_fock_derivative"_a,
+             "occupied_fock_derivative"_a, "Solve the screened first-space nuclear LMP2 tangent system.");
     core.def("dlpno_orbital_response_action", &dlpno::orbital_response_action, py::arg("wfn"), py::arg("block"),
              py::arg("rhs"), "Apply an RHF DLPNO correlation orbital or AO operator derivative to a C1 column panel.");
     core.def("f12", py_psi_f12, "Runs the F12 codes.");

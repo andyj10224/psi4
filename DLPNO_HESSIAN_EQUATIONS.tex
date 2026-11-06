@@ -229,4 +229,45 @@ occupations $n_p,n_a$. In the transported frame,
 \end{align}
 $A$ is the AO contravariant subspace density; $AS$ acts on AO coefficients.
 Differentiating $ASA=A$ supplies a metric diagnostic.
+
+\section{Coupled first-space LMP2 amplitude response}
+For each retained pair $p=(ij)$ let $Y_p$ be its actual first-stage
+semicanonical AO frame, $Y_p^{\mathsf T} S Y_p=I$, and $P_p=Y_pY_p^{\mathsf T}$.
+From the previous section's AO density derivative $P_p^v$, choose
+\begin{equation}
+ Y_p^v=P_p^v S Y_p+\tfrac12Y_p(Y_p^{\mathsf T}S^vY_p).
+\end{equation}
+This fixes the internal gauge, $Y_p^{\mathsf T}S Y_p^v
+=-Y_p^{\mathsf T}S^vY_p/2$. Define the following blocks in these frames:
+\begin{align}
+ f_p&=Y_p^{\mathsf T}F Y_p,& s_p&=F_{ii}+F_{jj},&
+ S_{pq}&=Y_p^{\mathsf T}S Y_q,\\
+ f_p^v&=(Y_p^v)^{\mathsf T}FY_p+Y_p^{\mathsf T}F^vY_p+Y_p^{\mathsf T}FY_p^v,\\
+ S_{pq}^v&=(Y_p^v)^{\mathsf T}S Y_q+Y_p^{\mathsf T}S^v Y_q+Y_p^{\mathsf T}S Y_q^v .
+\end{align}
+Here $F_{ij}$ is the LMO Fock matrix and $K_p$ the exchange integral
+matrix in frame $Y_p$. For each actual directed coupling $p\gets q$ in
+the screened forward row, $c_{pq}$ denotes its occupied Fock element.
+Use the physical orientation of $q$, transposing the stored unique block
+if the row calls for $T_{ji}=T_{ij}^{\mathsf T}$. The right residual is
+\begin{equation}
+ R_p=K_p+f_pT_p+T_pf_p-s_pT_p-
+        \sum_{p\gets q}c_{pq}S_{pq}T_qS_{pq}^{\mathsf T}.
+\end{equation}
+Let $A$ be its derivative with respect to all independent amplitude blocks.
+The moving-basis right-hand side at fixed amplitudes is
+\begin{align}
+ b_p^v={}&K_p^v+f_p^vT_p+T_pf_p^v-s_p^vT_p \notag\\
+ &-\sum_{p\gets q}\big[
+ c_{pq}^v S_{pq}T_q S_{pq}^{\mathsf T}
+ +c_{pq}(S_{pq}^vT_q S_{pq}^{\mathsf T}
+ +S_{pq}T_q(S_{pq}^v)^{\mathsf T})\big],\\
+ A T^v={}&-b^v .
+\end{align}
+The diagonal-pair blocks are symmetric. Compare the gauge-independent AO
+tensor derivative in an aligned occupied-pair convention:
+\begin{equation}
+ (Y_pT_pY_p^{\mathsf T})^v=Y_p^v T_p Y_p^{\mathsf T}
+ +Y_p T_p^v Y_p^{\mathsf T}+Y_p T_p(Y_p^v)^{\mathsf T}.
+\end{equation}
 \end{document}

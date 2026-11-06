@@ -1039,6 +1039,11 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     ~DLPNOCCSD_T() override;
     SharedMatrix orbital_response_action(const std::string& block, const SharedMatrix& rhs) const;
 
+    using PairBlocks = std::map<std::pair<int,int>, SharedMatrix>;
+    PairBlocks lmp2_blocks(const std::string& block) const;
+    PairBlocks lmp2_tangent(const PairBlocks& dy, const PairBlocks& dk, SharedMatrix ds,
+                            SharedMatrix df, SharedMatrix dfoo);
+
     double compute_energy() override;
 };
 

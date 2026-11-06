@@ -584,3 +584,44 @@ def first_pno_tangent(pao, dpao, overlap, doverlap, fock, dfock, exchange, dexch
         dproj = block + block.T
     half = dY @ proj @ Y.T
     return FirstPNOTangent(occ, gap, Y @ proj @ Y.T, half + half.T + Y @ dproj @ Y.T)
+
+
+class LMP2Tangent(NamedTuple):
+    frames: dict
+    amplitudes: dict
+
+
+def coupled_lmp2_tangent(wfn, first_pno, exchange_derivative, doverlap, dfock, doccupied_fock):
+    """Differentiate the converged first-space amplitudes on the retained native graph.
+
+    first_pno[ij] is the first-PNO projector response in the AO basis for
+    each unique retained pair. exchange_derivative(ij,Y,dY) supplies dK in
+    this transported pair frame, including both frame derivatives. The
+    occupied Fock derivative includes Boys orbital motion. Request
+    DLPNO_KEEP_LMP2_RESPONSE before computing the gradient-model energy.
+    """
+    from psi4 import core
+    S = wfn.reference_wavefunction().S().np
+    frames = core.dlpno_lmp2_blocks(wfn, 'FRAME')
+    if set(frames) != set(first_pno):
+        raise ValueError("Expected one first-PNO response per unique retained LMP2 pair.")
+    dy, dk = {}, {}
+    for ij, block in frames.items():
+        Y = block.np
+        first = first_pno[ij]
+        if first.retained_density.shape != S.shape or first.retained_density_tangent.shape != S.shape:
+            raise ValueError(f"Invalid first-PNO response for {ij}.")
+        if (abs(np.sum(first.retained_density*S)-Y.shape[1]) > 2.e-7
+                or not np.allclose(first.retained_density @ S @ Y, Y, atol=2.e-8, rtol=0)):
+            raise ValueError(f"First-PNO space disagrees with the forward LMP2 frame for {ij}.")
+        # In the parallel gauge, Y.T S dY = -.5 Y.T dS Y.
+        dY = first.retained_density_tangent @ S @ Y + .5*Y @ (Y.T @ doverlap @ Y)
+        overlap_motion = Y.T @ S @ dY
+        if not np.allclose(overlap_motion+overlap_motion.T+Y.T @ doverlap @ Y, 0., atol=2.e-8, rtol=0):
+            raise ValueError(f"Inconsistent moving first-PNO metric for {ij}.")
+        dy[ij] = core.Matrix.from_array(dY)
+        dk[ij] = core.Matrix.from_array(exchange_derivative(ij,Y,dY))
+    tangent = core.dlpno_lmp2_tangent(wfn, dy, dk, core.Matrix.from_array(doverlap),
+                                      core.Matrix.from_array(dfock), core.Matrix.from_array(doccupied_fock))
+    return LMP2Tangent({ij: block.np.copy() for ij, block in dy.items()},
+                       {ij: block.np.copy() for ij, block in tangent.items()})

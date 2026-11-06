@@ -290,8 +290,84 @@ void DLPNOCCSD_T::form_lmp2_response() {
                       q = "DLPNO LMP2 RESPONSE THREE-CENTER GRADIENT";
     set_array_variable(m, contract_metric(metric, m));
     set_array_variable(q, contract_three_center(density, q));
-    lmp2_state_ = {};
-    lmp2_state_words_ = 0;
+    if (!options_.get_bool("DLPNO_KEEP_LMP2_RESPONSE")) {
+        lmp2_state_ = {};
+        lmp2_state_words_ = 0;
+    }
+}
+
+DLPNOCCSD_T::PairBlocks DLPNOCCSD_T::lmp2_blocks(const std::string& block) const {
+    if (lmp2_state_.X.empty()) throw PSIEXCEPTION("LMP2 response state was not retained.");
+    if (block != "FRAME" && block != "AMPLITUDE") throw PSIEXCEPTION("Invalid LMP2 response block.");
+    PairBlocks result;
+    for (int p = 0; p < ij_to_i_j_.size(); ++p) {
+        const auto ij = ij_to_i_j_[p];
+        if (ij.first > ij.second) continue;
+        if (block == "AMPLITUDE") {
+            result[ij] = lmp2_state_.T[p]->clone();
+        } else {
+            auto N = submatrix_cols(*C_pao_, lmopair_to_paos_[p]);
+            result[ij] = linalg::doublet(N, lmp2_state_.X[p]);
+        }
+    }
+    return result;
+}
+
+DLPNOCCSD_T::PairBlocks DLPNOCCSD_T::lmp2_tangent(const PairBlocks& dy, const PairBlocks& dk,
+                                                   SharedMatrix ds, SharedMatrix df, SharedMatrix dfoo) {
+    const auto y = lmp2_blocks("FRAME");
+    const auto S = reference_wavefunction_->S();
+    const int n = S->nrow(), no = F_lmo_->nrow();
+    auto valid = [](const SharedMatrix& a, int rows, int cols) {
+        return a && a->nirrep() == 1 && a->nrow() == rows && a->ncol() == cols;
+    };
+    if (!valid(ds,n,n) || !valid(df,n,n) || !valid(dfoo,no,no) || dy.size()!=y.size() || dk.size()!=y.size())
+        throw PSIEXCEPTION("Incompatible LMP2 nuclear response inputs.");
+    // Cache both terms on the right leg of the differentiated overlap.
+    PairBlocks sy, dsy;
+    for (const auto& [ij, yp] : y) {
+        if (!dy.count(ij) || !dk.count(ij) || !valid(dy.at(ij),n,yp->ncol()) ||
+            !valid(dk.at(ij),yp->ncol(),yp->ncol())) throw PSIEXCEPTION("Invalid LMP2 pair tangent.");
+        sy[ij] = linalg::doublet(S, yp);
+        dsy[ij] = linalg::doublet(ds, yp);
+        dsy[ij]->add(linalg::doublet(S, dy.at(ij)));
+    }
+    std::vector<SharedMatrix> source(ij_to_i_j_.size());
+    for (int p = 0; p < source.size(); ++p) {
+        const auto ij = ij_to_i_j_[p];
+        const auto [i,j] = ij;
+        if (i > j) { source[p] = std::make_shared<Matrix>(0,0); continue; }
+        const auto yp = y.at(ij), dyp = dy.at(ij), t = lmp2_state_.T[p];
+        auto fv = linalg::triplet(dyp,F_ao_,yp,true,false,false);
+        fv->add(fv->transpose());
+        fv->add(linalg::triplet(yp,df,yp,true,false,false));
+        auto b = dk.at(ij)->clone();
+        b->add(linalg::doublet(fv,t));
+        b->add(linalg::doublet(t,fv));
+        b->axpy(-((*dfoo)(i,i)+(*dfoo)(j,j)),t);
+        for (const auto& edge : lmp2_state_.edges[p]) {
+            auto [k,l] = ij_to_i_j_[edge.source];
+            auto ijq = std::make_pair(std::min(k,l),std::max(k,l));
+            auto ov = edge.overlap, tq = lmp2_state_.T[edge.source];
+            auto dov = linalg::doublet(dyp,sy.at(ijq),true,false);
+            dov->add(linalg::doublet(yp,dsy.at(ijq),true,false));
+            b->axpy(-(*dfoo)(edge.f1,edge.f2), linalg::triplet(ov,tq,ov,false,false,true));
+            const double f = -(*F_lmo_)(edge.f1,edge.f2);
+            b->axpy(f,linalg::triplet(dov,tq,ov,false,false,true));
+            b->axpy(f,linalg::triplet(ov,tq,dov,false,false,true));
+        }
+        if (i == j) b->hermitivitize();
+        source[p] = b;
+    }
+    double rms;
+    int iterations;
+    auto dt = solve_lmp2_system(source,false,rms,iterations);
+    set_scalar_variable("DLPNO LMP2 NUCLEAR TANGENT RESIDUAL",rms);
+    set_scalar_variable("DLPNO LMP2 NUCLEAR TANGENT ITERATIONS",iterations);
+    PairBlocks result;
+    for (int p = 0; p < dt.size(); ++p)
+        if (dt[p]->nrow()) result[ij_to_i_j_[p]] = dt[p];
+    return result;
 }
 
 // Rebuild the unrelaxed residual at fixed amplitudes on a perturbed orbital

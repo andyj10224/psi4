@@ -40,6 +40,20 @@ SharedMatrix orbital_response_action(SharedWavefunction wfn, const std::string& 
     return local->orbital_response_action(block,rhs);
 }
 
+DLPNOCCSD_T::PairBlocks lmp2_blocks(SharedWavefunction wfn, const std::string& block) {
+    auto local = std::dynamic_pointer_cast<DLPNOCCSD_T>(wfn);
+    if (!local) throw PSIEXCEPTION("LMP2 frames require an RHF DLPNO gradient model.");
+    return local->lmp2_blocks(block);
+}
+
+DLPNOCCSD_T::PairBlocks lmp2_tangent(SharedWavefunction wfn, const DLPNOCCSD_T::PairBlocks& dy,
+                                    const DLPNOCCSD_T::PairBlocks& dk, SharedMatrix ds, SharedMatrix df,
+                                    SharedMatrix dfoo) {
+    auto local = std::dynamic_pointer_cast<DLPNOCCSD_T>(wfn);
+    if (!local) throw PSIEXCEPTION("LMP2 tangent requires an RHF DLPNO gradient model.");
+    return local->lmp2_tangent(dy,dk,ds,df,dfoo);
+}
+
 SharedWavefunction dlpno(SharedWavefunction ref_wfn, Options& options) {
 
     const auto reference = options.get_str("REFERENCE");

@@ -2716,6 +2716,9 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
             Evaluates the explicit auxiliary metric and three-center contributions of CCSD,
             iterative triples, PNO projector response, both PNO truncation corrections and LMP2 relaxation. !expert -*/
         options.add_bool("DLPNO_GRADIENT_MODEL", false);
+        /*- Retain converged first-space pair amplitudes and their screened graph
+            for experimental nuclear LMP2 tangent solves in the RHF gradient model. -*/
+        options.add_bool("DLPNO_KEEP_LMP2_RESPONSE", false);
         /*- How much to damp T1 updates in DLPNO-CCSD -*/
         options.add_double("DLPNO_T1_DAMPING", 0.0);
         /*- How much to damp T2 updates in DLPNO-CCSD -*/
