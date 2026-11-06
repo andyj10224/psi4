@@ -1,4 +1,4 @@
-"""Count the CCSD response contractions on separated waters and interacting H2 chains.
+"""Count the CCSD and LMP2 response contractions on separated waters and interacting H2 chains.
 
 Run with a Psi4 build of this branch. Counts measure the new response pass.
 """
@@ -16,8 +16,9 @@ def counts(system, size):
             atoms.extend([f"H {x} 0 -.37", f"H {x} 0 .37"])
     mol = psi4.geometry("\n".join(["0 1", *atoms, "units angstrom", "symmetry c1", "no_com", "no_reorient"]))
     _, wfn = psi4.energy("dlpno-ccsd(t)", molecule=mol, return_wfn=True)
-    return tuple(int(wfn.variable("DLPNO CCSD RESPONSE " + key))
-                 for key in ("ORDERED PAIRS", "OVERLAP BLOCKS", "KL CANDIDATES"))
+    keys = ["DLPNO CCSD RESPONSE " + key for key in ("ORDERED PAIRS", "OVERLAP BLOCKS", "KL CANDIDATES")]
+    keys.extend(["DLPNO LMP2 RESPONSE EDGES", "DLPNO LMP2 ADJOINT ITERATIONS"])
+    return tuple(int(wfn.variable(key)) for key in keys)
 
 
 if __name__ == "__main__":
@@ -28,7 +29,7 @@ if __name__ == "__main__":
                           e_convergence=1e-11, d_convergence=1e-11, r_convergence=1e-10, dlpno_maxiter=120,
                           dlpno_gradient_model=True, dlpno_local_orbitals="BOYS", low_memory_overlap=True,
                           t_cut_pairs_mp2=1e-6, t_cut_pairs=1e-5, t_cut_tno=1e-5, min_tnos=3, dlpno_ao_ints_tol=1e-14))
-    print("system, molecules, ordered pairs, overlap blocks, kl candidates")
+    print("system, molecules, ordered pairs, overlap blocks, kl candidates, LMP2 couplings, LMP2 adjoint updates")
     for system, sizes in (("water", (1, 2, 3)), ("hydrogen", (4, 8, 12))):
         for size in sizes:
             print(system, size, *counts(system, size), flush=True)

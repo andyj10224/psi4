@@ -8,6 +8,7 @@ list(APPEND sources
   ccsd_pair_response.cc
   ccsd_df_response.cc
   pno_truncation_response.cc
+  lmp2_response.cc
   triples.cc
   triples_response.cc
   triples_df_response.cc

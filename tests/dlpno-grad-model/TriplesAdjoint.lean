@@ -93,4 +93,13 @@ theorem truncation_loss_variation (A dA : Matrix I J ℝ) (k u dk du : J → ℝ
   simp only [dotProduct_add, sub_dotProduct, pullback A]
   ring
 
+-- Independent-pair coordinates use the ordinary Frobenius pairing. A already
+-- contains the endpoint transposes for a source stored with reversed labels.
+theorem lmp2_relaxation (A : Matrix I I ℝ) (s z r dt : I → ℝ)
+    (adjoint : A.transpose *ᵥ z = -s) (tangent : A *ᵥ dt = -r) :
+    s ⬝ᵥ dt = z ⬝ᵥ r := by
+  have h := pullback A z dt
+  rw [tangent, adjoint, dotProduct_neg, neg_dotProduct] at h
+  exact (neg_inj.mp h).symm
+
 end DLPNO

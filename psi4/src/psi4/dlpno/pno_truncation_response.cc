@@ -144,19 +144,18 @@ double reverse_mp2(PairLoss& g, const SharedMatrix& t, const SharedVector& eps, 
     return -z->vector_dot(t);
 }
 
-// Reference evaluator for fixed-geometry probes: re-solve semicanonical MP2,
-// rediagonalize the pair density, then evaluate the two forward energies.
-double reference_loss(SharedMatrix K, SharedMatrix t, SharedMatrix F, SharedMatrix f, double oi, double oj, int rank,
-                      bool initial, bool diagonal, SharedMatrix* selected = nullptr) {
-    if (initial) {
-        auto V = F->clone();
-        Vector eps(F->nrow());
-        F->diagonalize(*V, eps);
-        t = project(K, V);
-        for (int a = 0; a < t->nrow(); ++a)
-            for (int b = 0; b < t->ncol(); ++b) (*t)(a, b) /= oi + oj - eps(a) - eps(b);
-        t = lift(t, V);
-    }
+// Independent forward calculations for the fixed-geometry probes.
+SharedMatrix probe_mp2_amplitudes(const SharedMatrix& K, const SharedMatrix& F, double occ_sum) {
+    auto V = F->clone();
+    Vector eps(F->nrow());
+    F->diagonalize(*V, eps);
+    auto t = project(K, V);
+    for (int a = 0; a < t->nrow(); ++a)
+        for (int b = 0; b < t->ncol(); ++b) (*t)(a, b) /= occ_sum - eps(a) - eps(b);
+    return lift(t, V);
+}
+
+SharedMatrix probe_selected_pnos(const SharedMatrix& t, int rank, bool diagonal) {
     auto u = spin_adapt(t);
     auto D = linalg::doublet(u, t, false, true);
     D->add(linalg::doublet(u, t, true, false));
@@ -164,7 +163,21 @@ double reference_loss(SharedMatrix K, SharedMatrix t, SharedMatrix F, SharedMatr
     auto V = D->clone();
     Vector occ(D->nrow());
     D->diagonalize(*V, occ, descending);
-    auto x = retained(V, rank);
+    return retained(V, rank);
+}
+
+SharedMatrix align_pnos(const SharedMatrix& X, const SharedMatrix& ref, const SharedMatrix& parent) {
+    auto projected = linalg::triplet(X, X, ref, false, true, false);
+    auto norm = linalg::doublet(projected, projected, true, false);
+    norm->power(-.5);
+    return linalg::triplet(parent, projected, norm);
+}
+
+double reference_loss(SharedMatrix K, SharedMatrix t, SharedMatrix F, SharedMatrix f, double oi, double oj, int rank,
+                      bool initial, bool diagonal, SharedMatrix* selected = nullptr) {
+    if (initial) t = probe_mp2_amplitudes(K, F, oi + oj);
+    auto u = spin_adapt(t);
+    auto x = probe_selected_pnos(t, rank, diagonal);
     if (selected) *selected = x;
     auto forward_singles = [&](SharedMatrix A, SharedMatrix b) {
         auto c = A->clone();
@@ -201,6 +214,71 @@ void record_error(double& maximum, double error) {
 }
 }  // namespace
 
+DLPNOCCSD_T::PairExchangeFit DLPNOCCSD_T::pair_exchange_fit(int p) {
+    const auto [i, j] = ij_to_i_j_[p];
+    const auto& aux = lmopair_to_ribfs_[p];
+    const auto& paos = lmopair_to_paos_[p];
+    auto qi = std::make_shared<Matrix>(aux.size(), paos.size()), qj = qi->clone();
+    for (int a = 0; a < aux.size(); ++a) {
+        int q = aux[a], atom = ribasis_->function_to_center(q);
+        const auto& l = riatom_to_lmos_ext_dense_[atom];
+        for (int v = 0; v < paos.size(); ++v) {
+            int u = riatom_to_paos_ext_dense_[atom][paos[v]];
+            (*qi)(a, v) = (*qia_[q])(l[i], u);
+            (*qj)(a, v) = (*qia_[q])(l[j], u);
+        }
+    }
+    auto J = submatrix_rows_and_cols(*full_metric_, aux, aux);
+    auto bi = qi->clone(), bj = qj->clone();
+    C_DGESV_wrapper(J->clone(), bi);
+    C_DGESV_wrapper(J->clone(), bj);
+    return {J, qi, qj, bi, bj, linalg::doublet(bi, qj, true, false)};
+}
+
+void DLPNOCCSD_T::scatter_pair_fit(int p, const SharedMatrix& dJ, const SharedMatrix& di, const SharedMatrix& dj,
+                                   MetricShellBlocks& metric, std::vector<ThreeCenterDensity>& density) {
+    const auto [i, j] = ij_to_i_j_[p];
+    const auto& aux = lmopair_to_ribfs_[p];
+    const auto& paos = lmopair_to_paos_[p];
+    add_metric_density(metric, aux, dJ);
+    for (int a = 0; a < aux.size(); ++a) {
+        int q = aux[a], atom = ribasis_->function_to_center(q);
+        const auto& l = riatom_to_lmos_ext_dense_[atom];
+        const auto& v = riatom_to_paos_ext_dense_[atom];
+        auto& d = density[q];
+        if (!d.oo) {
+            size_t no = riatom_to_lmos_ext_[atom].size(), nv = riatom_to_paos_ext_[atom].size();
+            d.oo = std::make_shared<Matrix>(no, no);
+            d.ov = std::make_shared<Matrix>(no, nv);
+            d.vv = std::make_shared<Matrix>(nv, nv);
+        }
+        for (int u = 0; u < paos.size(); ++u) {
+            (*d.ov)(l[i], v[paos[u]]) += (*di)(a, u);
+            (*d.ov)(l[j], v[paos[u]]) += (*dj)(a, u);
+        }
+    }
+}
+
+double DLPNOCCSD_T::initial_pno_mp2_bar(int p, const SharedMatrix& coefficient_bar, SharedMatrix& k, SharedMatrix& f) {
+    const auto& first = initial_pno_selection_[p];
+    const auto [i, j] = ij_to_i_j_[p];
+    auto cov = linalg::triplet(first.parent, coefficient_bar, first.canonical_rotation, true, false, true);
+    PairLoss child{0., 0., k, projector_amplitude_bar(first, cov, i == j), f, {}, {}};
+    return reverse_mp2(child, first.amplitudes, initial_pno_response_[p].virtual_energy,
+                       (*F_lmo_)(i, i) + (*F_lmo_)(j, j));
+}
+
+SharedMatrix DLPNOCCSD_T::transported_first_pno(int p, const SharedMatrix& K, const SharedMatrix& F, double oi,
+                                                double oj) {
+    const auto& first = initial_pno_selection_[p];
+    if (!first.parent) return lmp2_state_.X[p];
+    const auto& parent = first.parent;
+    auto t = probe_mp2_amplitudes(project(K, parent), project(F, parent), oi + oj);
+    auto X = probe_selected_pnos(t, first.canonical_rotation->nrow(), ij_to_i_j_[p].first == ij_to_i_j_[p].second);
+    auto ref = linalg::doublet(retained(first.eigenvectors, X->ncol()), first.canonical_rotation);
+    return align_pnos(X, ref, parent);
+}
+
 void DLPNOCCSD_T::form_pno_truncation_response() {
     MetricShellBlocks metric(ribasis_->nshell());
     std::vector<ThreeCenterDensity> density(ribasis_->nbf());
@@ -217,22 +295,9 @@ void DLPNOCCSD_T::form_pno_truncation_response() {
         const double weight = diag ? 1. : 2.;
         const double oi = (*F_lmo_)(i, i), oj = (*F_lmo_)(j, j);
         const auto& paos = lmopair_to_paos_[p];
-        const auto& aux = lmopair_to_ribfs_[p];
-        auto qi = std::make_shared<Matrix>(aux.size(), paos.size()), qj = qi->clone();
-        for (int a = 0; a < aux.size(); ++a) {
-            int q = aux[a], atom = ribasis_->function_to_center(q);
-            const auto& l = riatom_to_lmos_ext_dense_[atom];
-            for (int v = 0; v < paos.size(); ++v) {
-                int u = riatom_to_paos_ext_dense_[atom][paos[v]];
-                (*qi)(a, v) = (*qia_[q])(l[i], u);
-                (*qj)(a, v) = (*qia_[q])(l[j], u);
-            }
-        }
-        auto J = submatrix_rows_and_cols(*full_metric_, aux, aux);
-        auto bi = qi->clone(), bj = qj->clone();
-        C_DGESV_wrapper(J->clone(), bi);
-        C_DGESV_wrapper(J->clone(), bj);
-        auto K0 = linalg::doublet(bi, qj, true, false), Kbar = std::make_shared<Matrix>(paos.size(), paos.size());
+        auto fit = pair_exchange_fit(p);
+        const auto& [J, qi, qj, bi, bj, K0] = fit;
+        auto Kbar = std::make_shared<Matrix>(paos.size(), paos.size());
         auto F0 = submatrix_rows_and_cols(*F_pao_, paos, paos);
         auto f0 = submatrix_rows_and_cols(*F_lmo_pao_, {i}, paos)->transpose();
         SharedMatrix child_bar;
@@ -286,18 +351,7 @@ void DLPNOCCSD_T::form_pno_truncation_response() {
             g.f->scale(weight);
             occupied_sum *= weight;
             if (initial && child_bar) {
-                auto cov = linalg::triplet(A, child_bar, s.canonical_rotation, true, false, true);
-                // The final-stage coefficient derivative already has its pair weight.
-                PairLoss child{0.,
-                               0.,
-                               std::make_shared<Matrix>(K->nrow(), K->ncol()),
-                               projector_amplitude_bar(s, cov, diag),
-                               std::make_shared<Matrix>(F->nrow(), F->ncol()),
-                               {},
-                               {}};
-                occupied_sum += reverse_mp2(child, s.amplitudes, initial_pno_response_[p].virtual_energy, oi + oj);
-                g.K->add(child.K);
-                g.F->add(child.F);
+                occupied_sum += initial_pno_mp2_bar(p, child_bar, g.K, g.F);
             }
             ccsd_foo_response_[i][i] += occupied_sum + weight * g.occ;
             ccsd_foo_response_[j][j] += occupied_sum;
@@ -342,10 +396,7 @@ void DLPNOCCSD_T::form_pno_truncation_response() {
                                            first.canonical_rotation->nrow(), true, diag, &X);
                     if (last.parent) {
                         auto ref = linalg::doublet(retained(first.eigenvectors, X->ncol()), first.canonical_rotation);
-                        auto projected = linalg::triplet(X, X, ref, false, true, false);
-                        auto norm = linalg::doublet(projected, projected, true, false);
-                        norm->power(-.5);
-                        A = linalg::triplet(first.parent, projected, norm);
+                        A = align_pnos(X, ref, first.parent);
                     }
                 }
                 if (last.parent)
@@ -357,23 +408,7 @@ void DLPNOCCSD_T::form_pno_truncation_response() {
             constexpr double h = 1.e-7;
             record_error(nested_df_error, analytic - (sample(h) - sample(-h)) / (2 * h));
         }
-        add_metric_density(metric, aux, dJ);
-        for (int a = 0; a < aux.size(); ++a) {
-            int q = aux[a], atom = ribasis_->function_to_center(q);
-            const auto& l = riatom_to_lmos_ext_dense_[atom];
-            const auto& v = riatom_to_paos_ext_dense_[atom];
-            auto& d = density[q];
-            if (!d.oo) {
-                size_t no = riatom_to_lmos_ext_[atom].size(), nv = riatom_to_paos_ext_[atom].size();
-                d.oo = std::make_shared<Matrix>(no, no);
-                d.ov = std::make_shared<Matrix>(no, nv);
-                d.vv = std::make_shared<Matrix>(nv, nv);
-            }
-            for (int u = 0; u < paos.size(); ++u) {
-                (*d.ov)(l[i], v[paos[u]]) += (*di)(a, u);
-                (*d.ov)(l[j], v[paos[u]]) += (*dj)(a, u);
-            }
-        }
+        scatter_pair_fit(p, dJ, di, dj, metric, density);
     }
     for (bool initial : {true, false}) {
         std::string name = initial ? "DLPNO INITIAL PNO TRUNCATION" : "DLPNO FINAL PNO TRUNCATION";

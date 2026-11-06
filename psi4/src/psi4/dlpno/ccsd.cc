@@ -380,8 +380,8 @@ void DLPNOCCSD::estimate_memory() {
     const size_t total_df_memory = qij_memory_ + qia_memory_ + qab_memory_;
     const size_t total_pno_int_memory = oo + ov + vv + vv_non_proj + vvv + qo + qv + qov + qvv;
 
-    size_t memory_integrals = total_df_memory + total_pno_int_memory + thread_buffer_a * nthreads;
-    size_t memory_ccsd = total_df_memory + total_pno_int_memory + pno_overlap_memory + thread_buffer_b * nthreads;
+    size_t memory_integrals = lmp2_state_words_ + total_df_memory + total_pno_int_memory + thread_buffer_a * nthreads;
+    size_t memory_ccsd = lmp2_state_words_ + total_df_memory + total_pno_int_memory + pno_overlap_memory + thread_buffer_b * nthreads;
 
     // 1 GB = 1000^3 = 10^9 Bytes
     const double DOUBLES_TO_GB = pow(10.0, -9) * sizeof(double);
@@ -855,27 +855,27 @@ std::vector<double> DLPNOCCSD::pno_lmp2_iterations() {
 
     double F_CUT_MP2 = options_.get_double("F_CUT");
 
+    // Neighbors are the surviving pairs of a single occupied orbital. Visit
+    // their union in k order to preserve the summation order of the residual.
+    std::vector<std::vector<int>> neighbors(naocc);
+    for (const auto &[i, j] : ij_to_i_j_) neighbors[i].push_back(j);
+    for (auto &row : neighbors) std::sort(row.begin(), row.end());
+    LMP2Graph graph(n_lmo_pairs);
     size_t pno_transform_memory = 0, amplitude_memory = 0, pno_overlap_memory = 0;
 #pragma omp parallel for schedule(dynamic, 1) reduction(+ : pno_transform_memory, amplitude_memory, pno_overlap_memory)
     for (int ij = 0; ij < n_lmo_pairs; ++ij) {
-        auto &[i, j] = ij_to_i_j_[ij];
-        int npao_ij = lmopair_to_paos_[ij].size();
-
-        pno_transform_memory += npao_ij * n_pno_[ij];
-        amplitude_memory += n_pno_[ij] * n_pno_[ij];
-
+        const auto [i, j] = ij_to_i_j_[ij];
+        pno_transform_memory += lmopair_to_paos_[ij].size() * n_pno_[ij];
+        amplitude_memory += size_t(n_pno_[ij]) * n_pno_[ij];
         if (i > j) continue;
-
-        for (int k = 0; k < naocc; ++k) {
-            int kj = i_j_to_ij_[k][j];
-            int ik = i_j_to_ij_[i][k];
-
-            if (kj != -1 && i != k && fabs(F_lmo_->get(i, k)) > F_CUT_MP2) {
-                pno_overlap_memory += n_pno_[ij] * n_pno_[kj];
-            }
-            if (ik != -1 && j != k && fabs(F_lmo_->get(k, j)) > F_CUT_MP2) {
-                pno_overlap_memory += n_pno_[ij] * n_pno_[ik];
-            }
+        auto add_edge = [&](int source, int f1, int f2) {
+            if (source < 0 || f1 == f2 || !n_pno_[source] || std::abs((*F_lmo_)(f1, f2)) <= F_CUT_MP2) return;
+            graph[ij].push_back({source, f1, f2, {}});
+            pno_overlap_memory += size_t(n_pno_[ij]) * n_pno_[source];
+        };
+        for (int k : merge_lists(neighbors[i], neighbors[j])) {
+            add_edge(i_j_to_ij_[k][j], i, k);
+            add_edge(i_j_to_ij_[i][k], k, j);
         }
     }
 
@@ -904,32 +904,13 @@ std::vector<double> DLPNOCCSD::pno_lmp2_iterations() {
 
     // => Form PNO overlap integrals for preceeding DLPNO-MP2 iterations
 
-    std::vector<std::vector<SharedMatrix>> S_pno_ij_ik(n_lmo_pairs);
-    std::vector<std::vector<SharedMatrix>> S_pno_ij_kj(n_lmo_pairs);
-
 #pragma omp parallel for schedule(dynamic, 1)
     for (int ij = 0; ij < n_lmo_pairs; ++ij) {
-        auto &[i, j] = ij_to_i_j_[ij];
-
-        if (i > j) continue;
-
-        S_pno_ij_ik[ij].resize(naocc);
-        S_pno_ij_kj[ij].resize(naocc);
-
-        for (int k = 0; k < naocc; ++k) {
-            int kj = i_j_to_ij_[k][j];
-            int ik = i_j_to_ij_[i][k];
-
-            if (kj != -1 && i != k && fabs(F_lmo_->get(i, k)) > F_CUT_MP2) {
-                S_pno_ij_kj[ij][k] = submatrix_rows_and_cols(*S_pao_, lmopair_to_paos_[ij], lmopair_to_paos_[kj]);
-                S_pno_ij_kj[ij][k] = linalg::triplet(X_pno_[ij], S_pno_ij_kj[ij][k], X_pno_[kj], true, false, false);
-            }
-            if (ik != -1 && j != k && fabs(F_lmo_->get(k, j)) > F_CUT_MP2) {
-                S_pno_ij_ik[ij][k] = submatrix_rows_and_cols(*S_pao_, lmopair_to_paos_[ij], lmopair_to_paos_[ik]);
-                S_pno_ij_ik[ij][k] = linalg::triplet(X_pno_[ij], S_pno_ij_ik[ij][k], X_pno_[ik], true, false, false);
-            }
-        } // end k
-    } // end ij
+        for (auto &edge : graph[ij]) {
+            auto raw = submatrix_rows_and_cols(*S_pao_, lmopair_to_paos_[ij], lmopair_to_paos_[edge.source]);
+            edge.overlap = linalg::triplet(X_pno_[ij], raw, X_pno_[edge.source], true, false, false);
+        }
+    }
 
     // Store the energy for each pair (used to filter out strong and weak pairs later)
     std::vector<double> e_ijs(n_lmo_pairs);
@@ -978,38 +959,8 @@ std::vector<double> DLPNOCCSD::pno_lmp2_iterations() {
 
             if (i > j) continue;
 
-            R_iajb[ij] = std::make_shared<Matrix>("Residual", n_pno_[ij], n_pno_[ij]);
-
-            if (n_pno_[ij] == 0) continue;
-
-            for (int a = 0; a < n_pno_[ij]; ++a) {
-                for (int b = 0; b < n_pno_[ij]; ++b) {
-                    R_iajb[ij]->set(a, b,
-                                    K_iajb_[ij]->get(a, b) +
-                                        (e_pno_[ij]->get(a) + e_pno_[ij]->get(b) - F_lmo_->get(i, i) - F_lmo_->get(j, j)) *
-                                            T_iajb_[ij]->get(a, b));
-                }
-            }
-
-            for (int k = 0; k < naocc; ++k) {
-                int kj = i_j_to_ij_[k][j];
-                int ik = i_j_to_ij_[i][k];
-
-                if (kj != -1 && i != k && fabs(F_lmo_->get(i, k)) > options_.get_double("F_CUT") && n_pno_[kj] > 0) {
-                    auto S_ij_kj = S_pno_ij_kj[ij][k];
-                    auto temp = linalg::triplet(S_ij_kj, T_iajb_[kj], S_ij_kj, false, false, true);
-                    temp->scale(-1.0 * F_lmo_->get(i, k));
-                    R_iajb[ij]->add(temp);
-                }
-                if (ik != -1 && j != k && fabs(F_lmo_->get(k, j)) > options_.get_double("F_CUT") && n_pno_[ik] > 0) {
-                    auto S_ij_ik = S_pno_ij_ik[ij][k];
-                    auto temp = linalg::triplet(S_ij_ik, T_iajb_[ik], S_ij_ik, false, false, true);
-                    temp->scale(-1.0 * F_lmo_->get(k, j));
-                    R_iajb[ij]->add(temp);
-                }
-            }
-
-            R_iajb_rms[ij] = R_iajb[ij]->rms();
+            R_iajb[ij] = lmp2_right_row(ij, graph, T_iajb_, e_pno_[ij], K_iajb_[ij]);
+            R_iajb_rms[ij] = n_pno_[ij] ? R_iajb[ij]->rms() : 0.;
 
             if (i < j) {
                 int ji = ij_to_ji_[ij];
@@ -1083,6 +1034,14 @@ std::vector<double> DLPNOCCSD::pno_lmp2_iterations() {
     // The raw PNO-LMP2 energy contains both the iterated pair-doubles energy
     // and the retained semicanonical F_ia singles energy.
     e_lmp2_ = e_curr;
+    if (gradient_model_) {
+        lmp2_state_ = {std::move(graph), X_pno_, T_iajb_, {}, e_pno_};
+        if (debug_) lmp2_state_.K = K_iajb_;  // used only to replay the saved forward residual
+        lmp2_state_words_ = pno_overlap_memory + pno_transform_memory + (debug_ ? 2 : 1) * amplitude_memory;
+        for (const auto& row : lmp2_state_.edges)
+            lmp2_state_words_ += (row.capacity() * sizeof(LMP2Edge) + sizeof(double) - 1) / sizeof(double);
+        for (int rank : n_pno_) lmp2_state_words_ += rank;
+    }
 
     return e_ijs;
 }

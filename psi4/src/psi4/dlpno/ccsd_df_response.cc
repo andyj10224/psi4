@@ -237,9 +237,6 @@ void DLPNOCCSD_T::contract_ccsd_df_response() {
                        contract_metric(metric, "DLPNO CCSD AUXILIARY METRIC GRADIENT"));
     set_array_variable("DLPNO CCSD THREE-CENTER GRADIENT",
                        contract_three_center(density, "DLPNO CCSD THREE-CENTER GRADIENT"));
-    form_pno_projector_response();
-    if (debug_) check_ccsd_coefficient_response();
-    form_pno_truncation_response();
 }
 
 SharedMatrix DLPNOCCSD::projector_amplitude_bar(const PairSelection& s, const SharedMatrix& cov, bool diagonal) {

@@ -1995,6 +1995,10 @@ void DLPNOCCSD_T::post_ccsd_correction(DLPNOCCSDPhase phase) {
             compute_gradient_model_triples();
             solve_gradient_lambda();
             contract_ccsd_df_response();
+            form_pno_projector_response();
+            if (debug_) check_ccsd_coefficient_response();
+            form_pno_truncation_response();
+            form_lmp2_response();
         } catch (...) {
             close_pair_files();
             throw;

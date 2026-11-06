@@ -724,7 +724,22 @@ class PSI_API DLPNOCCSD : public DLPNO {
         double occupied_sum_bar = 0.;
     };
     std::vector<InitialPNOResponse> initial_pno_response_;
+    // All LMP2 response variables use one independent block per i <= j.
+    // Edge sources retain the orientation actually read by the forward residual.
+    struct LMP2Edge { int source, f1, f2; SharedMatrix overlap; };
+    using LMP2Graph = std::vector<std::vector<LMP2Edge>>;
+    struct LMP2State {
+        LMP2Graph edges;
+        std::vector<SharedMatrix> X, T, K;
+        std::vector<SharedVector> eps;
+    } lmp2_state_;
+    size_t lmp2_state_words_ = 0;
     std::vector<SharedMatrix> ccsd_lmp2_projector_source_;
+    SharedMatrix lmp2_right_row(int p, const LMP2Graph& graph, const std::vector<SharedMatrix>& ordered,
+                                const SharedVector& eps, const SharedMatrix& seed) const;
+    std::vector<SharedMatrix> lmp2_apply(const std::vector<SharedMatrix>& x, bool transpose) const;
+    std::vector<SharedMatrix> solve_lmp2_system(const std::vector<SharedMatrix>& source, bool transpose,
+                                             double& rms, int& iterations);
     static SharedMatrix projector_amplitude_bar(const PairSelection& s, const SharedMatrix& cov, bool diagonal);
     void form_pno_projector_response();
     // Pair-local covectors of the underlying orthonormal parent orbitals.
@@ -952,6 +967,16 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     SharedMatrix contract_three_center(const std::vector<ThreeCenterDensity>& density, const std::string& name);
     void contract_ccsd_df_response();
     void form_pno_truncation_response();
+    void form_lmp2_response();
+    std::vector<SharedMatrix> probe_lmp2_residual(double h);
+    void check_lmp2_adjoint(const std::vector<SharedMatrix>& source,const std::vector<SharedMatrix>& z,double analytic);
+    struct PairExchangeFit { SharedMatrix J, qi, qj, bi, bj, K; };
+    PairExchangeFit pair_exchange_fit(int p);
+    void scatter_pair_fit(int p, const SharedMatrix& dJ, const SharedMatrix& di, const SharedMatrix& dj,
+                          MetricShellBlocks& metric, std::vector<ThreeCenterDensity>& density);
+    SharedMatrix transported_first_pno(int p, const SharedMatrix& K, const SharedMatrix& F, double oi,double oj);
+    double initial_pno_mp2_bar(int p, const SharedMatrix& coefficient_bar, SharedMatrix& k, SharedMatrix& f);
+    std::vector<SharedMatrix> lmp2_parent_, lmp2_parent_bar_;
     void check_ccsd_coefficient_response();
     SharedMatrix pair_df_response(int p, std::vector<ThreeCenterDensity>& density);
     /// Create TNOs (Triplet Natural Orbitals) for DLPNO-(T)

@@ -162,6 +162,17 @@ fitting integrals at fixed orbital data and LMP2 amplitudes, including the
 induced motion of the first retained subspace. The final correction supplies
 a source for the LMP2 adjoint. A full-rank stage has zero correction.
 
+The RHF gradient model solves the LMP2 adjoint in the first retained PNO
+spaces using the combined CCSD projector and truncation-energy sources. It
+reverses each occupied Fock coupling that passed |dlpno__f_cut| in the
+right solve. The explicit fitting contributions from LMP2 amplitude relaxation
+are reported in hartree/bohr as ``DLPNO LMP2 RESPONSE AUXILIARY METRIC GRADIENT``
+and ``DLPNO LMP2 RESPONSE THREE-CENTER GRADIENT``. These include motion of
+the first retained projector with the underlying parent orbitals held fixed.
+``DLPNO LMP2 ADJOINT RESIDUAL`` is the largest final pair RMS. Module
+``DEBUG`` compares a relaxed directional derivative with a forward tangent
+solve and checks the transpose on trial amplitudes.
+
 The response traverses the retained pair graph. With bounded occupied
 neighbor counts, PNO, PAO and auxiliary domain sizes, and a number of
 retained pairs proportional to system size, its contraction count grows
@@ -169,7 +180,7 @@ linearly. The wavefunction reports ``DLPNO CCSD RESPONSE ORDERED PAIRS``,
 ``DLPNO CCSD RESPONSE OVERLAP BLOCKS``, and ``DLPNO CCSD RESPONSE KL CANDIDATES``
 to inspect those assumptions. These counts measure the new CCSD contractions.
 A total gradient still requires the nuclear Fock and overlap response,
-orbital relaxation, the LMP2 adjoint and remaining local-space response. The total-gradient driver rejects the
+orbital relaxation and remaining local-space and triples response. The total-gradient driver rejects the
 development model until these terms are implemented.
 
 Higher-Order DLPNO Methods
