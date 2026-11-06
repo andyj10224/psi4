@@ -725,7 +725,10 @@ class PSI_API DLPNOCCSD : public DLPNO {
     };
     std::vector<InitialPNOResponse> initial_pno_response_;
     std::vector<SharedMatrix> ccsd_lmp2_projector_source_;
+    static SharedMatrix projector_amplitude_bar(const PairSelection& s, const SharedMatrix& cov, bool diagonal);
     void form_pno_projector_response();
+    // Pair-local covectors of the underlying orthonormal parent orbitals.
+    std::vector<SharedMatrix> truncation_parent_, truncation_parent_bar_;
     void form_ccsd_pair_response();
     void backtransform_ccsd_one_body();
     double ccsd_lagrangian(const std::vector<SharedMatrix>& z1, const std::vector<SharedMatrix>& z2);
@@ -948,6 +951,7 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     SharedMatrix contract_metric(const MetricShellBlocks& density, const std::string& name);
     SharedMatrix contract_three_center(const std::vector<ThreeCenterDensity>& density, const std::string& name);
     void contract_ccsd_df_response();
+    void form_pno_truncation_response();
     void check_ccsd_coefficient_response();
     SharedMatrix pair_df_response(int p, std::vector<ThreeCenterDensity>& density);
     /// Create TNOs (Triplet Natural Orbitals) for DLPNO-(T)

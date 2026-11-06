@@ -7,6 +7,7 @@ list(APPEND sources
   ccsd_gradient_lambda.cc
   ccsd_pair_response.cc
   ccsd_df_response.cc
+  pno_truncation_response.cc
   triples.cc
   triples_response.cc
   triples_df_response.cc

@@ -83,4 +83,14 @@ theorem half_metric_factor (a b : ℝ) (ha : a ≠ 0) (hb : b ≠ 0) (hs : a+b �
   field_simp
   ring
 
+-- A maps a parent pair tensor into a retained pair space. Differentiate
+-- k·u - (Ak)·(Au), including the variation of both projection factors.
+theorem truncation_loss_variation (A dA : Matrix I J ℝ) (k u dk du : J → ℝ) :
+    u ⬝ᵥ dk + k ⬝ᵥ du -
+      ((A *ᵥ u) ⬝ᵥ (A *ᵥ dk + dA *ᵥ k) + (A *ᵥ k) ⬝ᵥ (A *ᵥ du + dA *ᵥ u)) =
+    (u - A.transpose *ᵥ (A *ᵥ u)) ⬝ᵥ dk + (k - A.transpose *ᵥ (A *ᵥ k)) ⬝ᵥ du -
+      ((A *ᵥ u) ⬝ᵥ (dA *ᵥ k) + (A *ᵥ k) ⬝ᵥ (dA *ᵥ u)) := by
+  simp only [dotProduct_add, sub_dotProduct, pullback A]
+  ring
+
 end DLPNO

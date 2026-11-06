@@ -62,6 +62,17 @@ void DLPNOCCSD::estimate_gradient_lambda_memory() {
         if (ij_to_i_j_[p].first <= ij_to_i_j_[p].second) response += q * (m * n + n * n);
         // Largest pair-local raw factors, eigensystem and simultaneous pullbacks.
         df_scratch = std::max(df_scratch, 10 * q * q + 6 * q * (m * n + n * n + n * widest + m + 2 * n + 1));
+        // Saved selection data, parent coefficient covectors and the largest local
+        // PAO exchange/DF workspace for either truncation correction.
+        if (initial_pno_selection_[p].parent || final_pno_selection_[p].parent) {
+            for (const auto* selection : {&initial_pno_selection_[p], &final_pno_selection_[p]}) {
+                if (!selection->parent) continue;
+                size_t v = selection->amplitudes->nrow(), k = selection->canonical_rotation->ncol();
+                response += nv * v + 3 * v * v + k * k + 2 * v;
+            }
+            response += nv * nv;
+            df_scratch = std::max(df_scratch, 4 * q * q + 8 * q * nv + (debug_ ? 40 : 25) * nv * nv);
+        }
         amp += n * n;
         words += 2 * m * m + 5 * n * n + 2 * m * n + n + q * (n + m);
         scratch = std::max(scratch,

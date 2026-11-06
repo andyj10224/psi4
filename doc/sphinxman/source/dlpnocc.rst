@@ -151,6 +151,17 @@ Internally, the solver also accumulates derivatives with respect to the
 bare occupied and PAO Fock blocks, the PAO overlap and the pair coefficients.
 With module ``DEBUG`` these derivatives are checked at fixed geometry.
 
+The initial and final PNO truncation energy corrections each subtract the
+retained-space MP2 pair energy from the corresponding parent-space energy.
+The initial correction uses semicanonical MP2 amplitudes and the final one
+uses converged LMP2 amplitudes. Both include the diagonal-pair singles term.
+Their sum contributes two Cartesian arrays in hartree/bohr,
+``DLPNO PNO TRUNCATION AUXILIARY METRIC GRADIENT`` and
+``DLPNO PNO TRUNCATION THREE-CENTER GRADIENT``. These vary the correlation
+fitting integrals at fixed orbital data and LMP2 amplitudes, including the
+induced motion of the first retained subspace. The final correction supplies
+a source for the LMP2 adjoint. A full-rank stage has zero correction.
+
 The response traverses the retained pair graph. With bounded occupied
 neighbor counts, PNO, PAO and auxiliary domain sizes, and a number of
 retained pairs proportional to system size, its contraction count grows
@@ -158,7 +169,7 @@ linearly. The wavefunction reports ``DLPNO CCSD RESPONSE ORDERED PAIRS``,
 ``DLPNO CCSD RESPONSE OVERLAP BLOCKS``, and ``DLPNO CCSD RESPONSE KL CANDIDATES``
 to inspect those assumptions. These counts measure the new CCSD contractions.
 A total gradient still requires the nuclear Fock and overlap response,
-orbital relaxation, and the PNO, TNO and PNO-correction responses. The total-gradient driver rejects the
+orbital relaxation, the LMP2 adjoint and remaining local-space response. The total-gradient driver rejects the
 development model until these terms are implemented.
 
 Higher-Order DLPNO Methods

@@ -58,7 +58,19 @@ three_ref = np.array([[0., 0., 0.00190046913],
                       [0., 0.00114142153, -0.00095023456],
                       [0., -0.00114142153, -0.00095023456]])
 
+def check_truncation(w):
+    parts = [w.variable('DLPNO ' + which + ' PNO TRUNCATION ENERGY') for which in ('INITIAL', 'FINAL')]
+    compare_values(w.variable('DLPNO PNO TRUNCATION ERROR'), sum(parts), 1.e-9,
+                   'two reconstructed corrections match the forward energy')                                  #TEST
+    for which in ('INITIAL', 'FINAL'):
+        for probe in ('DIRECTION ERROR', 'SINGLES DIRECTION ERROR'):
+            compare_values(0., w.variable(f'DLPNO {which} PNO TRUNCATION {probe}'), 1.e-7,
+                           f'{which} truncation correction {probe}')                                           #TEST
+    compare_values(0., w.variable('DLPNO PNO TRUNCATION DF DIRECTION ERROR'), 1.e-7,
+                   'nested first and final correction using perturbed primitive fitting integrals')             #TEST
+
 def check_stationarity(w):
+    check_truncation(w)
     compare_values(0., w.variable('DLPNO (T) TRANSPOSE DOT ERROR'), 1.e-12, 'packed B transpose')            #TEST
     compare_values(0., w.variable('DLPNO (T) RIGHT RESIDUAL'), 1.e-10, 'T3 residual')                         #TEST
     compare_values(0., w.variable('DLPNO (T) ADJOINT RESIDUAL'), 1.e-10, 'Z3 residual')                      #TEST
@@ -95,6 +107,9 @@ for loc in ('BOYS', 'PIPEK_MEZEY', 'IBO'):
     compare_values(e_df, e, 1.e-7, loc + ' zero-cutoff DF-CCSD(T) energy')                                               #TEST
     compare_values(-0.00304081137850, w.variable('(T) CORRECTION ENERGY'), 1.e-9, loc + ' canonical (T)')       #TEST
     check_stationarity(w)
+    for label in ('AUXILIARY METRIC', 'THREE-CENTER'):
+        compare_arrays(np.zeros((3, 3)), w.variable('DLPNO PNO TRUNCATION ' + label + ' GRADIENT').np,
+                       1.e-12, loc + ' full-rank truncation correction derivative')                            #TEST
     for key, ref in [('DLPNO (T) T1 SCALE DERIVATIVE', 0.00008531657979),
                      ('DLPNO (T) T2 SCALE DERIVATIVE', -0.00616693933676),
                      ('DLPNO CCSD(T) LAMBDA1 T1 CONTRACTION', 0.00044402383150),
@@ -128,7 +143,10 @@ mem_three = w.variable(three_key).np.copy()
 lambda_keys = ['DLPNO CCSD(T) LAMBDA1 T1 CONTRACTION', 'DLPNO CCSD(T) LAMBDA2 T2 CONTRACTION']
 mem_lambda = [w.variable(key) for key in lambda_keys]
 cc_keys = ['DLPNO CCSD ' + label + ' GRADIENT' for label in ('AUXILIARY METRIC', 'THREE-CENTER')]
+cc_keys.extend(['DLPNO PNO TRUNCATION ' + label + ' GRADIENT' for label in ('AUXILIARY METRIC', 'THREE-CENTER')])
 mem_cc = [w.variable(key).np.copy() for key in cc_keys]
+assert all(abs(w.variable(f'DLPNO {stage} PNO TRUNCATION ENERGY')) > 1.e-7 for stage in ('INITIAL', 'FINAL'))
+assert all(np.max(np.abs(x)) > 1.e-8 for x in mem_cc[-2:])
 assert abs(w.variable('DLPNO (T) L2 TNO SOURCE DIRECTION')) > 1.e-8
 assert abs(e - e_df) > 1.e-6
 set write_qia_pno true
@@ -209,6 +227,7 @@ no_reorient
 set t_cut_pairs_mp2 1.e-6
 set low_memory_overlap true
 _, chain_wfn = energy('dlpno-ccsd(t)', return_wfn=True)
+check_truncation(chain_wfn)
 compare_values(10., chain_wfn.variable('DLPNO CCSD RESPONSE ORDERED PAIRS'), 1.e-12,
                'screened H2 chain includes nearest-neighbor pairs')                                            #TEST
 for group in ('INTEGRAL', 'FOCK', 'OVERLAP', 'PNO COEFFICIENT'):

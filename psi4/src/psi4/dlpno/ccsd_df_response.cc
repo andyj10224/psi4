@@ -239,6 +239,34 @@ void DLPNOCCSD_T::contract_ccsd_df_response() {
                        contract_three_center(density, "DLPNO CCSD THREE-CENTER GRADIENT"));
     form_pno_projector_response();
     if (debug_) check_ccsd_coefficient_response();
+    form_pno_truncation_response();
+}
+
+SharedMatrix DLPNOCCSD::projector_amplitude_bar(const PairSelection& s, const SharedMatrix& cov, bool diagonal) {
+    const int n = s.eigenvectors->nrow(), k = s.canonical_rotation->nrow();
+    auto g = linalg::doublet(s.eigenvectors, cov, true, false);
+    auto eigbar = std::make_shared<Matrix>(n, n);
+    for (int a = k; a < n; ++a)
+        for (int b = 0; b < k; ++b) {
+            double gap = (*s.occupations)(b) - (*s.occupations)(a);
+            if (gap <= 64 * std::numeric_limits<double>::epsilon() * std::abs((*s.occupations)(0)))
+                throw PSIEXCEPTION("PNO selection has an unresolved retained/discarded occupation gap.");
+            (*eigbar)(a, b) = (*eigbar)(b, a) = 0.5 * (*g)(a, b) / gap;
+        }
+    auto d = linalg::triplet(s.eigenvectors, eigbar, s.eigenvectors, false, false, true);
+    if (diagonal) d->scale(0.5);
+    // D = U T^T + U^T T, U = 2T - T^T.
+    const auto& t = s.amplitudes;
+    auto u = t->clone();
+    u->scale(2.);
+    u->subtract(t->transpose());
+    auto du = linalg::doublet(d, t);
+    du->add(linalg::doublet(t, d));
+    auto dt = linalg::doublet(d, u);
+    dt->add(linalg::doublet(u, d));
+    dt->axpy(2., du);
+    dt->subtract(du->transpose());
+    return dt;
 }
 
 // Direct fixed-rank projector terms from the CCSD coefficient derivative.
@@ -257,29 +285,9 @@ void DLPNOCCSD::form_pno_projector_response() {
             if (p != ij_to_ji_[p]) bar->add(ccsd_pno_coefficient_response_[ij_to_ji_[p]]);
             if (initial) bar = linalg::doublet(bar, initial_pno_response_[p].final_transform, false, true);
             auto cov = linalg::triplet(s.parent, bar, s.canonical_rotation, true, false, true);
-            auto g = linalg::doublet(s.eigenvectors, cov, true, false);
-            auto eigbar = std::make_shared<Matrix>(n, n);
-            for (int a = k; a < n; ++a)
-                for (int b = 0; b < k; ++b) {
-                    double gap = (*s.occupations)(b) - (*s.occupations)(a);
-                    if (gap <= 64 * std::numeric_limits<double>::epsilon() * std::abs((*s.occupations)(0)))
-                        throw PSIEXCEPTION("PNO selection has an unresolved retained/discarded occupation gap.");
-                    (*eigbar)(a, b) = (*eigbar)(b, a) = 0.5 * (*g)(a, b) / gap;
-                }
-            auto d = linalg::triplet(s.eigenvectors, eigbar, s.eigenvectors, false, false, true);
+            auto dt = projector_amplitude_bar(s, cov, ij_to_i_j_[p].first == ij_to_i_j_[p].second);
             auto [i, j] = ij_to_i_j_[p];
-            if (i == j) d->scale(0.5);
-            // D = U T^T + U^T T, U = 2T - T^T.
             const auto& t = s.amplitudes;
-            auto u = t->clone();
-            u->scale(2.);
-            u->subtract(t->transpose());
-            auto du = linalg::doublet(d, t);
-            du->add(linalg::doublet(t, d));
-            auto dt = linalg::doublet(d, u);
-            dt->add(linalg::doublet(u, d));
-            dt->axpy(2., du);
-            dt->subtract(du->transpose());
             if (initial) {
                 // T_ab = K_ab / (f_ii + f_jj - eps_a - eps_b).
                 auto& r = initial_pno_response_[p];
