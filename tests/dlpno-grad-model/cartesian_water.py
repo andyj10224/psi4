@@ -49,7 +49,10 @@ def check(frozen, localizer='BOYS', screened=False):
         'f_cut t_cut_tno t_cut_do_triples t_cut_mkn_triples f_cut_t').split()})
     _, w = psi4.energy('dlpno-ccsd(t)', return_wfn=True)
     ref = w.reference_wavefunction()
-    grad = assemble_cartesian_gradient(w, hf, fixed_density_fock(ref))
+    dense = assemble_cartesian_gradient(w, hf, fixed_density_fock(ref))
+    grad = assemble_cartesian_gradient(w)
+    print('screened JK versus dense', np.max(abs(grad-dense)), flush=True)
+    np.testing.assert_allclose(grad, dense, atol=1.e-9, rtol=0)
     print(localizer, 'screened', screened, 'freeze_core', frozen, 'assembled', grad, 'canonical', reference,
           'max error', np.max(abs(grad-reference)), flush=True)
     np.testing.assert_allclose(grad.sum(axis=0), np.zeros(3), atol=1.e-8, rtol=0)

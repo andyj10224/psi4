@@ -247,10 +247,29 @@ def _iao_occupied_bar(C, S, cross, metric, cutoff, iaos, iao_bar):
     Xbar = (Dtbar + Dtbar.T) @ X @ gram_inv
     return (Dbar + Dbar.T) @ C + mapping.T @ (Xbar - S @ Dt @ Xbar)
 
-def cartesian_orbital_terms(wfn, fock_derivatives, panel_width=16, tol=1.e-9):
+
+def _df_fock_panel(mints, occupied, unit, response):
+    """Contract sym(response @ unit.T) with the fixed-density DF Fock derivative."""
+    from psi4 import core
+
+    def jk_gradient(factors):
+        return core.rhf_df_jk_energy_gradient(mints, core.Matrix.from_array(factors)).np.copy()
+
+    plus = (unit + response)*.5
+    minus = (unit - response)*.5
+    # The common quadratic reference term cancels between the two differences.
+    two = (jk_gradient(np.column_stack((occupied, plus))) - jk_gradient(plus)
+           - jk_gradient(np.column_stack((occupied, minus))) + jk_gradient(minus))*.5
+    density = response @ unit.T
+    one = mints.core_hamiltonian_grad(core.Matrix.from_array((density + density.T)*.5)).np
+    return one + two
+
+
+def cartesian_orbital_terms(wfn, fock_derivatives=None, panel_width=16, tol=1.e-9):
     """Contract Cartesian sources for Boys/PM; yield one atom (three scalars) at a time.
 
-    fock_derivatives(atom) returns three AO Fock derivatives at fixed AO
+    By default the SCF gradient backend contracts each panel directly. An
+    optional fock_derivatives(atom) returns three AO Fock derivatives at fixed AO
     density, including the derivative of the *reference* Coulomb/exchange fit.
     """
     from psi4 import core
@@ -272,9 +291,10 @@ def cartesian_orbital_terms(wfn, fock_derivatives, panel_width=16, tol=1.e-9):
     F = ref.Fa().np
     metric -= .5*(D @ F @ mixed + mixed @ F @ D)
     basis = ref.basisset()
-    mints = core.MintsHelper(basis)
+    mints = core.MintsHelper(ref)
     # The density-transport term needs only C.T @ G[Fbar] @ C.
     potential = np.zeros((C.shape[1], C.shape[1]))
+    fock_gradient = np.zeros((ref.molecule().natom(), 3))
     jk = core.JK.build(basis, aux=ref.get_basisset('DF_BASIS_SCF'), do_wK=False,
                        memory=int(core.get_memory()*.1))
     jk.initialize()
@@ -286,13 +306,21 @@ def cartesian_orbital_terms(wfn, fock_derivatives, panel_width=16, tol=1.e-9):
             E[np.arange(first,stop), np.arange(stop-first)] = 1.
             right = core.Matrix.from_array(E)
             raw = core.dlpno_orbital_response_action(wfn, 'FOCK', right).np
-            jk.C_left_add(core.Matrix.from_array(raw + fextra[:,first:stop]))
+            response = raw + fextra[:, first:stop]
+            jk.C_left_add(core.Matrix.from_array(response))
             jk.C_right_add(right)
             jk.compute()
             potential += C.T @ (2*jk.J()[0].np - jk.K()[0].np) @ C
             jk.C_clear()
     finally:
         jk.finalize()
+    if fock_derivatives is None:
+        for first in range(0, Sdim, panel_width):
+            stop = min(first + panel_width, Sdim)
+            E = np.eye(Sdim, stop-first, k=-first)
+            panel = core.Matrix.from_array(E)
+            response = core.dlpno_orbital_response_action(wfn, 'FOCK', panel).np + fextra[:,first:stop]
+            fock_gradient += _df_fock_panel(mints, C, E, response)
     metric -= C @ potential @ C.T
     boys = bool(wfn.variable('DLPNO RESPONSE BOYS'))
     if not boys:
@@ -301,10 +329,14 @@ def cartesian_orbital_terms(wfn, fock_derivatives, panel_width=16, tol=1.e-9):
             metric += (centers == atom)[:,None] * (L @ bar @ L.T)
     for atom in range(ref.molecule().natom()):
         ds = [m.np for m in mints.ao_oei_deriv1('OVERLAP', atom)]
-        df = np.asarray(fock_derivatives(atom))
-        if df.shape != (3, Sdim, Sdim):
-            raise ValueError("Expected three Cartesian AO Fock derivative matrices per atom.")
-        result = np.array([np.sum(metric*s) + np.sum(fextra*f) for s,f in zip(ds,df)])
+        result = fock_gradient[atom] + np.array([np.sum(metric*s) for s in ds])
+        blocks = [('OVERLAP', ds)]
+        if fock_derivatives is not None:
+            df = np.asarray(fock_derivatives(atom))
+            if df.shape != (3, Sdim, Sdim):
+                raise ValueError("Expected three Cartesian AO Fock derivative matrices per atom.")
+            result += [np.sum(fextra*f) for f in df]
+            blocks.append(('FOCK', df))
         if boys:
             dip = mints.ao_elec_dip_deriv1(atom)
             for k,bar in enumerate(bars):
@@ -315,19 +347,22 @@ def cartesian_orbital_terms(wfn, fock_derivatives, panel_width=16, tol=1.e-9):
             E = np.zeros((Sdim, stop-first))
             E[np.arange(first,stop), np.arange(stop-first)] = 1.
             panel = core.Matrix.from_array(E)
-            for block, directions in [('FOCK', df), ('OVERLAP', ds)]:
+            for block, directions in blocks:
                 bar = core.dlpno_orbital_response_action(wfn, block, panel).np
                 for xyz in range(3):
                     result[xyz] += np.sum(bar*directions[xyz][:,first:stop])
         yield result
 
 
-def assemble_cartesian_gradient(wfn, reference_gradient, fock_derivatives, panel_width=16, tol=1.e-9):
+def assemble_cartesian_gradient(wfn, reference_gradient=None, fock_derivatives=None, panel_width=16, tol=1.e-9):
     """Assemble a gradient-model Cartesian array, including reference and DF correlation.
 
-    reference_gradient includes the RHF electronic and nuclear gradients in
-    the wavefunction's orientation. fock_derivatives uses the same SCF reference.
+    Defaults to SCFGrad on the retained RHF reference. An optional reference_gradient
+    must include the RHF electronic and nuclear gradients in the same orientation.
     """
+    from psi4 import core
+    if reference_gradient is None:
+        reference_gradient = core.scfgrad(wfn.reference_wavefunction()).np
     refgrad = np.asarray(reference_gradient, dtype=float)
     shape = (wfn.molecule().natom(), 3)
     if refgrad.shape != shape:

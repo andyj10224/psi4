@@ -263,4 +263,25 @@ Add $g^{\rm orb}$ to the RHF nuclear gradient and the previously derived
 RIFIT metric and three-center contractions for CCSD, ordinary (T), the PNO
 projector, truncation correction and LMP2 response. The dense ERI expression
 above is restricted to the small-system verification code.
+
+\subsection{Screened SCF Fock derivative using the RHF gradient kernel}
+Let $\mathcal E'(X)=\langle X,2J'[X]-K'[X]\rangle$ denote one Cartesian
+derivative of the RHF two-electron energy at fixed spatial density $X$.
+For a column panel $E$ of the AO identity and $R=B_F E$, put
+$L_\pm=(E\pm R)/2$, $P_\pm=L_\pm L_\pm\T$. Then
+\begin{equation}
+ P_+-P_-=\sym(RE\T),\qquad \sum_{\rm panels}(P_+-P_-)=B_F.
+\end{equation}
+Bilinearity gives the exchange and Coulomb contraction for one panel:
+\begin{align}
+ \langle P_+-P_-,2J'[D]-K'[D]\rangle
+ =\tfrac12\big(&\mathcal E'(D+P_+)-\mathcal E'(P_+)\notag\\
+ &-\mathcal E'(D+P_-)+\mathcal E'(P_-)\big).
+\end{align}
+The four arguments are represented by $[C,L_+]$, $L_+$, $[C,L_-]$ and
+$L_-$, respectively, permitting direct use of the existing restricted
+DFJKGrad kernel. The one-electron term is
+$\langle P_+-P_-,h'\rangle$. Each kernel call computes all Cartesian
+components together with the shell-pair screening and metric conditioning
+of the DF-SCF gradient.
 \end{document}

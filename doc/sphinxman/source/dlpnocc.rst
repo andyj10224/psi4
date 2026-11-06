@@ -193,9 +193,23 @@ retained pairs proportional to system size, its contraction count grows
 linearly. The wavefunction reports ``DLPNO CCSD RESPONSE ORDERED PAIRS``,
 ``DLPNO CCSD RESPONSE OVERLAP BLOCKS``, and ``DLPNO CCSD RESPONSE KL CANDIDATES``
 to inspect those assumptions. These counts measure the new CCSD contractions.
-A total gradient still requires the occupied-space projector that constructs the PAOs, localization,
-RHF orbital relaxation, and the remaining AO integral derivatives. The total-gradient driver rejects the
-development model until these terms are implemented.
+For Boys or Mulliken Pipek–Mezey localization, the experimental assembler
+returns the gradient of the selected RHF model as an (atoms, 3) NumPy array
+in hartree/bohr. Keep the density-fitted RHF reference and its JK object for
+the orbital solve. For example, with a molecule already defined::
+
+   from psi4.driver.procrouting.response.dlpno_orbital import assemble_cartesian_gradient
+   psi4.set_options({"reference": "rhf", "scf_type": "df", "save_jk": True,
+                     "dlpno_gradient_model": True, "dlpno_local_orbitals": "BOYS"})
+   energy, wfn = psi4.energy("dlpno-ccsd(t)", return_wfn=True)
+   gradient = assemble_cartesian_gradient(wfn)
+
+Use PIPEK_MEZEY for Mulliken PM. The assembler obtains the RHF gradient
+and contracts the response using the reference JKFIT basis through the SCF
+gradient backend. It computes the derivative on the selected domain/rank
+branch and requires a consistent localization adjoint. The standard gradient
+driver still guards this experimental model. Full-gradient linear scaling
+has yet to be established.
 
 Higher-Order DLPNO Methods
 --------------------------

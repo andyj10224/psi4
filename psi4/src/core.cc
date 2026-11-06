@@ -42,7 +42,9 @@
 #include "psi4/cc/cclambda/cclambda.h"
 #include "psi4/cc/ccwave.h"
 #include "psi4/libmints/matrix.h"
-#include "psi4/libmints/matrix.h"
+#include "psi4/libmints/mintshelper.h"
+#include "psi4/libmints/basisset.h"
+#include "psi4/scfgrad/jk_grad.h"
 #include "psi4/libmints/molecule.h"
 #include "psi4/libmints/pointgrp.h"
 #include "psi4/libmints/vector.h"
@@ -1386,6 +1388,30 @@ PYBIND11_MODULE(core, core) {
              "To switch back to regular output mode, use :func:`~psi4.core.reopen_outfile()`. "
              "Doesn't work with Windows.");
     // modules
+    core.def("rhf_df_jk_energy_gradient", [](std::shared_ptr<MintsHelper> mints, SharedMatrix factors) {
+        if (!mints || !factors || factors->nirrep() != 1 || factors->ncol() == 0 ||
+            factors->nrow() != mints->get_basisset("ORBITAL")->nbf())
+            throw PSIEXCEPTION("Invalid AO density factors for the RHF JK gradient.");
+        auto jk = std::dynamic_pointer_cast<scfgrad::DFJKGrad>(scfgrad::JKGrad::build_JKGrad(1, mints));
+        if (!jk)
+            throw PSIEXCEPTION("RHF DF JK derivative contraction requires a DF SCF reference.");
+        jk->set_unit_a(PSIF_DLPNO_JK_ALPHA);
+        jk->set_unit_b(PSIF_DLPNO_JK_BETA);
+        jk->set_unit_c(PSIF_DLPNO_JK_COULOMB);
+        auto density = linalg::doublet(factors, factors, false, true);
+        auto total = density->clone();
+        total->scale(2.);
+        jk->set_Ca(factors);
+        jk->set_Cb(factors);
+        jk->set_Da(density);
+        jk->set_Db(density);
+        jk->set_Dt(total);
+        jk->set_memory(Process::environment.get_memory() / sizeof(double) * 0.8);
+        jk->compute_gradient();
+        auto result = jk->gradients().at("Coulomb");
+        result->subtract(jk->gradients().at("Exchange"));
+        return result;
+    }, "mints"_a, "factors"_a, "Fixed-density RHF two-electron energy gradient for D = factors factors^T.");
     core.def("scfgrad", py_psi_scfgrad, "ref_wfn"_a, "Run scfgrad, which is a specialized DF-SCF gradient program.");
     core.def("scfhess", py_psi_scfhess, "ref_wfn"_a, "Run scfhess, which is a specialized DF-SCF hessian program.");
     core.def("dct", py_psi_dct, "ref_wfn"_a, "Runs the density cumulant (functional) theory code.");
