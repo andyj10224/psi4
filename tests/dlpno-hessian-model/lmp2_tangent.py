@@ -307,6 +307,7 @@ def check(frozen, *, amplitude_response=False, row_at=None, reference=None, lowe
             triple_direction = triples(dt1,dt2)
             if lower_order is not None:
                 lower_order['lmo'],lower_order['fock'],lower_order['parent'] = dL,df,dV
+                lower_order['occupied_density'] = dC@C.T+C@dC.T
                 lower_order.update({('t1',i):a for i,a in enumerate(dt1)})
                 lower_order.update({('t2',p):a for p,a in dt2.items()})
                 lower_order.update({('pno',p):a for p,a in ccsd_frames.tangents.items()})

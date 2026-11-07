@@ -73,4 +73,13 @@ theorem discarded_projector_block {R : Type*} [Ring R] (p q x c : R)
     _ = (q*p)*x*q + q*x*(p*q) + q*c*q := by noncomm_ring
     _ = q*c*q := by simp [hqp,hpq]
 
+-- Mixed metric panel solve: rearranging the differentiated S Y = B
+-- equation requires all three response terms in addition to S Y_uv.
+theorem mixed_metric_panel {R : Type*} [Ring R]
+    (s su sv suv y yu yv yuv buv : R)
+    (solve : s*yuv = buv-suv*y-su*yv-sv*yu) :
+    suv*y+su*yv+sv*yu+s*yuv = buv := by
+  rw [solve]
+  abel
+
 end DLPNOHessian

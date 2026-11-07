@@ -873,4 +873,58 @@ without making the whole Hessian analytic. The column diagnostic can
 now sum retained CCSD, iterative triples and stationary PNO-loss curvature.
 Other nonzero screened-energy corrections require separate treatment.
 
+
+\section{Mixed PAO and full-virtual parent from the occupied projector}
+Let $D=C_o C_o^{\mathsf T}$ include all RHF occupied orbitals, including
+frozen core, with $C_o^{\mathsf T}S C_o=I$. The supplied occupied response
+may be represented by mixed coefficient blocks or by the gauge-invariant
+mixed density. Acting on a moving panel $B$ gives
+\begin{equation}
+ (DB)^{uv}=D^{uv}B+D^u B^v+D^v B^u+D B^{uv}.
+\end{equation}
+The coefficient implementation contracts $C_o(C_o^{\mathsf T}B)$ without
+forming $D$. Internal occupied rotations cancel, including their mixed
+exponential-coordinate term.
+
+For fixed AO-domain columns $E_{\cal D}$, the raw PAOs are
+\begin{equation}
+ A=E_{\cal D}-D S E_{\cal D},\qquad
+ A^{uv}=-(D^{uv}S+D^uS^v+D^vS^u+DS^{uv})E_{\cal D}.
+\end{equation}
+Define $q_a=A_a^{\mathsf T} S A_a$ and $N_a=A_a q_a^{-1/2}$.
+The mixed product rule supplies $q_a^u,q_a^v,q_a^{uv}$, and
+\begin{equation}
+ (q_a^{-1/2})^{uv}
+ =\tfrac34 q_a^{-5/2}q_a^u q_a^v-\tfrac12 q_a^{-3/2}q_a^{uv}.
+\end{equation}
+The native fixed zero-column mask $q_a>10^{-20}$ is retained. Inactive
+normalized columns and their derivatives are zero on that branch.
+
+For a reference full-virtual frame $V_0$, use a fixed panel $B=S_0V_0$.
+The projected frame and its reference polar normalization are
+\begin{equation}
+ Y=(S^{-1}-D)B,\qquad G=Y^{\mathsf T}S Y,\qquad V=Y G^{-1/2}.
+\end{equation}
+At the reference $Y=V_0$, $G=I$. The mixed inverse-square-root formula
+from the previous sections therefore applies. To avoid forming a metric
+inverse, solve $S Z=B$ on the supplied panel and differentiate:
+\begin{align}
+ S Z^u&=B^u-S^u Z,\\
+ S Z^v&=B^v-S^v Z,\\
+ S Z^{uv}&=B^{uv}-S^{uv}Z-S^u Z^v-S^v Z^u.
+\end{align}
+The implementation uses $Y=Z-DB$ with the constant $B=S_0V_0$.
+This reproduces the fixed-reference polar gauge used in the displaced
+full-virtual diagnostics. A separately truncated local parent requires
+its own selection response; this formula does not replace it.
+
+The triples mixed-input provider now reconstructs $V^{uv}$ through this
+formula rather than requesting the sampled aligned virtual coefficients.
+Its $D^u,D^v$ are from native RHF tangents; $D^{uv}$ is still sampled.
+Thus the frame transformation is analytic conditional on its occupied
+response inputs, while the molecular Hessian remains semi-analytic.
+The full-domain water diagnostic materializes $D$; the general coefficient
+panel action avoids that materialization. Dense metric solves and global
+occupied actions do not establish end-to-end linear scaling.
+
 \end{document}

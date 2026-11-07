@@ -53,7 +53,8 @@ def aligned_inputs(model, reference, rows):
     new_rows = psi4.core.dlpno_triples_response_state(model)
     assert len(new_rows) == len(rows)
     # The TNOs depend on both pair selections. Check both ranks as well.
-    lower = {'lmo':lm,'fock':other.Fa().np.copy()}
+    occupied = other.Ca_subset('AO','OCC').np
+    lower = {'lmo':lm,'fock':other.Fa().np.copy(),'occupied_density':occupied@occupied.T}
     vir = other.Ca_subset('AO','VIR').np
     x,_,y = np.linalg.svd(vir.T@ref.S().np@ref.Ca_subset('AO','VIR').np)
     lower['parent'] = vir@(x@y)
@@ -144,6 +145,14 @@ def molecular_blocks(w,u,v,lower,lower_u,lower_v,lower_uv,trial_ccsd):
                          mints.ao_oei_deriv2('OVERLAP',au,av)[3*xu+xv].np)
     @lru_cache(None)
     def electronic(key):
+        if key == 'parent':
+            from psi4.driver.procrouting.response.dlpno_frame_curvature import mixed_virtual_parent
+            density = electronic('occupied_density')
+            frame = mixed_virtual_parent(lambda panel:mixed_product('mn,na->ma',density,panel),
+                                         overlap,lower['parent'])
+            np.testing.assert_allclose(frame.u,lower_u['parent'],atol=2.e-8,rtol=0.)
+            np.testing.assert_allclose(frame.v,lower_v['parent'],atol=2.e-8,rtol=0.)
+            return frame
         if trial_ccsd and isinstance(key,tuple):
             if key[0] in ('t1','t2'):
                 return MixedBlock(lower[key],lower_u[key],lower_v[key],np.zeros_like(lower[key]))

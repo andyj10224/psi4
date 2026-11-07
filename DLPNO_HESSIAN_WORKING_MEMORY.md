@@ -280,3 +280,24 @@ The independent O_y/H1_z mixed entry, extrapolated from 0.002/0.001 bohr inputs,
 **Formal check and limitations.** Added and checked `eliminate_mixed_lmp2` in `CCSDStationarity.lean`, specializing the finite-dimensional elimination identity to the unweighted pairing. It assumes the mixed constraint and adjoint equations; it does not certify the numerical nuclear derivatives. The LaTeX record includes the native residual, source convention, adjoint and stationary energy formula. Mixed frames/Fock/exchange inputs remain sampled in the molecular provider, and the previous step-size sensitivity remains visible. This is a more stationary semi-analytic Hessian construction, not a fully analytic molecular Hessian or frequency implementation.
 
 **Next.** Replace sampled mixed lower-order orbital/localization and local-frame inputs, and the CCSD nuclear mixed residual source, with analytic response providers. Before a production Hessian driver, assemble and validate complete Cartesian matrices and any nonzero remaining screened-energy corrections. Preserve the fixed-rank/fixed-domain branch checks.
+
+## Mixed PAO projection and full-virtual parent response
+
+**Implemented.** `dlpno_frame_curvature.py` constructs raw/normalized mixed PAOs on fixed AO domains and the mixed full-virtual frame in the diagnostic's fixed-reference polar gauge. Inputs are total occupied-projector response and AO overlap derivatives. All occupied orbitals, including frozen core, enter the projector. The coefficient action contracts occupied orbitals with column panels without forming a dense density or identity. Metric derivatives use one reference factorization and four panel solves, or a caller-supplied reference solver that can be reused across entries. No explicit metric inverse is formed. The full virtual frame formula is not a replacement for the response of a separately truncated local parent.
+
+The shared triples molecular input provider now reconstructs the full-virtual parent through `(S^-1-D) S0 V0` and polar normalization. It no longer requests a sampled mixed aligned virtual frame. The first occupied-density derivatives come from native RHF tangents. **The mixed occupied density remains sampled.** This is analytic frame reconstruction conditional on electronic response inputs, not an analytic second-order RHF solver. Mixed first/final PNO and localization responses remain open. The normalized PAO kernel is tested independently; it has not replaced the remaining sampled PNO-frame provider.
+
+**Verification.** `frame_curvature.py` checks occupied-rotation cancellation through mixed order (9.24e-14 maximum), the differentiated metric panel equation, exact mixed frame orthonormality, PAO normalization, and u/v reciprocity. Water/cc-pVDZ checks include frozen-core and all-electron settings and H1-z/H1-z and O-y/H1-z entries. Two centered stencils (0.002 and 0.001 bohr) provide Richardson comparisons against independently aligned SCF virtual frames and directly reconstructed PAOs.
+
+| Entry | Virtual-parent mixed error | Raw PAO mixed error | Normalized PAO mixed error |
+|---|---:|---:|---:|
+| H1-z/H1-z | 3.33e-8 | 2.84e-9 | 1.81e-6 |
+| O-y/H1-z | 7.88e-9 | 1.99e-9 | 1.19e-6 |
+
+Both core settings give the same projector results to rounding, as expected for the same RHF full-occupied projector. The selected PAO panel includes a near-core column, making normalization substantially more sensitive than the raw projection. These coefficient errors are separate from energy-curvature errors; no stronger PAO accuracy claim follows from the parent result.
+
+The combined retained-CCSD + triples + PNO H1-z correlation entries still pass their existing component checks. They are -0.001997930152018 (frozen) and -0.002841096874295 (all-electron) hartree/bohr², changes of -2.41e-12 and -2.94e-12 from the previous sampled-parent provider. These finite-cutoff entries exclude RHF and are not new canonical Hessian reference values.
+
+Added and checked the Lean `mixed_metric_panel` identity for the rearranged mixed metric equation; the numerical tests cover its implementation and occupied rotation cancellation. Updated the LaTeX equations and compiled them successfully. The install target succeeds; `dfccsd-t-grad1`, `dlpno-grad-model`, and `dlpnocc-1` pass (3/3). The dense full-domain water provider is still diagnostic-only. A full-width virtual frame and dense metric factorization do not establish linear scaling; the general API allows fixed-width panels and a reused reference solver.
+
+**Next.** Supply the mixed RHF occupied-density response analytically, then propagate it through localization and first/final PNO selections. The CCSD nuclear mixed residual and the remaining nonzero screened-energy corrections also remain before a fully analytic molecular Hessian can be claimed.
