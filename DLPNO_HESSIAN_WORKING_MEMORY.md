@@ -1088,3 +1088,59 @@ calls. Mocked public-wrapper checks cover completion order, duplicate
 suppression, both failure paths and an unrelated method. Python compilation,
 equation-export consistency and whitespace checks pass. Native numerical
 validation status is unchanged; no electronic-structure equation changed.
+
+
+## 2026-11-07 — Water execution evidence, response reuse and stage timing
+
+The user's water/cc-pVTZ output from revision `991427f` completes all 81 ordered
+analytic Hessian entries and returns a matrix after the native residual,
+first-gradient replay and raw symmetry/rigid-motion guards. Wall time is
+1806.67 seconds including optimization; the nine column times total 1678.2
+seconds. This is successful execution evidence for that revision, not an
+independent energy/gradient finite-difference validation of the matrix. The
+previous cc-pVDZ fixtures and their recorded evidence are unchanged.
+
+The current pass owns a first-CCSD-response cache on the Hessian reference.
+It stores read-only first AO/PNO frames and singles/doubles amplitudes, keyed by
+Cartesian coordinate. Every reuse compares its first frame at the unchanged
+2e-9 tolerance, and every ordered entry replays the full responding CCSD
+residual and checks its value/first derivatives. New entries are published only
+after that check passes. On a nine-coordinate assembly, the control flow needs
+nine first solves instead of 162 and nine constant-amplitude source replays
+instead of 81. All 81 responding mixed residuals remain. The memory preflight
+includes cached frames/amplitudes. Printed and wavefunction counters expose the
+actual work; the water repeatability regression requires the nine/nine counts.
+This cache has source/synthetic validation, but no fresh native molecular run.
+
+Mixed products share at most 1024 contraction plans keyed by expression/shapes;
+only metadata is shared, not molecular arrays. Per-column timing distinguishes
+molecular inputs, PNO/LMP2 response, CCSD mixed response, screened corrections,
+retained energy/curvature, and triples directions/solves/curvature. The gradient
+also reports its orbital assembly stages. These timings identify the next
+native targets; no measured full-molecule speedup is claimed for this pass.
+
+Known remaining costs include per-entry first PNO/LMP2 reconstruction, mixed
+LMP2 response, and repeated first fitting/triples data. The gradient's 58 AO
+water case has four 16-column panels, each making four native DF J/K-gradient
+calls through polarization. A native cross-density derivative contraction could
+combine those passes. Do not parallelize the existing calls over shared PSIO
+units. A more fully stationary adjoint formulation could remove second
+electronic responses, but is a separate derivation and validation project.
+
+The absent frequency table was caused by calling `hessian()`: it returns force
+constants. The misleading analytic-frequency announcement is corrected, and
+`frequency()` remains a single Hessian followed by vibrational analysis. The
+new NumPy-only recovery utility reads the completed log and matching final
+geometry/isotope masses, applies mass weighting and removes translations and
+rotations. The supplied rounded matrix gives 1669.32, 3840.90 and 3945.38 cm^-1
+(bend, symmetric stretch, antisymmetric stretch). All three are real. Matrix
+rounding in the log limits these values as derivative-validation references.
+
+Validation: 129 focused checks pass (118 source/routing/algebra checks with a
+mock native boundary and 11 isolated compiled DF-kernel checks). Nine separate
+recovery tests pass, including the exact reduced-mass diatomic result under
+rotation/translation and negative curvature. The supplied log reproduces the
+three frequencies above. Twelve old/new orbital-gradient contractions with
+identical mock operators agree exactly; wrapper checks verify one Hessian per
+frequency call, completion order and failure paths. This is not a full native
+Psi4 build, a molecular timing comparison or independent derivative validation.

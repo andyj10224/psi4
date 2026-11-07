@@ -13,10 +13,73 @@ the reported failure; it does not replace any cc-pVDZ tests.
 The LANL2DZ input inside the driver regression is only an ECP-rejection check.
 No smaller orbital basis replaces the derivative tests.
 
-These tests are provided for a local numerical rerun. The recovery checkpoint's
-earlier native results are historical evidence; the recovered implementation
-has not yet passed a fresh native run. Its source-level routing checks do not
-establish numerical Hessian accuracy.
+The user's water/cc-pVTZ run at `991427f` completed all 81 ordered Hessian
+entries and passed the native residual, gradient-replay and rigid-motion
+guards. This is fresh execution evidence for that revision, not an independent
+finite-difference validation. The subsequent first-response cache still needs
+a native numerical rerun. Source-level routing checks do not establish
+numerical Hessian accuracy.
+
+## Response reuse and timing
+
+At `991427f`, the water run took 1806.67 seconds, including optimization;
+1678.2 seconds were spent in the nine Hessian columns. The current pass caches
+each first CCSD response for one reference geometry, reducing water's first
+solves from 162 to nine and constant-amplitude source replays from 81 to nine.
+Cached amplitudes are read-only. Every reuse checks the first AO/PNO frame,
+and every ordered entry still replays the value/first CCSD residual. All
+mixed entries, residual tolerances and raw symmetry checks remain in place.
+The memory estimate includes the cached frames and amplitudes.
+
+Mixed contractions now share a bounded cache of NumPy contraction plans keyed
+by equation and shapes; this cache contains no molecular tensors. Per-column
+timings distinguish molecular inputs, PNO/LMP2 response, CCSD response, and
+triples stages. Orbital-gradient timings separately report local sources,
+the RHF adjoint, AO covectors/density transport, DF Fock panels and atomic
+derivative contractions. These are wall times; the gradient table covers only
+orbital assembly, not all native gradient work.
+
+On water's 58-AO basis, 16-column Fock panels currently make 16 native DF
+J/K-gradient calls. A native cross-density derivative contraction is a next
+optimization target; it is not implemented by this cache. First PNO/LMP2
+responses and many mixed fitting/triples blocks are still reconstructed for
+each entry. More complete stationarity would remove the need for second
+electronic responses, but requires a separate derivation and validation.
+
+This pass changes Python only. An existing `991427f` native build can use the
+updated Python installation; Cython installations must rebuild the changed
+modules. Older native builds still require the full rebuild described below.
+Use the printed counters and stage timings to assess the speedup locally.
+
+## Frequencies and completed-run recovery
+
+`hessian()` returns force constants. Use `frequency()` to additionally print
+normal modes and thermochemistry, and save the full-precision Hessian before
+the vibrational analysis:
+
+```python
+set hessian_write true
+frequency('dlpno-ccsd(t)')
+```
+
+The frequency wrapper performs one Hessian calculation. Do not call both
+`hessian()` and `frequency()` consecutively unless two evaluations are intended.
+The public Hessian message now describes force constants rather than promising
+frequencies. If a completed `.log` contains the Hessian, recover its modes
+without another electronic-structure calculation:
+
+```bash
+python /path/to/psi4/tests/dlpno-hessian-model/recover_frequencies.py --log water_freq_test.log --output water_freq_test.out --json recovered_modes.json
+python -m pytest --confcutdir=tests/dlpno-hessian-model tests/dlpno-hessian-model/test_recover_frequencies.py
+```
+
+Use the matching `.out`: its final Angstrom geometry and isotope masses define
+the mass weighting and translation/rotation projection. The utility rejects
+incomplete/abbreviated matrices and inconsistent nuclear repulsion energies.
+It requires NumPy, not a Psi4 installation. The supplied water run gives
+1669.32, 3840.90 and 3945.38 cm^-1 (bend, symmetric stretch, antisymmetric
+stretch). The log rounds the matrix to eight decimal places; these recovered
+frequencies are not full-precision Hessian validation references.
 
 ## Gradient-first verification after the optimization
 
@@ -64,7 +127,7 @@ OpenMP packing and mixed-integral loops write disjoint outputs; LMP2 right
 rows are independent, while transpose scatter remains serial. The dense
 Hessian memory guard, full ordered matrix, residual tolerances and rigid-motion
 checks are unchanged. Row progress now includes elapsed column time.
-First PNO/CCSD responses are still reconstructed for individual mixed entries;
+First PNO/LMP2 responses are still reconstructed for individual mixed entries;
 this is a bounded optimization, not an end-to-end local-scaling backend.
 No full-molecule speedup is claimed before timings on the rebuilt installation.
 
@@ -89,7 +152,8 @@ python /path/to/psi4/tests/dlpno-hessian-model/water_repeatability.py --threads 
 ```
 
 The script requests 28 GB, leaves global SCF solver options at their defaults,
-and requires exactly one first-density response batch. The second command
+and requires exactly one first-density response batch, nine first CCSD solves
+and nine fixed-source replays. The second command
 compares the component/total Hessians at 2e-7 Eh/bohr² and optionally checks
 one column against independently reconverged gradient differences with native
 selection matching. Omit `--fd-column` for a quicker repeatability-only run.
@@ -106,7 +170,7 @@ From the source checkout, using your actual configured build directory:
 ctest --test-dir build --output-on-failure -R '^dlpno-hessian-driver$'
 ctest --test-dir build --output-on-failure -R '^(dfccsd-t-grad1|dlpno-grad-model|dlpnocc-1|dlpnolocal-1|scf-cholesky-basis|scf-hess1|scf-hess2)$'
 python -m pytest tests/pytests/test_dertype.py
-python -m pytest tests/pytests/test_dlpno_hessian_response.py tests/pytests/test_dlpno_response_kernels.py
+python -m pytest tests/pytests/test_dlpno_hessian_response.py tests/pytests/test_dlpno_response_kernels.py tests/pytests/test_dlpno_mixed_products.py
 ```
 
 `dlpno-hessian-driver` uses H2 and 1 GiB. It checks default analytic routing,

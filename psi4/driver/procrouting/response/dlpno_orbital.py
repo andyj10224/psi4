@@ -1,5 +1,6 @@
 """Fixed-geometry orbital adjoints for the RHF DLPNO gradient model."""
 from typing import NamedTuple
+from time import perf_counter
 
 import numpy as np
 from scipy.sparse.linalg import LinearOperator, eigsh, minres
@@ -293,9 +294,12 @@ def cartesian_orbital_terms(wfn, fock_derivatives=None, panel_width=16, tol=1.e-
     from psi4 import core
     if not (wfn.variable('DLPNO RESPONSE BOYS') or wfn.variable('DLPNO RESPONSE MULLIKEN PM')):
         raise NotImplementedError("Explicit primary/minimal overlap derivatives are needed for IBO.")
+    start = perf_counter()
     rhs, bars, occupied_bar, mixed = _molecular_sources(wfn, panel_width, tol)
+    sources_done = perf_counter()
     ref = wfn.reference_wavefunction()
     z = constrained_rhf_adjoint(ref, rhs, tol)
+    adjoint_done = perf_counter()
     C = ref.Ca_subset('AO', 'OCC').np
     V = ref.Ca_subset('AO', 'VIR').np
     L = wfn.variable('DLPNO RESPONSE ACTIVE LMOS').np
@@ -338,19 +342,23 @@ def cartesian_orbital_terms(wfn, fock_derivatives=None, panel_width=16, tol=1.e-
             jk.C_clear()
     finally:
         jk.finalize()
+    covectors_done = perf_counter()
     if fock_derivatives is None:
         for first in range(0, Sdim, panel_width):
             stop = min(first + panel_width, Sdim)
             E = np.eye(Sdim, stop-first, k=-first)
             response = fock_bar[:,first:stop] + fextra[:,first:stop]
             fock_gradient += _df_fock_panel(mints, C, E, response)
+    fock_done = perf_counter()
     metric -= C @ potential @ C.T
     boys = bool(wfn.variable('DLPNO RESPONSE BOYS'))
     if not boys:
         centers = np.array([basis.function_to_center(mu) for mu in range(basis.nbf())])
         for atom, bar in enumerate(bars):
             metric += (centers == atom)[:,None] * (L @ bar @ L.T)
+    atomic_seconds = 0.
     for atom in range(ref.molecule().natom()):
+        atomic_start = perf_counter()
         ds = [m.np for m in mints.ao_oei_deriv1('OVERLAP', atom)]
         result = fock_gradient[atom] + np.array([np.sum(metric*s) for s in ds])
         blocks = [('OVERLAP', ds)]
@@ -369,7 +377,16 @@ def cartesian_orbital_terms(wfn, fock_derivatives=None, panel_width=16, tol=1.e-
             bar = overlap_bar if block == 'OVERLAP' else fock_bar
             for xyz in range(3):
                 result[xyz] += np.sum(bar*directions[xyz])
+        atomic_seconds += perf_counter() - atomic_start
         yield result
+    core.print_out('    DLPNO orbital-gradient stages (seconds):\n')
+    for label, seconds in (
+            ('local orbital sources', sources_done-start),
+            ('RHF adjoint', adjoint_done-sources_done),
+            ('AO covectors/density transport', covectors_done-adjoint_done),
+            ('DF Fock derivative panels', fock_done-covectors_done),
+            ('atomic derivative contraction', atomic_seconds)):
+        core.print_out(f'      {label:30s}: {seconds:9.2f} s\n')
 
 
 def assemble_cartesian_gradient(wfn, reference_gradient=None, fock_derivatives=None, panel_width=16, tol=1.e-9):

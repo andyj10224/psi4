@@ -113,11 +113,64 @@ def screened_ccsd_residual(wfn,electronic,overlap,occupied_action,local_df):
     return mixed_ccsd_residual(wfn,electronic,overlap,local_df,fitted=fit)
 
 
-def screened_ccsd_response(wfn,pnos,overlap,fock,lmo,occupied_action,local_df):
-    """Solve first CCSD response and form its analytic affine mixed source."""
+class CCSDFirstResponseCache:
+    """First amplitudes in a checked frame, owned by one Hessian reference.
+
+    Only AO/PNO first-frame data and amplitude vectors are retained. No mixed
+    residuals or three-center integral panels survive an entry evaluation.
+    """
+    def __init__(self,wfn):
+        self.wfn=wfn
+        self.size=3*wfn.molecule().natom()
+        self.entries={}
+        self.source_replays=0
+        self.solves=0
+
+    @staticmethod
+    def chart(overlap,fock,lmo,pnos,k):
+        return {'overlap':overlap[k],'fock':fock[k],'lmo':lmo[k],
+                **{('pno',p):x.frame[k] for p,x in pnos.final_selection.items()}}
+
+    @staticmethod
+    def check(record,chart,coordinate):
+        if record['chart'].keys()!=chart.keys():
+            raise ValueError('Cached CCSD first response has a different pair list.')
+        for key,current in chart.items():
+            saved=record['chart'][key]
+            if (np.shape(current)!=saved.shape or not np.isfinite(current).all() or
+                    not np.allclose(current,saved,atol=2.e-9,rtol=0.)):
+                raise ValueError(f'Cached CCSD first-response chart changed: coordinate={coordinate}, block={key!r}.')
+        return record['tangent']
+
+    @staticmethod
+    def record(chart,tangent):
+        def freeze(x):
+            value=np.array(x,copy=True)
+            if not np.isfinite(value).all():raise ValueError('Nonfinite cached CCSD first response.')
+            value.setflags(write=False)
+            return value
+        return dict(chart={key:freeze(x) for key,x in chart.items()},
+                    tangent=([freeze(x) for x in tangent[0]],{p:freeze(x) for p,x in tangent[1].items()}))
+
+
+def screened_ccsd_response(wfn,pnos,overlap,fock,lmo,occupied_action,local_df,*,
+                           first_cache=None,coordinates=None):
+    """Solve/reuse first CCSD responses and form the affine mixed source.
+
+    Cached directions still undergo full value/first residual checks in every
+    mixed entry. With both directions cached, the unused constant-amplitude
+    residual replay is omitted and fixed_residual is None.
+    """
     from psi4 import core
     from .dlpno_ccsd_mixed import mixed_ccsd_residual
     from .dlpno_ccsd_response import coupled_ccsd_tangent
+    if first_cache is not None:
+        if first_cache.wfn is not wfn:
+            raise ValueError('CCSD first-response cache belongs to a different wavefunction.')
+        if coordinates is None or len(coordinates)!=2 or any(k<0 or k>=first_cache.size for k in coordinates):
+            raise ValueError('Expected two in-range nuclear coordinates for the CCSD first-response cache.')
+    elif coordinates is not None:
+        raise ValueError('CCSD response coordinates require a reference cache.')
     t2={p:x.np.copy() for p,x in core.dlpno_lmp2_blocks(wfn,'CCSD_DOUBLES').items()}
     t1=[]
     for i in range(lmo.value.shape[1]):
@@ -132,15 +185,33 @@ def screened_ccsd_response(wfn,pnos,overlap,fock,lmo,occupied_action,local_df):
         if isinstance(key,tuple) and key[0]=='pno':return pnos.final_selection[key[1]].frame
         return amplitudes[key]
     fit=ScreenedFitting(wfn,electronic,overlap,occupied_action,local_df)
-    fixed=mixed_ccsd_residual(wfn,electronic,overlap,local_df,fitted=fit)
+    fixed=None
     tangent=[]
+    pending={}
     for k in (1,2):
-        tangent.append(coupled_ccsd_tangent(wfn,[x[k] for x in fixed[0]],{p:x[k] for p,x in fixed[1].items()}))
+        saved=None
+        if first_cache is not None:
+            coordinate=coordinates[k-1]
+            chart=first_cache.chart(overlap,fock,lmo,pnos,k)
+            record=pending.get(coordinate,first_cache.entries.get(coordinate))
+            if record is not None:
+                saved=first_cache.check(record,chart,coordinate)
+        if saved is None:
+            if fixed is None:
+                fixed=mixed_ccsd_residual(wfn,electronic,overlap,local_df,fitted=fit)
+                if first_cache is not None:first_cache.source_replays+=1
+            saved=coupled_ccsd_tangent(wfn,[x[k] for x in fixed[0]],{p:x[k] for p,x in fixed[1].items()})
+            if first_cache is not None:
+                first_cache.solves+=1
+                pending[coordinate]=first_cache.record(chart,saved)
+                saved=pending[coordinate]['tangent']
+        tangent.append(saved)
     for i,x in enumerate(t1):amplitudes['t1',i]=MixedBlock(x,tangent[0][0][i],tangent[1][0][i],np.zeros_like(x))
     for p,x in t2.items():amplitudes['t2',p]=MixedBlock(x,tangent[0][1][p],tangent[1][1][p],np.zeros_like(x))
     result=mixed_ccsd_residual(wfn,electronic,overlap,local_df,fitted=fit)
     errors=[max(np.max(abs(x[k]),initial=0.) for x in [*result[0],*result[1].values()]) for k in (0,1,2)]
     if not np.isfinite(errors).all() or max(errors)>2.e-9:
         raise ValueError('Screened CCSD value/first residual response failed.')
+    if first_cache is not None:first_cache.entries.update(pending)
     return dict(electronic=electronic,fitting=fit,residual=result,fixed_residual=fixed,
                 tangent_u=tangent[0],tangent_v=tangent[1],base=(t1,t2),residual_errors=errors)

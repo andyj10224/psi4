@@ -376,3 +376,24 @@ The complete evidence is in `screened_molecular_results.json`, Hessian Section 2
 ## 2026-11-07 — Guarded public Hessian integration, interrupted validation
 
 The same native gradient functional is used by the guarded public Hessian, with no gradient equation or pair-weight changes. Hessian-only restrictions do not narrow gradient availability. The public wrapper retains one native gradient and restores temporary settings. Before the outage, the H2 equilibrium stretch agreed with native-gradient differences within 3.383e-6 cm^-1; H2 has no triples. Full public screened molecular comparisons remain unverified. See the recovery record for observed tests and failure history; gradient Section 10.14 records the follow-up. Revalidate this reconstructed tree before promotion.
+
+
+## 2026-11-07 — Profiling after the water Hessian run
+
+The `991427f` user run completed the optimized water/cc-pVTZ Hessian. Logged
+optimization gradient calls take approximately 14.6–15.0 seconds; the full job
+including the Hessian takes 1806.67 seconds. The current pass adds separate
+orbital-gradient wall times for local sources, the RHF adjoint, AO covectors
+and density transport, DF Fock panels, and atomic contractions. It does not
+change any gradient equation. Twelve deterministic old/new contractions agree
+exactly with mock native operators; fresh native comparisons remain required.
+
+The existing 16-column polarization path invokes four native DF J/K-gradient
+calls per panel, or sixteen calls for water's 58 AOs. A native bilinear
+cross-density derivative contraction and reuse of derivative-integral work is
+a concrete next optimization; it is not implemented here. Existing calls share
+PSIO units and must not be launched concurrently without redesigning scratch
+ownership. Thread/BLAS settings require timings rather than assuming twelve
+threads is faster for small pair spaces. Independent energy-difference checks
+in `gradient_audit.py` remain the next accuracy test; passing a Hessian's own
+invariants is insufficient to validate the analytic gradient.

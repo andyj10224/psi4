@@ -19,10 +19,18 @@ class MixedBlock(NamedTuple):
         return MixedBlock(*(part[index] for part in self))
 
 
+@lru_cache(maxsize=1024)
+def _mixed_contraction_path(subscripts, shapes):
+    """Reuse planning by shape; broadcast placeholders allocate no tensors."""
+    operands=[np.broadcast_to(np.array(0.),shape) for shape in shapes]
+    return tuple(np.einsum_path(subscripts,*operands,optimize=True)[0])
+
+
 def mixed_product(subscripts, *blocks):
     """Differentiate a local multilinear contraction in two directions."""
+    path=_mixed_contraction_path(subscripts,tuple(np.shape(block[0]) for block in blocks))
     def contraction(*parts):
-        return np.einsum(subscripts, *(block[i] for block,i in zip(blocks,parts)), optimize=True)
+        return np.einsum(subscripts, *(block[i] for block,i in zip(blocks,parts)), optimize=path)
     indices = [0]*len(blocks)
     value = contraction(*indices)
     u,v,uv = (np.zeros_like(value) for _ in range(3))

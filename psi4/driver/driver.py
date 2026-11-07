@@ -1425,10 +1425,10 @@ def hessian(name, **kwargs):
 
     :examples:
 
-    >>> # [1] Frequency calculation without thermochemical analysis
+    >>> # [1] Hessian only; use frequency('mp3') for vibrational modes
     >>> hessian('mp3')
 
-    >>> # [2] Frequency calc w/o thermo analysis getting the Hessian
+    >>> # [2] Hessian calculation getting the Hessian
     >>> #     in file, core.Matrix, and np.array forms
     >>> set hessian_write on
     >>> H, wfn = hessian('ccsd', return_wfn=True)
@@ -1534,9 +1534,11 @@ def hessian(name, **kwargs):
         # We have the desired method. Do it.
         logger.info(f"Compute hessian(): method={lowername}, basis={core.get_global_option('BASIS').lower()}, molecule={molecule.name()}, nre={'w/EFP' if hasattr(molecule, 'EFP') else molecule.nuclear_repulsion_energy()}")
         logger.debug("w/EFP" if hasattr(molecule, "EFP") else pp.pformat(molecule.to_dict(quiet=kwargs.get("quiet", True))))
-        core.print_out("""hessian() will perform analytic frequency computation.\n""")
         if wfn is None:
+            core.print_out("hessian() will compute the analytic Cartesian Hessian.\n")
             wfn = procedures['hessian'][lowername](lowername, molecule=molecule, **kwargs)
+        if not frequency_step:
+            core.print_out("hessian() returns force constants. Use frequency() to print vibrational frequencies.\n")
         logger.info(f"Return hessian(): {wfn.energy()}")
         logger.info(nppp(wfn.hessian().np))
 
