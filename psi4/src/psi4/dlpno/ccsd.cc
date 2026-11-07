@@ -3131,6 +3131,8 @@ double DLPNOCCSD::compute_dlpno_ccsd_energy() {
     set_scalar_variable("CCSD TOTAL ENERGY", e_ccsd_total);
     set_scalar_variable("CURRENT ENERGY", e_ccsd_total);
 
+    if (gradient_model_) set_scalar_variable("DLPNO RETAINED CCSD CORRELATION ENERGY", e_lccsd_);
+
     // psivars for LCCSD energy components
     set_scalar_variable("DLPNO LMP2 WEAK PAIR ENERGY", de_weak_);
     set_scalar_variable("DLPNO SC-LMP2 PAIR ENERGY", de_lmp2_eliminated_);

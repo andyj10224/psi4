@@ -1,5 +1,6 @@
 import Mathlib.LinearAlgebra.Matrix.DotProduct
 import Mathlib.Data.Real.Basic
+import Mathlib.Tactic.Abel
 import Mathlib.Tactic.Ring
 import Mathlib.Tactic.NoncommRing
 
@@ -18,6 +19,16 @@ theorem eliminate_mixed_ccsd {I : Type*} [Fintype I] (J W : Matrix I I ℝ)
     rw [dotProduct_mulVec, mulVec_transpose]
   rw [mixed, adjoint, dotProduct_neg, neg_dotProduct] at h
   exact (neg_inj.mp h).symm
+
+-- The native gradient Lambda has the combined CCSD and ordinary triples
+-- source. Subtract the triples-only solution in the same packed metric.
+theorem retained_adjoint {I : Type*} [Fintype I] (J W : Matrix I I ℝ)
+    (total triples ccSource tSource : I → ℝ)
+    (combined : J.transpose *ᵥ (W *ᵥ total) = -(W *ᵥ (ccSource + tSource)))
+    (triplesOnly : J.transpose *ᵥ (W *ᵥ triples) = -(W *ᵥ tSource)) :
+    J.transpose *ᵥ (W *ᵥ (total - triples)) = -(W *ᵥ ccSource) := by
+  rw [mulVec_sub, mulVec_sub, combined, triplesOnly, mulVec_add]
+  abel
 
 -- All fifteen coefficients of a bivariate polynomial of total degree ≤ 4.
 def quartic (c : ℕ → ℕ → ℝ) (s t : ℝ) : ℝ :=

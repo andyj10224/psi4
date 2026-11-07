@@ -682,4 +682,52 @@ and pull the residual back to the reference ordering using
  R_{ij}^{\rm aligned}&=\sigma_i\sigma_j Q_{ij}^{\mathsf T}R_{ab}^{\rm native} Q_{ij}.
 \end{align}
 If $a>b$ the unique native block is obtained by transposition.
+\section{Stationary retained-pair CCSD correlation curvature}
+Use the RHF gradient model, which promotes every surviving occupied pair
+to strong. Let $p=ij$, $i\le j$, $m_{ij}=2-\delta_{ij}$,
+$d_i^p=S_{p,ii}t_i$, and $L_{ij}=2K_{ij}-K_{ij}^{\mathsf T}$.
+Jiang Eq.~45 and the native singles Fock term then give
+\begin{equation}
+ E_{\rm ret}=2\sum_i (f_i^{ii})^{\mathsf T} t_i
+     +\sum_{i\le j}m_{ij}L_{ij}:
+          \big[t_{ij}+d_i^p(d_j^p)^{\mathsf T}\big].
+\end{equation}
+Here $(f_i^{ii})_a$ is the bare occupied--virtual Fock element. In a pair's own
+Coulomb fit $K_{ij}=q_i^{\mathsf T}J^{-1}q_j$ with raw occupied--virtual
+three-center blocks $q_i,q_j$; both project into the pair basis. Use the
+full inverse, as in the exchange term of the forward energy. Apply the
+mixed product rule above to the fit, transfers, Fock row and amplitudes.
+For $\tau_p=t_{ij}+d_i^p(d_j^p)^{\mathsf T}$ the pair part is
+\begin{equation}
+ (L_p:\tau_p)^{uv}=L_p^{uv}:\tau_p+L_p^u:\tau_p^v
+                   +L_p^v:\tau_p^u+L_p:\tau_p^{uv}.
+\end{equation}
+The energy multiplicity $m_{ij}$ differs from the residual metric $W$.
+
+Let $\eta_{\rm ret}$ be the CCSD amplitude covector in that metric and
+$\eta_{(T)}$ the previous triples source. The converged gradient Lambda obeys
+\begin{align}
+ J^{\dagger_W}\lambda_{\rm tot}&=-(\eta_{\rm ret}+\eta_{(T)}),&
+ J^{\dagger_W}\lambda_{(T)}&=-\eta_{(T)},\\
+ \lambda_{\rm ret}&=\lambda_{\rm tot}-\lambda_{(T)},&
+ J^{\dagger_W}\lambda_{\rm ret}&=-\eta_{\rm ret}.
+\end{align}
+For example, the independent-$ij$ doubles component of $\eta_{\rm ret}$
+is $2L_{ij}$, also on diagonal occupied pairs. Each ordered energy occurrence
+of $d_i^p(d_j^p)^{\mathsf T}$ contributes
+$S_{p,ii}^{\mathsf T} L_{ij}d_j^p$ to the $i$ singles source and
+$S_{p,jj}^{\mathsf T} L_{ij}^{\mathsf T}d_i^p$ to the $j$ source, in
+addition to the bare singles Fock term.
+On the same affine CCSD trial used in the triples column,
+\begin{equation}
+ H_{uv}^{\rm ret}=E_{\rm ret}^{uv}[\widehat t]
+               +\langle\lambda_{\rm ret}, C_{uv}\rangle_W .
+\end{equation}
+All first CCSD derivatives and mixed lower-order inputs are included;
+$\widehat t^{uv}=0$. The same $C_{uv}$ serves both correlation contributions.
+The reference benchmark for the complete-space retained block is a centered
+difference of $g_{\rm DF\text{-}CCSD}-g_{\rm DF\text{-}RHF}$. For the
+complete-space total longitudinal benchmark, add the analytic DF-RHF Hessian
+entry to $H_{uv}^{\rm ret}+H_{uv}^{(T)}$. At finite cutoffs the remaining
+local energy corrections must be differentiated separately.
 \end{document}

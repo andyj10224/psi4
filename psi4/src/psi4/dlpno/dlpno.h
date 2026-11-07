@@ -775,6 +775,7 @@ class PSI_API DLPNOCCSD : public DLPNO {
    public:
     using PairBlocks = std::map<std::pair<int,int>, SharedMatrix>;
     std::pair<std::vector<SharedMatrix>, PairBlocks> triples_ccsd_source() const;
+    std::pair<std::vector<SharedMatrix>, PairBlocks> gradient_ccsd_lambda() const;
     std::pair<std::vector<SharedMatrix>, PairBlocks> ccsd_residual_at(
         const std::vector<SharedMatrix>& singles, const PairBlocks& doubles);
     std::pair<std::vector<SharedMatrix>, PairBlocks> ccsd_amplitude_action(

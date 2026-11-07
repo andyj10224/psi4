@@ -1,4 +1,4 @@
-"""Water stretch column of the ordinary (T) block on a fixed local branch.
+"""Water stretch column of retained CCSD and ordinary (T) on a fixed local branch.
 
 The CCSD-stationary route eliminates mixed T1/T2 and builds mixed TNO frames.
 Remaining mixed lower-order electronic inputs come from aligned displaced states.
@@ -12,7 +12,9 @@ import numpy as np
 import psi4
 from scipy.optimize import linear_sum_assignment
 
-from lmp2_tangent import calculation, check
+from lmp2_tangent import calculation, check, blocks
+from psi4.driver.procrouting.response.dlpno_orbital import pair_exchange_tangent
+from psi4.driver.procrouting.response.dlpno_ccsd_curvature import RetainedCCSDCurvature, project_retained_ccsd_energy
 from first_pno import raw
 from psi4.driver.procrouting.response.dlpno_triples_curvature import MixedBlock, mixed_product, project_mixed_triples_row, mixed_tno_frame
 from psi4.driver.procrouting.response.dlpno_ccsd_response import TriplesCCSDAdjoint, transported_ccsd_residual, semi_analytic_ccsd_mixed_source, ccsd_weighted_dot
@@ -132,7 +134,7 @@ def mixed_coefficients(data,u,v,h):
     return (difference(lambda x:x.occupied_fock),row,lambda r,q:difference(lambda x:x.overlaps[r,q])), lambda key:difference(lambda x:x.electronic[key])
 
 
-def molecular_inputs(w,rows,u,v,lower,lower_u,lower_v,lower_uv,*,trial_ccsd=False):
+def molecular_blocks(w,u,v,lower,lower_u,lower_v,lower_uv,trial_ccsd):
     ref = w.reference_wavefunction()
     mints = psi4.core.MintsHelper(ref)
     au,xu = divmod(u,3)
@@ -155,7 +157,6 @@ def molecular_inputs(w,rows,u,v,lower,lower_u,lower_v,lower_uv,*,trial_ccsd=Fals
                 np.testing.assert_allclose(tno.v,lower_v[key],atol=2.e-8,rtol=0.)
                 return tno
         return MixedBlock(lower[key],lower_u[key],lower_v[key],lower_uv(key))
-    lmo,fock = electronic('lmo'),electronic('fock')
     metric,q = raw(ref,ref.get_basisset('DF_BASIS_CC'))
     def df1(atom,xyz):
         m = mints.ao_metric_deriv1(atom,'DF_BASIS_CC')[xyz].np
@@ -171,6 +172,12 @@ def molecular_inputs(w,rows,u,v,lower,lower_u,lower_v,lower_uv,*,trial_ccsd=Fals
         m2,q2 = psi4.core.dlpno_df_mixed_integrals(ref,'DF_BASIS_CC',indices,ao_ids,u,v)
         ix = np.ix_(indices,indices)
         return MixedBlock(metric[ix],mu[ix],mv[ix],m2.np), MixedBlock(q[indices],qu[indices],qv[indices],q2.np)
+    return electronic,overlap,local_df
+
+
+def molecular_inputs(w,rows,u,v,lower,lower_u,lower_v,lower_uv,*,trial_ccsd=False):
+    electronic,overlap,local_df = molecular_blocks(w,u,v,lower,lower_u,lower_v,lower_uv,trial_ccsd)
+    lmo,fock = electronic('lmo'),electronic('fock')
     def ordered(a,b):
         t = electronic(('t2',tuple(sorted((a,b)))))
         return t if a <= b else MixedBlock(*(x.T for x in t))
@@ -186,6 +193,95 @@ def molecular_inputs(w,rows,u,v,lower,lower_u,lower_v,lower_uv,*,trial_ccsd=Fals
     def occupied(i,j):
         return mixed_product('m,mn,n->',lmo.slice((slice(None),i)),fock,lmo.slice((slice(None),j))).uv
     return occupied,mixed_row,edge
+
+
+def retained_inputs(w,u,v,base,lower_u,lower_v,lower_uv,affine):
+    electronic,s,df = molecular_blocks(w,u,v,base,lower_u,lower_v,lower_uv,affine)
+    lmo = electronic('lmo')
+    pairs = {k[1]:electronic(k) for k in base if isinstance(k,tuple) and k[0]=='pno'}
+    singles = [electronic(('t1',i)) for i in range(lmo.value.shape[1])]
+    doubles = {p:electronic(('t2',p)) for p in pairs}
+    def pair_fit(p):
+        i,j = p
+        _,_,state = psi4.core.dlpno_ccsd_df_pair_state(w,i,j)
+        m,q = df(tuple(state['AUX'].np[:,0].astype(int)))
+        def fitted(a):
+            return mixed_product('m,Qmn,nb->Qb',lmo.slice((slice(None),a)),q,pairs[p])
+        return m,fitted(i),fitted(j)
+    return lmo,pairs,s,electronic('fock'),singles,doubles,pair_fit
+
+
+def retained_gradient(w,u,lower):
+    """Independent first derivative of the ordered native energy on the relaxed path."""
+    ref = w.reference_wavefunction()
+    atom,xyz = divmod(u,3)
+    mints = psi4.core.MintsHelper(ref)
+    s,ds = ref.S().np,mints.ao_oei_deriv1('OVERLAP',atom)[xyz].np
+    m,q = raw(ref,ref.get_basisset('DF_BASIS_CC'))
+    dm = mints.ao_metric_deriv1(atom,'DF_BASIS_CC')[xyz].np
+    dq = mints.ao_3center_deriv1(atom,'DF_BASIS_CC')[xyz].np
+    l,dl = w.variable('DLPNO RESPONSE ACTIVE LMOS').np,lower['lmo']
+    f,df = ref.Fa().np,lower['fock']
+    frames,t2 = blocks(w,'FINAL_FRAME'),blocks(w,'CCSD_DOUBLES')
+    t1 = []
+    gradient = 0.
+    for i in range(l.shape[1]):
+        dom,ts,_ = psi4.core.dlpno_ccsd_df_pair_state(w,i,i)
+        t = ts[dom.index(i)].np.ravel()
+        t1.append(t)
+        y,dy = frames[i,i],lower['pno',(i,i)]
+        fov = l[:,i]@f@y
+        dfov = dl[:,i]@f@y + l[:,i]@df@y + l[:,i]@f@dy
+        gradient += 2*(dfov@t + fov@lower['t1',i])
+    for i,j in frames:
+        p = i,j
+        y,dy = frames[p],lower['pno',p]
+        _,_,state = psi4.core.dlpno_ccsd_df_pair_state(w,i,j)
+        aux = state['AUX'].np[:,0].astype(int)
+        def ov(a):
+            return l[:,a]@q[aux]@y, dl[:,a]@q[aux]@y+l[:,a]@dq[aux]@y+l[:,a]@q[aux]@dy
+        ix = np.ix_(aux,aux)
+        k,dk = pair_exchange_tangent(m[ix],dm[ix],*ov(i),*ov(j))
+        def single(a):
+            z,dz = frames[a,a],lower['pno',(a,a)]
+            ov = y.T@s@z
+            dov = dy.T@s@z+y.T@ds@z+y.T@s@dz
+            return ov@t1[a],dov@t1[a]+ov@lower['t1',a]
+        ti,dti = single(i)
+        tj,dtj = single(j)
+        tau = t2[p]+np.outer(ti,tj)
+        dtau = lower['t2',p]+np.outer(dti,tj)+np.outer(ti,dtj)
+        gradient += (1 if i==j else 2)*(np.vdot(tau,2*dk-dk.T)+np.vdot(dtau,2*k-k.T))
+    return gradient
+
+
+def check_retained_adjoint(w,adjoint,base):
+    """Independently differentiate the retained energy w.r.t. the packed t1/t2."""
+    ref = w.reference_wavefunction()
+    metric,q = raw(ref,ref.get_basisset('DF_BASIS_CC'))
+    l,f,s = base['lmo'],base['fock'],ref.S().np
+    one = [2*l[:,i]@f@base['pno',(i,i)] for i in range(l.shape[1])]
+    two = {}
+    for p in adjoint.doubles:
+        i,j = p
+        y = base['pno',p]
+        _,_,state = psi4.core.dlpno_ccsd_df_pair_state(w,i,j)
+        aux = state['AUX'].np[:,0].astype(int)
+        qi,qj = l[:,i]@q[aux]@y,l[:,j]@q[aux]@y
+        k = np.linalg.solve(metric[np.ix_(aux,aux)],qi).T@qj
+        spin = 2*k-k.T
+        si,sj = y.T@s@base['pno',(i,i)],y.T@s@base['pno',(j,j)]
+        mult = 1 if i==j else 2
+        one[i] += mult*si.T@spin@sj@base['t1',j]
+        one[j] += mult*sj.T@spin.T@si@base['t1',i]
+        two[p] = 2*spin
+    matrix = psi4.core.Matrix.from_array
+    j1,j2 = psi4.core.dlpno_ccsd_amplitude_action(w,[matrix(x[:,None]) for x in adjoint.singles],
+                                                  {p:matrix(x) for p,x in adjoint.doubles.items()},True)
+    err = max([np.max(abs(x.np.ravel()+y)) for x,y in zip(j1,one)]
+              + [np.max(abs(j2[p].np+y)) for p,y in two.items()])
+    print('retained CCSD adjoint residual',err,flush=True)
+    assert err < 2.e-8
 
 
 def trial_tno_frame(triplet, parent, metric, pair_frames, doubles, reference_frame, reference_metric):
@@ -274,7 +370,7 @@ def check_residual_replay(w, state):
     assert max(np.max(abs(x)) for x in [*base1,*base2.values()]) < 1.e-8
 
 
-def benchmark(frozen, coordinates=range(9)):
+def benchmark(frozen, coordinates=range(9), *, complete_spaces=False, coarse_step=.002):
     psi4.set_options({'freeze_core':frozen})
     w = calculation(BASE)
     rows = psi4.core.dlpno_triples_response_state(w)
@@ -283,12 +379,19 @@ def benchmark(frozen, coordinates=range(9)):
     column_row = check(frozen,row_at=divmod(v,3),reference=w,lower_order=lower_v)
     column = TriplesHessianColumn(column_row)
     ccsd_adjoint = TriplesCCSDAdjoint(w)
+    retained = RetainedCCSDCurvature(w,ccsd_adjoint)
     eta1,eta2 = psi4.core.dlpno_triples_ccsd_source(w)
     eta1,eta2 = [x.np.ravel() for x in eta1], {p:x.np for p,x in eta2.items()}
 
     @lru_cache(maxsize=4)
     def model_at(delta):
-        return calculation(BASE+np.array(delta).reshape(3,3)) if any(delta) else w
+        model = calculation(BASE+np.array(delta).reshape(3,3)) if any(delta) else w
+        if complete_spaces:
+            corrections = ('DLPNO LMP2 WEAK PAIR ENERGY','DLPNO SC-LMP2 PAIR ENERGY',
+                           'DLPNO DIPOLE ENERGY','DLPNO PNO TRUNCATION ERROR')
+            for key in corrections:
+                np.testing.assert_allclose(model.variable(key),0.,atol=1.e-10,rtol=0.,err_msg=key)
+        return model
     @lru_cache(None)
     def data(delta):
         return aligned_inputs(model_at(delta),w,rows)
@@ -298,6 +401,7 @@ def benchmark(frozen, coordinates=range(9)):
         d[v] = h
         return calculation(BASE+d.reshape(3,3))
     check_residual_replay(w,data((0.,)*9))
+    check_retained_adjoint(w,retained,data((0.,)*9).electronic)
     results = []
     for u in coordinates:
         lower_u = lower_v if u == v else {}
@@ -307,7 +411,8 @@ def benchmark(frozen, coordinates=range(9)):
         np.testing.assert_allclose(relax,reverse,rtol=0.,atol=2.e-11)
         elements,stationary,reference,tno_errors = [],[],[],[]
         constraints,source_errors = [],[]
-        for h in (.002,.001):
+        retained_values,retained_direct,retained_reference = [],[],[]
+        for h in (coarse_step,coarse_step/2):
             projected,lower_uv = mixed_coefficients(data,u,v,h)
             # Use analytic AO and DF derivatives with lower-order mixed response
             # from the native displaced states. Separately check the result
@@ -341,8 +446,19 @@ def benchmark(frozen, coordinates=range(9)):
             adjoint_value = column.ccsd_stationary_element(row,*trial,ccsd_adjoint,residual)
             stationary.append(adjoint_value)
             print('CCSD adjoint correction',frozen,u,h,ccsd_adjoint.correction(*residual),adjoint_value-element,flush=True)
-            derivatives = [stationary_gradient(check(frozen,row_at=divmod(u,3),reference=along_column(k*h)))
-                           for k in (1,-1)]
+            base = data((0.,)*9).electronic
+            direct_cc = project_retained_ccsd_energy(*retained_inputs(w,u,v,base,lower_u,lower_v,lower_uv,False))
+            affine_inputs = retained_inputs(w,u,v,base,lower_u,lower_v,remaining_mixed,True)
+            retained_values.append(retained.element(*affine_inputs,residual))
+            retained_direct.append(direct_cc.uv)
+            derivatives,cc_gradients = [],[]
+            for sign in (1,-1):
+                model = along_column(sign*h)
+                moved = {}
+                d = check(frozen,row_at=divmod(u,3),reference=model,lower_order=moved)
+                derivatives.append(stationary_gradient(d))
+                cc_gradients.append(retained_gradient(model,u,moved))
+            retained_reference.append((cc_gradients[0]-cc_gradients[1])/(2*h))
             reference.append((derivatives[0]-derivatives[1])/(2*h))
         source_error = abs(4*source_errors[1]-source_errors[0])/3
         print('triples-only adjoint contraction error',frozen,u,source_error,flush=True)
@@ -357,16 +473,21 @@ def benchmark(frozen, coordinates=range(9)):
         np.testing.assert_allclose(estimated,previous,atol=2.e-7,rtol=0.)
         numerical = (4*reference[1]-reference[0])/3
         print('triples curvature',frozen,u,relax,estimated,numerical,estimated-numerical,flush=True)
-        results.append((relax,estimated,numerical))
+        cc,cc_direct,cc_reference = ((4*values[1]-values[0])/3 for values in
+                                     (retained_values,retained_direct,retained_reference))
+        print('retained CCSD curvature',frozen,u,cc,cc_direct,cc_reference,cc-cc_reference,flush=True)
+        np.testing.assert_allclose(cc,[cc_direct,cc_reference],atol=2.e-6,rtol=0.)
+        results.append((relax,estimated,numerical,cc,cc_reference))
     result = np.asarray(results)
     np.testing.assert_allclose(result[:,1],result[:,2],rtol=0.,atol=2.e-7)
     if list(coordinates) == list(range(9)):
+        np.testing.assert_allclose(result[:,3].reshape(3,3).sum(axis=0),0.,rtol=0.,atol=2.e-6)
         np.testing.assert_allclose(result[:,2].reshape(3,3).sum(axis=0),0.,rtol=0.,atol=2.e-6)
     return result
 
 
-def canonical_reference(frozen):
-    """Isolate the canonical (T) contribution on the same stretch."""
+def canonical_correlation_columns(frozen):
+    """Difference analytic gradients to isolate the canonical CCSD and (T) blocks."""
     psi4.set_options({'freeze_core':frozen,'cc_type':'df'})
     estimates = []
     for h in (.004,.002):
@@ -378,12 +499,18 @@ def canonical_reference(frozen):
             def grad(method):
                 psi4.core.clean()
                 return psi4.gradient(method,molecule=mol,dertype=1).np.copy()
-            grads.append(grad('ccsd(t)')-grad('ccsd'))
+            ccsd = grad('ccsd')
+            total = grad('ccsd(t)')
+            grads.append(np.stack((total-ccsd,ccsd-grad('scf'),total)))
         estimates.append((grads[0]-grads[1])/(2*h))
-    column = (4*estimates[-1]-estimates[-2])/3
-    np.testing.assert_allclose(column.sum(axis=0),0.,atol=1.e-8,rtol=0.)
-    print('canonical (T) column',frozen,column.ravel(),flush=True)
-    return column
+    columns = (4*estimates[-1]-estimates[-2])/3
+    np.testing.assert_allclose(columns.sum(axis=1),0.,atol=1.e-8,rtol=0.)
+    print('canonical triples, CCSD correlation and total columns',frozen,columns,flush=True)
+    return columns
+
+
+def canonical_reference(frozen):
+    return canonical_correlation_columns(frozen)[0]
 
 
 if __name__ == '__main__':
@@ -402,12 +529,22 @@ if __name__ == '__main__':
     canonical_columns = {}
     for frozen in (True,False):
         local = benchmark(frozen)
-        canonical = canonical_columns[frozen] = canonical_reference(frozen)
+        tcol,cccol,_ = canonical_columns[frozen] = canonical_correlation_columns(frozen)
         print('max local/canonical (T) difference',frozen,
-              np.max(abs(local[:,1]-canonical.ravel())),flush=True)
+              np.max(abs(local[:,1]-tcol.ravel())),flush=True)
+        print('max retained/canonical CCSD difference',frozen,
+              np.max(abs(local[:,3]-cccol.ravel())),flush=True)
+    # Check the displacement sensitivity of the all-electron O x and H1 z entries.
+    benchmark(False,(0,5),coarse_step=.003)
     # Keep the nonzero pair cutoff. On this molecule it retains all pairs.
     psi4.set_options(dict(t_cut_pno=0.,t_cut_pno_mp2=0.,t_cut_tno=0.,t_cut_do_triples=0.,
                           t_cut_mkn_triples=0.,f_cut=0.,f_cut_t=0.))
     for frozen in (True,False):
-        result = benchmark(frozen,(5,))
-        np.testing.assert_allclose(result[0,1],canonical_columns[frozen][1,2],atol=2.e-7,rtol=0.)
+        output_rows = (1,5)  # O y and H1 z
+        result = benchmark(frozen,output_rows,complete_spaces=True)
+        can = canonical_columns[frozen].reshape(3,9)[:,output_rows].T
+        np.testing.assert_allclose(result[:,[1,3]],can[:,:2],atol=2.e-7,rtol=0.)
+        hf = psi4.hessian('scf',molecule=molecule(BASE),dertype=2).np[list(output_rows),5]
+        assembled = hf + result[:,3] + result[:,1]
+        print('complete-space total components',frozen,assembled,can[:,2],assembled-can[:,2],flush=True)
+        np.testing.assert_allclose(assembled,can[:,2],atol=2.e-7,rtol=0.)

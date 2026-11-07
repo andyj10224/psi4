@@ -159,17 +159,32 @@ std::vector<SharedMatrix> DLPNOCCSD::ordered_ccsd_blocks(const std::vector<Share
     return x2;
 }
 
+namespace {
+std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> unique_ccsd_state(
+    const std::vector<SharedMatrix>& singles, const std::vector<SharedMatrix>& doubles,
+    const std::vector<std::pair<int,int>>& pairs) {
+    std::vector<SharedMatrix> one;
+    DLPNOCCSD::PairBlocks two;
+    for (const auto& block : singles) one.push_back(block->clone());
+    for (size_t p = 0; p < pairs.size(); ++p) {
+        const auto ij = pairs[p];
+        if (ij.first <= ij.second) two[ij] = doubles[p]->clone();
+    }
+    return {one,two};
+}
+}  // namespace
+
 std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> DLPNOCCSD::triples_ccsd_source() const {
     if (!gradient_model_ || triples_source1_.size() != T_ia_.size() || triples_source2_.size() != ij_to_i_j_.size())
         throw PSIEXCEPTION("Expected the converged ordinary triples CCSD source.");
-    std::vector<SharedMatrix> one;
-    PairBlocks two;
-    for (const auto& block : triples_source1_) one.push_back(block->clone());
-    for (size_t p = 0; p < triples_source2_.size(); ++p) {
-        const auto ij = ij_to_i_j_[p];
-        if (ij.first <= ij.second) two[ij] = triples_source2_[p]->clone();
-    }
-    return {one,two};
+    return unique_ccsd_state(triples_source1_,triples_source2_,ij_to_i_j_);
+}
+
+std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> DLPNOCCSD::gradient_ccsd_lambda() const {
+    if (!gradient_model_ || !lambda_solved_ || lambda_ia_.size() != T_ia_.size() ||
+        lambda_iajb_.size() != ij_to_i_j_.size())
+        throw PSIEXCEPTION("Expected the converged RHF gradient-model CCSD(T) multipliers.");
+    return unique_ccsd_state(lambda_ia_,lambda_iajb_,ij_to_i_j_);
 }
 
 std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> DLPNOCCSD::ccsd_residual_at(

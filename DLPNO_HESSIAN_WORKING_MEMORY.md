@@ -206,3 +206,31 @@ Lean 4.16.0 with mathlib v4.16.0 checked the weighted mixed-amplitude eliminatio
 Across the nine Cartesian output rows at the working cutoffs, replacing direct mixed-amplitude inputs changed the column by at most 1.02e-10 Eh/bohr² with frozen core and 3.98e-9 Eh/bohr² with all electrons. Maximum differences from independently differenced local stationary (T) gradients were 1.79e-9 and 1.54e-8 Eh/bohr². At H1 z, the adjoint correction agreed with contracting the native (T) source against displaced mixed CCSD amplitudes within 4.95e-12 and 6.45e-11 Eh/bohr². The residual replay test checks that the native amplitudes and dressed pair intermediates are restored.
 
 Native build, dfccsd-t-grad1, dlpno-grad-model, dlpnocc-1, the previous coupled-response water diagnostic, the new water stationarity checks and the formal algebra checks passed. The equation record compiled in two LaTeX passes.
+
+## Stationary retained-pair CCSD correlation curvature
+
+Implemented the mixed curvature of the retained RHF CCSD energy used by Jiang Eq. 45 and the native singles Fock term. Each independent pair carries its ordered-energy multiplicity (one for ii, two for ij). The product rule includes moving diagonal-to-pair singles transfers, the bare Fock row, and the spin-adapted exchange from the original full local Coulomb solve. The kernel checks its reference energy against the native retained CCSD correlation energy. This quantity is separate from the published CCSD correlation energy, which includes local energy corrections. [Energy and curvature kernel](psi4/driver/procrouting/response/dlpno_ccsd_curvature.py) · [Native forward energy](psi4/src/psi4/dlpno/ccsd.cc) · [Equations](DLPNO_HESSIAN_EQUATIONS.tex)
+
+The converged native gradient multiplier is sourced by retained CCSD plus ordinary (T). Subtract the previously solved triples-only CCSD multiplier in the same pair metric to obtain the retained-only multiplier. No extra solve is required when the triples multiplier is available. Contract this multiplier against the same mixed residual as the triples column. The CCSD energy receives only reference amplitudes and first tangents on the affine path. A direct water check differentiated the energy with respect to singles and doubles independently: maximum native weighted-adjoint residuals were 1.40e-12 (frozen O 1s) and 5.67e-13 (all-electron) at working cutoffs. Lean checked the multiplier subtraction identity in the weighted coordinates. [Native Lambda accessor](psi4/src/psi4/dlpno/ccsd_gradient_lambda.cc) · [Lean proof](tests/dlpno-hessian-model/CCSDStationarity.lean)
+
+For the water/cc-pVDZ H1 z column, checked all nine Cartesian outputs on the occupation-selected Boys branch with positive pair cutoffs. Displacements were 0.002 and 0.001 bohr with Richardson extrapolation. The independent local reference differences the analytic first derivative of the ordered retained energy. Maximum absolute errors across the nine outputs (Eh/bohr²):
+
+| Core | Against direct mixed-amplitude construction | Against differences of local retained gradients |
+| --- | ---: | ---: |
+| Frozen O 1s | 2.80e-10 | 3.93e-8 |
+| All-electron | 1.35e-8 | 6.86e-7 |
+
+The largest all-electron local-gradient difference was in the symmetry-zero O x component. The reported column was not symmetrized. A sparse-pair algebra check with rectangular transfers and nonzero singles/Fock terms agreed with an independent ordered-pair calculation to 3.71e-10 absolute. [Water diagnostic](tests/dlpno-hessian-model/triples_curvature.py) · [Sparse pair check](tests/dlpno-hessian-model/retained_ccsd_energy.py)
+
+| Core | Working-cutoff retained H1 z | Complete-space retained H1 z | Canonical DF-CCSD correlation H1 z |
+| --- | ---: | ---: | ---: |
+| Frozen O 1s | −0.00025572698 | −0.00233355588 | −0.00233350537 |
+| All-electron | −0.00127063922 | −0.00332875547 | −0.00332867762 |
+
+Entries are Eh/bohr². The canonical reference differences analytic DF-CCSD minus DF-RHF gradients. In the complete-space benchmark, both PNO thresholds and the TNO threshold are zero and all water pairs survive the positive 1e-9 pair cutoff. Adding the analytic RHF Hessian and the previously verified triples contribution gave longitudinal total curvatures 0.57108383457 and 0.57007187180 (frozen and all-electron). Direct differences of canonical analytic DF-CCSD(T) gradients gave 0.57108388627 and 0.57007195032. The reference and sampled geometries in this check have zero local energy corrections to the test tolerance.
+
+At working cutoffs, the native PNO truncation energy at the reference was −0.010064689976 Eh (frozen) and −0.010251784717 Eh (all-electron); the weak, eliminated-pair and dipole energies were zero. Its curvature is the next missing energy term for this fixture. Screened fit delivery, mixed lower-order electronic inputs, system-size scaling and the remaining Hessian columns remain open.
+
+A displacement-window check at working cutoffs gave an all-electron O x discrepancy of 7.29e-9 and an H1 z discrepancy of 1.18e-7 Eh/bohr² with 0.003/0.0015 bohr steps. An exploratory 0.004/0.002 bohr all-electron comparison failed the existing Boys stationarity check at a displaced geometry and was excluded. The primary nine-row comparison uses the same 0.002/0.001 bohr steps for both core choices. At those steps, maximum absolute differences between the working-cutoff retained and canonical CCSD correlation columns were 2.08e-3 (frozen) and 2.06e-3 (all-electron) Eh/bohr². The retained-pair observable and the fully corrected energy must be distinguished at finite cutoffs.
+
+Also assembled the complete-space mixed entry (O y, H1 z) with the analytic RHF Hessian. Differences from direct canonical DF-CCSD(T) gradient differences were 5.97e-10 (frozen) and 2.68e-8 (all-electron) Eh/bohr². For the longitudinal entry the corresponding differences were 5.17e-8 and 7.86e-8 Eh/bohr². The native build, three regressions (dfccsd-t-grad1, dlpno-grad-model, dlpnocc-1), sparse algebra check, water working-cutoff columns and both complete-space core cases passed. Lean checked the weighted-adjoint subtraction, and the LaTeX equation record compiled.

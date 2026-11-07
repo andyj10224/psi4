@@ -60,6 +60,12 @@ std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> triples_ccsd_source(
     return local->triples_ccsd_source();
 }
 
+std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> gradient_ccsd_lambda(SharedWavefunction wfn) {
+    auto local = std::dynamic_pointer_cast<DLPNOCCSD_T>(wfn);
+    if (!local) throw PSIEXCEPTION("Expected an RHF DLPNO gradient-model wavefunction.");
+    return local->gradient_ccsd_lambda();
+}
+
 std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> ccsd_residual_at(SharedWavefunction wfn,
     const std::vector<SharedMatrix>& singles, const DLPNOCCSD::PairBlocks& doubles) {
     auto local = std::dynamic_pointer_cast<DLPNOCCSD_T>(wfn);
