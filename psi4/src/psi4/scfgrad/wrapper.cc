@@ -56,6 +56,13 @@ SharedMatrix rhf_occupied_tangent(std::shared_ptr<scf::HF> ref, SharedMatrix dir
     return derivatives.occupied_tangent(direction);
 }
 
+std::vector<SharedMatrix> rhf_occupied_tangents(std::shared_ptr<scf::HF> ref) {
+    auto rhf = std::dynamic_pointer_cast<scf::RHF>(ref);
+    if (!rhf) throw PSIEXCEPTION("RHF reference required for occupied nuclear response.");
+    RSCFDeriv derivatives(rhf, Process::environment.options);
+    return derivatives.occupied_tangents();
+}
+
 SharedMatrix scfhess(std::shared_ptr<scf::HF> ref_wfn, Options &options)
 {
     tstart();

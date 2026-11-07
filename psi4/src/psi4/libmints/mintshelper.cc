@@ -154,7 +154,10 @@ MintsHelper::MintsHelper(std::shared_ptr<BasisSet> basis,
 }
 
 MintsHelper::MintsHelper(std::shared_ptr<Wavefunction> wavefunction)
-    : options_(wavefunction->options()), print_(wavefunction->get_print()) {
+    : MintsHelper(wavefunction, wavefunction->get_print()) {}
+
+MintsHelper::MintsHelper(std::shared_ptr<Wavefunction> wavefunction, int print)
+    : options_(wavefunction->options()), print_(print) {
     init_helper(wavefunction);
 }
 

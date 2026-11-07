@@ -86,6 +86,17 @@ SharedMatrix RSCFDeriv::hessian_response() {
 }
 
 SharedMatrix RSCFDeriv::occupied_tangent(const SharedMatrix& direction) {
+    return occupied_tangent_impl(direction, nullptr);
+}
+
+std::vector<SharedMatrix> RSCFDeriv::occupied_tangents() {
+    std::vector<SharedMatrix> all;
+    // A non-null direction requests the tangent path, without the Hessian zipper.
+    occupied_tangent_impl(std::make_shared<Matrix>(molecule_->natom(), 3), &all);
+    return all;
+}
+
+SharedMatrix RSCFDeriv::occupied_tangent_impl(const SharedMatrix& direction, std::vector<SharedMatrix>* all) {
     if (!direction || direction->nirrep() != 1 || direction->nrow() != molecule_->natom() || direction->ncol() != 3)
         throw PSIEXCEPTION("Expected a natom by 3 RHF nuclear displacement.");
     const auto scf_type = options_.get_str("SCF_TYPE");
@@ -95,7 +106,7 @@ SharedMatrix RSCFDeriv::occupied_tangent(const SharedMatrix& direction) {
     if (psio_->open_check(PSIF_HESS)) throw PSIEXCEPTION("SCF Hessian scratch file is already in use.");
     auto saved_jk = rhf_wfn_->jk();
     try {
-        auto tangent = response_impl(direction);
+        auto tangent = response_impl(direction, all);
         rhf_wfn_->set_jk(saved_jk);
         return tangent;
     } catch (...) {
@@ -105,7 +116,7 @@ SharedMatrix RSCFDeriv::occupied_tangent(const SharedMatrix& direction) {
     }
 }
 
-SharedMatrix RSCFDeriv::response_impl(const SharedMatrix& direction) {
+SharedMatrix RSCFDeriv::response_impl(const SharedMatrix& direction, std::vector<SharedMatrix>* all) {
     // => Control Parameters <= //
 
     std::shared_ptr<Vector> eps = epsilon_a_subset("AO", "ALL");
@@ -2406,12 +2417,14 @@ SharedMatrix RSCFDeriv::response_impl(const SharedMatrix& direction) {
     jk.reset();
 
     if (direction) {
-        auto contract = [&](const char* key) {
+        auto contract = [&](const char* key, int coordinate) {
             auto term = std::make_shared<Matrix>(nmo, nocc);
             auto sum = std::make_shared<Matrix>(nmo, nocc);
             const size_t bytes = size_t(nmo) * nocc * sizeof(double);
-            for (int a = 0; a < 3 * natom; ++a) {
-                const double weight = (*direction)(a / 3, a % 3);
+            const int first = coordinate < 0 ? 0 : coordinate;
+            const int last = coordinate < 0 ? 3 * natom : coordinate + 1;
+            for (int a = first; a < last; ++a) {
+                const double weight = coordinate < 0 ? (*direction)(a / 3, a % 3) : 1.;
                 if (weight == 0.) continue;
                 auto address = psio_get_address(PSIO_ZERO, a * bytes);
                 psio_->read(PSIF_HESS, key, (char*)term->pointer()[0], bytes, address, &address);
@@ -2419,24 +2432,36 @@ SharedMatrix RSCFDeriv::response_impl(const SharedMatrix& direction) {
             }
             return sum;
         };
-        auto U = contract("Upi^A");
-        const int nc = frzcpi_[0];
-        if (nc && nc < nocc) {
-            auto F = contract("Fpi^A");
-            F->add(contract("Qpi^A"));
-            for (int c = 0; c < nc; ++c) {
-                for (int i = nc; i < nocc; ++i) {
-                    const double gap = eop[i] - eop[c];
-                    if (std::abs(gap) < 1.e-10) throw PSIEXCEPTION("Unresolved frozen-active orbital gap.");
-                    // Canonicalize the frozen-active block of the moving Fock matrix.
-                    const double k = -((*F)(i, c) + eop[i] * (*U)(i, c) + eop[c] * (*U)(c, i)) / gap;
-                    (*U)(i, c) += k;
-                    (*U)(c, i) -= k;
+        // All first-order CPHF solutions are already on disk. Export them from
+        // this one solve; preserve exactly the directional frozen-core gauge.
+        auto export_coordinate = [&](int coordinate) {
+            auto U = contract("Upi^A", coordinate);
+            const int nc = frzcpi_[0];
+            if (nc && nc < nocc) {
+                auto F = contract("Fpi^A", coordinate);
+                F->add(contract("Qpi^A", coordinate));
+                for (int c = 0; c < nc; ++c) {
+                    for (int i = nc; i < nocc; ++i) {
+                        const double gap = eop[i] - eop[c];
+                        if (std::abs(gap) < 1.e-10) throw PSIEXCEPTION("Unresolved frozen-active orbital gap.");
+                        // Canonicalize the frozen-active block of the moving Fock matrix.
+                        const double k = -((*F)(i, c) + eop[i] * (*U)(i, c) + eop[c] * (*U)(c, i)) / gap;
+                        (*U)(i, c) += k;
+                        (*U)(c, i) -= k;
+                    }
                 }
             }
+            return linalg::doublet(C, U);
+        };
+        SharedMatrix result;
+        if (all) {
+            all->reserve(3 * natom);
+            for (int a = 0; a < 3 * natom; ++a) all->push_back(export_coordinate(a));
+        } else {
+            result = export_coordinate(-1);
         }
         psio_->close(PSIF_HESS, 0);
-        return linalg::doublet(C, U);
+        return result;
     }
 
     // => Zipper <= //

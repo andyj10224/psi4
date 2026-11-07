@@ -35,6 +35,8 @@
 #include "psi4/libpsi4util/PsiOutStream.h"
 #include <algorithm>
 #include <cmath>
+#include <exception>
+#include "psi4/libpsi4util/process.h"
 
 namespace psi {
 namespace dlpno {
@@ -64,8 +66,18 @@ std::vector<SharedMatrix> DLPNOCCSD::lmp2_apply(const std::vector<SharedMatrix>&
         auto ordered = x;
         for (int p = 0; p < x.size(); ++p)
             if (ij_to_i_j_[p].first > ij_to_i_j_[p].second) ordered[p] = x[ij_to_ji_[p]]->transpose();
-        for (int p = 0; p < x.size(); ++p)
-            if (x[p]->nrow()) y[p] = lmp2_right_row(p, state.edges, ordered, state.eps[p], y[p]);
+        // Gather rows read the same amplitudes but own separate output blocks.
+        // The transpose below scatters into shared pairs and stays serial.
+        std::vector<std::exception_ptr> failures(x.size());
+        [[maybe_unused]] const int threads = std::max(1, std::min(int(x.size()), Process::environment.get_n_threads()));
+#pragma omp parallel for schedule(dynamic) num_threads(threads)
+        for (int p = 0; p < int(x.size()); ++p) {
+            try {
+                if (x[p]->nrow()) y[p] = lmp2_right_row(p, state.edges, ordered, state.eps[p], y[p]);
+            } catch (...) { failures[p] = std::current_exception(); }
+        }
+        for (const auto& failure : failures)
+            if (failure) std::rethrow_exception(failure);
     } else {
         for (int p = 0; p < x.size(); ++p) {
             const auto [i, j] = ij_to_i_j_[p];

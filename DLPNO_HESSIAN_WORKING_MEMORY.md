@@ -2,6 +2,62 @@
 
 > **Public routing delivered for local validation:** the user requested pushing the recovered implementation with the cc-pVDZ tests restored. The experimental `DLPNO_HESSIAN_MODEL` route now defaults to `true`, with complete Cython packaging and local test instructions. Source-level checks pass; fresh native numerical validation remains pending. See [recovery record](DLPNO_HESSIAN_M33_RECOVERY.md) and [local test commands](tests/dlpno-hessian-model/README.md). Milestone 32 remains the last fully validated molecular checkpoint.
 
+## Response optimization pass (7 November 2026)
+
+The latest user water/cc-pVTZ output at `923da30` completed column 1 and entered
+column 2 before the user stopped it. It contains no exception. The first
+column took about 196 seconds; the many SCF-component gradients and basis
+prints were repeated work, not successive total gradients or proof of failure.
+A complete Hessian from this water case is still pending.
+
+This pass changes execution and storage, not the gradient/Hessian functional:
+
+- Export all Cartesian occupied tangents from one native RHF response batch.
+  The old directional API already solved all directions and discarded the
+  others. Water now uses one tangent batch instead of nine, in addition to
+  the separate RHF Hessian calculation. Frozen-active gauge transport, SCF
+  option preparation, scratch cleanup and JK restoration are preserved.
+- Build the RHF gradient and reference CCSD/(T) adjoints once per Hessian.
+  Every ordered mixed entry and its independent repeatability checks remain.
+- Reuse one quiet, wavefunction-backed MintsHelper and reference fitting
+  integrals. Bounded first-integral caches retain at most four atom/basis
+  keys per DF derivative family, rather than all 3N three-center panels.
+  The quiet constructor preserves the reference options, bases and PSIO.
+- Build each Fock/overlap AO covector panel once per analytic gradient,
+  retaining two AO matrices instead of rebuilding panels for every atom.
+- Move dense mixed DF 2J-K contractions to `dlpno/response_kernels.cc`.
+  GEMM/GEMV/Matrix::gemm evaluate all 16 product-rule terms using nine shared
+  QD products and O(naux*nao^2) temporary storage, without four-index ERIs.
+- Parallelize disjoint auxiliary rows in mixed DF integral generation using
+  private integral engines. Parallelize independent LMP2 right-response
+  rows; keep transpose scatters serial. Worker exceptions are caught and
+  rethrown after joining. Kernel packing is parallel with disjoint writes;
+  its BLAS contractions occur outside the OpenMP packing regions.
+- Add row progress with elapsed column time. No residual, symmetry,
+  translation/rotation or column-repeatability tolerance was loosened.
+
+Verification in this workspace: 112 source-level routing/cache/ownership and
+failure-message checks with the molecular native boundary mocked; 11 native
+DF-kernel checks against independent NumPy contractions and mixed finite
+differences, using the exact C++ kernel and production BLAS wrappers linked
+to system BLAS with small Matrix/thread adapters (serial and OpenMP builds).
+Twelve old/new Python gradient contraction replays using deterministic mocked
+native operators agree to 8.33e-17. Equation exports, completion ordering,
+Python syntax and whitespace checks pass. This is NOT a full Psi4 build:
+RHF batching, real integral engines, LMP2 threading and molecular numerical
+results still require the user's rebuilt native installation. No molecular
+speedup or full-gradient/Hessian certification is claimed from these checks.
+
+`gradient_audit.py` now checks off-equilibrium water against reconverged
+same-model energies at three step sizes, with native branch/parent matching,
+force/torque checks, batched/directional RHF agreement, serial/four-thread
+mixed integrals and optional cross-run gradient/component comparisons.
+Default basis remains cc-pVDZ; cc-pVTZ, Boys/PM and all-electron/frozen-core
+runs are available. Existing canonical and screened molecular tests remain.
+See `tests/dlpno-hessian-model/README.md` for the staged local commands.
+First PNO/CCSD responses are still reconstructed for each mixed entry; broader
+response caching and additional native ports remain future performance work.
+
 ## Water response regression fixes (7 November 2026)
 
 The user's frozen-core water/cc-pVTZ, TightPNO, 12-thread run at `8807b4c`

@@ -1,10 +1,11 @@
 """Analytic DLPNO Hessian delivery with explicit model/resource guards."""
 import gc
+from time import perf_counter
 import numpy as np
 from psi4 import core
 from ...p4util.exceptions import ValidationError
 from .dlpno_hessian_inputs import molecular_input_provider
-from .dlpno_screened_hessian import COMPONENTS, ScreenedHessianColumn
+from .dlpno_screened_hessian import COMPONENTS, ScreenedHessianColumn, ScreenedHessianReference
 
 
 def validate_settings():
@@ -75,15 +76,19 @@ def assemble_hessian(wfn):
     gradient=wfn.gradient().np.copy();xyz=wfn.molecule().geometry().np.copy()
     rhf=core.scfhess(ref).np.copy()
     inputs=molecular_input_provider(wfn)
+    reference=ScreenedHessianReference(wfn)
     parts=np.empty((len(COMPONENTS),size,size));firsts=np.empty_like(parts)
     residuals=np.zeros(4)
     for v in range(size):
-        column=ScreenedHessianColumn(wfn,v,inputs,rhf[:,v])
+        start=perf_counter()
+        column=ScreenedHessianColumn(wfn,v,inputs,rhf[:,v],reference=reference)
         for u in range(size):
             entry=column.element(u)
             parts[:,u,v]=entry['components'];firsts[:,u,v]=entry['gradient_components']
             residuals=np.maximum(residuals,[max(entry['cc_residual_errors']),max(entry['pno_residual_errors']),
                                           entry['triples_right_residual'],entry['triples_left_residual']])
+            core.print_out(f'    Analytic DLPNO Hessian column {v+1}/{size}, row {u+1}/{size} complete '
+                           f'({perf_counter()-start:.1f} s elapsed in column).\n')
         core.print_out(f'    Analytic DLPNO Hessian column {v+1:3d}/{size:3d} complete.\n')
         del column
         gc.collect()

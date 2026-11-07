@@ -309,12 +309,16 @@ def cartesian_orbital_terms(wfn, fock_derivatives=None, panel_width=16, tol=1.e-
     F = ref.Fa().np
     metric -= .5*(D @ F @ mixed + mixed @ F @ D)
     basis = ref.basisset()
-    mints = core.MintsHelper(ref)
+    mints = core.MintsHelper(ref, 0)
     # The density-transport term needs only C.T @ G[Fbar] @ C.
     potential = np.zeros((C.shape[1], C.shape[1]))
     fock_gradient = np.zeros((ref.molecule().natom(), 3))
     jk = core.JK.build(basis, aux=ref.get_basisset('DF_BASIS_SCF'), do_wK=False,
                        memory=int(core.get_memory()*.1))
+    # These covectors do not depend on the atom whose integral derivative is
+    # contracted. Build each panel once and keep only two O(nao^2) arrays.
+    fock_bar = np.empty_like(D)
+    overlap_bar = np.empty_like(D)
     jk.initialize()
     try:
         Sdim = basis.nbf()
@@ -324,6 +328,8 @@ def cartesian_orbital_terms(wfn, fock_derivatives=None, panel_width=16, tol=1.e-
             E[np.arange(first,stop), np.arange(stop-first)] = 1.
             right = core.Matrix.from_array(E)
             raw = core.dlpno_orbital_response_action(wfn, 'FOCK', right).np
+            fock_bar[:, first:stop] = raw
+            overlap_bar[:, first:stop] = core.dlpno_orbital_response_action(wfn, 'OVERLAP', right).np
             response = raw + fextra[:, first:stop]
             jk.C_left_add(core.Matrix.from_array(response))
             jk.C_right_add(right)
@@ -336,8 +342,7 @@ def cartesian_orbital_terms(wfn, fock_derivatives=None, panel_width=16, tol=1.e-
         for first in range(0, Sdim, panel_width):
             stop = min(first + panel_width, Sdim)
             E = np.eye(Sdim, stop-first, k=-first)
-            panel = core.Matrix.from_array(E)
-            response = core.dlpno_orbital_response_action(wfn, 'FOCK', panel).np + fextra[:,first:stop]
+            response = fock_bar[:,first:stop] + fextra[:,first:stop]
             fock_gradient += _df_fock_panel(mints, C, E, response)
     metric -= C @ potential @ C.T
     boys = bool(wfn.variable('DLPNO RESPONSE BOYS'))
@@ -360,15 +365,10 @@ def cartesian_orbital_terms(wfn, fock_derivatives=None, panel_width=16, tol=1.e-
             for k,bar in enumerate(bars):
                 for xyz in range(3):
                     result[xyz] += np.sum(bar*(L.T @ dip[3*k+xyz].np @ L))
-        for first in range(0, Sdim, panel_width):
-            stop = min(first+panel_width, Sdim)
-            E = np.zeros((Sdim, stop-first))
-            E[np.arange(first,stop), np.arange(stop-first)] = 1.
-            panel = core.Matrix.from_array(E)
-            for block, directions in blocks:
-                bar = core.dlpno_orbital_response_action(wfn, block, panel).np
-                for xyz in range(3):
-                    result[xyz] += np.sum(bar*directions[xyz][:,first:stop])
+        for block, directions in blocks:
+            bar = overlap_bar if block == 'OVERLAP' else fock_bar
+            for xyz in range(3):
+                result[xyz] += np.sum(bar*directions[xyz])
         yield result
 
 

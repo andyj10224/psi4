@@ -133,6 +133,7 @@ class PSI_API MintsHelper {
 
     /// Constructor, using wavefunction
     MintsHelper(std::shared_ptr<Wavefunction> wavefunction);
+    MintsHelper(std::shared_ptr<Wavefunction> wavefunction, int print);
     /// Destructor, does nothing
     ~MintsHelper();
 

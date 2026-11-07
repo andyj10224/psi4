@@ -192,6 +192,8 @@ PairBlocks pno_truncation_lmp2_response(SharedWavefunction,bool);
 std::vector<SharedMatrix> ccsd_mixed_state(SharedWavefunction,int,int,int);
 std::pair<SharedMatrix,SharedMatrix> df_mixed_integrals(SharedWavefunction,const std::string&,
     const std::vector<int>&,const std::vector<int>&,int,int);
+std::vector<SharedMatrix> df_fock_response(const std::vector<SharedMatrix>&,
+    const std::vector<SharedMatrix>&,const std::vector<SharedMatrix>&);
 std::pair<SharedMatrix,SharedMatrix> pair_metric_tangent(SharedMatrix,SharedMatrix);
 std::tuple<std::vector<int>,std::vector<SharedMatrix>,std::map<std::string,SharedMatrix>>
     ccsd_df_pair_state(SharedWavefunction,int,int);
@@ -247,6 +249,7 @@ SharedMatrix scfgrad(std::shared_ptr<scf::HF>, Options&);
 namespace scfgrad {
 SharedMatrix scfhess(std::shared_ptr<scf::HF>, Options&);
 SharedMatrix rhf_occupied_tangent(std::shared_ptr<scf::HF>, SharedMatrix);
+std::vector<SharedMatrix> rhf_occupied_tangents(std::shared_ptr<scf::HF>);
 }
 
 // Does not create a wavefunction
@@ -365,6 +368,11 @@ SharedMatrix py_psi_rhf_occupied_tangent(std::shared_ptr<scf::HF> ref_wfn, Share
     // must honor the SCF-local solver and integral thresholds on every call.
     py_psi_prepare_options_for_module("SCF");
     return scfgrad::rhf_occupied_tangent(ref_wfn, direction);
+}
+
+std::vector<SharedMatrix> py_psi_rhf_occupied_tangents(std::shared_ptr<scf::HF> ref_wfn) {
+    py_psi_prepare_options_for_module("SCF");
+    return scfgrad::rhf_occupied_tangents(ref_wfn);
 }
 
 SharedWavefunction py_psi_occ(SharedWavefunction ref_wfn) {
@@ -1424,6 +1432,7 @@ PYBIND11_MODULE(core, core) {
              "Doesn't work with Windows.");
     // modules
     core.def("rhf_df_jk_energy_gradient", [](std::shared_ptr<MintsHelper> mints, SharedMatrix factors) {
+        py_psi_prepare_options_for_module("SCF");
         if (!mints || !factors || factors->nirrep() != 1 || factors->ncol() == 0 ||
             factors->nrow() != mints->get_basisset("ORBITAL")->nbf())
             throw PSIEXCEPTION("Invalid AO density factors for the RHF JK gradient.");
@@ -1450,12 +1459,16 @@ PYBIND11_MODULE(core, core) {
     core.def("scfgrad", py_psi_scfgrad, "ref_wfn"_a, "Run scfgrad, which is a specialized DF-SCF gradient program.");
     core.def("rhf_occupied_tangent", py_psi_rhf_occupied_tangent, "ref_wfn"_a, "direction"_a,
              "Directional AO occupied coefficient derivative for C1 DF-RHF, partitioned at the frozen core.");
+    core.def("rhf_occupied_tangents", py_psi_rhf_occupied_tangents, "ref_wfn"_a,
+             "All Cartesian AO occupied coefficient derivatives from one C1 DF-RHF response solve, in atom/xyz order.");
     core.def("scfhess", py_psi_scfhess, "ref_wfn"_a, "Run scfhess, which is a specialized DF-SCF hessian program.");
     core.def("dct", py_psi_dct, "ref_wfn"_a, "Runs the density cumulant (functional) theory code.");
     core.def("dfmp2", py_psi_dfmp2, "ref_wfn"_a, "Runs the DF-MP2 code.");
     core.def("dlpno", py_psi_dlpno, "Runs the DLPNO codes.");
     core.def("dlpno_df_mixed_integrals", &dlpno::df_mixed_integrals, "wfn"_a, "aux_name"_a, "auxiliary"_a,
              "aos"_a, "u"_a, "v"_a, "Mixed bare Coulomb metric and three-center AO blocks on the requested indices.");
+    core.def("dlpno_df_fock_response", &dlpno::df_fock_response, "three_center"_a, "fitted"_a, "density"_a,
+             "BLAS contraction of one or four value/u/v/uv DF 2J-K blocks; fitting panels are naux by nao squared.");
     core.def("dlpno_pair_metric_tangent", &dlpno::pair_metric_tangent, "metric"_a, "direction"_a,
              "Local inverse square root of the CCSD fitting metric and its fixed-rank derivative.");
     core.def("dlpno_ccsd_mixed_state", &dlpno::ccsd_mixed_state, "wfn"_a, "i"_a, "j"_a, "k"_a,

@@ -94,9 +94,9 @@ def spy(name,**kwargs):
 def forbidden(*args,**kwargs):
     raise AssertionError('Numerical or forbidden forward calculation entered analytic route.')
 with patch.object(proc,'run_dlpno',spy),patch.object(FiniteDifferenceComputer,'compute',forbidden), \
-     patch.object(dlpno_hessian_inputs,'_occupied_density_tangent',wraps=dlpno_hessian_inputs._occupied_density_tangent) as densities:
+     patch.object(dlpno_hessian_inputs,'_occupied_density_tangents',wraps=dlpno_hessian_inputs._occupied_density_tangents) as densities:
     H,w=hessian('dlpno-ccsd(t)',dertype=2,return_wfn=True)
-assert sorted(call.args[1] for call in densities.call_args_list)==list(range(6))
+assert densities.call_count==1
 assert len(calls)==1
 np.testing.assert_array_equal(calls[0],xyz)
 assert state()==before
@@ -127,6 +127,14 @@ try:
     core.get_option('DLPNO','F_CUT')
     other=core.rhf_occupied_tangent(ref,core.Matrix.from_array(direction)).np.copy()
     np.testing.assert_allclose(other,dc,atol=2e-11,rtol=0.)
+    core.get_option('DLPNO','F_CUT')
+    batch=core.rhf_occupied_tangents(ref)
+    assert len(batch)==6
+    np.testing.assert_allclose(batch[2].np,dc,atol=2e-11,rtol=0.)
+    arbitrary=np.arange(6,dtype=float).reshape(2,3)/7.
+    independent=core.rhf_occupied_tangent(ref,core.Matrix.from_array(arbitrary))
+    np.testing.assert_allclose(sum(c*m.np for c,m in zip(arbitrary.ravel(),batch)),
+                               independent.np,atol=2e-11,rtol=0.)
     core.set_global_option('R_CONVERGENCE',1.)
     core.set_local_option('DLPNO','R_CONVERGENCE',1.e-11)
     frames=core.dlpno_lmp2_blocks(w,'FRAME')

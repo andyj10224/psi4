@@ -27,10 +27,12 @@ def mixed_df_fock(metric, three_center, density):
     shape=three_center.value.shape
     panels=MixedBlock(*(q.reshape(shape[0],-1) for q in three_center))
     solved=mixed_metric_solve(metric,panels)
-    fitted=MixedBlock(*(q.reshape(shape) for q in solved))
-    coulomb=mixed_product('Qmn,Qrs,rs->mn',three_center,fitted,density)
-    exchange=mixed_product('Qmr,Qns,rs->mn',three_center,fitted,density)
-    return MixedBlock(*(2*j-k for j,k in zip(coulomb,exchange)))
+    from psi4 import core
+    result=core.dlpno_df_fock_response(
+        [core.Matrix.from_array(q) for q in panels],
+        [core.Matrix.from_array(q) for q in solved],
+        [core.Matrix.from_array(d) for d in density])
+    return MixedBlock(*(m.np for m in result))
 
 
 def rhf_mixed_density(reference, overlap, density_u, density_v, fock_u, fock_v,

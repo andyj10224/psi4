@@ -3,6 +3,29 @@
 > **Public Hessian routing delivered for local validation:** the user requested pushing the recovered route with the cc-pVDZ tests restored, then making `DLPNO_HESSIAN_MODEL=true` the default. Source-level checks pass, and Cython response packaging is complete; fresh native numerical tests remain pending. See [recovery record](DLPNO_HESSIAN_M33_RECOVERY.md) and [local test commands](tests/dlpno-hessian-model/README.md). The gradient functional is unchanged.
 
 
+## Bounded response optimization (7 November 2026)
+
+Analytic gradient assembly now retains two atom-independent AO covectors,
+computed in the existing narrow native panels, instead of rebuilding them
+for each atom and again for the explicit Fock derivative. Independent LMP2
+right-response rows use OpenMP; shared transpose scatters remain serial.
+The RHF DF JK-gradient binding explicitly prepares SCF options before reading
+its settings. Quiet MintsHelper construction preserves wavefunction PSIO,
+basis sets and options. The nuclear derivative functional is unchanged.
+
+The Hessian additionally batches RHF first derivatives, reuses reference
+adjoints/integrals and calls a new native BLAS DF-response kernel. See the
+current optimization entry in `DLPNO_HESSIAN_WORKING_MEMORY.md` for the
+precise checks and limitations. Source-level and isolated numerical checks
+passed; no full native molecular run or measured end-to-end speedup is
+claimed. Rebuild the native extension before local testing.
+
+Use `tests/dlpno-hessian-model/gradient_audit.py` to validate gradients against
+independently reconverged same-model energies at three step sizes before
+interpreting gradient-difference Hessians. Native branch matching is required.
+The audit supports Boys/PM, frozen-core/all-electron, cc-pVDZ/cc-pVTZ and
+thread-count comparisons; existing canonical and screened tests are retained.
+
 ## RHF DLPNO-CCSD(T) analytic nuclear gradients
 
 **Current capability (7 November 2026).** The public RHF DLPNO-CCSD(T) gradient includes ordinary iterative triples, stationary CCSD, both PNO truncation corrections, LMP2 relaxation, local refits, PAO/PNO/TNO motion, frozen-core response, and Boys or Mulliken-PM localization/RHF adjoints. Step 26 of the Hessian ledger now adds native analytic gradients for excluded crude SC-MP2 and distant dipole estimates, after correcting a factor-of-two error in the dipole energy accumulator. Both estimates are included in the gradient-model energy. All surviving pairs are still strong and the triples use one common TNO cutoff; matching an ordinary energy requires matching those choices.

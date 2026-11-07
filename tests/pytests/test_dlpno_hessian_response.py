@@ -13,27 +13,55 @@ def test_density_cache_is_shared_across_rows_and_columns(monkeypatch):
     ref=SimpleNamespace(molecule=lambda:SimpleNamespace(natom=lambda:1))
     wfn=SimpleNamespace(reference_wavefunction=lambda:ref)
     calls=[]
-    def tangent(reference,k):
+    def tangents(reference):
         assert reference is ref
-        calls.append(k)
+        calls.append(reference)
         # Deliberately non-repeatable source: duplicate solves must not leak
         # into different entries of the same Hessian.
-        return np.full((2,2),k+len(calls)*1.e-8)
-    monkeypatch.setattr(inputs,'_occupied_density_tangent',tangent)
-    monkeypatch.setattr(inputs,'molecular_inputs',lambda w,u,v,*,Du,Dv:(Du,Dv))
+        return tuple(np.full((2,2),k+len(calls)*1.e-8) for k in range(3))
+    contexts=[]
+    def context(reference):
+        value=object();contexts.append(value);return value
+    monkeypatch.setattr(inputs,'_occupied_density_tangents',tangents)
+    monkeypatch.setattr(inputs,'_MolecularIntegrals',context)
+    monkeypatch.setattr(inputs,'molecular_inputs',lambda w,u,v,*,Du,Dv,integrals:(Du,Dv,integrals))
     provider=inputs.molecular_input_provider(wfn)
     entries={(u,v):provider(u,v) for v in range(3) for u in range(3)}
-    assert calls==[0,1,2]
-    for (u,v),(du,dv) in entries.items():
+    assert len(calls)==1
+    for (u,v),(du,dv,integrals) in entries.items():
         assert du is entries[u,u][0]
         assert dv is entries[v,v][0]
+        assert integrals is contexts[0]
         assert not du.flags.writeable and not dv.flags.writeable
     # A new assembly must never inherit a previous geometry's cache.
     fresh=inputs.molecular_input_provider(wfn)(0,0)
-    assert calls==[0,1,2,0]
+    assert len(calls)==2
     assert fresh[0] is fresh[1] and fresh[0] is not entries[0,0][0]
+    assert fresh[2] is not contexts[0]
     with pytest.raises(ValueError,match='Invalid nuclear response coordinate'):
         provider(3,0)
+    with pytest.raises(ValueError,match='Invalid nuclear response coordinate'):
+        provider(0,-1)
+
+
+def test_integral_cache_is_bounded_and_reference_scoped(monkeypatch):
+    class Mints:
+        def __init__(self,ref,print): self.calls=[]; self.ref=ref
+        def set_basisset(self,*args): pass
+        def __getattr__(self,name):
+            def evaluate(*args):
+                value=object();self.calls.append((name,args));return value
+            return evaluate
+    monkeypatch.setattr(inputs.core,'MintsHelper',Mints,raising=False)
+    ref=SimpleNamespace(basisset=lambda:object(),get_basisset=lambda name:object())
+    cache=inputs._MolecularIntegrals(ref)
+    first=cache.ao_3center_deriv1(0,'DF_BASIS_SCF')
+    assert cache.ao_3center_deriv1(0,'DF_BASIS_SCF') is first
+    for atom in range(1,10): cache.ao_3center_deriv1(atom,'DF_BASIS_SCF')
+    assert cache.ao_3center_deriv1.cache_info().currsize==4
+    assert cache.ao_3center_deriv1(0,'DF_BASIS_SCF') is not first
+    fresh=inputs._MolecularIntegrals(ref)
+    assert fresh.ao_3center_deriv1(0,'DF_BASIS_SCF') is not first
 
 
 def direction_data(delta=0.):
@@ -76,3 +104,32 @@ def test_column_repeatability_rejects_shape_change():
     current['response']['electronic']=lambda key:previous(key)._replace(v=np.zeros((3,2)))
     with pytest.raises(RuntimeError,match='shapes'):
         _check_column_direction(current,saved,1,0)
+
+
+def test_reference_adjoints_are_shared_only_with_the_same_wavefunction(monkeypatch):
+    from psi4.driver.procrouting.response import dlpno_screened_hessian as h
+    counts=dict(gradient=0,adjoint=0,retained=0)
+    w=SimpleNamespace(molecule=lambda:SimpleNamespace(natom=lambda:1),
+                      reference_wavefunction=lambda:object(),variable=lambda key:0.)
+    def gradient(ref):
+        counts['gradient']+=1
+        return SimpleNamespace(np=np.zeros((1,3)))
+    def adjoint(wfn):
+        counts['adjoint']+=1
+        return object()
+    def retained(wfn,source):
+        counts['retained']+=1
+        return object()
+    monkeypatch.setattr(inputs.core,'scfgrad',gradient,raising=False)
+    monkeypatch.setattr(h,'TriplesCCSDAdjoint',adjoint)
+    monkeypatch.setattr(h,'RetainedCCSDCurvature',retained)
+    monkeypatch.setattr(h,'TriplesHessianColumn',lambda direction:object())
+    monkeypatch.setattr(h.ScreenedHessianColumn,'_prepare',
+                        lambda self,k:{'triples':SimpleNamespace(first_direction=lambda order:None)})
+    ref=h.ScreenedHessianReference(w)
+    columns=[h.ScreenedHessianColumn(w,k,None,np.zeros(3),reference=ref) for k in range(3)]
+    assert counts==dict(gradient=1,adjoint=1,retained=1)
+    assert all(c.adjoint is ref.adjoint and c.retained is ref.retained for c in columns)
+    other=SimpleNamespace(**w.__dict__)
+    with pytest.raises(ValueError,match='different wavefunction'):
+        h.ScreenedHessianColumn(other,0,None,np.zeros(3),reference=ref)

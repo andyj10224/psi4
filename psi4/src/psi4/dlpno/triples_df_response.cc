@@ -35,6 +35,11 @@
 #include "psi4/libmints/twobody.h"
 #include "psi4/liboptions/liboptions.h"
 #include "psi4/libpsi4util/PsiOutStream.h"
+#include "psi4/libpsi4util/process.h"
+#include <exception>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -76,7 +81,19 @@ std::pair<SharedMatrix, SharedMatrix> df_mixed_integrals(SharedWavefunction wfn,
     if (!nq) return {metric,raw};
     auto zero = BasisSet::zero_ao_basis_set();
     IntegralFactory mf(aux,zero,aux,zero), qf(aux,zero,basis,basis);
-    auto mi = mf.eri(2), qi = qf.eri(2);
+    std::vector<ShellMap::const_iterator> rows;
+    for (auto it = qs.begin(); it != qs.end(); ++it) rows.push_back(it);
+    int threads = 1;
+#ifdef _OPENMP
+    threads = std::max(1, std::min(int(rows.size()), Process::environment.get_n_threads()));
+#endif
+    std::vector<std::unique_ptr<TwoBodyAOInt>> metrics(threads), triples(threads);
+    // Construct engines serially; each worker owns its buffers and scratch.
+    for (int t = 0; t < threads; ++t) {
+        metrics[t] = mf.eri(2);
+        triples[t] = qf.eri(2);
+    }
+    std::vector<std::exception_ptr> failures(rows.size());
     auto components = [u,v](std::initializer_list<int> centers) {
         std::vector<int> indices;
         // Equal physical centers must be summed over all ordered slots,
@@ -95,33 +112,46 @@ std::pair<SharedMatrix, SharedMatrix> df_mixed_integrals(SharedWavefunction wfn,
         }
         return indices;
     };
-    for (const auto& [P,pids] : qs) {
-        const int cp = aux->shell_to_center(P);
-        for (const auto& [Q,qids] : qs) {
-            const auto parts = components({cp,aux->shell_to_center(Q)});
-            if (parts.empty() || !mi->compute_shell_deriv2(P,0,Q,0)) continue;
-            for (int part : parts) {
-                const auto* buf = mi->buffers()[part];
-                for (const auto& [p,i] : pids)
-                    for (const auto& [q,j] : qids)
-                        (*metric)(i,j) += buf[p*aux->shell(Q).nfunction()+q];
-            }
-        }
-        for (const auto& [M,mids] : ms) {
-            for (const auto& [N,nids] : ms) {
-                const auto parts = components({cp,basis->shell_to_center(M),basis->shell_to_center(N)});
-                if (parts.empty() || !qi->compute_shell_deriv2(P,0,M,N)) continue;
-                const int nm = basis->shell(M).nfunction(), nn = basis->shell(N).nfunction();
+    // Shell P owns distinct auxiliary output rows, even for reordered subsets.
+#pragma omp parallel for schedule(dynamic) num_threads(threads)
+    for (int row = 0; row < int(rows.size()); ++row) {
+        int thread = 0;
+#ifdef _OPENMP
+        thread = omp_get_thread_num();
+#endif
+        const auto& mi = metrics[thread];
+        const auto& qi = triples[thread];
+        const auto& [P,pids] = *rows[row];
+        try {
+            const int cp = aux->shell_to_center(P);
+            for (const auto& [Q,qids] : qs) {
+                const auto parts = components({cp,aux->shell_to_center(Q)});
+                if (parts.empty() || !mi->compute_shell_deriv2(P,0,Q,0)) continue;
                 for (int part : parts) {
-                    const auto* buf = qi->buffers()[part];
+                    const auto* buf = mi->buffers()[part];
                     for (const auto& [p,i] : pids)
-                        for (const auto& [m,j] : mids)
-                            for (const auto& [n,k] : nids)
-                                (*raw)(i,j*nb+k) += buf[(p*nm+m)*nn+n];
+                        for (const auto& [q,j] : qids)
+                            (*metric)(i,j) += buf[p*aux->shell(Q).nfunction()+q];
                 }
             }
-        }
+            for (const auto& [M,mids] : ms) {
+                for (const auto& [N,nids] : ms) {
+                    const auto parts = components({cp,basis->shell_to_center(M),basis->shell_to_center(N)});
+                    if (parts.empty() || !qi->compute_shell_deriv2(P,0,M,N)) continue;
+                    const int nm = basis->shell(M).nfunction(), nn = basis->shell(N).nfunction();
+                    for (int part : parts) {
+                        const auto* buf = qi->buffers()[part];
+                        for (const auto& [p,i] : pids)
+                            for (const auto& [m,j] : mids)
+                                for (const auto& [n,k] : nids)
+                                    (*raw)(i,j*nb+k) += buf[(p*nm+m)*nn+n];
+                    }
+                }
+            }
+        } catch (...) { failures[row] = std::current_exception(); }
     }
+    for (const auto& failure : failures)
+        if (failure) std::rethrow_exception(failure);
     return {metric,raw};
 }
 

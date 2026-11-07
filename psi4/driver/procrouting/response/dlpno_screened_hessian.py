@@ -80,6 +80,16 @@ def _check_column_direction(data,reference,row,column):
         raise RuntimeError('; '.join(details)+'.')
 
 
+class ScreenedHessianReference:
+    """Reference-only gradient and CCSD adjoints shared by all columns."""
+    def __init__(self, wfn):
+        from psi4 import core
+        self.wfn = wfn
+        self.rhf_gradient = core.scfgrad(wfn.reference_wavefunction()).np.ravel().copy()
+        self.adjoint = TriplesCCSDAdjoint(wfn)
+        self.retained = RetainedCCSDCurvature(wfn, self.adjoint)
+
+
 class ScreenedHessianColumn:
     """Cache the reference CCSD adjoints and one right/left triples tangent.
 
@@ -88,8 +98,7 @@ class ScreenedHessianColumn:
     repulsion and follows the same fixed Cartesian order, in hartree/bohr^2.
     Separate row evaluations are returned without symmetrizing or projection.
     """
-    def __init__(self,wfn,column,inputs,rhf_column):
-        from psi4 import core
+    def __init__(self,wfn,column,inputs,rhf_column,reference=None):
         self.wfn,self.coordinate,self.inputs=wfn,column,inputs
         self.size=3*wfn.molecule().natom()
         if not 0<=column<self.size:
@@ -99,9 +108,12 @@ class ScreenedHessianColumn:
             raise ValueError('Expected a finite analytic RHF Hessian column.')
         if abs(wfn.variable('DLPNO LMP2 WEAK PAIR ENERGY'))>1.e-12:
             raise ValueError('Screened Hessian column requires the all-strong gradient model.')
-        self.rhf_gradient=core.scfgrad(wfn.reference_wavefunction()).np.ravel().copy()
-        self.adjoint=TriplesCCSDAdjoint(wfn)
-        self.retained=RetainedCCSDCurvature(wfn,self.adjoint)
+        if reference is None: reference=ScreenedHessianReference(wfn)
+        if reference.wfn is not wfn:
+            raise ValueError('Hessian reference belongs to a different wavefunction.')
+        self.rhf_gradient=reference.rhf_gradient
+        self.adjoint=reference.adjoint
+        self.retained=reference.retained
         self.reference=self._prepare(column)
         self.column=TriplesHessianColumn(self.reference['triples'].first_direction(2))
 

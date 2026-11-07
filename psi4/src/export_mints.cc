@@ -1448,6 +1448,8 @@ void export_mints(py::module& m) {
     py::class_<MintsHelper, std::shared_ptr<MintsHelper>>(m, "MintsHelper", "Computes integrals")
         .def(py::init<std::shared_ptr<BasisSet>>())
         .def(py::init<std::shared_ptr<Wavefunction>>())
+        .def(py::init<std::shared_ptr<Wavefunction>, int>(), "wavefunction"_a, "print"_a,
+             "Construct with a print level override, preserving the wavefunction bases, options and PSIO.")
 
         // Options and attributes
         .def("nbf", &MintsHelper::nbf, "Returns the number of basis functions")

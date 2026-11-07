@@ -33,13 +33,12 @@ no_reorient
         dlpno_ao_ints_tol=0.,f_cut=0.,f_cut_t=0.,t_cut_do_uv=0.))
     # Deliberately leave the global SCF solver settings at their defaults:
     # the public driver's stricter SCF-local options must reach the native API.
-    with patch.object(dlpno_hessian_inputs,'_occupied_density_tangent',
-                      wraps=dlpno_hessian_inputs._occupied_density_tangent) as densities:
+    with patch.object(dlpno_hessian_inputs,'_occupied_density_tangents',
+                      wraps=dlpno_hessian_inputs._occupied_density_tangents) as densities:
         h,w=psi4.hessian('dlpno-ccsd(t)',molecule=mol,dertype=2,return_wfn=True)
-    coordinates=[call.args[1] for call in densities.call_args_list]
-    assert sorted(coordinates)==list(range(9)),coordinates
+    assert densities.call_count==1
     parts=np.array([w.variable('DLPNO HESSIAN '+name.upper()).np for name in COMPONENTS])
-    result=dict(passed=False,threads=args.threads,version=psi4.__version__,density_response_calls=coordinates,
+    result=dict(passed=False,threads=args.threads,version=psi4.__version__,density_response_batches=densities.call_count,
         energy=w.energy(),coordinates_bohr=mol.geometry().np.tolist(),gradient=w.gradient().np.tolist(),
         hessian=h.np.tolist(),components=parts.tolist(),component_order=COMPONENTS)
     path=Path(args.output)
