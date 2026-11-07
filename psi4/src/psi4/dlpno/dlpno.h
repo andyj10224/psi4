@@ -724,6 +724,9 @@ class PSI_API DLPNOCCSD : public DLPNO {
         SharedVector occupations;
     };
     std::vector<PairSelection> initial_pno_selection_, final_pno_selection_;
+    // Optional immutable first-selection snapshot, including full-rank parents.
+    std::vector<std::map<std::string, SharedMatrix>> first_pno_blocks_;
+    std::map<std::string, SparseMap> first_pno_domains_;
     std::vector<SharedMatrix> pno_loss_lmp2_source_; ///< Isolated loss source retained only on request
     struct InitialPNOResponse {
         SharedMatrix final_transform;
@@ -791,6 +794,9 @@ class PSI_API DLPNOCCSD : public DLPNO {
     DFPairState ccsd_df_pair_state(int i, int j) const;
     /// Copies of the discrete fitting/domain lists used by the gradient model.
     std::map<std::string, SparseMap> response_domain_state() const;
+    using FirstPNOState = std::tuple<std::map<std::string, SparseMap>,
+                                    std::map<std::pair<int,int>, std::map<std::string, SharedMatrix>>>;
+    FirstPNOState first_pno_state() const;
     DLPNOCCSD(SharedWavefunction ref_wfn, Options& options);
     ~DLPNOCCSD() override;
 

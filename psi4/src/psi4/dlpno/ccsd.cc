@@ -553,6 +553,7 @@ template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
     int n_lmo_pairs = ij_to_i_j_.size();
 
     const int MIN_PNOS = options_.get_int("MIN_PNOS");
+    const bool keep_first = gradient_model_ && options_.get_bool("DLPNO_KEEP_LMP2_RESPONSE");
 
     std::vector<double> e_ijs(n_lmo_pairs);
     std::vector<double> de_pno_singles(n_lmo_pairs, 0.0);
@@ -565,6 +566,21 @@ template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
         if (gradient_model_) {
             initial_pno_selection_.assign(n_lmo_pairs, {});
             initial_pno_response_.assign(n_lmo_pairs, {});
+        }
+        first_pno_blocks_.clear();
+        first_pno_domains_.clear();
+        if (keep_first) {
+            first_pno_blocks_.assign(n_lmo_pairs, {});
+            first_pno_domains_ = {{"AO_OCC",riatom_to_bfs1_}, {"AO_VIR",riatom_to_bfs2_},
+                                  {"OCC",riatom_to_lmos_ext_}, {"PAO",riatom_to_paos_ext_}};
+            for (int p = 0; p < n_lmo_pairs; ++p) {
+                const auto [i,j] = ij_to_i_j_[p];
+                if (i > j) continue;
+                first_pno_domains_["PAIRS"].push_back({i,j});
+                first_pno_domains_["PAIR_PAO"].push_back(lmopair_to_paos_[p]);
+                first_pno_domains_["PAIR_AUX"].push_back(lmopair_to_ribfs_[p]);
+            }
+            set_scalar_variable("DLPNO FIRST PNO AO INTS TOL", options_.get_double("DLPNO_AO_INTS_TOL"));
         }
         outfile->Printf("\n  ==> Forming Pair Natural Orbitals (for LMP2) <==\n");
 
@@ -612,6 +628,9 @@ template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
             }
         }
 
+        if constexpr (!crude) {
+            if (keep_first) first_pno_blocks_[ij] = {{"QI",i_qa->clone()}, {"QJ",j_qa->clone()}};
+        }
         auto A_solve = submatrix_rows_and_cols(*full_metric_, lmopair_to_ribfs_[ij], lmopair_to_ribfs_[ij]);
         C_DGESV_wrapper(A_solve, i_qa);
 
@@ -679,6 +698,14 @@ template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
             auto X_pno_ij = std::make_shared<Matrix>("eigenvectors", nvir_ij, nvir_ij);
             Vector pno_occ("eigenvalues", nvir_ij);
             D_ij->diagonalize(*X_pno_ij, pno_occ, descending);
+            if (keep_first) {
+                auto& saved = first_pno_blocks_[ij];
+                saved["PARENT"] = X_pao_ij;
+                saved["AMPLITUDE"] = T_pao_ij;
+                auto occupations = std::make_shared<Matrix>(nvir_ij,1);
+                for (int a = 0; a < nvir_ij; ++a) (*occupations)(a,0) = pno_occ.get(a);
+                saved["OCCUPATIONS"] = occupations;
+            }
 
             double t_cut_scale = 1.0;
             if (i == j) t_cut_scale *= T_CUT_PNO_DIAG_SCALE_;
@@ -747,6 +774,7 @@ template<bool crude> std::vector<double> DLPNOCCSD::compute_pair_energies() {
             auto Tt_pno_ij = linalg::triplet(X_pno_ij, Tt_pao_ij, X_pno_ij, true, false, false);
 
             X_pno_ij = linalg::doublet(X_pao_ij, X_pno_ij, false, false);
+            if (keep_first) first_pno_blocks_[ij]["FRAME"] = X_pno_ij;
 
             // MP2 energy after PNO truncation. The singles term is recomputed
             // in the canonical retained PNO subspace, following the same

@@ -191,12 +191,12 @@ def check_local(w, mol):
 
     probes = {key: float(value) for key, value in w.variables().items()
               if isinstance(value, float) and ('DIRECTION ERROR' in key or 'REPLAY ERROR' in key)}
-    # Preserve the old acceptance threshold. A one-step synthetic operator
-    # probe is reported separately from the passing nuclear energy checks.
+    # Preserve the old acceptance threshold. The native projector diagnostic
+    # now uses Richardson; the old central estimate is retained separately.
     probe_failures = {key: value for key, value in probes.items() if value > 1.e-8}
     assert probes['DLPNO DF ORBITAL REPLAY ERROR'] < 1.e-10
     assert probes['DLPNO DF LMO REFIT DIRECTION ERROR'] < 1.e-8
-    return dict(domains=counts, mixed_nuclear_status='unsupported', provider_rejections=failures,
+    return dict(domains=counts, mixed_nuclear_status='complete_screened_hessian_unsupported', provider_rejections=failures,
                 gradient_comparisons=comparisons, native_debug_probes=probes,
                 debug_probes_above_1e_minus8=probe_failures, gradient=gradient.tolist())
 
@@ -233,7 +233,7 @@ def run(path):
         routing = str(exc)
     else:
         raise AssertionError('A new analytic driver must pass screened Hessian validation first.')
-    blockers = ['Screened mixed PNO/CCSD molecular inputs are unsupported.',
+    blockers = ['Screened coupled-LMP2/final-PNO and CCSD molecular delivery is incomplete.',
                 'No screened nuclear Hessian was assembled or compared to gradients.']
     if local['debug_probes_above_1e_minus8']:
         blockers.append('A native synthetic PNO operator probe exceeds its old tolerance.')
@@ -244,7 +244,8 @@ def run(path):
                   production_ready=False, blockers=blockers,
                   functional_scope='The gradient model now includes eliminated SC-MP2 and dipole estimates '
                                    'with analytic gradients. Their mixed correction kernels are tested in '
-                                   'screened_corrections.py; the full screened PNO/CCSD Hessian remains unsupported.')
+                                   'screened_corrections.py. Screened first-PNO response is tested separately in '
+                                   'screened_first_pno.py; complete screened PNO/CCSD Hessians remain unsupported.')
     Path(path).write_text(json.dumps(result, indent=2)+'\n')
     print(json.dumps({k: result[k] for k in ('screened_hessian_validated', 'production_ready', 'blockers')}, indent=2))
     return result

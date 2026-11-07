@@ -21990,7 +21990,7 @@
       },
       "missing_kj_couplings": 2
     },
-    "mixed_nuclear_status": "unsupported",
+    "mixed_nuclear_status": "complete_screened_hessian_unsupported",
     "provider_rejections": {
       "ccsd_mixed": "Mixed CCSD molecular replay currently requires full orbital/AO domains.",
       "pno_molecular": "Full-domain mixed PNO diagnostic requires T_CUT_DO = 0."
@@ -22047,13 +22047,11 @@
       "DLPNO OVERLAP PROJECTOR DIRECTION ERROR": 4.793049637741298e-13,
       "DLPNO PAO NORMALIZATION DIRECTION ERROR": 1.3733764125944958e-11,
       "DLPNO PARENT PAO METRIC DIRECTION ERROR": 1.26033825302209e-11,
-      "DLPNO PNO PROJECTOR OPERATOR DIRECTION ERROR": 1.2986839387674372e-07,
+      "DLPNO PNO PROJECTOR OPERATOR DIRECTION ERROR": 7.649825720321417e-10,
       "DLPNO PNO TRUNCATION DF DIRECTION ERROR": 3.172139412743139e-09,
       "DLPNO SCREENED SC-MP2 REPLAY ERROR": 6.617444900424222e-24
     },
-    "debug_probes_above_1e_minus8": {
-      "DLPNO PNO PROJECTOR OPERATOR DIRECTION ERROR": 1.2986839387674372e-07
-    },
+    "debug_probes_above_1e_minus8": {},
     "gradient": [
       [
         6.258269734426669e-05,
@@ -22164,9 +22162,8 @@
   "screened_hessian_validated": false,
   "production_ready": false,
   "blockers": [
-    "Screened mixed PNO/CCSD molecular inputs are unsupported.",
-    "No screened nuclear Hessian was assembled or compared to gradients.",
-    "A native synthetic PNO operator probe exceeds its old tolerance."
+    "Screened coupled-LMP2/final-PNO and CCSD molecular delivery is incomplete.",
+    "No screened nuclear Hessian was assembled or compared to gradients."
   ],
-  "functional_scope": "The gradient model now includes eliminated SC-MP2 and dipole estimates with analytic gradients. Their mixed correction kernels are tested in screened_corrections.py; the full screened PNO/CCSD Hessian remains unsupported."
+  "functional_scope": "The gradient model now includes eliminated SC-MP2 and dipole estimates with analytic gradients. Their mixed correction kernels are tested in screened_corrections.py. Screened first-PNO response is tested separately in screened_first_pno.py; complete screened PNO/CCSD Hessians remain unsupported."
 }

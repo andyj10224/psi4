@@ -117,6 +117,12 @@ std::map<std::string, SparseMap> response_domain_state(SharedWavefunction wfn) {
     return local->response_domain_state();
 }
 
+DLPNOCCSD::FirstPNOState first_pno_state(SharedWavefunction wfn) {
+    auto local = std::dynamic_pointer_cast<DLPNOCCSD_T>(wfn);
+    if (!local) throw PSIEXCEPTION("First-PNO state requires an RHF DLPNO gradient model.");
+    return local->first_pno_state();
+}
+
 std::tuple<std::map<std::string,SparseMap>,
            std::map<std::pair<int,int>,std::map<std::string,SharedMatrix>>>
 screened_pair_state(SharedWavefunction wfn) {

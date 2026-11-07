@@ -102,6 +102,22 @@ std::map<std::string, SparseMap> DLPNOCCSD::response_domain_state() const {
     return result;
 }
 
+DLPNOCCSD::FirstPNOState DLPNOCCSD::first_pno_state() const {
+    if (!gradient_model_ || first_pno_blocks_.empty() || T_ia_.empty())
+        throw PSIEXCEPTION("First-PNO state requires a converged RHF gradient model with DLPNO_KEEP_LMP2_RESPONSE.");
+    std::map<std::pair<int,int>, std::map<std::string, SharedMatrix>> result;
+    for (int p = 0; p < ij_to_i_j_.size(); ++p) {
+        const auto ij = ij_to_i_j_[p];
+        if (ij.first > ij.second) continue;
+        auto copies = first_pno_blocks_.at(p);
+        for (auto& [name,matrix] : copies) matrix = matrix->clone();
+        auto N = submatrix_cols(*C_pao_,lmopair_to_paos_[p]);
+        copies["FRAME"] = linalg::doublet(N,copies.at("FRAME"));
+        result[ij] = std::move(copies);
+    }
+    return {first_pno_domains_,result};
+}
+
 std::vector<SharedMatrix> DLPNOCCSD::ccsd_mixed_state(int i, int j, int k) const {
     int no = T_ia_.size();
     if (!gradient_model_ || std::min({i,j,k}) < 0 || std::max({i,j,k}) >= no)

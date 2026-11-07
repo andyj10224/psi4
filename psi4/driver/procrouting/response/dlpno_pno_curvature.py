@@ -39,12 +39,23 @@ def mixed_pair_exchange(metric, qi, qj):
 
 
 def _polar_normalization(gram):
-    """Mixed inverse square root about an identity reference Gram matrix."""
+    """Mixed inverse square root of a numerically near-identity Gram matrix.
+
+    Solve the square-root Sylvester equations at the actual reference Gram.
+    Replacing it by exact identity can amplify small parent conditioning errors
+    in a large tangent and violate differentiated metric orthonormality.
+    """
     eye = np.eye(len(gram.value))
     if not np.allclose(gram.value, eye, atol=2.e-8, rtol=0):
         raise ValueError("PNO reference frame must be metric orthonormal.")
-    return MixedBlock(eye, -.5*gram.u, -.5*gram.v,
-                      -.5*gram.uv + .375*(gram.u@gram.v + gram.v@gram.u))
+    eig, rotation = np.linalg.eigh(gram.value)
+    roots = np.sqrt(eig)
+    root = (rotation*roots) @ rotation.T
+    def solve(rhs):
+        return rotation @ ((rotation.T @ rhs @ rotation)/(roots[:,None]+roots[None,:])) @ rotation.T
+    u,v = solve(gram.u),solve(gram.v)
+    uv = solve(gram.uv-u@v-v@u)
+    return _inverse(MixedBlock(root,u,v,uv))
 
 
 class PNOSubspaceCurvature(NamedTuple):
@@ -97,13 +108,41 @@ class FirstPNOCurvature(NamedTuple):
     selection: PNOSubspaceCurvature
 
 
+def _moving_pao_parent(pao, overlap, transform):
+    """Fixed pivot span in a chart with no first-order internal rotation.
+
+    Large, arbitrary within-parent rotations in a conditioned local PAO span
+    cause cancellation in second derivatives. Choose the chart at the base
+    point by differentiated orthonormality, applying the SAME coefficients to
+    exchange and Fock blocks. The final retained PNO chart remains fixed by its
+    own reference projector, so this internal choice changes no observable.
+    """
+    B0 = pao.value @ transform
+    metric = B0.T @ overlap.value @ B0
+    if not np.allclose(metric, np.eye(len(metric)), atol=2.e-8, rtol=0.):
+        raise ValueError('First-PNO reference parent is not metric orthonormal.')
+    eig,rotation = np.linalg.eigh(metric)
+    X = transform @ ((rotation*eig**(-.5)) @ rotation.T)
+    B,Bu,Bv,Buv = (x @ X for x in pao)
+    S,Su,Sv,Suv = overlap
+    metric = B.T @ S @ B
+    cu = -np.linalg.solve(metric, B.T @ S @ Bu + .5*B.T @ Su @ B)
+    cv = -np.linalg.solve(metric, B.T @ S @ Bv + .5*B.T @ Sv @ B)
+    Yu,Yv = Bu+B@cu,Bv+B@cv
+    bare = Buv+Bu@cv+Bv@cu
+    residual = (bare.T@S@B + B.T@S@bare + Yu.T@S@Yv + Yv.T@S@Yu +
+                Yu.T@Sv@B + B.T@Sv@Yu + Yv.T@Su@B + B.T@Su@Yv + B.T@Suv@B)
+    cuv = -.5*np.linalg.solve(metric, residual)
+    return MixedBlock(B,Yu,Yv,bare+B@cuv), MixedBlock(X,X@cu,X@cv,X@cuv)
+
+
 def first_pno_curvature(pao, overlap, fock, exchange, occupied_sum, parent,
                         reference_frame, *, diagonal=False):
     """Mixed first-PNO response on a fixed full-rank Cholesky-pivot branch.
 
     parent is the forward PAO-to-orthonormal-parent transform, including its
-    selected pivot rows. Its coefficients are fixed while the PAOs move. Polar
-    normalization transports their span; a Sylvester solve differentiates MP2
+    selected pivot rows. A metric-orthonormal chart transports their fixed
+    span; a Sylvester solve differentiates MP2
     without semicanonical eigenvector derivatives or within-parent energy gaps.
     exchange is expressed in the normalized PAO domain, before this transform.
     """
@@ -112,10 +151,7 @@ def first_pno_curvature(pao, overlap, fock, exchange, occupied_sum, parent,
         raise ValueError("Invalid first-PNO parent transform.")
     if np.count_nonzero(np.any(X != 0., axis=1)) != X.shape[1]:
         raise ValueError("First-PNO curvature requires a full-rank selected pivot span.")
-    moving = MixedBlock(*(x @ X for x in pao))
-    norm = _polar_normalization(mixed_product('ma,mn,nb->ab', moving, overlap, moving))
-    coefficients = MixedBlock(*(X @ x for x in norm))
-    moving = mixed_product('ma,ab->mb', pao, coefficients)
+    moving, coefficients = _moving_pao_parent(pao,overlap,X)
     F = mixed_product('ma,mn,nb->ab', moving, fock, moving)
     K = mixed_product('ma,mn,nb->ab', coefficients, exchange, coefficients)
     t = semicanonical_mp2(K, F, occupied_sum)

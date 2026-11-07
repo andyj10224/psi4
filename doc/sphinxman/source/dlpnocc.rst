@@ -235,9 +235,10 @@ obtained through driver fallback must not be described as analytic.
 ``screened_domains.py`` audits an interacting four-H2 chain with actual local
 AO/refit, PAO, occupied and auxiliary lists. Its sparse CCSD residual and mixed
 amplitude checks, and selected screened analytic-gradient checks, pass. The
-mixed nuclear PNO/CCSD molecular providers still reject screened domains, so
-no screened nuclear Hessian has been validated. The audit also records a
-synthetic first-PNO operator probe above its existing tolerance. Run with
+complete coupled-LMP2/final-PNO/CCSD molecular delivery is still incomplete,
+so no screened nuclear Hessian has been validated. The synthetic first-PNO
+operator probe now passes its unchanged tolerance using Richardson
+extrapolation; its old centered error and a DEBUG>1 spacing study are retained. Run with
 ``--require-production`` to obtain a nonzero exit status while these blockers
 remain. Domain fingerprints are available through
 ``core.dlpno_response_domain_state(wfn)``; these copies exclude AO Schwarz
@@ -256,6 +257,18 @@ molecular providers or enable public analytic Hessian routing. Agreement with
 an ordinary energy calculation also requires matching its retained-pair and
 triples choices. See ``DLPNO_HESSIAN_WORKING_MEMORY.md`` and
 ``DLPNO_HESSIAN_EQUATIONS.txt`` for the validation ledger and working equations.
+
+``screened_first_pno.py`` validates the separate analytic first-PNO molecular
+provider in ``response/dlpno_screened_pno.py``. It uses native refined-stage
+local occupied/virtual AO domains, extended-label masks, pair auxiliary lists,
+normalized moving PAOs and selected pivot parents. The copied snapshot from
+``core.dlpno_first_pno_state(wfn)`` requires
+|dlpno__dlpno_keep_lmp2_response| and includes full-rank selections. Its forward
+AO Schwarz screen must be off. Analytic inputs are evaluated at one geometry;
+validation differences independent first-order projector responses. Direct
+second differences of native truncated PNO coefficients remain noisy and are
+recorded separately as unresolved diagnostics. Neither this first-PNO block
+nor the excluded-pair correction kernels supply a complete screened Hessian.
 
 Higher-Order DLPNO Methods
 --------------------------

@@ -120,7 +120,8 @@ void DLPNOCCSD_T::finish_local_basis_response() {
     merge(ccsd_overlap_response_, triples_overlap_bar_);
     MetricShellBlocks metric(ribasis_->nshell());
     std::vector<ThreeCenterDensity> density(ribasis_->nbf());
-    double projector_error = 0., metric_error = 0.;
+    double projector_error = 0., projector_central_error = 0., metric_error = 0.;
+    std::vector<std::vector<double>> projector_probe_rows;
     for (int p = 0; p < X_pno_.size(); ++p) {
         const auto [i, j] = ij_to_i_j_[p];
         if (i > j) continue;
@@ -166,9 +167,20 @@ void DLPNOCCSD_T::finish_local_basis_response() {
                     return b1->vector_dot(updated);
                 };
                 constexpr double h = 1.e-7;
-                double err = std::abs(analytic - (sample(h) - sample(-h)) / (2 * h));
+                const double coarse = (sample(h)-sample(-h))/(2.*h);
+                const double fine = (sample(h/2.)-sample(-h/2.))/h;
+                // Small PNO occupation gaps make the O(h^2) term visible at
+                // the old spacing. Cancel it without relaxing the tolerance.
+                const double err = std::abs(analytic-(4.*fine-coarse)/3.);
                 if (!std::isfinite(err)) throw PSIEXCEPTION("Nonfinite combined PNO projector probe.");
                 projector_error = std::max(projector_error, err);
+                projector_central_error = std::max(projector_central_error,std::abs(analytic-coarse));
+                if (debug_ > 1) {
+                    for (double step : {1.e-5,3.e-6,1.e-6,3.e-7,1.e-7,3.e-8,1.e-8}) {
+                        const double numeric = (sample(step)-sample(-step))/(2.*step);
+                        projector_probe_rows.push_back({double(i),double(j),step,analytic,numeric});
+                    }
+                }
             }
             scatter_pair_fit(p, dJ, di, dj, metric, density);
             add_local_block(ccsd_fvv_response_, paos, paos, linalg::triplet(parent, fbar, parent, false, false, true));
@@ -208,7 +220,14 @@ void DLPNOCCSD_T::finish_local_basis_response() {
     }
     if (debug_) {
         set_scalar_variable("DLPNO PNO PROJECTOR OPERATOR DIRECTION ERROR", projector_error);
+        set_scalar_variable("DLPNO PNO PROJECTOR OPERATOR CENTRAL ERROR", projector_central_error);
         set_scalar_variable("DLPNO PARENT PAO METRIC DIRECTION ERROR", metric_error);
+        if (!projector_probe_rows.empty()) {
+            auto rows = std::make_shared<Matrix>(projector_probe_rows.size(),5);
+            for (int r = 0; r < rows->nrow(); ++r)
+                for (int c = 0; c < 5; ++c) (*rows)(r,c) = projector_probe_rows[r][c];
+            set_array_variable("DLPNO PNO PROJECTOR OPERATOR STEP STUDY",rows);
+        }
     }
     const std::string m = "DLPNO PNO PROJECTOR AUXILIARY METRIC GRADIENT",
                       q = "DLPNO PNO PROJECTOR THREE-CENTER GRADIENT";

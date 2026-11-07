@@ -28,7 +28,8 @@ eliminates mixed CCSD amplitudes and supplies trial mixed TNO response.
 Four complete full-domain water Hessians are validated in Section 21.
 Section 23 adds the screened semicanonical-MP2 and dipole corrections to
 the gradient energy and implements their analytic gradients and mixed
-curvatures. Complete screened PNO/CCSD molecular delivery, public analytic
+curvatures. Section 24 adds screened first-PNO molecular response and resolves
+the synthetic operator diagnostic. Complete screened PNO/CCSD delivery, public analytic
 Hessian routing and equilibrium vibrational validation remain open.
 Later sections supersede the explicitly historical checkpoints.
 The companion working-memory Markdown file contains
@@ -1735,5 +1736,135 @@ These are selected total-gradient and correction-only curvature checks,
 not complete screened CCSD(T) Hessians. The mixed screened PNO/CCSD
 providers and the synthetic operator-probe issue from Section 22 remain
 open; public analytic Hessian routing is still disabled.
+
+\section{Screened first-PNO molecular response}
+This step supplies analytic first and mixed nuclear data for every retained
+first-PNO pair using its actual local fitting and selected PAO parent spaces.
+It does not yet deliver screened coupled-LMP2, final-PNO, TNO or CCSD nuclear
+inputs, and does not enable a general analytic Hessian. The earlier excluded
+SC-MP2 and dipole kernels remain separate contributions.
+
+\subsection{Native snapshot and local fitting factors}
+The optional first-PNO snapshot stores the refined-stage occupied/virtual
+AO lists $A_Q,B_Q$, extended occupied/PAO labels, unique retained pair list,
+pair PAO/auxiliary lists, full-rank pivot parent $X$, raw panels $q_i,q_j$,
+semicanonical MP2 amplitudes, all occupations, and retained AO frame $Y_0$.
+Full-rank selections are stored too. Accessors return copies. Discrete lists
+and ranks come from the forward calculation; no cutoff is reapplied by the
+response provider. The recorded forward AO Schwarz tolerance must be zero:
+these snapshots do not export the shell mask. Native analytic gradients do
+not acquire this restriction.
+
+Let $N$ be normalized PAOs on the pair list, with total occupied-projector
+response including frozen core. For auxiliary center $Q$, the occupied
+refit and raw panel are
+\begin{align}
+ S_{A_QA_Q}c_i^{Q}&=S_{A_Q,:}L_i,\\
+ (q_i)_{Qa}&=\chi_i^Q\chi_a^Q
+ \sum_{\mu\in A_Q,\nu\in B_Q}
+ (c_i^Q)_\mu (Q|\mu\nu)N_{\nu a},\\
+ K&=q_i^{\mathsf T}J^{-1}q_j .
+\end{align}
+Here $\chi_i^Q$ and $\chi_a^Q$ are fixed extended-label masks. The OO/VV
+PAO-pair mask is not part of this OV panel. The different occupied and
+virtual AO lists must not be replaced by a common full AO contraction.
+For any local solve $A x=b$, use
+\begin{align}
+ A x^u&=b^u-A^u x,\\
+ A x^{uv}&=b^{uv}-A^{uv}x-A^u x^v-A^v x^u.
+\end{align}
+Products obey the full mixed product rule. Applying these rules to the refit,
+panel contraction and auxiliary solve delivers $K,K^u,K^v,K^{uv}$ directly
+from analytic molecular inputs at one geometry.
+
+\subsection{A stable chart for the native parent span}
+Numerically conditioned local parents can have large arbitrary internal
+rotations. First normalize the nearly orthonormal native parent at the
+reference, without changing its selected pivot span:
+\begin{align}
+ B_0&=N_0X_0,\quad M_0=B_0^{\mathsf T}S_0B_0,\quad
+ X=X_0M_0^{-1/2},\\
+ B&=N_0X,\quad B_u=N^uX,\quad B_v=N^vX,\quad B_{uv}=N^{uv}X,
+ \quad M=B^{\mathsf T}SB .
+\end{align}
+Subscripts on $B_u,B_v,B_{uv}$ in this subsection denote raw moving-PAO
+blocks with $X$ held fixed. Define a chart with no first-order internal
+rotation in the symmetric metric connection:
+\begin{align}
+ C_u&=-M^{-1}\left(B^{\mathsf T}SB_u+
+                    \tfrac12 B^{\mathsf T}S^uB\right),\\
+ C_v&=-M^{-1}\left(B^{\mathsf T}SB_v+
+                    \tfrac12 B^{\mathsf T}S^vB\right),\\
+ Y^u&=B_u+BC_u,\qquad Y^v=B_v+BC_v,\\
+ Z&=B_{uv}+B_uC_v+B_vC_u,\\
+ R&=Z^{\mathsf T}SB+B^{\mathsf T}SZ
+     +(Y^u)^{\mathsf T}SY^v+(Y^v)^{\mathsf T}SY^u\nonumber\\
+  &\quad +(Y^u)^{\mathsf T}S^vB+B^{\mathsf T}S^vY^u
+     +(Y^v)^{\mathsf T}S^uB+B^{\mathsf T}S^uY^v+B^{\mathsf T}S^{uv}B,\\
+ C_{uv}&=-\tfrac12 M^{-1}R,\qquad Y^{uv}=Z+BC_{uv} .
+\end{align}
+The parent blocks are $(B,Y^u,Y^v,Y^{uv})$; their PAO coefficient blocks are
+$(X,XC_u,XC_v,XC_{uv})$. Use these same coefficient blocks to transform $K$
+and the parent blocks to transform the AO Fock matrix. Differentiated metric
+orthonormality is then satisfied without introducing virtual energy gaps.
+The full-Fock Sylvester MP2 solve and retained/discarded spectral projector
+response are those in Section 7.1. The final retained frame remains anchored
+to the actual reference PNO projector; the internal parent chart changes no
+selected subspace. At full retained rank the AO density factor is simply
+$B(B^{\mathsf T}SB)^{-1}B^{\mathsf T}$.
+
+For polar normalization, evaluate derivatives at the actual near-identity
+Gram matrix $G$, rather than replacing its reference by exact identity.
+Let $W=G^{1/2}$ and $T=W^{-1}$. Solve
+\begin{align}
+ WW^u+W^uW&=G^u,\qquad WW^v+W^vW=G^v,\\
+ WW^{uv}+W^{uv}W&=G^{uv}-W^uW^v-W^vW^u,\\
+ T^u&=-TW^uT,\\
+ T^{uv}&=TW^uTW^vT+TW^vTW^uT-TW^{uv}T .
+\end{align}
+The square-root Sylvester denominator is $\sqrt{g_a}+\sqrt{g_b}$, positive
+for a nonsingular Gram matrix. The original $2\times10^{-8}$ reference
+and differentiated metric checks are retained.
+
+\subsection{Independent checks and precision limits}
+The screened test uses the actual native local lists and checks their
+fixed-branch identity, occupied labeling, pair membership, first/final ranks,
+response edges and physical parent spans at every displaced geometry.
+Raw panels, amplitudes and occupations replay within $2\times10^{-10}$;
+reference frames use the existing $2\times10^{-8}$ metric/frame criterion.
+First projector derivatives agree with the older independent first-order
+refit/MP2/projector implementation within $2\times10^{-9}$.
+Mixed projectors are checked against Richardson differences of that older
+first-order response with acceptance $5\times10^{-7}$. First differences of
+native selected frames/projectors and mixed PAO/raw-panel differences are
+separate checks at $5\times10^{-7}$. At full retained rank the independent
+value reference uses the defining parent-span metric solve after verifying
+that the native selected span is the same. Its independent first derivative
+is obtained by differentiating this metric solve; mixed response is checked
+by differences of those derivatives. It avoids rediagonalizing a complete
+PNO space whose internal rotations are immaterial.
+
+Direct second differences of native truncated PNO coefficients/projectors
+are recorded, but remain unresolved at a $3\times10^{-6}$ diagnostic target.
+They amplify native value errors by $h^{-2}$. For example, the Boys H2
+$(2,2)$ frame comparison at 0.004/0.002 bohr has error
+$3.98\times10^{-4}$, while differences of the independent first response
+agree to $5.93\times10^{-8}$. These raw value comparisons are not reported
+as passing evidence. The accompanying memory and JSON records distinguish
+the accepted derivative oracle from these numerical limitations.
+
+The historical synthetic first-PNO operator probe used one centered spacing
+$h=10^{-7}$ and gave $1.30\times10^{-7}$ error. Its step study exhibits the
+expected quadratic truncation term. With $D(h)=[f(h)-f(-h)]/(2h)$, use
+\begin{equation}
+ D_{\mathrm R}(h)=\frac{4D(h/2)-D(h)}{3} .
+\end{equation}
+The Boys H2 error becomes $7.65\times10^{-10}$, below the unchanged
+$10^{-8}$ criterion. Preserve the original centered error separately and,
+with DEBUG greater than one, record all seven spacings from $10^{-5}$ to
+$10^{-8}$. This is a diagnostic refinement, not a gradient formula change.
+The next molecular block is the coupled first-space LMP2 and final-PNO
+response on these same local domains, followed by screened CCSD/TNO
+assembly and complete Hessian validation before production routing.
 
 \end{document}

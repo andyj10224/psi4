@@ -196,6 +196,8 @@ std::tuple<std::vector<int>,std::vector<SharedMatrix>,std::map<std::string,Share
     ccsd_df_pair_state(SharedWavefunction,int,int);
 std::map<std::string,std::vector<std::vector<int>>> response_domain_state(SharedWavefunction);
 std::tuple<std::map<std::string,std::vector<std::vector<int>>>,
+           std::map<std::pair<int,int>,std::map<std::string,SharedMatrix>>> first_pno_state(SharedWavefunction);
+std::tuple<std::map<std::string,std::vector<std::vector<int>>>,
            std::map<std::pair<int,int>,std::map<std::string,SharedMatrix>>> screened_pair_state(SharedWavefunction);
 std::pair<std::vector<SharedMatrix>, PairBlocks> triples_ccsd_source(SharedWavefunction);
 std::pair<std::vector<SharedMatrix>, PairBlocks> gradient_ccsd_lambda(SharedWavefunction);
@@ -1454,6 +1456,8 @@ PYBIND11_MODULE(core, core) {
              "Local CCSD amplitudes and dressed DF intermediates for one unique retained pair.");
     core.def("dlpno_response_domain_state", &dlpno::response_domain_state, "wfn"_a,
              "Copy fixed atom/pair AO, PAO, occupied and auxiliary lists; excludes AO Schwarz masks.");
+    core.def("dlpno_first_pno_state", &dlpno::first_pno_state, "wfn"_a,
+             "Copy first-PNO domains, native parents, raw fitting panels, amplitudes and selected AO frames.");
     core.def("dlpno_screened_pair_state", &dlpno::screened_pair_state, "wfn"_a,
              "Copy dipole and excluded SC-MP2 pair domains, parents and crude fitting panels.");
     core.def("dlpno_gradient_ccsd_lambda", &dlpno::gradient_ccsd_lambda, "wfn"_a,

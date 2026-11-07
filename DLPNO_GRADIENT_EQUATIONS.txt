@@ -544,3 +544,17 @@ complete the screened PNO/CCSD molecular Hessian providers. Public analytic
 Hessian routing remains disabled. These are fixed-branch derivatives;
 threshold crossings, open-shell gradients, complete-gradient linear
 scaling and a general screened Hessian are not established by these tests.
+10.8. First-PNO diagnostic follow-up
+The Hessian development snapshot now also retains actual first-PNO domains,
+raw fitting panels, pivot parents, amplitudes, occupations and selections,
+including full-rank selections. The native gradient does not require this
+snapshot, and its energy and response equations are unchanged.
+The synthetic first-PNO operator directional check now uses Richardson
+extrapolation of centered spacings $10^{-7}$ and $5\times10^{-8}$ rather
+than only the larger spacing. The old centered error is retained separately;
+DEBUG greater than one also records a seven-spacing study. On the screened
+Boys H2 fixture the error falls from $1.30\times10^{-7}$ to
+$7.65\times10^{-10}$ without relaxing the $10^{-8}$ threshold.
+The analytic local first/mixed PNO response and its parent-chart conditioning
+are documented in Hessian equation Section 24. They do not complete screened
+CCSD(T) Hessian assembly or alter public gradient routing.

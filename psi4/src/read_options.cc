@@ -2717,7 +2717,8 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
             iterative triples, PNO projector response, both PNO truncation corrections,
             LMP2 relaxation, and excluded dipole/semicanonical-MP2 pairs. !expert -*/
         options.add_bool("DLPNO_GRADIENT_MODEL", false);
-        /*- Retain excluded-pair domains/parents, converged first-space pair amplitudes, their screened graph and the
+        /*- Retain excluded-pair domains/parents, first-PNO domains/panels/parents and selections,
+            converged first-space pair amplitudes, their screened graph and the
             isolated PNO-loss source for experimental nuclear LMP2 tangent and
             PNO-truncation adjoint solves in the RHF gradient model. -*/
         options.add_bool("DLPNO_KEEP_LMP2_RESPONSE", false);
