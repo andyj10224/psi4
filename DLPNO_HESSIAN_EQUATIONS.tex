@@ -1231,4 +1231,173 @@ to stop. The fourth-power proposal retains its objective acceptance test.
 Independent AO-projected stationarity checks cover small-rotation restarts
 with augmented-Hessian steps both enabled and disabled.
 
+\section{Analytic mixed nuclear transformed-CCSD residual}
+Let $x$ collect the moving molecular inputs: AO overlap, active LMOs, AO
+Fock matrix, final pair frames, local Coulomb metrics and raw three-center
+integrals. The reference and both first CCSD amplitude responses solve
+$R(t,x)=0$ and $R_t t^u+R_x x^u=0$. Evaluate the same residual along
+\begin{equation}
+ \widehat t(u,v)=t+u t^u+v t^v,\qquad
+ x(u,v)=x+u x^u+v x^v+uv x^{uv}+\cdots .
+\end{equation}
+The desired mixed source contains all nuclear and amplitude cross terms:
+\begin{align}
+ c^{uv}&=\left.\partial_u\partial_v
+                   R(\widehat t(u,v),x(u,v))\right|_0\\
+ &=R_x x^{uv}+R_{xx}[x^u,x^v]+R_{xt}[x^u,t^v]
+       +R_{tx}[t^u,x^v]+R_{tt}[t^u,t^v],\\
+ Jt^{uv}&=-c^{uv},\qquad J=R_t.
+\end{align}
+There is no mixed CCSD amplitude in the source. Each tensor is stored as
+$(A,A^u,A^v,A^{uv})$; singles and doubles have $t^{uv}=0$. For a multilinear
+contraction $\mathcal C$ over $n$ factors, preserving all native index orders,
+\begin{equation}
+ (\mathcal C[A_1,\ldots,A_n])^{uv}
+ =\sum_i\mathcal C[A_1,\ldots,A_i^{uv},\ldots,A_n]
+ +\sum_{i\ne j}\mathcal C[\ldots,A_i^u,\ldots,A_j^v,\ldots].
+\end{equation}
+For coincident nuclear directions the two cross assignments remain separate;
+no factor of two is dropped. Intermediate products are differentiated before
+they are used in subsequent contractions, so the rule covers the full
+quartic amplitude dependence of the transformed residual.
+
+\subsection{Raw fitted factors and the two metric conventions}
+For the occupied domain $D_p$ and final frame $Y_p$ of target pair $p$, form
+\begin{equation}
+ q_{oo}^Q=L_{D_p}^{\mathsf T}Q^Q L_{D_p},\quad
+ q_{ov}^Q=L_{D_p}^{\mathsf T}Q^QY_p,\quad
+ q_{vv}^Q=Y_p^{\mathsf T}Q^QY_p,\quad
+ S_{pq}=Y_p^{\mathsf T}S Y_q.
+\end{equation}
+These equations and every following equation apply to all four tensor
+components by the mixed product rule. Native T1 dressing uses two metric
+half-inverses with the relative spectral cutoff $10^{-14}$. Their product
+is $G_f=f(M)$, where $f(e)=1/e$ on the retained positive spectral branch
+and zero on its complement. Since every dressed residual term contains
+exactly two fitted factors, compute it as
+\begin{equation}
+ \sum_Q B_A^Q B_B^Q=\sum_{QR}q_A^Q(G_f)_{QR}q_B^R.
+\end{equation}
+The mixed spectral derivative already used for the triples moments supplies
+$G_f^{uv}$, including retained--discarded eigenvector response. This avoids
+introducing an auxiliary eigenvector gauge. The MP2-origin exchange and
+nonprojected mixed $J/K$ instead use the native unfiltered inverse $G=M^{-1}$:
+\begin{equation}
+ G^u=-GM^uG,\quad G^v=-GM^vG,\quad
+ G^{uv}=-G(M^{uv}G+M^uG^v+M^vG^u).
+\end{equation}
+For example, with $p=(i,j)$ and $q=(k,j)$, the two nonprojected vertices use
+\begin{align}
+ J_{ik}^{a_p c_q}&=q_{ik}^{Q}(G_p)_{QR}q_{a_p c_q}^{R},\\
+ K_{ik}^{a_p c_q}&=q_{i a_p}^{Q}(G_p)_{QR}q_{k c_q}^{R}.
+\end{align}
+Both are fitted on the target $p$ auxiliary domain, even though the second
+virtual leg belongs to $q$. Their actual rectangular frames must be used;
+a pair-overlap projection is not substituted for these integrals.
+
+\subsection{Replay of the full residual}
+Projected singles in a target pair are $T_m^a(p)=(S_{p,mm}t_m)^a$.
+The raw counterparts of the occupied and virtual dressed factors are
+\begin{align}
+ O_m^{Qk}(p)&=q_{oo}^{Qmk}+q_{ov}^{Qkc}T_m^c(p),\\
+ V_m^{Qa}(p)&=q_{ov}^{Qma}-O_m^{Qk}(p)T_k^a(p)
+                            +q_{vv}^{Qac}T_m^c(p),\\
+ V^{Qac}(p)&=q_{vv}^{Qac}-T_k^a(p)q_{ov}^{Qkc}.
+\end{align}
+The direct and virtual-ladder contributions are therefore
+\begin{equation}
+ R_{ij}^{ab}\big|_{75,76}
+ =V_i^{Qa}(G_f)_{QR}V_j^{Rb}
+       +V^{Qac}(G_f)_{QR}t_{ij}^{cd}V^{Rbd}.
+\end{equation}
+Taking the mixed coefficient differentiates both virtual legs, both singles
+transfers, all amplitude factors and the local fitting operator. The same
+procedure applies to the $\beta,\gamma,\delta$ expressions of Section 10.3,
+with $u_{ij}=2t_{ij}-t_{ij}^{\mathsf T}$ and each exchange block fitted in
+its own pair domain. The remaining residual assembly follows the forward
+contraction order:
+\begin{center}
+\begin{tabular}{ll}
+Jiang equations & Replayed contribution \\\hline
+75--76 & Direct dressed product and virtual ladder \\
+77, 82 & $\beta$ and both pair-transfer legs \\
+78--79, 83--84 & Ordered $\gamma/\delta$ and mixed $J/K$ vertices \\
+80--81, 85--86 & Virtual and occupied double-dressed Fock blocks \\
+87--90 & Singles A, B, C terms and diagonal-space accumulation \\
+93--101 & Contracted-index and free-index T1/Fock dressings
+\end{tabular}
+\end{center}
+In particular, form the entire occupied $F''_{kj}$ matrix before using it
+in the G contribution. Singles B rows are accumulated into their destination
+\emph{diagonal} pair spaces. Both ordered doubles residuals are combined as
+in the native code, including the diagonal-pair multiplicity. These details
+matter when pair ranks differ.
+
+\subsection{Stationary contraction, validation and current scope}
+Use this analytic $c^{uv}$ in the existing retained-energy and triples
+multipliers:
+\begin{equation}
+ E_{\rm CC}^{uv}=\widehat E_{\rm CC}^{uv}
+                   +\langle\lambda_{\rm CC},c^{uv}\rangle_W,\qquad
+ E_{(T)}^{uv}=\widehat E_{(T)}^{uv}
+                   +\langle\lambda_{(T)},c^{uv}\rangle_W.
+\end{equation}
+The metric $W$ is the established unique-pair convention (one half on
+symmetric diagonal doubles blocks). Mixed CCSD amplitudes remain eliminated.
+The existing finite-geometry coefficient-extraction routine is retained only
+as an independent verification oracle. It no longer supplies the assembled
+stationary value.
+
+The molecular replay currently requires full occupied and AO domains
+with fixed pair lists and subspace ranks. Its input guard rejects screened orbital-domain
+settings and nonzero mixed CCSD amplitudes. Native residual replay tests the
+zeroth coefficient; converged first-response equations test both linear
+coefficients. Random symmetric amplitude directions independently isolate
+$R_{tt}[t^u,t^v]$ using the native quartic residual. Swapping directions checks
+mixed reciprocity. Geometry stencils check the mixed coefficient and its
+adjoint contraction, separately from the integrated finite-PNO and full-rank
+canonical curvature comparisons. No finite-difference spacing enters the
+analytic result. Detailed tolerances and observed errors are in the working
+memory ledger.
+
+This completes the previously sampled CCSD residual block of the full-domain
+stationary diagnostic. Screened-domain molecular assembly, other nonzero
+screened-energy corrections, full Cartesian invariance and vibrational
+validation, and production scaling/delivery remain separate tasks. The
+result does not yet expose a general public analytic DLPNO nuclear Hessian.
+
+\subsection{Independent check from transported analytic first amplitudes}
+Second differences of the native residual magnify small integral/refit
+cancellation offsets, especially in all-electron core singles. An independent
+componentwise oracle instead differences the already-validated analytic first
+CCSD amplitudes. Their moving frames must be aligned \emph{and differentiated}.
+Let $Y_h$ be the native pair frame at a displaced geometry and $Y_0$ the
+fixed reference. With the fixed reference AO metric $S_0$, write
+\begin{equation}
+ A=Y_h^{\mathsf T}S_0Y_0=QH,\qquad
+ H=H^{\mathsf T}>0,\quad Q^{\mathsf T}Q=I.
+\end{equation}
+The native first tangent is expressed in its own local polar frame. With
+$A^u=(Y_h^u)^{\mathsf T}S_0Y_0$, differentiate the alignment through
+\begin{equation}
+ Q^u=Q\Omega^u,\qquad
+ H\Omega^u+\Omega^u H=Q^{\mathsf T}A^u-(A^u)^{\mathsf T}Q,
+ \qquad (\Omega^u)^{\mathsf T}=-\Omega^u.
+\end{equation}
+For an ordered doubles block and a singles vector, respectively,
+\begin{align}
+ \overline t&=Q^{\mathsf T}tQ,&
+ \overline t^{\,u}&=Q^{\mathsf T}t^uQ
+                    +(\Omega^u)^{\mathsf T}\overline t+\overline t\Omega^u,\\
+ \overline s&=Q^{\mathsf T}s,&
+ \overline s^{\,u}&=Q^{\mathsf T}s^u+(\Omega^u)^{\mathsf T}\overline s.
+\end{align}
+Apply the occupied permutation and signs consistently. Centered first
+differences of these transported tangents at $h$ and $h/2$, extrapolated to
+fourth order, give an independent $t^{uv}$. The native amplitude action then
+tests $c^{uv}=-Jt^{uv}$ component by component. This oracle uses the earlier
+first-response implementation, not the new mixed residual algebra. Its
+geometry spacing occurs only in the test. Native residual second differences
+remain a separate scalar-adjoint check and a reported roundoff diagnostic.
+
 \end{document}

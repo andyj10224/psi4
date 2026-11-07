@@ -4,11 +4,11 @@
 
 Derive the analytic nuclear Hessian of the same closed-shell RHF ordinary iterative DLPNO-CCSD(T) functional selected by the public gradient driver. Start with Boys, then Mulliken PM; exercise both frozen-core and all-electron references. Work in a fixed Cartesian frame, in hartree/bohr², on a smooth local branch. Keep discrete selections fixed while differentiating the moving electronic subspaces. Require a test for each block before using it as a reference for the next block. Keep canonical comparisons, local finite-cutoff checks, and scaling measurements separate. [Working equations (.txt)](DLPNO_HESSIAN_EQUATIONS.txt) · [Typesetting source (.tex)](DLPNO_HESSIAN_EQUATIONS.tex)
 
-**Current checkpoint (7 November 2026).** Both PNO selections, including the mixed coupled-LMP2 amplitudes between them, now have analytic full-domain molecular inputs. The separate stationary PNO truncation-energy curvature is analytic in that diagnostic. The assembled retained-CCSD/triples path no longer samples mixed PNO coefficients; the mixed nuclear CCSD residual is the next major analytic block. Nonzero other screened-energy corrections, screened molecular assembly, full Cartesian invariance/vibrational validation and scaling remain. See the final entry for validation and scope; historical “Next” statements below describe the state at that earlier checkpoint.
+**Current checkpoint (7 November 2026).** The mixed nuclear transformed-CCSD residual now has an analytic replay at one reference geometry, with affine CCSD amplitudes and analytic moving final PNO frames. It supplies the retained-CCSD and iterative-triples stationary curvature contractions. Both PNO selections, their coupled-LMP2 parent response, and the separate PNO truncation-energy curvature are also analytic in the full-domain diagnostic. Geometry stencils remain independent checks only. Nonzero other screened-energy corrections, screened molecular assembly, full Cartesian invariance/vibrational validation and production scaling/delivery remain. See the final entry for validation and scope; historical “Next” statements below describe the state at that earlier checkpoint.
 
 ## Complete Hessian milestone index across both chats
 
-This index reconciles the Hessian phase of **“Implement DLPNO Gradients”** with the continuation in this chat. It was checked against every commit from `0af1a1eb` through `1b9f1b23`, all 21 pre-existing chronological entries below, and the recovered older-chat context. Each previous Hessian commit has a corresponding ledger entry and working-equation section. The current mixed-LMP2/final-PNO checkpoint is step 22. Earlier unsuccessful checks, numerical dependencies and their later resolutions are preserved in the chronological entries; they are not silently replaced by the latest passing result.
+This index reconciles the Hessian phase of **“Implement DLPNO Gradients”** with the continuation in this chat. It was checked against every commit from `0af1a1eb` through `05aea699`, all 22 preceding chronological entries below, and the recovered older-chat context. Each previous Hessian commit has a corresponding ledger entry and working-equation section. The analytic mixed nuclear CCSD residual is step 23. Earlier unsuccessful checks, numerical dependencies and their later resolutions are preserved in the chronological entries; they are not silently replaced by the latest passing result.
 
 Equation-section numbers refer to both the `.txt` export and `.tex` source. The text export contains the entire equation body with mathematical notation preserved, not a shortened recap. Regenerate it with `python tests/dlpno-hessian-model/export_equations.py`; `--check` verifies synchronization. The exporter also checks that every displayed equation is preserved verbatim.
 
@@ -35,7 +35,8 @@ Equation-section numbers refer to both the `.txt` export and `.tex` source. The 
 | 19 | Mixed quadratic Boys/Mulliken-PM response and native electronic dipole second derivatives | `d79f434b` | 19–19.1 |
 | 20 | Remove forward localization precision floor; resolve failed all-electron assembled entry | `063eb109` | 19.2 |
 | 21 | Analytic mixed first PNOs; remove sampled molecular inputs from PNO-loss curvature | `1b9f1b23` | 7.1, 16 |
-| 22 | Native mixed coupled-LMP2 solve and final-PNO curvature; analytic frame integration | Current checkpoint | 8.1, 9.1 |
+| 22 | Native mixed coupled-LMP2 solve and final-PNO curvature; analytic frame integration | `05aea699` | 8.1, 9.1 |
+| 23 | Analytic mixed nuclear CCSD residual and stationary curvature integration | Current checkpoint | 20–20.4 |
 
 Step 19 was recovered locally as `e8a240b2` and published as `d79f434b`; the localization precision fix was locally `d222a3ab` and published as `063eb109`. These pairs refer to the same tested content at each checkpoint, not additional Hessian steps. The failed all-electron total error of -3.37e-7 at step 19 and its resolution at step 20 are both retained below. No completed full Cartesian molecular Hessian or vibrational result is implied by the milestone count.
 
@@ -499,3 +500,55 @@ Reproduce the new response checks in the built Psi4 environment:
     python tests/dlpno-hessian-model/export_equations.py --check
 
 **Next analytic block.** Replace `semi_analytic_ccsd_mixed_source` with the analytic mixed nuclear source of the t1-transformed CCSD residual in the same moving final-PNO charts. This includes the T1-dressed fitted integrals and intermediates, occupied couplings, projected singles and all explicit interpair overlaps; the existing native CCSD adjoints then contract that source. Keep the existing stationary elimination of mixed CCSD amplitudes. Other nonzero screened-energy corrections, screened-domain input delivery, PM molecular integration, full Cartesian symmetry/translation/rotation/vibrational checks and scaling validation remain separate work. A complete production analytic molecular Hessian is not claimed.
+
+## 2026-11-07 — Analytic mixed nuclear CCSD residual
+
+**Implemented.** `psi4/driver/procrouting/response/dlpno_ccsd_mixed.py` replays the complete RHF t1-transformed singles and doubles residual with four-component mixed tensors. Its molecular inputs are the AO overlap, active LMOs, Fock matrix, moving final PNO frames, local fitting metrics and three-center integrals. Both first CCSD responses are included; the mixed CCSD amplitudes are explicitly zero. The result is
+
+    c_uv = R_x x_uv + R_xx[x_u,x_v] + R_xt[x_u,t_v]
+           + R_tx[t_u,x_v] + R_tt[t_u,t_v],   J t_uv = -c_uv.
+
+The replay includes direct dressed DF products, the virtual ladder, beta and both overlap legs, ordered gamma/delta and nonprojected J/K vertices, singles A/B/C, and all contracted/free-index Fock dressings (Jiang 75–101). The entire occupied double-dressed Fock matrix is completed before using the G contribution. Singles B rows accumulate into their destination diagonal-pair spaces. Reversed pairs transpose amplitudes while preserving each target's auxiliary fitting domain and actual rectangular virtual legs.
+
+**Metric distinction.** Raw T1-dressed factors are contracted with the analytic spectral derivative of the product of the two native filtered half-inverses. MP2-origin exchange and nonprojected J/K retain the native unfiltered metric solve. This preserves the original residual algebra without selecting an auxiliary eigenvector gauge. The existing mixed-product implementation supplies every two-direction cross assignment, including the two equal-direction assignments for a diagonal Hessian entry.
+
+**Integration.** `triples_curvature.benchmark` computes this source once per coordinate pair at the reference geometry and feeds it into both the retained-CCSD and ordinary iterative-triples stationary contractions. The source and the stationary trial providers reject requests for sampled mixed electronic inputs. `semi_analytic_ccsd_mixed_source` remains an independent native-residual oracle; it no longer supplies the assembled value. The source's CCSD path rejects nonzero mixed amplitudes and unsupported screened orbital/AO domain settings. There is no geometry step in the analytic value.
+
+**Isolated verification.** `tests/dlpno-hessian-model/ccsd_mixed.py` checks finite-rank water/cc-pVDZ with first/final/TNO cutoffs 1e-5/1e-4/1e-5, both frozen O 1s and all-electron, and Oy/H1z plus H1z/H1z entries. It verifies the residual value against native replay, both converged first-response equations, u/v interchange, random symmetric pure-amplitude mixed directions against exact native quartic coefficient extraction, and rejection of non-affine CCSD input. The largest native value discrepancy is 8.85e-12; the largest first-equation residual is 5.80e-11. Pure-amplitude mixed discrepancies are 1.18e-15 (frozen) and 1.32e-14 (all-electron). These checks respectively retain 2e-10, 2e-9 and 2e-11 absolute acceptance thresholds. u/v interchange uses 2e-11.
+
+**Numerical-oracle investigation, retained as evidence.** Two-spacing fourth-order residual differences at 0.002/0.001 bohr amplified native integral/frame cancellation: the frozen cross source differed by 3.46e-7 with the original fixture and 3.76e-7 with tighter SCF/localization. The tighter fixture uses SCF integral/E/D tolerances 1e-14, orbital solver 1e-14 and localization gradient 1e-13 (CCSD/LMP2 R convergence remains 1e-11). At 0.004/0.002, the frozen cross error fell to 2.15e-8 but the diagonal component error was 2.62e-7. The amplitude-only check was already at roundoff and the scalar adjoint errors stayed below 4e-10. Tightening the reference alone did not resolve the small-spacing oracle noise.
+
+The isolated component test therefore uses three wider spacings, h=0.016, 0.008 and 0.004 bohr, with the sixth-order estimate
+
+    c_FD = (c(h) - 20 c(h/2) + 64 c(h/4))/45.
+
+The target component acceptance is 2e-7 and triples-adjoint acceptance is 2e-9. The wider all-electron stencil exceeded the old 0.999 occupied-overlap matching cutoff; the isolated test now permits 0.995, while the original default remains 0.999 for every other test. All original fixed PNO/TNO-rank, pair-label and response-edge checks remain active. This accommodates smooth occupied rotations over the larger displacement; it does not change a residual tolerance. The assembled energy check reports the noisier short-stencil component comparison but relies on the independent first-tangent component check described next, its existing mixed-equation check, and independent gradient/adjoint checks.
+
+
+The standard sixth-order residual oracle passed both cross entries (6.26e-9 frozen, 8.61e-9 all-electron) and the frozen diagonal (9.81e-8), but the all-electron diagonal still differed by 1.55e-6 in four core-singles components, with a triples-adjoint error of only -1.24e-12. A centered diagonal stencil excluding the reference residual gave 4.02e-6 at h=0.016 and 5.09e-7 at h=0.032. Thus removing the center alone did not cure the numerical comparison; neither of these exploratory component checks is represented as passing.
+
+**Independent resolution.** Added `ccsd_mixed_tangent_check.py`, which differentiates the previously validated analytic first CCSD amplitudes at displaced geometries. It includes the derivative of the fixed-reference polar alignment: for A=Y_h^T S_0 Y_0=Q H, solve H Omega + Omega H = Q^T A_u - A_u^T Q, then transform both amplitudes and their derivatives. Merely rotating t_u would miss this connection term. Centered first differences at 0.004/0.002 bohr, with fourth-order extrapolation, produce t_uv; the native exact-polynomial Jacobian action then independently checks c_uv=-J t_uv. This uses the original first-response algebra and avoids a second subtraction of native residual values. Every source component must satisfy the same 2e-7 acceptance in every core/coordinate case. The native residual sixth-order check remains separately required for the triples-adjoint contraction at 2e-9, with its component discrepancy printed rather than hidden. The final combined test passed all four cases. Maximum first-tangent source component errors were:
+
+| Core | Oy/H1z | H1z/H1z |
+|---|---:|---:|
+| Frozen O 1s | 1.21e-8 | 8.03e-9 |
+| All-electron | 1.61e-8 | 6.87e-8 |
+
+The standard sixth-order native residual adjoint errors were at most 4.36e-11. The all-electron diagonal residual-value discrepancy of 1.55e-6 is still reported by the final test; it is not claimed to satisfy the component criterion. All components independently satisfy that criterion through the transported-first-tangent oracle.
+
+**Assembled finite-PNO results.** The retained-CCSD + iterative-triples + two-stage PNO-loss correlation curvatures use analytic inputs throughout; they exclude RHF and nuclear-repulsion curvature. Verification uses independent gradient differences and the existing mixed-equation/adjoint checks at 0.004/0.002 bohr. All four entries passed. Values are in hartree/bohr²:
+
+| Core | Entry | Analytic correlation curvature | Retained CCSD vs gradient differences | Triples vs gradient differences |
+|---|---|---:|---:|---:|
+| Frozen O 1s | Oy/H1z | +0.004191800327785914 | -8.95e-12 | -1.62e-12 |
+| Frozen O 1s | H1z/H1z | -0.002000840798949364 | -5.44e-11 | +6.60e-13 |
+| All-electron | Oy/H1z | +0.004128129052544035 | -3.24e-11 | -3.44e-12 |
+| All-electron | H1z/H1z | -0.002843487204113496 | -2.08e-10 | -3.44e-12 |
+
+The largest independent PNO-loss comparison was 6.63e-10. The native second-amplitude-difference mixed-equation check was noisier for the all-electron diagonal (1.73e-5, below its existing 5e-5 criterion); the transported-first-tangent source test is the more precise componentwise check. Finite PNO ranks and rectangular transfers are retained. Relative to the preceding semi-analytic-residual checkpoint, the four analytic totals shift by about 4e-9 to 1.6e-8, consistent with removal of the residual stencil error.
+
+**Canonical limit.** Full pair and triples virtual spaces, both core choices, Oy/H1z and H1z/H1z, and independent canonical analytic-gradient differences at 0.008/0.004 bohr passed the original 2e-7 component criteria. The largest total-Hessian discrepancy was 4.65e-11 hartree/bohr². The largest separate CCSD/triples component discrepancy was 5.43e-9. All screened/PNO energy corrections were explicitly verified zero on this full-rank comparison. No full Cartesian matrix or vibrational validation has been inferred from these four entries.
+
+**Regression and records.** The module installs successfully; `dfccsd-t-grad1`, `dlpno-grad-model`, `dlpnocc-1`, and `dlpnolocal-1` all passed (4/4). The existing Lean stationarity and mixed-product identities still compile; they do not prove the complete residual implementation. Equation Section 20 documents the analytic source, metric conventions, contribution map, stationary use and independent transported-tangent oracle. The full `.txt` export contains 1,402 lines and remains synchronized with the `.tex` source; the latter compiles to 23 pages without overfull boxes or warnings. All prior milestone entries remain intact, and this checkpoint is step 23 across both chats.
+
+**Scope and next step.** The reference-geometry full-domain stationary diagnostic now has analytic molecular inputs for the retained CCSD, iterative (T), and two-stage PNO-loss pieces, with no displaced-geometry input in their assembled values. This is not yet a general public analytic-Hessian driver. Next validate the full Cartesian matrix and invariances on this branch, then extend the screened molecular providers and account for nonzero other screened-energy corrections before production delivery and scaling claims. Assembled PM validation also remains open.

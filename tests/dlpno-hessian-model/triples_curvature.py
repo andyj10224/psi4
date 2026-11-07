@@ -2,7 +2,8 @@
 
 The CCSD-stationary route eliminates mixed T1/T2 and builds mixed TNO frames.
 Both PNO selections and their coupled-LMP2 parent response are analytic. The
-mixed CCSD nuclear residual still comes from aligned displaced states.
+mixed CCSD nuclear residual is replayed analytically at the reference geometry.
+Aligned displaced states provide independent checks only.
 The independent local check differences stationary (T) gradients. The canonical
 reference differences analytic DF-CCSD(T) minus DF-CCSD gradients.
 """
@@ -18,6 +19,7 @@ from psi4.driver.procrouting.response.dlpno_orbital import pair_exchange_tangent
 from psi4.driver.procrouting.response.dlpno_ccsd_curvature import RetainedCCSDCurvature, project_retained_ccsd_energy
 from first_pno import raw
 from psi4.driver.procrouting.response.dlpno_triples_curvature import MixedBlock, mixed_product, project_mixed_triples_row, mixed_tno_frame
+from psi4.driver.procrouting.response.dlpno_ccsd_mixed import mixed_ccsd_residual
 from psi4.driver.procrouting.response.dlpno_ccsd_response import TriplesCCSDAdjoint, transported_ccsd_residual, semi_analytic_ccsd_mixed_source, ccsd_weighted_dot
 from water_hvp import BASE, molecule
 from psi4.driver.procrouting.response.dlpno_triples_response import TriplesHessianColumn, TriplesMixedRow
@@ -39,7 +41,7 @@ def stationary_gradient(direction):
                + np.vdot(direction.adjoints[r],direction.right_source[r]) for r in direction.edges)
 
 
-def aligned_inputs(model, reference, rows):
+def aligned_inputs(model, reference, rows, *, minimum_occupied_overlap=.999):
     """Express native inputs at one geometry in the reference smooth frame."""
     ref,other = reference.reference_wavefunction(),model.reference_wavefunction()
     l0 = reference.variable('DLPNO RESPONSE ACTIVE LMOS').np
@@ -48,7 +50,7 @@ def aligned_inputs(model, reference, rows):
     overlap = l0.T @ cross @ lm
     _,order = linear_sum_assignment(-abs(overlap))
     matched = overlap[np.arange(len(order)),order]
-    assert min(abs(matched)) > .999
+    assert min(abs(matched)) > minimum_occupied_overlap, min(abs(matched))
     signs = np.sign(matched)
     lm = lm[:,order]*signs
     new_rows = psi4.core.dlpno_triples_response_state(model)
@@ -448,6 +450,16 @@ def benchmark(frozen, coordinates=range(9), *, complete_spaces=False, coarse_ste
         lower_u = lower_v if u == v else {}
         row = column_row if u == v else check(frozen,row_at=divmod(u,3),reference=w,lower_order=lower_u)
         pno_data = analytic_final_pno_inputs(w,u,v)
+        base = data((0.,)*9).electronic
+        def forbidden_mixed(key):
+            raise AssertionError(f'Analytic CCSD residual requested a sampled mixed input: {key}')
+        replay = mixed_ccsd_residual(w,*molecular_blocks(w,u,v,base,lower_u,lower_v,
+                                                       forbidden_mixed,True,pno_data))
+        residual = [x.uv for x in replay[0]],{p:x.uv for p,x in replay[1].items()}
+        for component in (1,2):
+            np.testing.assert_allclose(np.concatenate([x[component].ravel() for x in
+                [*replay[0],*replay[1].values()]]),0.,atol=2.e-9,rtol=0.)
+        residual_checks = []
         relax = column.relaxation(row)
         reverse = TriplesHessianColumn(row).relaxation(column_row)
         np.testing.assert_allclose(relax,reverse,rtol=0.,atol=2.e-11)
@@ -465,7 +477,10 @@ def benchmark(frozen, coordinates=range(9), *, complete_spaces=False, coarse_ste
             print('mixed provider difference',frozen,u,h,element-direct,flush=True)
             assert abs(element-direct) < 5.e-6
             elements.append(element)
-            trial_fd,residual = trial_mixed_inputs(w,rows,u,v,h,model_at,data,lower_u,lower_v,lower_uv,pno_data)
+            trial_fd,sampled_residual = trial_mixed_inputs(w,rows,u,v,h,model_at,data,lower_u,lower_v,lower_uv,pno_data)
+            residual_checks.append(np.concatenate(
+                [a-b for a,b in zip(residual[0],sampled_residual[0])]
+                + [(a-sampled_residual[1][p]).ravel() for p,a in residual[1].items()]))
             matrix = psi4.core.Matrix.from_array
             nocc = len(residual[0])
             jt1,jt2 = psi4.core.dlpno_ccsd_amplitude_action(w,
@@ -504,6 +519,12 @@ def benchmark(frozen, coordinates=range(9), *, complete_spaces=False, coarse_ste
                 cc_gradients.append(retained_gradient(model,u,moved))
             retained_reference.append((cc_gradients[0]-cc_gradients[1])/(2*h))
             reference.append((derivatives[0]-derivatives[1])/(2*h))
+        residual_error = np.max(abs(4*residual_checks[1]-residual_checks[0]))/3
+        print('analytic CCSD residual vs stencil',frozen,u,residual_error,flush=True)
+        # Componentwise source validation uses transported analytic first tangents
+        # in ccsd_mixed.py. This short energy-verification stencil can amplify native
+        # integral/frame roundoff; the mixed constraint and adjoint checks below
+        # remain independent requirements for this assembled calculation.
         source_error = abs(4*source_errors[1]-source_errors[0])/3
         print('triples-only adjoint contraction error',frozen,u,source_error,flush=True)
         assert source_error < 1.e-7

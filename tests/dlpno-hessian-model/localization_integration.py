@@ -1,8 +1,8 @@
 """Canonical-limit checks after analytic mixed occupied/localization response.
 
-Run in a built Psi4 environment. The remaining mixed CCSD residual is sampled;
---coarse-step tests its numerical sensitivity, not a step in the analytic
-RHF/localization or first/final-PNO construction. Units are hartree/bohr^2.
+Run in a built Psi4 environment. The mixed CCSD source and moving orbital
+frames are analytic. --coarse-step changes only the independent numerical
+verification, not the assembled curvature. Units are hartree/bohr^2.
 """
 import argparse
 import numpy as np
