@@ -70,6 +70,9 @@ class MultipoleInt : public OneBodyAOInt, public mdintegrals::MDHelper {
     //! Computes the first derivative of the multipole integrals between two gaussian shells.
     void compute_pair_deriv1(const libint2::Shell &, const libint2::Shell &) override;
 
+    void compute_pair_deriv2(const libint2::Shell &, const libint2::Shell &) override;
+    bool has_deriv2() override { return order_ == 1; }
+
     //! Does the method provide first derivatives?
     bool has_deriv1() override { return true; }
 

@@ -1611,6 +1611,8 @@ void export_mints(py::module& m) {
              "C2"_a, "C3"_a, "C4"_a)
 
         // First derivatives of electric dipole integrals in AO and MO basis.
+        .def("ao_elec_dip_deriv2", &MintsHelper::ao_elec_dip_deriv2,
+             "Electronic dipole mixed nuclear derivatives, ordered dipole component then two Cartesian axes.")
         .def("ao_elec_dip_deriv1", &MintsHelper::ao_elec_dip_deriv1,
              "Gradient of AO basis electric dipole integrals: returns (3 * natoms) matrices", "atom"_a)
         .def("mo_elec_dip_deriv1", &MintsHelper::mo_elec_dip_deriv1,

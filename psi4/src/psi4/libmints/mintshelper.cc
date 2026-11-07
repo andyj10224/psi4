@@ -4328,6 +4328,37 @@ std::vector<SharedMatrix> MintsHelper::mo_overlap_half_deriv1(const std::string 
 
 /* Electric dipole moment derivatives in both AO and MO basis */
 
+std::vector<SharedMatrix> MintsHelper::ao_elec_dip_deriv2(int atom1, int atom2) {
+    if (atom1<0 || atom2<0 || atom1>=basisset_->molecule()->natom() || atom2>=basisset_->molecule()->natom())
+        throw PSIEXCEPTION("Invalid atom for mixed electronic dipole integrals.");
+    auto ints=integral_->ao_multipoles(1,2);
+    std::vector<SharedMatrix> result;
+    for (int k=0; k<27; ++k) result.push_back(std::make_shared<Matrix>("Mixed electronic dipole",basisset_->nbf(),basisset_->nbf()));
+    for (const auto& pair:ints->shellpairs()) {
+        const int P=pair.first, Q=pair.second;
+        const auto& p=basisset_->shell(P); const auto& q=basisset_->shell(Q);
+        if ((p.ncenter()!=atom1 && q.ncenter()!=atom1) || (p.ncenter()!=atom2 && q.ncenter()!=atom2)) continue;
+        ints->compute_shell_deriv2(P,Q);
+        const auto& buffers=ints->buffers();
+        for (int mu=0; mu<3; ++mu) for (int x=0; x<3; ++x) for (int y=0; y<3; ++y) {
+            auto& out=*result[9*mu+3*x+y];
+            for (int a=0; a<2; ++a) for (int b=0; b<2; ++b) {
+                if ((a?p.ncenter():q.ncenter())!=atom1 || (b?p.ncenter():q.ncenter())!=atom2) continue;
+                // Derivative coordinates 0:3 belong to bra P, 3:6 to ket Q.
+                int u=(a?0:3)+x, v=(b?0:3)+y;
+                if (u>v) std::swap(u,v);
+                const double* block=buffers[21*mu+6*u-u*(u+1)/2+v];
+                for (int i=0; i<p.nfunction(); ++i) for (int j=0; j<q.nfunction(); ++j) {
+                    const double value=block[i*q.nfunction()+j];
+                    out.add(p.function_index()+i,q.function_index()+j,value);
+                    if (P!=Q) out.add(q.function_index()+j,p.function_index()+i,value);
+                }
+            }
+        }
+    }
+    return result;
+}
+
 std::vector<SharedMatrix> MintsHelper::ao_elec_dip_deriv1(int atom) {
     std::vector<SharedMatrix> ao_grad = ao_elec_dip_deriv1_helper(atom);
 

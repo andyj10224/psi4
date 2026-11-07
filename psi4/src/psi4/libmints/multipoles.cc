@@ -61,8 +61,11 @@ MultipoleInt::MultipoleInt(std::vector<SphericalTransform>& spherical_transforms
     } else if (deriv_ == 1) {
         buffer_ = new double[6 * n_mult * maxnao1 * maxnao2];
         set_chunks(6 * n_mult);
+    } else if (deriv_ == 2 && order_ == 1) {
+        buffer_ = new double[21 * n_mult * maxnao1 * maxnao2];
+        set_chunks(21 * n_mult);
     } else {
-        throw PSIEXCEPTION("Only first derivatives are available for arbitrary-order multipoles.");
+        throw PSIEXCEPTION("Multipole second derivatives are available only for dipoles.");
     }
     buffers_.resize(nchunk_);
 
@@ -330,4 +333,65 @@ void MultipoleInt::compute_pair_deriv1(const libint2::Shell& s1, const libint2::
     for (int chunk = 0; chunk < nchunk_; ++chunk) {
         buffers_[chunk] = buffer_ + chunk * s1.size() * s2.size();
     }
+}
+
+// Upper-triangular derivatives of the six shell-center coordinates, 21 per
+// dipole component. Apply d_A g_l = 2 alpha g_(l+1) - l g_(l-1) twice.
+void MultipoleInt::compute_pair_deriv2(const libint2::Shell& s1, const libint2::Shell& s2) {
+    if (deriv_ != 2 || order_ != 1) throw PSIEXCEPTION("Expected a second-derivative dipole engine.");
+    const int am1=s1.contr[0].l, am2=s2.contr[0].l, am=am1+am2;
+    const int size=INT_NCART(am1)*INT_NCART(am2);
+    memset(buffer_,0,nchunk_*size*sizeof(double));
+    const int mdim=std::max(am,order_)+2, sdim=am2+3, edim=am1+am2+6;
+    const Point origin={origin_[0],origin_[1],origin_[2]};
+    struct Term { std::array<int,6> l; double c; };
+    for (int p1=0; p1<s1.nprim(); ++p1) for (int p2=0; p2<s2.nprim(); ++p2) {
+        const double a=s1.alpha[p1], b=s2.alpha[p2], p=a+b;
+        Point P;
+        for (int xyz=0; xyz<3; ++xyz) P[xyz]=(a*s1.O[xyz]+b*s2.O[xyz])/p;
+        fill_E_matrix(am1+2,am2+2,P,s1.O,s2.O,a,b,Ex,Ey,Ez);
+        fill_M_matrix(am,order_,point_diff(P,origin),a,b,Mx,My,Mz);
+        std::fill(Sx.begin(),Sx.end(),0.); std::fill(Sy.begin(),Sy.end(),0.); std::fill(Sz.begin(),Sz.end(),0.);
+        for (int i=0; i<=am1+2; ++i) for (int j=0; j<=am2+2; ++j) for (int e=0; e<=1; ++e) {
+            const int target=address_3d(i,j,e,sdim,2);
+            for (int t=0; t<=std::min(i+j,e); ++t) {
+                const int source=address_3d(i,j,t,sdim,edim), moment=e*mdim+t;
+                Sx[target]+=Ex[source]*Mx[moment];
+                Sy[target]+=Ey[source]*My[moment];
+                Sz[target]+=Ez[source]*Mz[moment];
+            }
+        }
+        auto derivative=[&](const std::vector<Term>& input,int axis) {
+            std::vector<Term> output;
+            for (const auto& term:input) {
+                auto plus=term; ++plus.l[axis]; plus.c*=2*(axis<3?a:b); output.push_back(plus);
+                if (term.l[axis]) {
+                    auto minus=term; --minus.l[axis]; minus.c*=-term.l[axis]; output.push_back(minus);
+                }
+            }
+            return output;
+        };
+        const double prefactor=-s1.contr[0].coeff[p1]*s2.contr[0].coeff[p2];
+        for (int component=0; component<3; ++component) {
+            const auto& powers=comps_mul_[1][component];
+            int ao=0;
+            for (const auto& left:am_comps_[am1]) for (const auto& right:am_comps_[am2]) {
+                const std::vector<Term> base={{{left[0],left[1],left[2],right[0],right[1],right[2]},1.}};
+                int chunk=21*component;
+                for (int u=0; u<6; ++u) for (int v=u; v<6; ++v,++chunk) {
+                    double value=0.;
+                    for (const auto& term:derivative(derivative(base,u),v)) {
+                        const auto& l=term.l;
+                        value+=term.c*Sx[address_3d(l[0],l[3],powers[0],sdim,2)]
+                                     *Sy[address_3d(l[1],l[4],powers[1],sdim,2)]
+                                     *Sz[address_3d(l[2],l[5],powers[2],sdim,2)];
+                    }
+                    buffer_[chunk*size+ao]+=prefactor*value;
+                }
+                ++ao;
+            }
+        }
+    }
+    pure_transform(s1,s2,nchunk_);
+    for (int chunk=0; chunk<nchunk_; ++chunk) buffers_[chunk]=buffer_+chunk*s1.size()*s2.size();
 }

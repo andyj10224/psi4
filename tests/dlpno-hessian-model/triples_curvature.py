@@ -146,13 +146,20 @@ def molecular_blocks(w,u,v,lower,lower_u,lower_v,lower_uv,trial_ccsd):
     @lru_cache(None)
     def rhf_second():
         from rhf_mixed import analytic_inputs
-        return analytic_inputs(ref,u,v,lower_u['occupied_density'],lower_v['occupied_density'])
+        return analytic_inputs(ref,u,v,lower_u['occupied_density'],lower_v['occupied_density'],partition=True)
     @lru_cache(None)
     def electronic(key):
         if key in ('occupied_density','fock'):
-            result = rhf_second()
+            result = rhf_second()[0]
             mixed = result.density if key=='occupied_density' else result.fock
             return MixedBlock(lower[key],lower_u[key],lower_v[key],mixed)
+        if key == 'lmo':
+            from localization_mixed import molecular_localization
+            kind = 'BOYS' if w.variable('DLPNO RESPONSE BOYS') else 'PIPEK_MEZEY'
+            frame = molecular_localization(ref,lower['lmo'],kind,u,v,rhf_second()[2])
+            np.testing.assert_allclose(frame.u,lower_u['lmo'],atol=2.e-8,rtol=0.)
+            np.testing.assert_allclose(frame.v,lower_v['lmo'],atol=2.e-8,rtol=0.)
+            return frame
         if key == 'parent':
             from psi4.driver.procrouting.response.dlpno_frame_curvature import mixed_virtual_parent
             density = electronic('occupied_density')

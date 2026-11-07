@@ -1008,9 +1008,81 @@ canonical eigenvector or localized-orbital mixed derivatives.
 
 The retained-CCSD/triples mixed molecular provider now uses these analytic
 $D^{uv}$ and $F^{uv}$ and reconstructs its virtual parent from them.
-Mixed localized orbitals, first/final PNO frames and the CCSD nuclear mixed
-residual remain sampled. The separate PNO-loss diagnostic still samples
+At this stage mixed localized orbitals, first/final PNO frames and the
+CCSD nuclear mixed residual remained sampled. The next section replaces
+the mixed localized-orbital input analytically. The separate PNO-loss diagnostic still samples
 its projected lower-order inputs. Thus the molecular Hessian remains
 semi-analytic despite this analytic RHF block.
+
+
+\section{Mixed quadratic Boys and Mulliken-PM localization response}
+Let $D_a$ be the active occupied density from the preceding spectral
+partition, and $L_0$ the reference localized occupied frame. Define its
+polar-transported parent by
+\begin{equation}
+ Y=D_a S_0 L_0,\qquad B=Y(Y^{\mathsf T}S Y)^{-1/2}.
+\end{equation}
+For Boys the AO operators $O^\kappa$ are the three electronic dipoles.
+For quadratic Mulliken PM they are the symmetrized atomic populations,
+\begin{equation}
+ O^A=\tfrac12(E_A S+S E_A),
+\end{equation}
+where $E_A$ selects AO functions centered on atom $A$. Both use
+\begin{equation}
+ \Phi(L)=\sum_{\kappa i}(A^\kappa_{ii})^2,\qquad
+ A^\kappa=L^{\mathsf T}O^\kappa L,\qquad
+ g_{ij}=4\sum_\kappa(A^\kappa_{ii}-A^\kappa_{jj})A^\kappa_{ij}=0.
+\end{equation}
+The independent antisymmetric generator uses $K_{ji}=\theta_{ij}$ and
+$K_{ij}=-\theta_{ij}$ for $i<j$. At a stationary maximum the existing
+localization rotation Hessian $H=\partial g/\partial\theta$ supplies
+\begin{equation}
+ H\theta^u=-g^u[B],\qquad H\theta^v=-g^v[B].
+\end{equation}
+With $L=B\exp(uK^u+vK^v+uvK^{uv})$, the mixed coefficient derivative is
+\begin{equation}
+ L^{uv}=B^{uv}+B^uK^v+B^vK^u
+             +B\left[K^{uv}+\tfrac12(K^uK^v+K^vK^u)\right].
+\end{equation}
+Set $K^{uv}=0$ to form a trial frame $\widehat L$ and solve
+\begin{equation}
+ H\theta^{uv}=-g^{uv}[\widehat L].
+\end{equation}
+For each operator put $\delta_{ij}=A_{ii}-A_{jj}$. Its mixed gradient is
+\begin{equation}
+ g_{ij}^{uv}=4\sum_\kappa\left[
+ \delta_{ij}^{uv}A_{ij}+\delta_{ij}^u A_{ij}^v
+ +\delta_{ij}^v A_{ij}^u+\delta_{ij}A_{ij}^{uv}\right].
+\end{equation}
+Every AO-operator, parent and rotation cross term is included through the
+mixed product rule. The reference must be stationary and the Hessian a
+nonsingular maximum. A nonunique PM or Boys branch is rejected rather
+than assigning an arbitrary mixed derivative. First and mixed stationarity
+and metric-orthonormality residuals are checked after the solves.
+
+\subsection{Analytic mixed electronic dipole integrals}
+At fixed operator origin, a Gaussian center derivative acts only on the
+basis functions. For an unnormalized primitive angular factor,
+\begin{equation}
+ \partial_{A_x}g_l=2\alpha g_{l+1}-l g_{l-1}.
+\end{equation}
+Applying this rule twice, including the updated angular power on the
+second application, evaluates all mixed shell-center dipole derivatives.
+The native multipole recurrence now supplies order-one multipoles with
+second derivatives; arbitrary higher multipoles retain their previous
+first-derivative limit. There are 21 symmetric second derivatives of the
+six shell-center coordinates per dipole component. Nuclear derivatives
+sum every matching shell-center assignment, including both cross terms
+when the centers belong to the same atom. The electronic sign is negative.
+
+The Mints interface returns 27 AO matrices ordered by dipole component,
+then the Cartesian derivative on atom 1, then that on atom 2. Mixed
+reciprocity, AO symmetry, spherical/Cartesian basis handling and the
+translation identity are tested:
+\begin{equation}
+ \sum_A \mu_\kappa^{A_x B_y}=-\delta_{\kappa x}S^{B_y}.
+\end{equation}
+The nuclear dipole is linear in nuclear coordinates and has zero mixed
+second derivative. Only the electronic dipole enters the Boys objective.
 
 \end{document}

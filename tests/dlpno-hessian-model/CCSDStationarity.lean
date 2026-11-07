@@ -92,4 +92,11 @@ theorem rhf_mixed_density_blocks {R : Type*} [Ring R] (p q x b : R)
   exact ⟨retained_projector_block p x b hp mixed,
          discarded_projector_block p q x b hqp hpq mixed⟩
 
+-- Cleared-denominator second-order orthogonality of exp(u K + v H + uv J):
+-- J, K and H are skew; R_uv = J + (K H + H K)/2. The transpose of
+-- the symmetric cross term reverses factor order and equals itself.
+theorem localization_mixed_rotation {R : Type*} [Ring R] (k h j : R) :
+    (2*j+k*h+h*k) + (-2*j+h*k+k*h) - 2*k*h - 2*h*k = 0 := by
+  noncomm_ring
+
 end DLPNOHessian

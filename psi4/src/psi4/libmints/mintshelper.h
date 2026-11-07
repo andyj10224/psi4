@@ -206,6 +206,7 @@ class PSI_API MintsHelper {
 
     // Derivatives of electric dipole moment integrals in AO and MO basis
     std::vector<SharedMatrix> ao_elec_dip_deriv1(int atom);
+    std::vector<SharedMatrix> ao_elec_dip_deriv2(int atom1, int atom2);
     std::vector<SharedMatrix> ao_elec_dip_deriv1_helper(int atom);
     std::vector<SharedMatrix> mo_elec_dip_deriv1(int atom, SharedMatrix C1, SharedMatrix C2);
 
