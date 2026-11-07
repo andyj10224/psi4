@@ -9,6 +9,7 @@ from psi4.driver.procrouting.response.dlpno_orbital import (
     ccsd_pair_frames, ccsd_projected_fock_source, ccsd_direct_df_source, ccsd_pair_df_factors, PairDFFactors)
 from psi4.driver.procrouting.response.dlpno_ccsd_response import (
     ccsd_pair_intermediate_tangent, ccsd_beta_source, ccsd_mixed_doubles_source, ccsd_singles_source, ccsd_doubles_fock_source, ccsd_residual_source, coupled_ccsd_tangent)
+from psi4.driver.procrouting.response.dlpno_triples_response import iterative_triples_tangent, triples_moment_integrals
 from first_pno import raw, relax_fock
 from water_hvp import BASE, STRETCH, molecule
 
@@ -22,7 +23,54 @@ def blocks(w, name):
     return {ij: m.np.copy() for ij,m in psi4.core.dlpno_lmp2_blocks(w,name).items()}
 
 
-def check_ccsd_tangent(w, source1, source2, frozen, dL, frames):
+def displaced_triples_adjoint(rows, v, y, foo, f, metric):
+    """Reconverge Z in reference occupied labels and displaced semicanonical frames.
+
+    The packed permutation of a repeated-index row depends on which occupied
+    label sorts first. Keep that convention fixed on both sides of the stretch.
+    """
+    rhs,denom,edges = {},{},[]
+    for r in rows:
+        i,j,k = r
+        # Match the native comparisons for ties explicitly.
+        def permute(x,i,j,k):
+            if i <= j <= k: return x
+            if i <= k <= j: return x.transpose(0,2,1)
+            if j <= i <= k: return x.transpose(1,0,2)
+            if j <= k <= i: return x.transpose(2,0,1)
+            if k <= i <= j: return x.transpose(1,2,0)
+            return x.transpose(2,1,0)
+        t = v[r]
+        multiplicity = 6 if i == k else 2 if i == j or j == k else 1
+        rhs[r] = -(8*t - 4*(permute(t,k,j,i)+permute(t,i,k,j)+permute(t,j,i,k))
+                   + 2*(permute(t,j,k,i)+permute(t,k,i,j))) / multiplicity
+        eps = np.diag(y[r].T@f@y[r])
+        denom[r] = eps[:,None,None]+eps[None,:,None]+eps[None,None,:]-sum(foo[a,a] for a in r)
+        for l,m,a,b,c,_ in rows[r][5]:
+            q = tuple(sorted((a,b,c)))
+            axes = np.argsort((a,b,c),kind='stable')
+            edges.append((r,q,foo[l,m],y[q].T@metric@y[r],axes))
+    def pack(x):
+        return np.concatenate([x[r].ravel() for r in rows])
+    cuts = np.cumsum([v[r].size for r in rows])[:-1]
+    def unpack(x):
+        return {r:t.reshape(v[r].shape) for r,t in zip(rows,np.split(x,cuts))}
+    def apply(flat):
+        x = unpack(flat)
+        result = {r:denom[r]*x[r] for r in rows}
+        for r,q,fij,u,axes in edges:
+            result[q] -= fij*np.einsum('ai,bj,ck,ijk->abc',u,u,u,x[r],optimize=True).transpose(axes)
+        return pack(result)
+    source,diagonal = pack(rhs),pack(denom)
+    shape = (len(source),len(source))
+    op = LinearOperator(shape,matvec=apply,dtype=float)
+    pre = LinearOperator(shape,matvec=lambda x:x/diagonal,dtype=float)
+    z,info = gmres(op,source,M=pre,rtol=1.e-13,atol=0.)
+    assert info == 0 and np.max(abs(apply(z)-source)) < 1.e-12
+    return unpack(z)
+
+
+def check_ccsd_tangent(w, source1, source2, frozen, dL, frames, triples):
     """Check the weighted transpose and transport reconverged displaced amplitudes."""
     matrix = psi4.core.Matrix.from_array
     rng = np.random.default_rng(122)
@@ -51,6 +99,14 @@ def check_ccsd_tangent(w, source1, source2, frozen, dL, frames):
     for p,j in jt[1].items():
         np.testing.assert_allclose(j,-source2[p],rtol=0.,atol=1.e-10)
 
+    t3 = triples(*tangent)
+    rows = psi4.core.dlpno_triples_response_state(w)
+    print("T3 tangent", frozen, len(rows), t3.residual,t3.adjoint_residual,t3.energy_tangent, flush=True)
+    assert rows and max(t3.residual,t3.adjoint_residual) < 1.e-10
+    rectangular = sum(row[2].np.shape[1] != rows[tuple(sorted((a,b,c)))][2].np.shape[1]
+                      for row in rows.values() for _,_,a,b,c,_ in row[5])
+    assert rectangular and any(i == j or j == k for i,j,k in rows)
+    print("Rectangular triples edges", frozen, rectangular, flush=True)
     original = blocks(w, 'FINAL_FRAME')
     parent = blocks(w,'FRAME')
     ref = w.reference_wavefunction()
@@ -88,17 +144,50 @@ def check_ccsd_tangent(w, source1, source2, frozen, dL, frames):
             if i == j:
                 dom,t1,_ = psi4.core.dlpno_ccsd_df_pair_state(other,int(a),int(a))
                 one[i] = signs[i]*(rotation.T @ t1[dom.index(a)].np).ravel()
+        displaced_rows = psi4.core.dlpno_triples_response_state(other)
+        assert len(displaced_rows) == len(rows)
+        dt,dz,dy3 = [],[],[]
+        moments,ys,rotations = {},{},{}
+        for r,row in rows.items():
+            indices = tuple(order[a] for a in r)
+            q = tuple(sorted(indices))
+            new = displaced_rows[q]
+            n = row[2].np.shape[1]
+            assert new[2].np.shape == row[2].np.shape
+            # Check the graph as a multiset including repeated-index replacements.
+            edges = sorted((order[l],order[m],tuple(sorted(order[a] for a in (i,j,k))))
+                           for l,m,i,j,k,_ in row[5])
+            assert edges == sorted((l,m,tuple(sorted((i,j,k)))) for l,m,i,j,k,_ in new[5])
+            a,_,bt = np.linalg.svd(new[2].np.T @ ref.S().np @ row[2].np)
+            rot = a @ bt
+            dy3.append((new[2].np @ rot).ravel())
+            axes = np.argsort(np.argsort(indices,kind='stable'))
+            tensor = new[3].np.reshape((n,)*3).transpose(axes)
+            t = np.einsum('ai,bj,ck,abc->ijk',rot,rot,rot,tensor,optimize=True)
+            dt.append((np.prod(signs[list(r)])*t).ravel())
+            moments[r] = np.prod(signs[list(r)]) * new[7].np.reshape((n,)*3).transpose(axes)
+            ys[r],rotations[r] = new[2].np,rot
+        fixed_z = displaced_triples_adjoint(rows,moments,ys,fooh,scf.Fa().np,scf.S().np)
+        for r,z in fixed_z.items():
+            rot = rotations[r]
+            dz.append(np.einsum('ai,bj,ck,abc->ijk',rot,rot,rot,z,optimize=True).ravel())
         return (np.concatenate([one[i] for i in range(len(one))]),
-                np.concatenate([two[p].ravel() for p in original]), local.ravel(), np.concatenate(dy))
+                np.concatenate([two[p].ravel() for p in original]), local.ravel(), np.concatenate(dy),
+                np.concatenate(dt),np.concatenate(dy3),np.concatenate(dz),other.variable("(T) CORRECTION ENERGY"))
     expected = (np.concatenate(tangent[0]), np.concatenate([tangent[1][p].ravel() for p in original]),
-                dL.ravel(), np.concatenate([frames.tangents[p].ravel() for p in original]))
+                dL.ravel(), np.concatenate([frames.tangents[p].ravel() for p in original]),
+                np.concatenate([t3.amplitudes[r].ravel() for r in rows]),
+                np.concatenate([t3.frames[r].ravel() for r in rows]),
+                np.concatenate([t3.adjoints[r].ravel() for r in rows]),t3.energy_tangent)
     estimates = []
     for h in (.002,.001,.0005):
         plus,minus = displaced(h),displaced(-h)
         estimates.append([(a-b)/(2*h) for a,b in zip(plus,minus)])
     for coarse,fine in zip(estimates,estimates[1:]):
         errors = [np.max(abs(v-(4*f-c)/3)) for v,c,f in zip(expected,coarse,fine)]
-        print('CCSD reconverged errors (T1, T2, LMO, PNO)', frozen, errors, flush=True)
+        print('CCSD reconverged errors (T1, T2, LMO, PNO)', frozen, errors[:4], flush=True)
+        print("Triples errors (T3, TNO, Z3, energy)",frozen,errors[4:],flush=True)
+        assert errors[4] < 2.e-7 and errors[5] < 2.e-4 and errors[6] < 3.e-7 and errors[7] < 1.e-9
         assert max(errors[:2]) < 1.e-6
         assert errors[2] < 1.e-5 and errors[3] < 5.e-5
 
@@ -198,7 +287,18 @@ def check(frozen, *, amplitude_response=False):
     eg = ccsd_doubles_fock_source(w,ccsd_frames,factors_for,doubles,ordered_exchange,L,dL,F,df)
     total1,total2 = ccsd_residual_source(w,ccsd_frames,factors_for,ordered_exchange,mixed_derivative,dL,df)
     if amplitude_response:
-        check_ccsd_tangent(w, total1, total2, frozen, dL, ccsd_frames)
+        def triple_integrals(triplet,domain,aux,y,dy):
+            local = np.asarray(aux,dtype=int)
+            lm,dlm = L[:,domain],dL[:,domain]
+            q,dq = Q[local],dQ[local]
+            def project(a,da,b,db):
+                return a.T @ q @ b, da.T @ q @ b + a.T @ dq @ b + a.T @ q @ db
+            values,dvalues = zip(project(lm,dlm,lm,dlm),project(lm,dlm,y,dy),project(y,dy,y,dy))
+            ix = np.ix_(local,local)
+            return triples_moment_integrals(domain,J[ix],dJ[ix],PairDFFactors(*values),PairDFFactors(*dvalues))
+        def triples(dt1,dt2):
+            return iterative_triples_tangent(w,ccsd_frames,dt1,dt2,dL,df,lambda r:(V,dV),triple_integrals)
+        check_ccsd_tangent(w, total1, total2, frozen, dL, ccsd_frames, triples)
         return
     for got,expected in zip(total1,singles_source):
         np.testing.assert_allclose(got,expected,atol=1.e-12,rtol=0)
@@ -553,7 +653,7 @@ if __name__ == '__main__':
     # The trace/energy rank selectors give different first-space ranks at
     # displaced geometries on the original fixture. Check the native solve
     # on an occupation-selected branch, asserting both ranks at each point.
-    psi4.set_options(dict(t_cut_trace_mp2=0., t_cut_energy_mp2=0., t_cut_trace=0., t_cut_energy=0.,
+    psi4.set_options(dict(dlpno_keep_triples_response=True, min_tnos=3, t_cut_tno=1.e-5, t_cut_trace_mp2=0., t_cut_energy_mp2=0., t_cut_trace=0., t_cut_energy=0.,
                           t_cut_pairs=1.e-9, t_cut_pairs_mp2=1.e-9))
     for frozen in (True, False):
         check(frozen, amplitude_response=True)

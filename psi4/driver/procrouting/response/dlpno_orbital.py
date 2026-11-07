@@ -580,6 +580,14 @@ def _pno_selection_tangent(Y, dY, t, dt, retained, diagonal):
     factor = .5 if diagonal else 1.
     density = factor*(tt @ t.T + tt.T @ t)
     ddensity = factor*(dtt @ t.T + tt @ dt.T + dtt.T @ t + tt.T @ dt)
+    return _density_selection_tangent(Y,dY,density,ddensity,retained)
+
+
+def _density_selection_tangent(Y,dY,density,ddensity,retained):
+    """Spectral selection response shared by the moving PNO and TNO spaces."""
+    n = density.shape[0]
+    if not 0 < retained <= n:
+        raise ValueError("Invalid retained natural-orbital rank.")
     occ, orbitals = np.linalg.eigh(density)
     occ, orbitals = occ[::-1], orbitals[:,::-1]
     keep, drop = orbitals[:,:retained], orbitals[:,retained:]

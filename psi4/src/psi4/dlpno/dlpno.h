@@ -1043,7 +1043,13 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     void compute_triples_correction(DLPNOCCSDPhase phase);
     void write_natural_orbitals(DLPNOOrbitalWriter& writer) const override;
 
+    std::vector<SharedMatrix> response_t3_, response_w3_, response_z3_, response_v3_;
+    std::vector<std::vector<std::array<int,6>>> response_t3_edges_;
    public:
+    using TriplesRow = std::tuple<std::vector<int>, std::vector<int>, SharedMatrix, SharedMatrix, SharedMatrix,
+                                  std::vector<std::array<int,6>>, SharedMatrix, SharedMatrix>;
+    std::map<std::tuple<int,int,int>,TriplesRow> triples_response_state() const;
+
     DLPNOCCSD_T(SharedWavefunction ref_wfn, Options& options);
     ~DLPNOCCSD_T() override;
     SharedMatrix orbital_response_action(const std::string& block, const SharedMatrix& rhs) const;

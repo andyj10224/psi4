@@ -2719,6 +2719,8 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         /*- Retain converged first-space pair amplitudes and their screened graph
             for experimental nuclear LMP2 tangent solves in the RHF gradient model. -*/
         options.add_bool("DLPNO_KEEP_LMP2_RESPONSE", false);
+        /*- Retain the in-core RHF iterative triples state for Hessian response diagnostics. -*/
+        options.add_bool("DLPNO_KEEP_TRIPLES_RESPONSE", false);
         /*- How much to damp T1 updates in DLPNO-CCSD -*/
         options.add_double("DLPNO_T1_DAMPING", 0.0);
         /*- How much to damp T2 updates in DLPNO-CCSD -*/

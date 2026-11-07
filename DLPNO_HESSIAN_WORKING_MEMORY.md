@@ -131,3 +131,27 @@ The new independent check uses water/cc-pVDZ, Boys orbitals, full fitting domain
 The all-electron extrapolation is sensitive to the displacement window. The coarser window gave 4.19e-9 and 3.55e-8 per bohr for T1 and T2. The solver check requires every component of J t^v + b^v to be within 1e-10 Hartree/bohr. This tests a single stretch on a fixed local branch. Four native residual evaluations per application preserve the cost order of a native application; large-system iteration counts and end-to-end scaling have not been measured. Next propagate the solved tangents into the iterative triples and moving triple spaces, followed by the remaining curvature contractions and the canonical DF-CCSD(T) gradient-difference Hessian comparison.
 
 The native build, both original and new water diagnostics, dfccsd-t-grad1, dlpno-grad-model and dlpnocc-1 passed. The LaTeX equation record compiled in two passes.
+
+## 2026-11-07 — Ordinary iterative triples amplitude and adjoint response
+
+Implemented the directional response of the single-space RHF (T) model. The opt-in native state supplies converged T3 and Z3, the W/V moments, native TNO frames, local domain indices and the actual directed, screened occupied replacements (including multiplicities). The response uses the differentiated CCSD singles and doubles from the previous step. Each TNO density receives the three moving pair-density contributions of its triplet. Reused the PNO retained/discarded projector derivative, the transported-frame rule and the filtered fitting-metric derivative. The OVVV part of W uses the distinct full metric solve from the forward triples code. [Triples kernel](psi4/driver/procrouting/response/dlpno_triples_response.py) · [Native state](psi4/src/psi4/dlpno/triples_response.cc) · [Equations](DLPNO_HESSIAN_EQUATIONS.tex)
+
+The two matrix-free solves apply the original packed triples operator and its transpose. Their sources include all three moving legs of every intertriplet transfer, the full transported virtual Fock matrix, the occupied diagonal and edge derivatives, and the W/V derivatives. The implementation reconstructs both moments, the original right and left residuals, and the (T) energy at the reference point. It also compares the directional energy from T3 response with the independent stationary contraction using the original Z3.
+
+Water/cc-pVDZ H1 stretch, Boys, both core treatments. Pair cutoffs 1e-9, occupancy-only PNO thresholds 1e-5/1e-4, TNO cutoff 1e-5 and minimum rank 3. The molecular provider uses full fitting domains and the full virtual parent; the TNOs themselves are truncated. The H1 displacement windows use 0.002/0.001 and 0.001/0.0005 bohr. All comparisons align LMO labels and signs and polar-align the TNO frames. Both PNO ranks, TNO ranks, triplet membership and occupied-slot edges are checked across displacements. [Molecular diagnostic](tests/dlpno-hessian-model/lmp2_tangent.py)
+
+| Core | Triplets | TNO ranks | T3 solve norm | Z3 solve norm | (T) directional derivative (Eh/bohr) |
+| --- | ---: | --- | ---: | ---: | ---: |
+| Frozen O 1s | 16 | 9–10 | 1.04e-12 | 3.45e-12 | −0.00091864104135 |
+| All-electron | 30 | 3–10 | 2.15e-12 | 4.00e-12 | −0.00091102837191 |
+
+| Core | Finer-window max T3 error (bohr⁻¹) | Finer-window max Z3 error (bohr⁻¹) | Finer-window (T) derivative error (Eh/bohr) |
+| --- | ---: | ---: | ---: |
+| Frozen O 1s | 2.44e-11 | 2.42e-11 | 9.45e-13 |
+| All-electron | 1.96e-8 | 3.66e-8 | 4.02e-13 |
+
+The coarser-window all-electron T3 and Z3 differences were 2.09e-9 and 3.51e-9 per bohr. One convention matters for reproducing the adjoint comparison. When localization exchanged occupied labels between displaced runs, directly relabeling Z3 gave a difference near 0.05 per bohr concentrated in repeated-index rows. The packed transpose acts on unrestricted cubes and inherits the forward tie order. The diagnostic now independently solves the displaced adjoint from the displaced native V moments in the reference occupied ordering, using the same identified edges. It compares the full packed derivative, including repeated-index rows. Displaced right amplitudes and (T) energies are taken directly from the native runs.
+
+The checkpoint requires in-core triples state retention. Production delivery of screened triplet PAO-parent and fitted-integral tangents, disk-backed response and system-size benchmarks remain open. The next Hessian contribution is to differentiate the stationary triples contraction entering each nuclear gradient component and verify the resulting Hessian column against differences of canonical DF-CCSD(T) gradients.
+
+The tests exercise 48 rectangular directed triplet transfers with frozen core and 230 with all electrons. The native build, the existing CCSD/LMP2 water checks, both new molecular response cases, and dfccsd-t-grad1, dlpno-grad-model and dlpnocc-1 passed. The LaTeX equation record compiled in two passes.

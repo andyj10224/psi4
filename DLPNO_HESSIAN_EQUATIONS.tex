@@ -464,4 +464,57 @@ Preconditioned GMRES solves $Jt^v=-b^v$. Its diagonal preconditioner uses
 $F_{aa}^{ii}-F_{ii}$ for singles and
 $F_{aa}^{ij}+F_{bb}^{ij}-F_{ii}-F_{jj}$ for doubles in the reference
 semicanonical pair frames. The unpreconditioned residual is checked at exit.
+\section{Iterative ordinary triples response}
+Use the unique stored triplet $r=(i,j,k)$ and its transported TNO frame
+$Y_r$. Let $Y_p$ be a pair PNO frame and $C_r$ the orthonormal parent of the
+triplet (columns expressed in AOs). In the moving parent define
+$U_{pr}=Y_p^{\mathsf T} S C_r$, $u_p=2t_p-t_p^{\mathsf T}$,
+\begin{align}
+ d_p&=(u_p t_p^{\mathsf T}+u_p^{\mathsf T}t_p)/(1+\delta_{p_1p_2}),&
+ d_r&=\tfrac13\sum_{p\in(ij,jk,ik)}U_{pr}^{\mathsf T}d_p U_{pr}.
+\end{align}
+The sum uses three slots, including multiplicities when occupied indices
+coincide. Differentiate the products with the solved $t_p^v$, moving pair
+and parent frames, and $S^v$. For orthonormal eigenvectors $C_K,C_D$ of
+$d_r$ in the parent coordinates, use the retained--discarded mixing
+$(C_D^{\mathsf T}d_r^v C_K)_{da}/(n_a-n_d)$ to transport $Y_r$ by the
+same metric and projector rule used for the PNOs.
+
+Let $S_{pr}=Y_p^{\mathsf T}SY_r$ and $t_p^r=S_{pr}^{\mathsf T}t_pS_{pr}$.
+Define $t_i^r=S_{ii,r}^{\mathsf T}t_i$. In Jiang Eqs.~109--110:
+\begin{align}
+ W_{ijk}^{abc}&=P_{ijk}^{abc}\left[\sum_d(ia|bd)(t_{kj}^r)^{cd}
+                         -\sum_l(t_{il}^r)^{ab}(jl|kc)\right],\\
+ V_{ijk}^{abc}&=W_{ijk}^{abc}
+ +(t_i^r)^a(jb|kc)+(t_j^r)^b(ia|kc)+(t_k^r)^c(ia|jb)\notag\\
+ &\qquad +F_i^a(t_{jk}^r)^{bc}+F_j^b(t_{ik}^r)^{ac}+F_k^c(t_{ij}^r)^{ab}.
+\end{align}
+Apply the product rule to every factor including transfer matrices. $P_{ijk}^{abc}$
+here enumerates all six slot permutations. The OVVV vertex uses the full
+triplet Coulomb solve $Mx=q$, $Mx^v=q^v-M^vx$; the OOOV and OVOV vertices
+use the fixed-rank inverse-square-root derivative of the CCSD fitting section.
+
+Let $P_e$ reorder the stored source amplitude for a native occupied-slot
+replacement $m\mapsto l$, and $S_{rs}=Y_r^{\mathsf T} S Y_s$.
+With $D_r$ the Kronecker sum of the three virtual Fock matrices minus
+the occupied diagonal sum, the right operator and its tangent are
+\begin{align}
+ (Bx)_r&=D_r x_r-\sum_{e:r\leftarrow s} F_{lm} S_{rs}^{\otimes3}P_e x_s,\\
+ (B^v x)_r&=D_r^v x_r-\sum_{e:r\leftarrow s}
+ \left[F_{lm}^v S_{rs}^{\otimes3}
+ +F_{lm}\sum_{h=1}^3 S_{rs}^{\otimes(h-1)}\otimes S_{rs}^v
+                         \otimes S_{rs}^{\otimes(3-h)}\right]P_e x_s .
+\end{align}
+The frame is semicanonical at the reference; its transported virtual Fock
+derivative is a full matrix. Let $A_r$ apply the actual spin permutations
+and occupied multiplicity of Jiang Eq.~53, and $g_r=A_r V_r$. The source
+triplet orientation and its inverse must follow the forward tie convention.
+\begin{align}
+ BT&=-W,& B^{\mathsf T}Z&=-g,\\
+ BT^v&=-W^v-B^vT,& B^{\mathsf T}Z^v&=-A V^v-(B^v)^{\mathsf T}Z,\\
+ E_{(T)}^v&=\langle A V^v,T\rangle+\langle g,T^v\rangle
+          =\langle A V^v,T\rangle+\langle Z,W^v+B^vT\rangle .
+\end{align}
+The transpose uses the Frobenius product on the stored triplet cubes;
+occupied multiplicities are already included in $A$.
 \end{document}

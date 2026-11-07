@@ -97,6 +97,21 @@ struct TriplesEdge {
 
 }  // namespace
 
+std::map<std::tuple<int,int,int>,DLPNOCCSD_T::TriplesRow> DLPNOCCSD_T::triples_response_state() const {
+    if (!gradient_model_ || !options_.get_bool("DLPNO_KEEP_TRIPLES_RESPONSE") || response_t3_.size() != n_tno_.size())
+        throw PSIEXCEPTION("Compute the RHF gradient model with DLPNO_KEEP_TRIPLES_RESPONSE first.");
+    std::map<std::tuple<int,int,int>,TriplesRow> state;
+    for (size_t r = 0; r < n_tno_.size(); ++r) {
+        if (!n_tno_[r]) continue;
+        const auto [i,j,k] = ijk_to_i_j_k_[r];
+        auto paos = submatrix_cols(*C_pao_, lmotriplet_to_paos_[r]);
+        state[{i,j,k}] = {lmotriplet_to_lmos_[r], lmotriplet_to_ribfs_[r], linalg::doublet(paos, X_tno_[r]),
+                          response_t3_[r]->clone(), response_w3_[r]->clone(), response_t3_edges_[r],
+                          response_z3_[r]->clone(), response_v3_[r]->clone()};
+    }
+    return state;
+}
+
 void DLPNOCCSD_T::compute_gradient_model_triples() {
     outfile->Printf("\n  ==> RHF DLPNO-CCSD(T) gradient model: single TNO space <==\n\n");
     ijk_to_i_j_k_.clear();
@@ -105,6 +120,8 @@ void DLPNOCCSD_T::compute_gradient_model_triples() {
     tno_transform(options_.get_double("T_CUT_TNO"));
     estimate_triples_memory();
 
+    if (options_.get_bool("DLPNO_KEEP_TRIPLES_RESPONSE") && (write_amplitudes_ || write_intermediates_))
+        throw PSIEXCEPTION("Retaining the Hessian triples state currently requires in-core amplitudes and moments.");
     const auto screen = F_lmo_;  // keep the forward Fock screen fixed for response probes
     auto evaluate = [&](bool right_only) {
         psio_->open(PSIF_DLPNO_TRIPLES, PSIO_OPEN_NEW);
@@ -323,6 +340,25 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only, const SharedMatr
         if (n) Z.write(r, std::make_shared<Matrix>(n, n * n));
     }
     set_scalar_variable("DLPNO (T) ADJOINT RESIDUAL", solve(Z, true));
+
+    if (options_.get_bool("DLPNO_KEEP_TRIPLES_RESPONSE")) {
+        response_t3_.resize(count);
+        response_z3_.resize(count);
+        response_w3_.resize(count);
+        response_v3_.resize(count);
+        response_t3_edges_.assign(count, {});
+        for (int r = 0; r < count; ++r) {
+            if (!n_tno_[r]) continue;
+            response_t3_[r] = T.read(r);
+            response_z3_[r] = Z.read(r);
+            response_w3_[r] = W.read(r);
+            response_v3_[r] = V.read(r);
+            for (const auto& e : forward[r]) {
+                const auto& o = e.ordered_source;
+                response_t3_edges_[r].push_back({e.l, e.m, o[0], o[1], o[2], e.source});
+            }
+        }
+    }
 
     // With R = W + B t and L = <P V,t> + <z,R>, B^T z = -P V.
     // Thus <z,W> independently reconstructs the ordinary (T) energy. At fixed
