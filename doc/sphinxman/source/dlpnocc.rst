@@ -222,17 +222,36 @@ including dertype=0, raise a validation error. The analytic gradient
 assumes locally fixed domains and ranks and a consistent localization
 adjoint. Full-gradient linear scaling has yet to be established.
 
-Guarded RHF Hessian recovery checkpoint
----------------------------------------
+Guarded RHF analytic Hessians
+----------------------------
 
-This recovery branch contains an experimental public analytic
-``psi4.hessian("dlpno-ccsd(t)")`` implementation with explicit
-``DLPNO_HESSIAN_MODEL=True`` opt-in. The original workspace passed small
-driver regressions and an H2 equilibrium frequency check, but became
-unavailable before full public screened molecular comparisons finished.
-The reconstructed tree requires revalidation. See
-``DLPNO_HESSIAN_M33_RECOVERY.md``; this is not a generally validated
-production route.
+An experimental public analytic ``psi4.hessian("dlpno-ccsd(t)")`` and
+``psi4.frequency("dlpno-ccsd(t)")`` route is available with explicit
+``DLPNO_HESSIAN_MODEL=True`` opt-in. The cc-pVDZ driver and molecular
+regressions are included for local validation; instructions are in
+``tests/dlpno-hessian-model/README.md``. The recovered implementation has
+passed source-level routing checks, but its native numerical tests have
+not been rerun after recovery. Earlier results and the interrupted full
+public molecular comparisons are recorded separately in
+``DLPNO_HESSIAN_M33_RECOVERY.md``.
+
+For example, after defining a supported molecule::
+
+    psi4.set_memory("4 GiB")
+    psi4.set_options({
+        "basis": "cc-pvdz",
+        "reference": "rhf",
+        "scf_type": "df",
+        "dlpno_local_orbitals": "boys",
+        "dlpno_hessian_model": True,
+        "dlpno_ao_ints_tol": 0.0,
+        "f_cut": 0.0,
+        "f_cut_t": 0.0,
+        "t_cut_do_uv": 0.0,
+    })
+    H, wfn = psi4.hessian("dlpno-ccsd(t)", dertype=2, return_wfn=True)
+
+Use ``psi4.frequency`` with the same settings for vibrational analysis.
 
 The target is the same RHF all-strong ordinary iterative single-TNO
 functional as the analytic gradient, including both PNO losses and excluded

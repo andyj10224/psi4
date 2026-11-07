@@ -24,6 +24,7 @@ def molecule(bond):
 def run():
     psi4.set_memory('1 GiB');psi4.set_num_threads(1)
     psi4.set_options(dict(basis='cc-pvdz',reference='rhf',scf_type='df',freeze_core=False,
+        df_basis_scf='cc-pvdz-jkfit',df_basis_cc='cc-pvdz-ri',
         scf_initial_accelerator='NONE',diis=False,e_convergence=1.e-14,d_convergence=1.e-14,
         r_convergence=1.e-11,solver_convergence=1.e-14,dlpno_hessian_model=True,
         t_cut_pno=0.,t_cut_pno_mp2=0.,t_cut_tno=0.,dlpno_ao_ints_tol=0.,f_cut=0.,f_cut_t=0.,

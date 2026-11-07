@@ -1,13 +1,13 @@
 # DLPNO Hessian Working Memory Bank
 
-> **Milestone 33 recovery branch:** public analytic delivery was implemented and small tests passed before an execution-environment outage. This reconstructed tree requires revalidation; full public screened matrices were unfinished. See [recovery record](DLPNO_HESSIAN_M33_RECOVERY.md). Milestone 32 remains the last accepted checkpoint.
+> **Public routing delivered for local validation:** the user requested pushing the recovered implementation with the cc-pVDZ tests restored. The experimental `DLPNO_HESSIAN_MODEL` route is included, with complete Cython packaging and local test instructions. Source-level checks pass; fresh native numerical validation remains pending. See [recovery record](DLPNO_HESSIAN_M33_RECOVERY.md) and [local test commands](tests/dlpno-hessian-model/README.md). Milestone 32 remains the last fully validated molecular checkpoint.
 
 
 ## Scope and verification policy
 
 Derive the analytic nuclear Hessian of the same closed-shell RHF ordinary iterative DLPNO-CCSD(T) functional selected by the public gradient driver. Start with Boys, then Mulliken PM; exercise both frozen-core and all-electron references. Work in a fixed Cartesian frame, in hartree/bohr², on a smooth local branch. Keep discrete selections fixed while differentiating the moving electronic subspaces. Require a test for each block before using it as a reference for the next block. Keep canonical comparisons, local finite-cutoff checks, and scaling measurements separate. [Working equations (.txt)](DLPNO_HESSIAN_EQUATIONS.txt) · [Typesetting source (.tex)](DLPNO_HESSIAN_EQUATIONS.tex)
 
-**Current checkpoint (7 November 2026, step 32).** Complete nonplanar screened water–H2 (Boys/PM) and ammonia–H2 (Boys) Hessians now cover frozen-core off-diagonal pairs, distinct-index triplets and unequal coupled TNO ranks: 774 independent ordered entries, maximum error 8.4175e-08 Eh/bohr² against native gradient differences. Conditioned Coulomb inverse response and native Cholesky first-pivot roundoff are corrected. Raw component/total symmetry and rigid-motion checks pass without projection. Branch-preserving reference spacings are selected independently of analytic errors. General production integration, screening robustness, equilibrium vibrations and scaling remain; public analytic Hessian routing stays disabled. All prior milestones and unsuccessful checks remain below.
+**Last fully validated molecular checkpoint (7 November 2026, step 32).** Complete nonplanar screened water–H2 (Boys/PM) and ammonia–H2 (Boys) Hessians cover frozen-core off-diagonal pairs, distinct-index triplets and unequal coupled TNO ranks: 774 independent ordered entries, maximum error 8.4175e-08 Eh/bohr² against native gradient differences. Conditioned Coulomb inverse response and native Cholesky first-pivot roundoff are corrected. Raw component/total symmetry and rigid-motion checks pass without projection. Branch-preserving reference spacings are selected independently of analytic errors. Public routing was disabled at that checkpoint; step 33 now supplies the opt-in route for local validation. Screening robustness, screened equilibrium vibrations and scaling remain open. All prior milestones and unsuccessful checks remain below.
 
 ## Complete Hessian milestone index across both chats
 
@@ -947,3 +947,30 @@ Both cumulative memories and complete equation records are updated (Hessian Sect
 Step 33 adds the explicit public analytic route, installed mixed molecular inputs, same-reference gradient/Hessian delivery, raw seven-component assembly, supported-input/resource guards and option restoration. No energy term or pair weight changes. All previous milestones remain above. The native small-driver regression, seven existing CTests, direct derivative-negotiation cases and H2 equilibrium frequency workflow passed in the original workspace. Full water–H2 Boys/PM and ammonia–H2 Boys public matrices were still running when the environment went offline. Do not label them validated. The recovery record preserves numerical observations, failures, paths and required resume gates. Hessian Section 30 documents the contract; its reconstructed text export is complete but not newly typeset.
 
 Step 33 is a recovery/WIP checkpoint based on `833ec80c`, not a new accepted milestone.
+
+## 2026-11-07 — Public routing delivery and cc-pVDZ local tests
+
+Restored the implementation and cc-pVDZ tests from `b870dd7a` onto the delivery
+branch at the user's request. This supersedes the recovery-only publication
+restriction, while preserving the outstanding native numerical validation.
+Public `hessian` and `frequency` use `DLPNO_HESSIAN_MODEL=true`, with the
+same-reference native gradient, raw seven-component Hessian, existing screen
+and memory restrictions, and no opted-in numerical fallback. All four installed
+molecular-input providers are AST-equivalent to the accepted development
+helpers after name/import normalization; no derivative equation changed.
+
+Completed the Cython install manifest for all 17 DLPNO response modules;
+ordinary Python installs already copy the complete directory. H2 driver and
+frequency tests explicitly select cc-pVDZ-JKFIT/RI. The three screened molecular
+fixtures retain their original cc-pVDZ configuration and numerical references.
+The new test README provides native CTest, full matrix and frequency commands
+with separate scratch directories.
+
+Source validation: 105 pytest cases pass with the native boundary mocked
+(80 unchanged derivative-negotiation cases plus 25 public Hessian route,
+unsupported-setting, missing-second-integral and option-restoration cases).
+All 17 response modules import from only the declared installation files.
+Python compilation, complete equation export synchronization and whitespace
+checks pass. This is source-level validation, not a native build or molecular
+run. The previous H2/native results and interrupted public molecular runs remain
+historical evidence; fresh native tests are left for the user's local build.

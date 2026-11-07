@@ -1,5 +1,24 @@
 # Milestone 33 recovery checkpoint — 7 November 2026
 
+> **Delivery update, 7 November 2026:** the user requested restoring the cc-pVDZ
+> tests, pushing the current work and completing public routing, with native
+> numerical tests to run locally. The recovered route is therefore being
+> delivered on `dlpno_gradients` with its experimental opt-in intact. The
+> historical promotion gate below is superseded by that explicit delivery
+> instruction; no numerical acceptance gate or accuracy tolerance is relaxed.
+> Source-level checks pass: 80 existing derivative-negotiation cases plus 25
+> Hessian routing/guard/restoration cases, with the native boundary mocked;
+> all 17 DLPNO response modules import from the Cython install manifest; and
+> all four promoted molecular providers are AST-equivalent to the accepted
+> development helpers after name/import normalization. Python compilation,
+> complete equation-export checks and whitespace checks pass. No native build,
+> molecular Hessian rerun or new frequency result is claimed in this delivery.
+> The Cython response install list is now complete, and the H2 tests explicitly
+> select the matching cc-pVDZ fitting bases. Local commands are in
+> [the test README](tests/dlpno-hessian-model/README.md).
+
+The remainder of this file preserves the original recovery record.
+
 **Status: reconstructed work in progress; do not treat this commit as a tested tree.**
 
 The execution environment became unavailable while the final public-driver molecular matrices were running. Read-only recovery attempts failed with an exec-server transport disconnect/recovery timeout. GitHub remained accessible. This separate branch reconstructs the implementation and tests from recorded tool outputs and patches on top of accepted parent 833ec80c021747603b6719954dcadcbaf4e6dc90. It does not move dlpno_gradients, which retains the accepted milestone-32 head.

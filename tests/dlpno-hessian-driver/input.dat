@@ -2,6 +2,7 @@
 
 import numpy as np
 from unittest.mock import patch
+from psi4.driver import p4util
 from psi4.driver.procrouting import proc
 from psi4.driver.procrouting.response import dlpno_hessian
 from psi4.driver.driver_findif import FiniteDifferenceComputer
@@ -20,6 +21,8 @@ no_reorient
 }
 set {
  basis cc-pvdz
+ df_basis_scf cc-pvdz-jkfit
+ df_basis_cc cc-pvdz-ri
  reference rhf
  scf_type df
  scf_initial_accelerator none
@@ -55,6 +58,9 @@ assert isinstance(hessian('dlpno-ccsd(t)',dertype=2,return_plan=True),AtomicComp
 assert isinstance(hessian('dlpno-ccsd(t)',return_plan=True),AtomicComputer)
 for derivative in (0,1):
     expect_error(lambda:hessian('dlpno-ccsd(t)',dertype=derivative,return_plan=True),ValidationError,'numerical fallback')
+with patch.object(p4util,'libint2_configuration',return_value={'eri':[5,4,None]}):
+    expect_error(lambda:hessian('dlpno-ccsd(t)',return_plan=True),ValidationError,'numerical fallback')
+    expect_error(lambda:hessian('dlpno-ccsd(t)',dertype=2,return_plan=True),MissingMethodError,'Libint2 build')
 for option,value,phrase in [('f_cut',1e-5,'F_CUT'),('f_cut_t',1e-3,'F_CUT_T'),
         ('dlpno_ao_ints_tol',1e-10,'DLPNO_AO_INTS_TOL'),('t_cut_do_uv',1e-5,'T_CUT_DO_UV'),
         ('dlpno_local_orbitals','IBO','localization'),('dlpno_reference_orbitals','BCCD','Brueckner')]:
