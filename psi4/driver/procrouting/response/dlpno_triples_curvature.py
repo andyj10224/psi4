@@ -154,3 +154,63 @@ def project_mixed_triples_row(triplet, domain, metric, three_center, overlap, fo
         return mixed_product('m,mn,nb->b',lmos.slice((slice(None),i)),fock,tnos)
 
     return mixed_triples_moments(triplet,domain,metric,oo,ov,vv,transfer,single,double,fov,vf)
+
+
+def _mixed_projector(density, kept):
+    """Differentiate P²=P and [D,P]=0 in an orthonormal parent."""
+    eig,rot = np.linalg.eigh(density.value)
+    n = len(eig)
+    if not 0 < kept <= n:
+        raise ValueError("Invalid natural-orbital selection rank.")
+    if kept == n:
+        zero = np.zeros((n,n))
+        return MixedBlock(np.eye(n),zero,zero,zero)
+    cut = n-kept
+    gaps = eig[None,cut:] - eig[:cut,None]
+    if np.min(gaps) <= 64*np.finfo(float).eps * max(abs(eig)):
+        raise ValueError("Unresolved retained/discarded natural-orbital boundary.")
+    du,dv,duv = (rot.T@x@rot for x in density[1:])
+    def first(x):
+        p = np.zeros_like(x)
+        p[:cut,cut:] = x[:cut,cut:] / gaps
+        p[cut:,:cut] = p[:cut,cut:].T
+        return p
+    pu,pv = first(du),first(dv)
+    puv = first(duv + du@pv-pv@du + dv@pu-pu@dv)
+    diagonal = pu@pv+pv@pu
+    puv[:cut,:cut] = diagonal[:cut,:cut]
+    puv[cut:,cut:] = -diagonal[cut:,cut:]
+    return MixedBlock(rot[:,cut:]@rot[:,cut:].T,rot@pu@rot.T,rot@pv@rot.T,rot@puv@rot.T)
+
+
+def mixed_tno_frame(triplet, parent, metric, pair_frames, doubles, reference_frame):
+    """Mixed TNO coefficients in the reference polar gauge, including parent motion.
+
+    For the triples-only CCSD adjoint, supply t_u, t_v and zero t_uv. Each
+    repeated pair slot contributes separately to the density.
+    """
+    i,j,k = triplet
+    n = parent.value.shape[1]
+    density = MixedBlock(*(np.zeros((n,n)) for _ in range(4)))
+    for p in ((i,j),(j,k),(i,k)):
+        t = doubles[p]
+        spin = MixedBlock(*(2*x-x.T for x in t))
+        direct = mixed_product('ac,bc->ab',spin,t)
+        exchange = mixed_product('ca,cb->ab',spin,t)
+        d = MixedBlock(*((x+y)/(3*(1+(p[0]==p[1]))) for x,y in zip(direct,exchange)))
+        transfer = mixed_product('ma,mn,nb->ab',pair_frames[p],metric,parent)
+        contribution = mixed_product('ia,ij,jb->ab',transfer,d,transfer)
+        for target,x in zip(density,contribution):
+            target += x
+    proj = _mixed_projector(density,reference_frame.shape[1])
+    ao = mixed_product('ma,ab,nb->mn',parent,proj,parent)
+    ref = metric.value@reference_frame
+    unnormalized = MixedBlock(*(x@ref for x in ao))
+    gram = mixed_product('ma,mn,nb->ab',unnormalized,metric,unnormalized)
+    eye = np.eye(reference_frame.shape[1])
+    if (not np.allclose(gram.value,eye,atol=2.e-8,rtol=0.) or
+            not np.allclose(unnormalized.value,reference_frame,atol=2.e-8,rtol=0.)):
+        raise ValueError(f"Mixed TNO selection disagrees with the native frame for {triplet}.")
+    polar = MixedBlock(eye,-.5*gram.u,-.5*gram.v,
+                       -.5*gram.uv+.375*(gram.u@gram.v+gram.v@gram.u))
+    return mixed_product('ma,ab->mb',unnormalized,polar)

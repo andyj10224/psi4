@@ -1,10 +1,11 @@
 """Water stretch column of the ordinary (T) block on a fixed local branch.
 
-Only the mixed lower-order electronic response comes from displaced native states.
+The CCSD-stationary route eliminates mixed T1/T2 and builds mixed TNO frames.
+Remaining mixed lower-order electronic inputs come from aligned displaced states.
 The independent local check differences stationary (T) gradients. The canonical
 reference differences analytic DF-CCSD(T) minus DF-CCSD gradients.
 """
-from functools import lru_cache
+from functools import lru_cache, partial
 from typing import NamedTuple
 
 import numpy as np
@@ -13,7 +14,8 @@ from scipy.optimize import linear_sum_assignment
 
 from lmp2_tangent import calculation, check
 from first_pno import raw
-from psi4.driver.procrouting.response.dlpno_triples_curvature import MixedBlock, mixed_product, project_mixed_triples_row
+from psi4.driver.procrouting.response.dlpno_triples_curvature import MixedBlock, mixed_product, project_mixed_triples_row, mixed_tno_frame
+from psi4.driver.procrouting.response.dlpno_ccsd_response import TriplesCCSDAdjoint, transported_ccsd_residual, semi_analytic_ccsd_mixed_source, ccsd_weighted_dot
 from water_hvp import BASE, molecule
 from psi4.driver.procrouting.response.dlpno_triples_response import TriplesHessianColumn, TriplesMixedRow
 
@@ -24,6 +26,9 @@ class NativeInputs(NamedTuple):
     moments: dict
     overlaps: dict
     electronic: dict
+    order: tuple
+    signs: np.ndarray
+    pair_rotations: dict
 
 
 def stationary_gradient(direction):
@@ -47,6 +52,10 @@ def aligned_inputs(model, reference, rows):
     assert len(new_rows) == len(rows)
     # The TNOs depend on both pair selections. Check both ranks as well.
     lower = {'lmo':lm,'fock':other.Fa().np.copy()}
+    vir = other.Ca_subset('AO','VIR').np
+    x,_,y = np.linalg.svd(vir.T@ref.S().np@ref.Ca_subset('AO','VIR').np)
+    lower['parent'] = vir@(x@y)
+    rotations = {}
     native_t2 = psi4.core.dlpno_lmp2_blocks(model,'CCSD_DOUBLES')
     for kind in ('FRAME','FINAL_FRAME'):
         old = psi4.core.dlpno_lmp2_blocks(reference,kind)
@@ -60,10 +69,13 @@ def aligned_inputs(model, reference, rows):
                 y = new[p].np
                 left,_,right = np.linalg.svd(y.T@ref.S().np@x.np)
                 rot = left@right
+                rotations[i,j] = rot
                 lower['pno',(i,j)] = y@rot
                 t = native_t2[p].np if a <= b else native_t2[p].np.T
                 lower['t2',(i,j)] = signs[i]*signs[j]*(rot.T@t@rot)
                 if i == j:
+                    block = lower['t2',(i,j)]
+                    lower['t2',(i,j)] = .5*(block+block.T)
                     dom,ts,_ = psi4.core.dlpno_ccsd_df_pair_state(model,int(a),int(a))
                     lower['t1',i] = signs[i]*(rot.T@ts[dom.index(a)].np).ravel()
     frames,moments,virtual,edges = {},{},{},{}
@@ -89,32 +101,38 @@ def aligned_inputs(model, reference, rows):
             q = tuple(sorted((i,j,k)))
             edges[r,q] = frames[r].T @ other.S().np @ frames[q]
     lower.update({('tno',r):y for r,y in frames.items()})
-    return NativeInputs(lm.T @ other.Fa().np @ lm,virtual,moments,edges,lower)
+    return NativeInputs(lm.T @ other.Fa().np @ lm,virtual,moments,edges,lower,tuple(order),signs,rotations)
+
+
+def mixed_stencil(u,v,h):
+    if u == v:
+        nodes = ((1,0,1), (0,0,-2), (-1,0,1))
+        scale = h*h
+    else:
+        nodes = ((1,1,1), (1,-1,-1), (-1,1,-1), (-1,-1,1))
+        scale = 4*h*h
+    samples = []
+    for a,b,weight in nodes:
+        delta = np.zeros(9)
+        delta[u] += a*h
+        delta[v] += b*h
+        samples.append((tuple(delta),a*h,b*h,weight/scale))
+    return samples
 
 
 def mixed_coefficients(data,u,v,h):
     """Return central mixed differences of fitted moments, Fock and overlap blocks."""
-    if u == v:
-        weights = (1.,-2.,1.)
-        values = [data(tuple(k*h if j == v else 0. for j in range(9))) for k in (1,0,-1)]
-        denom = h*h
-    else:
-        weights = (1.,-1.,-1.,1.)
-        values = []
-        for su,sv in ((1,1),(1,-1),(-1,1),(-1,-1)):
-            delta = np.zeros(9)
-            delta[[u,v]] = [su*h,sv*h]
-            values.append(data(tuple(delta)))
-        denom = 4*h*h
+    samples = mixed_stencil(u,v,h)
+    values = [(weight,data(delta)) for delta,_,_,weight in samples]
     def difference(get):
-        return sum(weight*get(x) for weight,x in zip(weights,values)) / denom
+        return sum(weight*get(x) for weight,x in values)
     def row(r):
         return TriplesMixedRow(difference(lambda x:x.moments[r][0]),difference(lambda x:x.moments[r][1]),
                                difference(lambda x:x.virtual_fock[r]))
     return (difference(lambda x:x.occupied_fock),row,lambda r,q:difference(lambda x:x.overlaps[r,q])), lambda key:difference(lambda x:x.electronic[key])
 
 
-def molecular_inputs(w,rows,u,v,lower,lower_u,lower_v,lower_uv):
+def molecular_inputs(w,rows,u,v,lower,lower_u,lower_v,lower_uv,*,trial_ccsd=False):
     ref = w.reference_wavefunction()
     mints = psi4.core.MintsHelper(ref)
     au,xu = divmod(u,3)
@@ -122,7 +140,20 @@ def molecular_inputs(w,rows,u,v,lower,lower_u,lower_v,lower_uv):
     overlap = MixedBlock(ref.S().np,mints.ao_oei_deriv1('OVERLAP',au)[xu].np,
                          mints.ao_oei_deriv1('OVERLAP',av)[xv].np,
                          mints.ao_oei_deriv2('OVERLAP',au,av)[3*xu+xv].np)
+    @lru_cache(None)
     def electronic(key):
+        if trial_ccsd and isinstance(key,tuple):
+            if key[0] in ('t1','t2'):
+                return MixedBlock(lower[key],lower_u[key],lower_v[key],np.zeros_like(lower[key]))
+            if key[0] == 'tno':
+                i,j,k = r = key[1]
+                pairs = ((i,j),(j,k),(i,k))
+                tno = mixed_tno_frame(r,electronic('parent'),overlap,
+                        {p:electronic(('pno',p)) for p in pairs},{p:electronic(('t2',p)) for p in pairs},
+                        lower[key])
+                np.testing.assert_allclose(tno.u,lower_u[key],atol=2.e-8,rtol=0.)
+                np.testing.assert_allclose(tno.v,lower_v[key],atol=2.e-8,rtol=0.)
+                return tno
         return MixedBlock(lower[key],lower_u[key],lower_v[key],lower_uv(key))
     lmo,fock = electronic('lmo'),electronic('fock')
     metric,q = raw(ref,ref.get_basisset('DF_BASIS_CC'))
@@ -157,6 +188,92 @@ def molecular_inputs(w,rows,u,v,lower,lower_u,lower_v,lower_uv):
     return occupied,mixed_row,edge
 
 
+def trial_tno_frame(triplet, parent, metric, pair_frames, doubles, reference_frame, reference_metric):
+    """Rebuild a fixed-rank triplet subspace on the trial CCSD path and polar-align it.
+
+    parent is the orthonormal PAO span at the sample; pair frames and doubles
+    use the same occupied labeling as the reference triplet.
+    """
+    i,j,k = triplet
+    density = np.zeros((parent.shape[1],)*2)
+    for p in ((i,j),(j,k),(i,k)):
+        t = doubles[p]
+        spin = 2*t-t.T
+        projected = pair_frames[p].T@metric@parent
+        density += projected.T@(spin@t.T+spin.T@t)@projected / (3*(1+(p[0]==p[1])))
+    values,vec = np.linalg.eigh(density)
+    kept = reference_frame.shape[1]
+    if not 0 < kept <= len(values):
+        raise ValueError(f"Invalid trial TNO rank for {triplet}.")
+    if kept < len(values) and values[-kept]-values[-kept-1] <= 64*np.finfo(float).eps*max(abs(values)):
+        raise ValueError(f"Unresolved trial TNO occupation boundary for {triplet}.")
+    frame = parent@vec[:,-kept:]
+    a,s,b = np.linalg.svd(frame.T@reference_metric@reference_frame)
+    if min(s) < np.sqrt(np.finfo(float).eps):
+        raise ValueError(f"Singular trial TNO frame alignment for {triplet}.")
+    return frame@(a@b)
+
+
+def trial_mixed_inputs(w, rows, u, v, h, model_at, data, lower_u, lower_v, lower_uv):
+    """Independent stencil for trial TNOs and geometry stencil for the residual."""
+    base = data((0.,)*9).electronic
+    pairs = list(data((0.,)*9).pair_rotations)
+    def blocks(lower):
+        return [lower['t1',i] for i in range(base['lmo'].shape[1])], {p:lower['t2',p] for p in pairs}
+    def evaluator(delta):
+        state = data(delta)
+        return partial(transported_ccsd_residual,model_at(delta),order=state.order,
+                       signs=state.signs,rotations=state.pair_rotations)
+    nodes = mixed_stencil(u,v,h)
+    mixed_residual = semi_analytic_ccsd_mixed_source(
+        evaluator((0.,)*9),blocks(base),blocks(lower_u),blocks(lower_v),
+        ((du,dv,weight,evaluator(delta)) for delta,du,dv,weight in nodes))
+    frame_uv = {r:np.zeros_like(row[2].np) for r,row in rows.items()}
+    for delta,du,dv,weight in nodes:
+        model = model_at(delta)
+        state = data(delta)
+        def affine(key):
+            return base[key] + du*lower_u[key] + dv*lower_v[key]
+        t2 = {p:affine(('t2',p)) for p in pairs}
+        other = model.reference_wavefunction()
+        parent = other.Ca_subset('AO','VIR').np
+        frames = {p:state.electronic['pno',p] for p in pairs}
+        for r in rows:
+            trial = trial_tno_frame(r,parent,other.S().np,frames,t2,rows[r][2].np,w.reference_wavefunction().S().np)
+            if not any(delta):
+                np.testing.assert_allclose(trial,rows[r][2].np,atol=2.e-8,rtol=0.)
+            frame_uv[r] += weight*trial
+    def adjusted(key):
+        if isinstance(key,tuple):
+            if key[0] in ('t1','t2'):
+                return np.zeros_like(base[key])
+            if key[0] == 'tno':
+                return frame_uv[key[1]]
+        return lower_uv(key)
+    return molecular_inputs(w,rows,u,v,base,lower_u,lower_v,adjusted),mixed_residual
+
+
+def check_residual_replay(w, state):
+    lower = state.electronic
+    one = [lower['t1',i] for i in range(len(state.order))]
+    two = {p:lower['t2',p] for p in state.pair_rotations}
+    def replay(one,two):
+        return transported_ccsd_residual(w,one,two,state.order,state.signs,state.pair_rotations)
+    pair = next(p for p in two if p[0]!=p[1])
+    def snapshot():
+        _,_,blocks = psi4.core.dlpno_ccsd_df_pair_state(w,*pair)
+        return {key:x.np.copy() for key,x in blocks.items()}
+    before = snapshot()
+    direction = [np.full_like(x,.01) for x in one]
+    shifted,_ = replay([x+y for x,y in zip(one,direction)],two)
+    assert max(np.max(abs(x)) for x in shifted) > 1.e-5
+    after = snapshot()
+    for key in before:
+        np.testing.assert_allclose(before[key],after[key],atol=1.e-13,rtol=0.)
+    base1,base2 = replay(one,two)
+    assert max(np.max(abs(x)) for x in [*base1,*base2.values()]) < 1.e-8
+
+
 def benchmark(frozen, coordinates=range(9)):
     psi4.set_options({'freeze_core':frozen})
     w = calculation(BASE)
@@ -165,16 +282,22 @@ def benchmark(frozen, coordinates=range(9)):
     lower_v = {}
     column_row = check(frozen,row_at=divmod(v,3),reference=w,lower_order=lower_v)
     column = TriplesHessianColumn(column_row)
+    ccsd_adjoint = TriplesCCSDAdjoint(w)
+    eta1,eta2 = psi4.core.dlpno_triples_ccsd_source(w)
+    eta1,eta2 = [x.np.ravel() for x in eta1], {p:x.np for p,x in eta2.items()}
 
+    @lru_cache(maxsize=4)
+    def model_at(delta):
+        return calculation(BASE+np.array(delta).reshape(3,3)) if any(delta) else w
     @lru_cache(None)
     def data(delta):
-        displaced = calculation(BASE+np.array(delta).reshape(3,3)) if any(delta) else w
-        return aligned_inputs(displaced,w,rows)
+        return aligned_inputs(model_at(delta),w,rows)
     @lru_cache(None)
     def along_column(h):
         d = np.zeros(9)
         d[v] = h
         return calculation(BASE+d.reshape(3,3))
+    check_residual_replay(w,data((0.,)*9))
     results = []
     for u in coordinates:
         lower_u = lower_v if u == v else {}
@@ -182,7 +305,8 @@ def benchmark(frozen, coordinates=range(9)):
         relax = column.relaxation(row)
         reverse = TriplesHessianColumn(row).relaxation(column_row)
         np.testing.assert_allclose(relax,reverse,rtol=0.,atol=2.e-11)
-        elements,reference = [],[]
+        elements,stationary,reference,tno_errors = [],[],[],[]
+        constraints,source_errors = [],[]
         for h in (.002,.001):
             projected,lower_uv = mixed_coefficients(data,u,v,h)
             # Use analytic AO and DF derivatives with lower-order mixed response
@@ -194,10 +318,43 @@ def benchmark(frozen, coordinates=range(9)):
             print('mixed provider difference',frozen,u,h,element-direct,flush=True)
             assert abs(element-direct) < 5.e-6
             elements.append(element)
+            trial_fd,residual = trial_mixed_inputs(w,rows,u,v,h,model_at,data,lower_u,lower_v,lower_uv)
+            matrix = psi4.core.Matrix.from_array
+            nocc = len(residual[0])
+            jt1,jt2 = psi4.core.dlpno_ccsd_amplitude_action(w,
+                [matrix(lower_uv(('t1',i))[:,None]) for i in range(nocc)],
+                {p:matrix(lower_uv(('t2',p))) for p in residual[1]})
+            oracle = ccsd_weighted_dot(eta1,eta2,[lower_uv(('t1',i)) for i in range(nocc)],
+                                       {p:lower_uv(('t2',p)) for p in eta2})
+            source_errors.append(ccsd_adjoint.correction(*residual)-oracle)
+            constraints.append(np.concatenate(
+                [x.np.ravel()+y for x,y in zip(jt1,residual[0])]
+                + [(jt2[p].np+y).ravel() for p,y in residual[1].items()]))
+            def remaining_mixed(key):
+                if isinstance(key,tuple) and key[0] in ('t1','t2','tno'):
+                    raise AssertionError("The CCSD-stationary path requested an eliminated mixed input.")
+                return lower_uv(key)
+            trial = molecular_inputs(w,rows,u,v,data((0.,)*9).electronic,lower_u,lower_v,remaining_mixed,trial_ccsd=True)
+            tno_comparison = column.element(row,*trial_fd)-column.element(row,*trial)
+            print('TNO mixed curvature comparison',frozen,u,h,tno_comparison,flush=True)
+            tno_errors.append(tno_comparison)
+            adjoint_value = column.ccsd_stationary_element(row,*trial,ccsd_adjoint,residual)
+            stationary.append(adjoint_value)
+            print('CCSD adjoint correction',frozen,u,h,ccsd_adjoint.correction(*residual),adjoint_value-element,flush=True)
             derivatives = [stationary_gradient(check(frozen,row_at=divmod(u,3),reference=along_column(k*h)))
                            for k in (1,-1)]
             reference.append((derivatives[0]-derivatives[1])/(2*h))
-        estimated = (4*elements[1]-elements[0])/3
+        source_error = abs(4*source_errors[1]-source_errors[0])/3
+        print('triples-only adjoint contraction error',frozen,u,source_error,flush=True)
+        assert source_error < 1.e-7
+        constraint_error = np.max(abs(4*constraints[1]-constraints[0]))/3
+        np.testing.assert_allclose((4*tno_errors[1]-tno_errors[0])/3,0.,atol=2.e-7,rtol=0.)
+        print('mixed CCSD constraint error',frozen,u,constraint_error,flush=True)
+        assert constraint_error < 5.e-5
+        estimated = (4*stationary[1]-stationary[0])/3
+        previous = (4*elements[1]-elements[0])/3
+        print('CCSD elimination check',frozen,u,estimated,previous,estimated-previous,flush=True)
+        np.testing.assert_allclose(estimated,previous,atol=2.e-7,rtol=0.)
         numerical = (4*reference[1]-reference[0])/3
         print('triples curvature',frozen,u,relax,estimated,numerical,estimated-numerical,flush=True)
         results.append((relax,estimated,numerical))

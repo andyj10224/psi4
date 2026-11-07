@@ -1,0 +1,55 @@
+import Mathlib.LinearAlgebra.Matrix.DotProduct
+import Mathlib.Data.Real.Basic
+import Mathlib.Tactic.Ring
+import Mathlib.Tactic.NoncommRing
+
+/- Finite-dimensional identities for the fixed-branch RHF Hessian.
+   Run with Lean 4.16.0 and mathlib v4.16.0. -/
+namespace DLPNOHessian
+open Matrix
+
+-- W acts on the first vector of the pair-weighted product. The two
+-- hypotheses are the mixed amplitude equation and the ordinary (T) adjoint.
+theorem eliminate_mixed_ccsd {I : Type*} [Fintype I] (J W : Matrix I I ℝ)
+    (tuv c eta lam : I → ℝ) (mixed : J *ᵥ tuv = -c)
+    (adjoint : J.transpose *ᵥ (W *ᵥ lam) = -(W *ᵥ eta)) :
+    (W *ᵥ eta) ⬝ᵥ tuv = (W *ᵥ lam) ⬝ᵥ c := by
+  have h : (W *ᵥ lam) ⬝ᵥ (J *ᵥ tuv) = (J.transpose *ᵥ (W *ᵥ lam)) ⬝ᵥ tuv := by
+    rw [dotProduct_mulVec, mulVec_transpose]
+  rw [mixed, adjoint, dotProduct_neg, neg_dotProduct] at h
+  exact (neg_inj.mp h).symm
+
+-- All fifteen coefficients of a bivariate polynomial of total degree ≤ 4.
+def quartic (c : ℕ → ℕ → ℝ) (s t : ℝ) : ℝ :=
+  c 0 0 + s*(c 1 0 + s*(c 2 0 + s*(c 3 0 + s*c 4 0))) +
+  t*(c 0 1 + s*(c 1 1 + s*(c 2 1 + s*c 3 1)) +
+     t*(c 0 2 + s*(c 1 2 + s*c 2 2) + t*(c 0 3 + s*c 1 3 + t*c 0 4)))
+
+def oddOdd (c : ℕ → ℕ → ℝ) (a b : ℝ) : ℝ :=
+  quartic c a b - quartic c a (-b) - quartic c (-a) b + quartic c (-a) (-b)
+
+-- Cleared-denominator form of the implemented mixed coefficient extraction.
+theorem quartic_mixed_coefficient (c : ℕ → ℕ → ℝ) (a b : ℝ) :
+    16 * oddOdd c a b - oddOdd c (2*a) (2*b) = 48*a*b*c 1 1 := by
+  unfold oddOdd quartic
+  ring
+
+-- x=P_uv and c=P_u P_v + P_v P_u. The diagonal blocks follow from
+-- differentiated idempotency in any ring, including real square matrices.
+theorem retained_projector_block {R : Type*} [Ring R] (p x c : R)
+    (hp : p*p = p) (mixed : x = p*x + x*p + c) :
+    p*x*p + p*c*p = 0 := by
+  have h : p*x*p = p*x*p + (p*x*p + p*c*p) := calc
+    p*x*p = p*(p*x + x*p + c)*p := congrArg (fun y => p*y*p) mixed
+    _ = (p*p)*x*p + p*x*(p*p) + p*c*p := by noncomm_ring
+    _ = p*x*p + (p*x*p + p*c*p) := by rw [hp, add_assoc]
+  exact add_left_cancel (h.symm.trans (add_zero _).symm)
+
+theorem discarded_projector_block {R : Type*} [Ring R] (p q x c : R)
+    (hqp : q*p = 0) (hpq : p*q = 0) (mixed : x = p*x + x*p + c) :
+    q*x*q = q*c*q := calc
+    q*x*q = q*(p*x + x*p + c)*q := congrArg (fun y => q*y*q) mixed
+    _ = (q*p)*x*q + q*x*(p*q) + q*c*q := by noncomm_ring
+    _ = q*c*q := by simp [hqp,hpq]
+
+end DLPNOHessian

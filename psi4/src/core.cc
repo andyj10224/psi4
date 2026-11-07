@@ -193,6 +193,9 @@ std::pair<SharedMatrix,SharedMatrix> df_mixed_integrals(SharedWavefunction,const
 std::pair<SharedMatrix,SharedMatrix> pair_metric_tangent(SharedMatrix,SharedMatrix);
 std::tuple<std::vector<int>,std::vector<SharedMatrix>,std::map<std::string,SharedMatrix>>
     ccsd_df_pair_state(SharedWavefunction,int,int);
+std::pair<std::vector<SharedMatrix>, PairBlocks> triples_ccsd_source(SharedWavefunction);
+std::pair<std::vector<SharedMatrix>, PairBlocks> ccsd_residual_at(SharedWavefunction,
+    const std::vector<SharedMatrix>&,const PairBlocks&);
 std::pair<std::vector<SharedMatrix>, PairBlocks> ccsd_amplitude_action(
     SharedWavefunction, const std::vector<SharedMatrix>&, const PairBlocks&, bool);
 std::pair<std::vector<SharedMatrix>, PairBlocks> ccsd_fock_source(
@@ -1443,6 +1446,10 @@ PYBIND11_MODULE(core, core) {
              "Ordered native mixed J/K, gamma and delta blocks for the CCSD C/D contributions.");
     core.def("dlpno_ccsd_df_pair_state", &dlpno::ccsd_df_pair_state, "wfn"_a, "i"_a, "j"_a,
              "Local CCSD amplitudes and dressed DF intermediates for one unique retained pair.");
+    core.def("dlpno_triples_ccsd_source", &dlpno::triples_ccsd_source, "wfn"_a,
+             "CCSD derivative of ordinary (T), including its fixed-rank TNO selection.");
+    core.def("dlpno_ccsd_residual_at", &dlpno::ccsd_residual_at, "wfn"_a, "singles"_a, "doubles"_a,
+             "Evaluate the transformed CCSD residual at supplied amplitudes in the native pair frames.");
     core.def("dlpno_ccsd_amplitude_action", &dlpno::ccsd_amplitude_action, "wfn"_a, "singles"_a, "doubles"_a,
              "transpose"_a = false, "Apply the local RHF CCSD amplitude Jacobian or its weighted adjoint.");
     core.def("dlpno_triples_response_state", &dlpno::triples_response_state, "wfn"_a,

@@ -179,3 +179,30 @@ Across all nine output rows, the maximum discrepancies from differences of local
 As a separate complete-space check, set both PNO occupation thresholds and the TNO threshold to zero, and include all Fock couplings and triplet domains; the 1e-9 pair cutoff still retains every water pair. The local H1 z triples curvature was −0.00133112006 (frozen) and −0.00134788260 (all-electron) Eh/bohr². Absolute differences from canonical were 3.20e-9 and 2.06e-9 Eh/bohr². These are isolated (T) longitudinal entries. No frequencies or full DLPNO-CCSD(T) Hessian have been delivered.
 
 The native build, dfccsd-t-grad1, dlpno-grad-model, dlpnocc-1, the previous water response regression and the new curvature, mixed integral and mixed moment checks passed. The LaTeX record compiled in two passes.
+
+## CCSD stationarity in the semi-analytic ordinary (T) Hessian
+
+Eliminated the mixed CCSD singles and doubles from the stationary triples column. The native accessor returns the existing ordinary (T) amplitude source, including its retained-TNO density derivative. The coupled solver now accepts the weighted transpose and solves a triples-only CCSD adjoint once per reference. Its contraction replaces the mixed-amplitude term for every row and column. The ordinary CCSD energy source is excluded from this multiplier. [Native residual and source access](psi4/src/psi4/dlpno/ccsd_gradient_lambda.cc) · [Adjoint and mixed source](psi4/driver/procrouting/response/dlpno_ccsd_response.py) · [Column assembly](psi4/driver/procrouting/response/dlpno_triples_response.py)
+
+Added residual replay at arbitrary real RHF amplitudes in the native pair frames. It validates the independent blocks, restores the reference amplitudes and rebuilds their dressed intermediates after each evaluation. The semi-analytic mixed source combines finite differences in nuclear geometry with exact amplitude derivatives of the native quartic residual. Its amplitude-only quadratic contraction uses odd–odd coefficient extraction; the geometry-dependent Jacobian actions use linear coefficient extraction at the reference amplitude components in the moving frames. Residuals are mapped back to the same labeled chart, including occupied signs and reversed-pair transposes.
+
+Added the analytic mixed TNO projector and reference-polar frame derivative. The retained/discarded mixing solves the differentiated spectral commutator, and the two diagonal blocks follow from differentiated idempotency. Its inputs are the mixed PAO parent and pair frames, AO metric, and the CCSD amplitudes on the affine trial. Only the mixed CCSD amplitudes are set to zero. The stationary assembly does not request displaced mixed T1, T2 or TNO frame entries. [Mixed TNO kernel](psi4/driver/procrouting/response/dlpno_triples_curvature.py) · [Equations](DLPNO_HESSIAN_EQUATIONS.tex)
+
+The water diagnostic retains the previous direct construction for comparison. It independently reconstructs TNO frames along the trial at displaced geometries and checks the mixed residual identity against the native Jacobian acting on diagnostic mixed amplitudes. A separate quartic and rotating-projector test checks coefficient extraction, internal degeneracies, a fully retained space and rejection of a split degenerate block. [Water curvature](tests/dlpno-hessian-model/triples_curvature.py) · [Algebra checks](tests/dlpno-hessian-model/ccsd_stationarity.py)
+
+The geometric part of the mixed transformed residual and lower-order mixed LMO, PNO, triplet-parent and AO Fock inputs are still semi-analytic. The result is the isolated ordinary (T) contribution on the selected branch. A next step toward molecular frequencies is to assemble the retained-pair CCSD energy curvature with the correlated CCSD multiplier, then account separately for the lower-order energy corrections and the RHF contribution.
+
+Water/cc-pVDZ, Boys H1 z stretch, working cutoffs as in the preceding entry. All values in this table are Eh/bohr². The old construction uses displaced mixed CCSD amplitudes. The stationary construction uses the CCSD adjoint and analytic mixed TNO selection.
+
+| Core | CCSD adjoint correction | Stationary H1 z (T) curvature | Old construction | Absolute change |
+| --- | ---: | ---: | ---: | ---: |
+| Frozen O 1s | +0.00044791455 | −0.001266604469 | −0.001266604443 | 2.52e-11 |
+| All-electron | +0.00046161022 | −0.001240878873 | −0.001240878147 | 7.27e-10 |
+
+With complete PNO/TNO spaces and the positive pair cutoff, the stationary H1 z values were −0.001331120144 and −0.001347883324 Eh/bohr² respectively. Absolute differences from the canonical triples curvature were about 3.28e-9 and 2.78e-9 Eh/bohr². The differences from the old complete-space construction were 7.99e-11 and 7.19e-10 Eh/bohr².
+
+Lean 4.16.0 with mathlib v4.16.0 checked the weighted mixed-amplitude elimination identity, the coefficient formula for an arbitrary bivariate quartic, and both diagonal projector-block identities under differentiated idempotency. These theorems assume the response equations; the native calculations test their implementation. [Lean proof](tests/dlpno-hessian-model/CCSDStationarity.lean)
+
+Across the nine Cartesian output rows at the working cutoffs, replacing direct mixed-amplitude inputs changed the column by at most 1.02e-10 Eh/bohr² with frozen core and 3.98e-9 Eh/bohr² with all electrons. Maximum differences from independently differenced local stationary (T) gradients were 1.79e-9 and 1.54e-8 Eh/bohr². At H1 z, the adjoint correction agreed with contracting the native (T) source against displaced mixed CCSD amplitudes within 4.95e-12 and 6.45e-11 Eh/bohr². The residual replay test checks that the native amplitudes and dressed pair intermediates are restored.
+
+Native build, dfccsd-t-grad1, dlpno-grad-model, dlpnocc-1, the previous coupled-response water diagnostic, the new water stationarity checks and the formal algebra checks passed. The equation record compiled in two LaTeX passes.

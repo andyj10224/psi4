@@ -129,8 +129,8 @@ void DLPNOCCSD::gradient_lambda_residual(const std::vector<SharedMatrix>& z1, co
     }
 }
 
-std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> DLPNOCCSD::ccsd_amplitude_action(
-    const std::vector<SharedMatrix>& x1, const PairBlocks& unique, bool transpose) {
+std::vector<SharedMatrix> DLPNOCCSD::ordered_ccsd_blocks(const std::vector<SharedMatrix>& x1,
+                                                        const PairBlocks& unique) const {
     if (!gradient_model_ || beta_.size() != T_iajb_.size() || x1.size() != T_ia_.size())
         throw PSIEXCEPTION("Expected singles on the RHF gradient-model occupied space.");
     auto validate = [](const SharedMatrix& x, const SharedMatrix& model) {
@@ -156,6 +156,63 @@ std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> DLPNOCCSD::ccsd_ampl
         if (i < j) x2[ij_to_ji_[p]] = block->transpose();
     }
     if (unique.size() != count) throw PSIEXCEPTION("Expected one doubles block per retained unique pair.");
+    return x2;
+}
+
+std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> DLPNOCCSD::triples_ccsd_source() const {
+    if (!gradient_model_ || triples_source1_.size() != T_ia_.size() || triples_source2_.size() != ij_to_i_j_.size())
+        throw PSIEXCEPTION("Expected the converged ordinary triples CCSD source.");
+    std::vector<SharedMatrix> one;
+    PairBlocks two;
+    for (const auto& block : triples_source1_) one.push_back(block->clone());
+    for (size_t p = 0; p < triples_source2_.size(); ++p) {
+        const auto ij = ij_to_i_j_[p];
+        if (ij.first <= ij.second) two[ij] = triples_source2_[p]->clone();
+    }
+    return {one,two};
+}
+
+std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> DLPNOCCSD::ccsd_residual_at(
+    const std::vector<SharedMatrix>& singles, const PairBlocks& doubles) {
+    auto ordered = ordered_ccsd_blocks(singles, doubles);
+    const auto saved1 = T_ia_, saved2 = T_iajb_, saved_u = Tt_iajb_;
+    auto restore = [&]() {
+        T_ia_ = saved1;
+        T_iajb_ = saved2;
+        Tt_iajb_ = saved_u;
+        prepare_ccsd_residual();
+    };
+    auto r1 = ccsd_detail::zero_blocks(singles), r2 = ccsd_detail::zero_blocks(ordered);
+    auto rn = ccsd_detail::zero_blocks(ordered);
+    std::vector<std::vector<SharedMatrix>> buffers(Process::environment.get_n_threads());
+    for (auto& buffer : buffers) buffer = ccsd_detail::zero_blocks(singles);
+    try {
+        T_ia_ = singles;
+        T_iajb_ = ordered;
+        for (size_t p = 0; p < ordered.size(); ++p) {
+            Tt_iajb_[p] = ordered[p]->clone();
+            Tt_iajb_[p]->scale(2.);
+            Tt_iajb_[p]->subtract(ordered[p]->transpose());
+        }
+        prepare_ccsd_residual();
+        compute_R_ia(r1,buffers);
+        compute_R_iajb(r2,rn);
+    } catch (...) {
+        restore();
+        throw;
+    }
+    restore();
+    PairBlocks result;
+    for (size_t p = 0; p < r2.size(); ++p) {
+        const auto ij = ij_to_i_j_[p];
+        if (ij.first <= ij.second) result[ij] = r2[p];
+    }
+    return {r1,result};
+}
+
+std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> DLPNOCCSD::ccsd_amplitude_action(
+    const std::vector<SharedMatrix>& x1, const PairBlocks& unique, bool transpose) {
+    const auto x2 = ordered_ccsd_blocks(x1,unique);
     auto y1 = ccsd_detail::zero_blocks(T_ia_);
     auto y2 = ccsd_detail::zero_blocks(T_iajb_);
     if (transpose) {

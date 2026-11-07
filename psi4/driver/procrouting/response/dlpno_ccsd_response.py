@@ -360,8 +360,8 @@ def ccsd_residual_source(wfn, frames, factors_for, exchange, mixed_integrals, dl
     return singles,doubles_source
 
 
-def coupled_ccsd_tangent(wfn, source1, source2, *, tolerance=1.e-10, maxiter=100):
-    """Solve J t^v = -b^v in the independent, pair-weighted RHF amplitude space.
+def coupled_ccsd_tangent(wfn, source1, source2, *, transpose=False, tolerance=1.e-10, maxiter=100):
+    """Solve J x = -b or its weighted adjoint system in the independent RHF pair space.
 
     The diagonal-pair upper triangle carries half weight on its diagonal
     and unit weight elsewhere. Off-diagonal occupied pairs have unit weight.
@@ -415,7 +415,7 @@ def coupled_ccsd_tangent(wfn, source1, source2, *, tolerance=1.e-10, maxiter=100
         one,two = unpack(flat)
         matrix = core.Matrix.from_array
         r1,r2 = core.dlpno_ccsd_amplitude_action(
-            wfn, [matrix(x[:,None]) for x in one], {p: matrix(x) for p,x in two.items()})
+            wfn, [matrix(x[:,None]) for x in one], {p: matrix(x) for p,x in two.items()}, transpose)
         return pack([x.np for x in r1], {p: x.np for p,x in r2.items()})
 
     rhs = -pack(source1, source2)
@@ -436,3 +436,135 @@ def coupled_ccsd_tangent(wfn, source1, source2, *, tolerance=1.e-10, maxiter=100
     if info or not np.isfinite(residual) or residual > tolerance * max(np.linalg.norm(rhs), 1.e-14):
         raise RuntimeError(f"CCSD amplitude response failed with residual {residual:.3e} (info={info}).")
     return unpack(solved)
+
+
+def ccsd_weighted_dot(one, two, other_one, other_two):
+    """RHF unique-pair product. The diagonal occupied pair carries half weight."""
+    if (len(one) != len(other_one) or two.keys() != other_two.keys()
+            or any(np.shape(two[p]) != np.shape(other_two[p]) for p in two)):
+        raise ValueError("Incompatible singles or doubles blocks in a CCSD contraction.")
+    return (sum(np.vdot(x,y) for x,y in zip(one,other_one))
+            + sum((.5 if i == j else 1.) * np.vdot(x,other_two[i,j]) for (i,j),x in two.items()))
+
+
+class TriplesCCSDAdjoint:
+    """CCSD multiplier for the isolated ordinary (T) energy, once per reference."""
+    def __init__(self, wfn, *, tolerance=1.e-10):
+        from psi4 import core
+
+        one,two = core.dlpno_triples_ccsd_source(wfn)
+        self.wavefunction = wfn
+        self.singles,self.doubles = coupled_ccsd_tangent(
+            wfn,[x.np.ravel() for x in one],{p:x.np for p,x in two.items()},
+            transpose=True,tolerance=tolerance)
+
+    def correction(self, residual1, residual2):
+        """Contract R_uv on a trial CCSD path with t_uv = 0."""
+        value = ccsd_weighted_dot(self.singles,self.doubles,residual1,residual2)
+        if not np.isfinite(value):
+            raise ValueError("Nonfinite CCSD adjoint contraction.")
+        return value
+
+
+def transported_ccsd_residual(wfn, trial1, trial2, order, signs, rotations):
+    """Replay the native residual at trial amplitudes and return it in reference frames.
+
+    Native PNO coefficients times rotations[ij] give the aligned reference
+    labeling of the displaced pair frame. order maps reference LMOs into native
+    indices and signs make their overlaps positive.
+    """
+    from psi4 import core
+
+    order = tuple(int(a) for a in order)
+    if (sorted(order) != list(range(len(trial1))) or len(signs) != len(order)
+            or not np.all(np.isin(signs,(-1,1))) or set(rotations) != set(trial2)):
+        raise ValueError("Inconsistent occupied or pair mapping for CCSD residual replay.")
+    native1 = [None]*len(order)
+    native2 = {}
+    for (i,j),rot in rotations.items():
+        a,b = order[i],order[j]
+        x = (signs[i]*signs[j])*(rot@trial2[i,j]@rot.T)
+        native2[tuple(sorted((a,b)))] = core.Matrix.from_array(x if a <= b else x.T)
+        if i == j:
+            native1[a] = core.Matrix.from_array((signs[i]*(rot@trial1[i]))[:,None])
+    r1,r2 = core.dlpno_ccsd_residual_at(wfn,native1,native2)
+    one = [signs[i]*(rotations[i,i].T@r1[a].np.ravel()) for i,a in enumerate(order)]
+    two = {}
+    for (i,j),rot in rotations.items():
+        a,b = order[i],order[j]
+        x = r2[tuple(sorted((a,b)))].np
+        two[i,j] = (signs[i]*signs[j])*(rot.T@(x if a <= b else x.T)@rot)
+    return one,two
+
+
+def _add_blocks(target, blocks, scale):
+    one,two = target
+    for i,x in enumerate(blocks[0]):
+        one[i] += scale*x
+    for p,x in blocks[1].items():
+        two[p] += scale*x
+
+
+def _copy_blocks(blocks):
+    return [x.copy() for x in blocks[0]], {p:x.copy() for p,x in blocks[1].items()}
+
+
+def _zero_blocks(blocks):
+    return [np.zeros_like(x) for x in blocks[0]], {p:np.zeros_like(x) for p,x in blocks[1].items()}
+
+
+def _block_scale(blocks):
+    maxima = [np.max(np.abs(x),initial=0.) for group in (blocks[0],blocks[1].values()) for x in group]
+    if not np.isfinite(maxima).all():
+        raise ValueError("Nonfinite CCSD amplitude direction.")
+    largest = max(maxima,default=0.)
+    return .125/largest if largest else 0.
+
+
+def _jacobian_at(evaluate, base, direction):
+    """Linear coefficient of the fixed-geometry quartic residual at base."""
+    scale = _block_scale(direction)
+    result = _zero_blocks(base)
+    if scale:
+        for node,weight in ((1,8),(-1,-8),(2,-1),(-2,1)):
+            trial = _copy_blocks(base)
+            _add_blocks(trial,direction,node*scale)
+            _add_blocks(result,evaluate(*trial),weight/(12*scale))
+    return result
+
+
+def ccsd_amplitude_curvature(evaluate, base, tangent_u, tangent_v):
+    """Exact mixed amplitude coefficient R_tt[t_u,t_v] for the transformed CCSD residual."""
+    a,b = _block_scale(tangent_u),_block_scale(tangent_v)
+    result = _zero_blocks(base)
+    if a and b:
+        # The odd-odd part of a quartic has only xy, x^3 y and x y^3 terms.
+        for radius,weight in ((1,4./3),(2,-1./3)):
+            for i,j in ((1,1),(1,-1),(-1,1),(-1,-1)):
+                trial = _copy_blocks(base)
+                _add_blocks(trial,tangent_u,i*radius*a)
+                _add_blocks(trial,tangent_v,j*radius*b)
+                _add_blocks(result,evaluate(*trial),i*j*weight/(4*radius**2*a*b))
+    return result
+
+
+def semi_analytic_ccsd_mixed_source(reference_residual, base, tangent_u, tangent_v, samples):
+    """Assemble R_uv on an affine CCSD trial in one transported frame.
+
+    Each sample is (du, dv, stencil weight, residual evaluator at that geometry).
+    The weighted stencil differentiates the molecular inputs. Amplitude derivatives
+    use exact coefficient extraction from the same t1-transformed residual.
+    All samples must describe the same discrete branch and transported pair ordering.
+    """
+    source = ccsd_amplitude_curvature(reference_residual,base,tangent_u,tangent_v)
+    count = 0
+    for du,dv,weight,evaluate in samples:
+        count += 1
+        _add_blocks(source,evaluate(*base),weight)
+        delta = _zero_blocks(base)
+        _add_blocks(delta,tangent_u,du)
+        _add_blocks(delta,tangent_v,dv)
+        _add_blocks(source,_jacobian_at(evaluate,base,delta),weight)
+    if not count:
+        raise ValueError("A mixed nuclear residual requires a nonempty geometry stencil.")
+    return source

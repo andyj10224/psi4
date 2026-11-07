@@ -774,6 +774,9 @@ class PSI_API DLPNOCCSD : public DLPNO {
 
    public:
     using PairBlocks = std::map<std::pair<int,int>, SharedMatrix>;
+    std::pair<std::vector<SharedMatrix>, PairBlocks> triples_ccsd_source() const;
+    std::pair<std::vector<SharedMatrix>, PairBlocks> ccsd_residual_at(
+        const std::vector<SharedMatrix>& singles, const PairBlocks& doubles);
     std::pair<std::vector<SharedMatrix>, PairBlocks> ccsd_amplitude_action(
         const std::vector<SharedMatrix>& singles, const PairBlocks& doubles, bool transpose);
     std::pair<std::vector<SharedMatrix>, PairBlocks> ccsd_fock_source(
@@ -785,6 +788,10 @@ class PSI_API DLPNOCCSD : public DLPNO {
     ~DLPNOCCSD() override;
 
     double compute_energy() override;
+
+   private:
+    std::vector<SharedMatrix> ordered_ccsd_blocks(const std::vector<SharedMatrix>& singles,
+                                                  const PairBlocks& doubles) const;
 };
 
 class PSI_API RO_DLPNOCCSD : public DLPNOCCSD {

@@ -54,6 +54,19 @@ DLPNOCCSD_T::PairBlocks lmp2_tangent(SharedWavefunction wfn, const DLPNOCCSD_T::
     return local->lmp2_tangent(dy,dk,ds,df,dfoo);
 }
 
+std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> triples_ccsd_source(SharedWavefunction wfn) {
+    auto local = std::dynamic_pointer_cast<DLPNOCCSD_T>(wfn);
+    if (!local) throw PSIEXCEPTION("Expected an RHF DLPNO triples wavefunction.");
+    return local->triples_ccsd_source();
+}
+
+std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> ccsd_residual_at(SharedWavefunction wfn,
+    const std::vector<SharedMatrix>& singles, const DLPNOCCSD::PairBlocks& doubles) {
+    auto local = std::dynamic_pointer_cast<DLPNOCCSD_T>(wfn);
+    if (!local) throw PSIEXCEPTION("Expected an RHF DLPNO gradient model wavefunction.");
+    return local->ccsd_residual_at(singles,doubles);
+}
+
 std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> ccsd_amplitude_action(
     SharedWavefunction wfn, const std::vector<SharedMatrix>& singles, const DLPNOCCSD::PairBlocks& doubles, bool transpose) {
     auto local = std::dynamic_pointer_cast<DLPNOCCSD_T>(wfn);

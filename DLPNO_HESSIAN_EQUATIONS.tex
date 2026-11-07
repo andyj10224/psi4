@@ -598,4 +598,88 @@ One independent local reference differentiates the stationary $G_u$ at
 $\mathbf X\pm h v$. For the canonical benchmark use
 $G_u^{\rm can}=g_u^{\rm DF\text{-}CCSD(T)}-g_u^{\rm DF\text{-}CCSD}$.
 Extrapolate each centered estimate $D$ as $[4D(h/2)-D(h)]/3$.
+\section{CCSD stationarity for the separate ordinary triples curvature}
+Use the same independent RHF pair coordinates and metric $W$ as for the
+right amplitude tangent. For a given geometry let $t=(t_1,t_2)$,
+$R(t,X)$ the transformed CCSD residual and $J=R_t$. Let
+$\eta$ be the derivative of the stationary triples Lagrangian with respect
+to $t$ at fixed lower-order inputs. It includes the response of the retained
+TNO subspace to $t_2$ at fixed triplet rank. The gradient model already forms
+this source before adding the CCSD energy derivative to its Lambda equations.
+For the isolated (T) contribution solve once per reference
+\begin{equation}
+ J^{\dagger_W}\lambda_{(T)}=-\eta, \qquad
+ \langle x,y\rangle_W=\sum_i x_i^{\mathsf T} y_i+
+ \sum_{i<j}x_{ij}:y_{ij}+\tfrac12\sum_i x_{ii}:y_{ii}.
+\end{equation}
+Here $\lambda_{(T)}$ is a CCSD-space multiplier; $Z$ still denotes the
+triples-space multiplier. In a common transported pair frame take the affine
+trial $\widehat t(s,h)=t+s t^u+h t^v$. Lower-order inputs follow the actual
+branch; TNOs follow $\widehat t$ and the moving pairs. Then
+\begin{align}
+ C_{uv} &= R_{uv}|_t + (\partial_u J)|_t t^v+
+                (\partial_v J)|_t t^u+ R_{tt}[t^u,t^v],\\
+ Jt^{uv}&=-C_{uv},&
+ \langle \eta,t^{uv}\rangle_W &= \langle\lambda_{(T)}, C_{uv}\rangle_W,\\
+ H_{uv}^{(T)}&=H_{uv}^{(T)}[\widehat t]
+                          +\langle\lambda_{(T)},C_{uv}\rangle_W .
+\end{align}
+In the trial term the first-order solutions are the same as on the relaxed
+branch. Only mixed CCSD amplitudes are set to zero. The trial TNO frame
+must include the motion of its PAO parent and the projected pair-density
+products. Differentiating a fully relaxed TNO frame here would count part
+of the CCSD response twice.
+
+For $x=t^u$, $y=t^v$, define
+\begin{equation}
+ D_{a,b}=\frac{1}{4ab}\sum_{i,j\in\{-1,1\}}ij\,
+            R(t+iax+jby,X_0),\qquad
+ R_{tt}[x,y]=\frac{4 D_{a,b}-D_{2a,2b}}{3}.
+\end{equation}
+The odd--odd powers of the quartic residual are $(1,1),(3,1),(1,3)$;
+the formula is exact in polynomial arithmetic, with a zero result for a
+zero direction. Nonzero directions are scaled independently as for the
+first-order Jacobian action. For a centered geometric stencil of weights
+$w_i$ and displacements $(s_i,h_i)$, the semi-analytic source is
+\begin{equation}
+ C_{uv}(h)= R_{tt}[x,y] + \sum_i w_i
+       \{R(t,X_i)+R_t(t,X_i)(s_i x+h_i y)\}.
+\end{equation}
+The Jacobian action at each displaced geometry is extracted from the native
+quartic at the reference amplitude components in the transported coordinates.
+The geometric error is quadratic for the centered stencils. The diagonal
+case uses a single displacement coordinate. The same-geometry polynomial
+evaluation has no nuclear step-size error.
+
+For the mixed TNO selection use $D=d_r$, the triplet density in a moving
+orthonormal PAO parent $Y$. In the eigenbasis of $D$, let $P$ project onto
+the retained eigenvectors, with $a$ retained, $d$ discarded. Differentiating
+$P^2=P$ and $[D,P]=0$ gives
+\begin{align}
+ (P^u)_{da}&=D^u_{da}/(n_a-n_d),\\
+ (P^{uv})_{da}&=\big(D^{uv}+[D^u,P^v]+[D^v,P^u]\big)_{da}/(n_a-n_d),\\
+ (P^{uv})_{KK}&=-(P^uP^v+P^vP^u)_{KK},&
+ (P^{uv})_{DD}&=(P^uP^v+P^vP^u)_{DD}.
+\end{align}
+The opposite off-diagonal block is its transpose. A fully retained parent
+has a constant internal projector. With $Y_{r,0}$ the reference TNO frame,
+form $A=YPY^{\mathsf T}S_0Y_{r,0}$ and $N=A^{\mathsf T}SA$. The polar-aligned
+moving frame is $Y_r=A N^{-1/2}$. Since $N_0=I$,
+\begin{align}
+ (N^{-1/2})^u&=-\tfrac12N^u,&
+ (N^{-1/2})^{uv}&=-\tfrac12N^{uv}
+                     +\tfrac38(N^uN^v+N^vN^u).
+\end{align}
+This form avoids divisions by eigenvalue differences within either cluster.
+For residual replay, let $a=\pi(i), b=\pi(j)$ be the displaced occupied
+labels, $\sigma_i$ their phase corrections, and $Q_{ij}$ the polar rotation
+that takes the native pair frame to its aligned frame. Supply ordered blocks
+and pull the residual back to the reference ordering using
+\begin{align}
+ t_a^{\rm native}&=\sigma_i Q_{ii}\widehat t_i,&
+ t_{ab}^{\rm native}&=\sigma_i\sigma_jQ_{ij}\widehat t_{ij}Q_{ij}^{\mathsf T},\\
+ R_i^{\rm aligned}&=\sigma_i Q_{ii}^{\mathsf T}R_a^{\rm native},&
+ R_{ij}^{\rm aligned}&=\sigma_i\sigma_j Q_{ij}^{\mathsf T}R_{ab}^{\rm native} Q_{ij}.
+\end{align}
+If $a>b$ the unique native block is obtained by transposition.
 \end{document}

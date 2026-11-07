@@ -402,3 +402,17 @@ class TriplesHessianColumn:
         if not np.isfinite(result):
             raise ValueError("Nonfinite stationary triples curvature.")
         return result
+
+    def ccsd_stationary_element(self, row, occupied_fock_uv, mixed_row, mixed_overlap,
+                                ccsd_adjoint, mixed_residual):
+        """Eliminate mixed CCSD amplitudes from the isolated triples curvature.
+
+        All mixed inputs follow the same affine CCSD trial path in moving pair
+        coordinates. Rebuild TNO projectors along this path: their amplitude
+        dependence is included in the native triples source. mixed_residual is
+        the pair of transformed right residual derivatives on that trial path.
+        """
+        if ccsd_adjoint.wavefunction is not self.direction.wavefunction:
+            raise ValueError("The CCSD adjoint and triples column require the same reference.")
+        return (self.element(row,occupied_fock_uv,mixed_row,mixed_overlap)
+                + ccsd_adjoint.correction(*mixed_residual))
