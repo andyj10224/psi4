@@ -1389,6 +1389,8 @@ template<bool crude> void DLPNOCCSD::pair_prescreening() {
         int n_lmo_pairs_init = ij_to_i_j_.size();
 
         const std::vector<double>& e_ijs_crude = compute_pair_energies<true>();
+        // Reverse excluded pairs while their CRUDE fitting domains still exist.
+        if (gradient_model_) form_screened_pair_response(e_ijs_crude);
         de_lmp2_eliminated_ = filter_pairs<true>(e_ijs_crude);
 
         int n_lmo_pairs_final = ij_to_i_j_.size();
@@ -3051,12 +3053,8 @@ double DLPNOCCSD::compute_dlpno_ccsd_energy() {
     pair_prescreening<false>();
     timer_off("Refined Pair Prescreening");
 
-    // Prescreening still defines the surviving pairs. The phase-one functional
-    // includes their PNO correction, but omits energy estimates for excluded pairs.
-    if (gradient_model_) {
-        de_lmp2_eliminated_ = 0.0;
-        de_dipole_ = 0.0;
-    }
+    // The gradient functional includes both fixed-branch prescreening estimates.
+    // Their response was formed before the crude domains were overwritten.
 
     // Set variables from LMP2
     const double e_scf = reference_energy_;

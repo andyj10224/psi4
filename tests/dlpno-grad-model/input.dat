@@ -309,3 +309,39 @@ compare_values(10., chain_wfn.variable('DLPNO CCSD RESPONSE ORDERED PAIRS'), 1.e
 for group in ('INTEGRAL', 'FOCK', 'OVERLAP', 'PNO COEFFICIENT'):
     compare_values(0., chain_wfn.variable(f'DLPNO CCSD {group} DIRECTION ERROR'), 1.e-8,
                    'screened chain ' + group)                                                                  #TEST
+
+# A dipole estimate has the unique-pair factor four already. Summing both ij
+# and ji in the energy used to count it twice. Exercise nonzero corrections.
+set dlpno_keep_lmp2_response true
+set t_cut_pre 1.e-6
+set t_cut_do_ij 1.e-5
+_, screened_wfn = energy('dlpno-ccsd(t)', return_wfn=True)
+domains, saved = psi4.core.dlpno_screened_pair_state(screened_wfn)
+assert domains['DIPOLE_PAIRS'] and domains['SCMP2_PAIRS']
+assert all(i < j for i,j in domains['DIPOLE_PAIRS'])
+ref = screened_wfn.reference_wavefunction()
+L = screened_wfn.variable('DLPNO RESPONSE ACTIVE LMOS').np
+C, S, F = ref.Ca_subset('AO','OCC').np, ref.S().np, ref.Fa().np
+N = np.eye(len(S)) - C @ C.T @ S
+norm = np.einsum('ma,mn,na->a', N, S, N)
+scale = np.zeros_like(norm)
+scale[norm > 1.e-20] = norm[norm > 1.e-20]**(-.5)
+N *= scale
+dipoles = [m.np for m in psi4.core.MintsHelper(ref).ao_dipole()]
+centroids = np.array([[L[:,i] @ d @ L[:,i] for d in dipoles] for i in range(L.shape[1])])
+unique_energy = 0.
+for i,j in domains['DIPOLE_PAIRS']:
+    Yi,Yj = [N[:,domains['DIPOLE_PAO'][k]] @ saved[k,k]['PARENT'].np for k in (i,j)]
+    di,dj = [np.array([L[:,k] @ d @ Y for d in dipoles]) for k,Y in ((i,Yi),(j,Yj))]
+    R = centroids[i] - centroids[j]
+    r = np.linalg.norm(R)
+    tensor = np.eye(3)/r**3 - 3*np.outer(R,R)/r**5
+    K = di.T @ tensor @ dj
+    gap = np.diag(Yi.T@F@Yi)[:,None] + np.diag(Yj.T@F@Yj)[None,:] - L[:,i]@F@L[:,i] - L[:,j]@F@L[:,j]
+    unique_energy -= 4*np.sum(K*K/gap)
+compare_values(unique_energy, screened_wfn.variable('DLPNO DIPOLE ENERGY'), 1.e-12,
+               'dipole estimate includes ij and ji exactly once')                                            #TEST
+assert abs(unique_energy) > 1.e-9
+compare_values(screened_wfn.variable('DLPNO SC-LMP2 PAIR ENERGY'),
+               screened_wfn.variable('DLPNO SCREENED SC-MP2 RESPONSE ENERGY'), 1.e-12,
+               'excluded SC-MP2 response retains both ordered orientations')                                #TEST

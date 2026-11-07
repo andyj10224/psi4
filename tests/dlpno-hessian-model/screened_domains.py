@@ -218,13 +218,14 @@ def run(path):
     local = check_local(w, mol)
     keys = ('DLPNO LMP2 WEAK PAIR ENERGY', 'DLPNO SC-LMP2 PAIR ENERGY', 'DLPNO DIPOLE ENERGY')
     model_corrections = {key: w.variable(key) for key in keys}
-    assert all(value == 0. for value in model_corrections.values())
+    assert abs(model_corrections['DLPNO SC-LMP2 PAIR ENERGY']) > 1.e-7
     psi4.set_options(dict(dlpno_gradient_model=False, t_cut_triples_weak=0., t_cut_iter=0.,
                           t_cut_tno_strong=1.e-5, t_cut_tno_weak=1.e-5))
     ordinary, other = psi4.energy('dlpno-ccsd(t)', molecule=mol, return_wfn=True)
     corrections = {key: other.variable(key) for key in keys}
     assert abs(corrections['DLPNO SC-LMP2 PAIR ENERGY']) > 1.e-7
-    np.testing.assert_allclose(ordinary-energy, sum(corrections.values()), atol=1.e-10, rtol=0.)
+    np.testing.assert_allclose(list(model_corrections.values()), list(corrections.values()), atol=1.e-12, rtol=0.)
+    np.testing.assert_allclose(ordinary, energy, atol=1.e-10, rtol=0.)
     # Confirm that an explicit analytic request cannot silently become an FD Hessian.
     try:
         psi4.hessian('dlpno-ccsd(t)', molecule=mol, dertype=2, return_plan=True)
@@ -241,9 +242,9 @@ def run(path):
                   model_corrections=model_corrections, ordinary_corrections=corrections,
                   analytic_driver_rejection=routing, screened_hessian_validated=False,
                   production_ready=False, blockers=blockers,
-                  functional_scope='The existing gradient model intentionally omits eliminated-pair/dipole '
-                                   'estimates. Their nonzero ordinary-energy curvature is a separate target; '
-                                   'it must not be silently attributed to this gradient-model Hessian.')
+                  functional_scope='The gradient model now includes eliminated SC-MP2 and dipole estimates '
+                                   'with analytic gradients. Their mixed correction kernels are tested in '
+                                   'screened_corrections.py; the full screened PNO/CCSD Hessian remains unsupported.')
     Path(path).write_text(json.dumps(result, indent=2)+'\n')
     print(json.dumps({k: result[k] for k in ('screened_hessian_validated', 'production_ready', 'blockers')}, indent=2))
     return result

@@ -2710,13 +2710,14 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
             are written. Supports orbital basis shells through G. -*/
         options.add_bool("DLPNO_WRITE_ORBITALS", false);
         /*- Experimental RHF DLPNO-CCSD(T) energy functional for gradient development.
-            Promotes surviving pairs to strong, retains both PNO corrections, omits
-            crude/dipole pair energies and uses one TNO space for all retained triplets.
+            Promotes surviving pairs to strong, retains both PNO corrections and
+            crude/dipole pair estimates, and uses one TNO space for all retained triplets.
             Solves the triples adjoint and the ordinary (T)-sourced CCSD Lambda equations.
             Evaluates the explicit auxiliary metric and three-center contributions of CCSD,
-            iterative triples, PNO projector response, both PNO truncation corrections and LMP2 relaxation. !expert -*/
+            iterative triples, PNO projector response, both PNO truncation corrections,
+            LMP2 relaxation, and excluded dipole/semicanonical-MP2 pairs. !expert -*/
         options.add_bool("DLPNO_GRADIENT_MODEL", false);
-        /*- Retain converged first-space pair amplitudes, their screened graph and the
+        /*- Retain excluded-pair domains/parents, converged first-space pair amplitudes, their screened graph and the
             isolated PNO-loss source for experimental nuclear LMP2 tangent and
             PNO-truncation adjoint solves in the RHF gradient model. -*/
         options.add_bool("DLPNO_KEEP_LMP2_RESPONSE", false);

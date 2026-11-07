@@ -2,9 +2,9 @@
 
 ## RHF DLPNO-CCSD(T) analytic nuclear gradients
 
-**Current capability.** The ordinary RHF iterative (T), stationary CCSD, direct PNO projectors, PNO truncation corrections, and LMP2 relaxation report explicit correlation-fitting derivatives in Cartesian coordinates. The model combines the local Fock, overlap, and orbital coefficient derivatives, including moving TNOs, local LMO refits and PAO normalization. The total-gradient driver remains guarded.
+**Current capability (7 November 2026).** The public RHF DLPNO-CCSD(T) gradient includes ordinary iterative triples, stationary CCSD, both PNO truncation corrections, LMP2 relaxation, local refits, PAO/PNO/TNO motion, frozen-core response, and Boys or Mulliken-PM localization/RHF adjoints. Step 26 of the Hessian ledger now adds native analytic gradients for excluded crude SC-MP2 and distant dipole estimates, after correcting a factor-of-two error in the dipole energy accumulator. Both estimates are included in the gradient-model energy. All surviving pairs are still strong and the triples use one common TNO cutoff; matching an ordinary energy requires matching those choices.
 
-**Next piece.** Reverse the occupied-space projector defining the unnormalized PAOs. Assemble its AO and occupied-orbital sources with the fitted-LMO and Fock derivatives, then handle localization and RHF orbital relaxation. The scaling target assumes a nonzero pair cutoff and bounded local domains.
+**Next piece.** Complete the screened mixed PNO/CCSD molecular inputs and validate full screened Hessians. The two screened correction curvature kernels are analytic and tested separately, but public analytic Hessian routing remains unavailable. See the cumulative [Hessian working memory](DLPNO_HESSIAN_WORKING_MEMORY.md) and [complete working equations](DLPNO_HESSIAN_EQUATIONS.txt). Historical entries below retain the capabilities and limitations of their original checkpoints.
 
 ## Implementation history
 
@@ -223,3 +223,9 @@ Water/cc-pVDZ with finite cutoffs: the oxygen z components from the public drive
 ## Completion message
 
 Added Andy's requested Natasha Bedingfield quotation to successful public DLPNO-CCSD(T) gradients and completed optimizations. Internal optimization gradients suppress the message so a multi-step optimization prints it once. This is an output-only change.
+
+### 2026-11-07 · Screened dipole and crude SC-MP2 gradients
+
+The dipole estimate's -4 prefactor already counts both occupied orientations. Its mirrored storage was accumulated twice; the shared energy accumulator now uses i<j. Crude SC-MP2 counting was correct. Both formerly omitted estimates now enter the gradient-model energy and native analytic gradient, including original crude local refits, auxiliary/three-center integral derivatives, PAO parents, Fock/denominator response, dipole transition moments and centroids, explicit AO dipole derivatives, and the common orbital/localization adjoints. Detailed snapshots are optional under `DLPNO_KEEP_LMP2_RESPONSE`.
+
+Nonzero total-gradient tests pass for Boys and Mulliken PM on four H2 molecules and for Boys on a LiH trimer with three frozen core orbitals (maximum selected error 3.21e-10 Eh/bohr). Analytic mixed correction kernels also pass independent energy differences (maximum 2.96e-11 Eh/bohr²); this does not enable a complete screened Hessian. All four targeted CTests pass, including the new unique-pair counting regression. Full formulas, settings, numerical records, failed exploratory checks and remaining scope are in step 26 of `DLPNO_HESSIAN_WORKING_MEMORY.md` and Section 23 of `DLPNO_HESSIAN_EQUATIONS.txt`/`.tex`. These records supersede the historical omission at the start of this log.

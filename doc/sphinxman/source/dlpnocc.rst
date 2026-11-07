@@ -109,8 +109,8 @@ RHF gradient development
 
 |dlpno__dlpno_gradient_model| selects the experimental, closed-shell RHF energy
 functional for gradient development. Every surviving pair is strong. Its energy
-includes both stages of the PNO truncation correction. Crude eliminated-pair and
-dipole energy estimates are omitted. All triplets allowed by the surviving pair
+includes both stages of the PNO truncation correction, crude eliminated-pair
+semicanonical MP2 estimates, and distant-pair dipole estimates. All triplets allowed by the surviving pair
 graph use the same |dlpno__t_cut_tno| cutoff and the ordinary iterative triples
 equations. Boys, Mulliken Pipek–Mezey, and IBO localization are supported for this
 energy calculation. For example::
@@ -161,6 +161,17 @@ Their sum contributes two Cartesian arrays in hartree/bohr,
 fitting integrals at fixed orbital data and LMP2 amplitudes, including the
 induced motion of the first retained subspace. The final correction supplies
 a source for the LMP2 adjoint. A full-rank stage has zero correction.
+
+The eliminated semicanonical MP2 pairs are differentiated on their original
+crude PAO and auxiliary domains, before those maps are overwritten. Their
+explicit fitting terms are ``DLPNO SC-LMP2 PAIRS AUXILIARY METRIC GRADIENT``
+and ``DLPNO SC-LMP2 PAIRS THREE-CENTER GRADIENT``. The distant dipole estimate
+includes each unique off-diagonal occupied pair once: its factor four already
+accounts for both occupied orientations. Its explicit AO dipole-integral term
+is ``DLPNO DIPOLE PAIRS EXPLICIT GRADIENT``. All three arrays have units of
+hartree/bohr. Both corrections also contribute PAO, Fock, occupied-orbital and
+localization response to the total analytic gradient. Screening bounds select
+the fixed branch; they are not substituted for the dipole energy estimate.
 
 The RHF gradient model solves the LMP2 adjoint in the first retained PNO
 spaces using the combined CCSD projector and truncation-energy sources. It
@@ -232,10 +243,18 @@ remain. Domain fingerprints are available through
 ``core.dlpno_response_domain_state(wfn)``; these copies exclude AO Schwarz
 decisions, and the audit explicitly disables that integral screen.
 
-The Hessian development target remains the same energy functional as the
-public gradient. In particular, passing a screened gradient-model test would
-not establish derivatives of the eliminated-pair and dipole estimates in the
-ordinary energy calculation. See ``DLPNO_HESSIAN_WORKING_MEMORY.md`` and
+The Hessian development target is the same energy functional as the public
+gradient, including both screened-pair estimates. ``screened_corrections.py``
+separately validates their analytic mixed nuclear curvatures for Boys and
+Mulliken PM localization and a frozen-core case. Its kernel consumes analytic
+molecular inputs and original crude domains retained with
+|dlpno__dlpno_keep_lmp2_response|, exposed by
+``core.dlpno_screened_pair_state(wfn)``. The mixed AO integral delivery currently
+requires the AO Schwarz screen off; the native gradient has no such additional
+restriction. These correction terms do not complete the screened PNO/CCSD
+molecular providers or enable public analytic Hessian routing. Agreement with
+an ordinary energy calculation also requires matching its retained-pair and
+triples choices. See ``DLPNO_HESSIAN_WORKING_MEMORY.md`` and
 ``DLPNO_HESSIAN_EQUATIONS.txt`` for the validation ledger and working equations.
 
 Higher-Order DLPNO Methods

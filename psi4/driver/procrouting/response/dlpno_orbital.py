@@ -388,9 +388,10 @@ def assemble_cartesian_gradient(wfn, reference_gradient=None, fock_derivatives=N
     gradient = refgrad.copy()
     for atom, contribution in enumerate(cartesian_orbital_terms(wfn, fock_derivatives, panel_width, tol)):
         gradient[atom] += contribution
-    for source in ('CCSD', '(T)', 'PNO PROJECTOR', 'PNO TRUNCATION', 'LMP2 RESPONSE'):
+    for source in ('CCSD', '(T)', 'PNO PROJECTOR', 'PNO TRUNCATION', 'LMP2 RESPONSE', 'SC-LMP2 PAIRS'):
         for term in ('AUXILIARY METRIC', 'THREE-CENTER'):
             gradient += wfn.variable(f'DLPNO {source} {term} GRADIENT').np
+    gradient += wfn.variable('DLPNO DIPOLE PAIRS EXPLICIT GRADIENT').np
     return gradient
 
 def boys_nuclear_tangent(wfn, direction, tol=1.e-9):

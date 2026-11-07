@@ -473,9 +473,12 @@ SharedMatrix DLPNOCCSD_T::contract_three_center(const std::vector<ThreeCenterDen
                            d.vv->vector_dot(linalg::triplet(p, vv, p, true, false, false));
                 };
                 const int Qfun = q0 + q;
-                double forward = d.oo->vector_dot(qij_[Qfun]) + d.ov->vector_dot(qia_[Qfun]);
+                double forward = d.ov->vector_dot(qia_[Qfun]);
+                // Crude excluded-pair response has only an OV density; OO/VV
+                // forward arrays do not exist yet at that stage.
+                if (d.oo->vector_dot(d.oo) != 0.) forward += d.oo->vector_dot(qij_[Qfun]);
                 const auto& pset = riatom_to_paos_ext_[atomQ];
-                for (int u = 0; u < pset.size(); ++u)
+                if (d.vv->vector_dot(d.vv) != 0.) for (int u = 0; u < pset.size(); ++u)
                     for (int v = 0; v < pset.size(); ++v) {
                         int uv = riatom_to_pao_pairs_dense_[atomQ][pset[u]][pset[v]];
                         if (uv >= 0) forward += (*d.vv)(u, v) * (*qab_[Qfun])(uv, 0);

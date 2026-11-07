@@ -6,7 +6,7 @@
 \newcommand{\ip}[2]{\langle #1,#2\rangle}
 \title{Working equations for the RHF DLPNO-CCSD(T) nuclear gradient}
 \author{Quantum Chemistry Grand Battleplan}
-\date{Occupied-space projection and frozen-core response}
+\date{7 November 2026: screened-pair response included}
 \begin{document}
 \maketitle
 This is a cumulative implementation record. Equation labels identify new
@@ -255,7 +255,7 @@ For the water verification calculation define $Q$ as the reference JKFIT
 three-center integrals with flattened AO pair columns, $J_0$ its Coulomb
 metric and $b=J_0^{-1}Q$. The fitted ERI derivative at fixed coefficients is
 \begin{align}
- I'&=Q'\T b+b\T Q'-b\T J_0' b,\\
+ I'&={Q'}\T b+b\T Q'-b\T J_0' b,\\
  f_{\mu\nu}&=h'_{\mu\nu}+\sum_{\lambda\sigma}D_{\lambda\sigma}
  [2 I'_{\mu\nu,\lambda\sigma}-I'_{\mu\lambda,\nu\sigma}].
 \end{align}
@@ -284,4 +284,32 @@ DFJKGrad kernel. The one-electron term is
 $\langle P_+-P_-,h'\rangle$. Each kernel call computes all Cartesian
 components together with the shell-pair screening and metric conditioning
 of the DF-SCF gradient.
+\section{Screened dipole and crude semicanonical-MP2 corrections}
+The gradient model now includes the previously omitted excluded-pair
+energies. For each unique off-diagonal pair, the crude SC-MP2 contribution
+is $2K:(2t-t\T)$, while the dipole contribution is $4K:t$, with
+$t_{ab}=K_{ab}/(f_{ii}+f_{jj}-\epsilon_a-\epsilon_b)$ at the semicanonical
+reference. The dipole estimate's factor four already includes both occupied
+orientations; mirrored storage must be accumulated only once. The ordinary
+SC-MP2 ordered-pair accumulator is unchanged.
+
+The native reverse differentiates the original crude local metric and
+three-center panels before their domains are overwritten. It merges their
+PAO, Fock, metric and refitted-LMO covectors with the sources above. The
+dipole reverse additionally produces a direct occupied source $B_{\rm dip}$
+and explicit AO dipole-integral covectors $D_k$. Thus extend
+Eq.~\eqref{eq:sources} by
+\begin{equation}
+ d\mathcal L_{\rm loc}\mathrel{+}=\ip{B_{\rm dip}}{dL}
+                   +\sum_{k=x,y,z}\ip{D_k}{d\mu_k},\qquad
+ \bar L\mathrel{+}=B_{\rm dip}.
+\end{equation}
+The first source enters the same localization, frozen/active and RHF
+adjoints. Add the explicit dipole contraction and excluded SC-MP2 fitting
+contractions to the total Cartesian gradient. Full reverse formulas,
+moving-centroid derivatives, local-parent response, and the corresponding
+mixed nuclear correction kernels appear in Section 23 of the companion
+Hessian equation record (both the complete text export and TeX source).
+Tests with nonzero corrections cover Boys, Mulliken PM and frozen core.
+They do not establish a complete screened CCSD(T) Hessian.
 \end{document}

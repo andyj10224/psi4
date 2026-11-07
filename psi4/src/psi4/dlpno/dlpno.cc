@@ -1391,6 +1391,10 @@ void DLPNO::compute_dipole_ints() {
     }
 
     double T_CUT_DO_PRE = options_.get_double("T_CUT_DO_PRE");
+    if (gradient_model_) {
+        dipole_pao_domains_.assign(ndipole_occ, {});
+        dipole_pao_parent_.assign(ndipole_occ, {});
+    }
     for (size_t i = 0; i < ndipole_occ; ++i) {
         std::vector<int> pao_inds;
         for (size_t u = 0; u < nbf; u++) {
@@ -1407,6 +1411,10 @@ void DLPNO::compute_dipole_ints() {
         SharedMatrix X_pao_i;
         SharedVector e_pao_i;
         std::tie(X_pao_i, e_pao_i) = orthocanonicalizer(S_pao_i, F_pao_i);
+        if (gradient_model_) {
+            dipole_pao_domains_[i] = pao_inds;
+            dipole_pao_parent_[i] = X_pao_i;
+        }
 
         auto lmo_pao_dipx_i = submatrix_rows_and_cols(*lmo_pao_dipx, {(int)i}, pao_inds);
         auto lmo_pao_dipy_i = submatrix_rows_and_cols(*lmo_pao_dipy, {(int)i}, pao_inds);
@@ -1475,6 +1483,9 @@ void DLPNO::compute_dipole_ints() {
                 }
             }
 
+            // This is the complete UNIQUE off-diagonal pair energy: the factor
+            // four includes both occupied orientations (Werner, JCP 145,
+            // 201101 (2016), Eqs. 1, 3, 4). Symmetric storage is for lookup only.
             dipole_pair_e_temp *= (-4 * pow(R_ij.norm(), -6));
             dipole_pair_e_bound_temp *= (-4 * pow(R_ij.norm(), -6));
 
@@ -1618,7 +1629,9 @@ void DLPNO::prep_sparsity(bool initial, bool final) {
                     i_j_to_ij_[i][j] = ij;
                     ij_to_i_j_.push_back(std::make_pair(i, j));
                     ij++;
-                } else {
+                } else if (i < j) {
+                    // dipole_pair_e_ already includes ij and ji. Its bound is
+                    // also a unique-pair bound; do not change the screening test.
                     de_dipole_ += dipole_pair_e_->get(i, j);
                 }
             }

@@ -21998,21 +21998,21 @@
     "gradient_comparisons": [
       {
         "coordinate": 2,
-        "analytic": 0.015397233005259341,
+        "analytic": 0.015397767745446848,
         "centered_estimates": [
-          0.015400954297417613,
-          0.015398163285107458
+          0.015401489048882944,
+          0.015398698036905856
         ],
-        "richardson_error": 5.7588602289659896e-11
+        "richardson_error": 4.586668891914947e-11
       },
       {
         "coordinate": 18,
-        "analytic": -6.274620426226838e-05,
+        "analytic": -6.258275052286081e-05,
         "centered_estimates": [
-          -6.274652353255306e-05,
-          -6.274626773716818e-05
+          -6.258306939344038e-05,
+          -6.258281382010011e-05
         ],
-        "richardson_error": -2.179022848931237e-11
+        "richardson_error": -2.1893874124138783e-11
       }
     ],
     "native_debug_probes": {
@@ -22024,7 +22024,7 @@
       "DLPNO (T) L2 TNO DIRECTION ERROR": 7.167997893172914e-15,
       "DLPNO (T) PAO OVERLAP DIRECTION ERROR": 9.700318298883069e-17,
       "DLPNO (T) PNO COEFFICIENT DIRECTION ERROR": 2.9689709705630696e-15,
-      "DLPNO ACTIVE PROJECTOR DIRECTION ERROR": 1.0718051880048707e-12,
+      "DLPNO ACTIVE PROJECTOR DIRECTION ERROR": 2.3446496480450385e-12,
       "DLPNO CCSD FINAL PNO PROJECTOR DIRECTION ERROR": 0.0,
       "DLPNO CCSD FOCK DIRECTION ERROR": 1.89020659078026e-12,
       "DLPNO CCSD INITIAL PNO PROJECTOR DIRECTION ERROR": 2.90837990572345e-10,
@@ -22036,62 +22036,64 @@
       "DLPNO DF LMO REFIT DIRECTION ERROR": 3.981032517530458e-12,
       "DLPNO DF ORBITAL COEFFICIENT DIRECTION ERROR": 3.4072623195102736e-12,
       "DLPNO DF ORBITAL REPLAY ERROR": 9.020562075079397e-17,
+      "DLPNO DIPOLE PAIR REPLAY ERROR": 0.0,
       "DLPNO FINAL PNO TRUNCATION DIRECTION ERROR": 0.0,
       "DLPNO FINAL PNO TRUNCATION SINGLES DIRECTION ERROR": 0.0,
-      "DLPNO FOCK PROJECTOR DIRECTION ERROR": 1.9623452168771038e-13,
+      "DLPNO FOCK PROJECTOR DIRECTION ERROR": 7.424616477180734e-14,
       "DLPNO FROZEN PROJECTOR DIRECTION ERROR": 0.0,
       "DLPNO INITIAL PNO TRUNCATION DIRECTION ERROR": 2.474381404693395e-10,
       "DLPNO INITIAL PNO TRUNCATION SINGLES DIRECTION ERROR": 2.477398376504389e-10,
       "DLPNO LMP2 TANGENT DIRECTION ERROR": 0.0,
-      "DLPNO OVERLAP PROJECTOR DIRECTION ERROR": 1.5163703626086544e-12,
-      "DLPNO PAO NORMALIZATION DIRECTION ERROR": 7.406256163910996e-12,
+      "DLPNO OVERLAP PROJECTOR DIRECTION ERROR": 4.793049637741298e-13,
+      "DLPNO PAO NORMALIZATION DIRECTION ERROR": 1.3733764125944958e-11,
       "DLPNO PARENT PAO METRIC DIRECTION ERROR": 1.26033825302209e-11,
       "DLPNO PNO PROJECTOR OPERATOR DIRECTION ERROR": 1.2986839387674372e-07,
-      "DLPNO PNO TRUNCATION DF DIRECTION ERROR": 3.172139412743139e-09
+      "DLPNO PNO TRUNCATION DF DIRECTION ERROR": 3.172139412743139e-09,
+      "DLPNO SCREENED SC-MP2 REPLAY ERROR": 6.617444900424222e-24
     },
     "debug_probes_above_1e_minus8": {
       "DLPNO PNO PROJECTOR OPERATOR DIRECTION ERROR": 1.2986839387674372e-07
     },
     "gradient": [
       [
-        6.27461511251477e-05,
-        -7.724854681932321e-18,
-        0.015397233005259341
+        6.258269734426669e-05,
+        -7.712534541494719e-18,
+        0.015397767745446848
       ],
       [
-        6.274619918446189e-05,
-        7.702472819772568e-18,
-        -0.015397233015203236
+        6.258274525606361e-05,
+        7.690008017123821e-18,
+        -0.015397767755367643
       ],
       [
-        -1.6462797320230328e-07,
-        1.6068852865163479e-16,
-        0.015328539978627967
+        -3.18496722697518e-07,
+        1.606892071041848e-16,
+        0.015329017620352346
       ],
       [
-        -1.6461957810463086e-07,
-        -1.6082912308461057e-16,
-        -0.015328539969891483
+        -3.184827581382053e-07,
+        -1.6082936179057303e-16,
+        -0.015329017611596567
       ],
       [
-        1.646051893599534e-07,
-        -2.0931215134735007e-16,
-        0.015328539964966541
+        3.184711753372695e-07,
+        -2.0931306917593865e-16,
+        0.015329017619525948
       ],
       [
-        1.6464225706361504e-07,
-        2.0902133829063495e-16,
-        -0.015328539969159146
+        3.1850826620233364e-07,
+        2.090216351187752e-16,
+        -0.015329017623707914
       ],
       [
-        -6.274620426226838e-05,
-        1.5728565867998108e-16,
-        0.015397233008146707
+        -6.258275052286081e-05,
+        1.573029305583918e-16,
+        0.015397767753746974
       ],
       [
-        -6.274614595208909e-05,
-        -1.568318693250729e-16,
-        -0.0153972330027723
+        -6.258269202503984e-05,
+        -1.5684881529507423e-16,
+        -0.015397767748379853
       ]
     ]
   },
@@ -22146,11 +22148,11 @@
     "t_cut_do_uv": 1e-05,
     "t_cut_do_pre": 0.03
   },
-  "model_energy": -4.653500030876629,
+  "model_energy": -4.653501443256336,
   "ordinary_energy": -4.653501443256336,
   "model_corrections": {
     "DLPNO LMP2 WEAK PAIR ENERGY": 0.0,
-    "DLPNO SC-LMP2 PAIR ENERGY": 0.0,
+    "DLPNO SC-LMP2 PAIR ENERGY": -1.4123797074041482e-06,
     "DLPNO DIPOLE ENERGY": 0.0
   },
   "ordinary_corrections": {
@@ -22166,5 +22168,5 @@
     "No screened nuclear Hessian was assembled or compared to gradients.",
     "A native synthetic PNO operator probe exceeds its old tolerance."
   ],
-  "functional_scope": "The existing gradient model intentionally omits eliminated-pair/dipole estimates. Their nonzero ordinary-energy curvature is a separate target; it must not be silently attributed to this gradient-model Hessian."
+  "functional_scope": "The gradient model now includes eliminated SC-MP2 and dipole estimates with analytic gradients. Their mixed correction kernels are tested in screened_corrections.py; the full screened PNO/CCSD Hessian remains unsupported."
 }

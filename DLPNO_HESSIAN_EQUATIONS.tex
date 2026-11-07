@@ -22,12 +22,16 @@ The orbital coefficients, subspace projectors and amplitudes relax. Assume
 a twice differentiable solution with separated retained/discarded spaces
 and a locally determined response after removing redundant rotations.
 
-The current full-domain diagnostic has analytic mixed RHF, Boys, PAO,
-first-PNO, coupled-LMP2 and final-PNO inputs. CCSD stationarity eliminates
-mixed CCSD amplitudes and supplies trial mixed TNO response. The mixed
-nuclear CCSD residual still uses a geometry stencil. Other nonzero screened
-energy corrections, local-domain assembly and full Hessian/vibrational
-validation remain open. The companion working-memory Markdown file contains
+The current full-domain diagnostic has analytic mixed RHF, localization, PAO,
+first-PNO, coupled-LMP2, final-PNO and CCSD nuclear inputs. CCSD stationarity
+eliminates mixed CCSD amplitudes and supplies trial mixed TNO response.
+Four complete full-domain water Hessians are validated in Section 21.
+Section 23 adds the screened semicanonical-MP2 and dipole corrections to
+the gradient energy and implements their analytic gradients and mixed
+curvatures. Complete screened PNO/CCSD molecular delivery, public analytic
+Hessian routing and equilibrium vibrational validation remain open.
+Later sections supersede the explicitly historical checkpoints.
+The companion working-memory Markdown file contains
 the complete milestone and validation index. The companion text file preserves
 this entire equation record in plain text with LaTeX mathematical notation.
 
@@ -1542,7 +1546,7 @@ $10^{-8}$ threshold; its single-step numerical resolution is not resolved
 by the passing nuclear tests. Neither its tolerance nor the Hessian
 provider guards are changed to obtain a pass.
 
-The derivative target remains
+At the Section 22 checkpoint, before the expansion in Section 23, the target was
 \begin{equation}
  E_{\rm grad}=E_{\rm RHF}+E_{\rm retained\ CCSD}
        +E_{\rm iterative\ (T)}+\Delta E_{\rm PNO}^{\rm first}
@@ -1557,5 +1561,179 @@ energy, with its other weak-pair/triplet choices, require separate work.
 The audit therefore records the screened Hessian as unsupported and leaves
 general analytic Hessian routing disabled. No Hessian symmetry, rigid-motion
 or vibrational claim is inferred from these selected gradient checks.
+
+\section{Screened-pair energy counting, analytic gradients and mixed curvature}
+The November 7 extension retains both screened-pair estimates in the public
+RHF gradient-model functional. Every surviving pair remains strong and all
+allowed triplets use the same TNO cutoff. For matching retained-pair and
+triples choices the ordinary and gradient-model energies now agree:
+\begin{equation}
+ E_{\rm grad}^{\rm new}=E_{\rm grad}^{\rm Section\ 22}
+       +\sum_{\{ij\}\in\mathcal C}E_{\{ij\}}^{\rm SC}
+       +\sum_{\{ij\}\in\mathcal D}E_{\{ij\}}^{\rm dip}.
+ \label{eq:screened-energy}
+\end{equation}
+Here $\mathcal D$ is the set excluded at dipole/DOI prescreening and
+$\mathcal C$ the set subsequently excluded by crude semicanonical MP2.
+Both sets contain each off-diagonal pair once, $i<j$, and are disjoint.
+Their membership, local domains and Cholesky pivot spans are fixed during
+differentiation. Screening bounds define membership; their derivatives
+are not energy terms on this branch.
+
+\subsection{Unique versus ordered occupied pairs}
+Let $o=f_{ii}+f_{jj}$, and let $F_i,F_j$ be the virtual Fock matrices in
+orthonormal local parents. Define the self-adjoint pair operator
+\begin{equation}
+ \mathcal A_{ij}t=o t-F_i t-tF_j,\qquad \mathcal A_{ij}t=K.
+ \label{eq:screened-sylvester}
+\end{equation}
+At the semicanonical reference $t_{ab}=K_{ab}/(o-\epsilon_a-\epsilon_b)$.
+For an excluded SC-MP2 pair both virtual slots use the same pair parent;
+with $\mathcal S(t)=2t-t^{\mathsf T}$,
+\begin{equation}
+ e_{ij}^{\rm SC}=K:\mathcal S(t),\qquad
+ e_{ji}^{\rm SC}=e_{ij}^{\rm SC},\qquad
+ E_{\{ij\}}^{\rm SC}=2K:\mathcal S(t).
+\end{equation}
+The native crude accumulator sums the two ordered energies correctly.
+
+For a distant pair, use separate virtual parents $Y_i,Y_j$ and electronic
+AO dipole operators $\mu_k$, consistently with the forward calculation:
+\begin{align}
+ r_{i,k}&=L_i^{\mathsf T}\mu_k L_i,&
+ d_{i,ka}&=L_i^{\mathsf T}\mu_k Y_{i,a},\\
+ R&=r_i-r_j,& \rho&=R^{\mathsf T}R,\\
+ A(R)&=\rho^{-3/2}I-3\rho^{-5/2}RR^{\mathsf T},&
+ K&=d_i^{\mathsf T}A(R)d_j,\\
+ E_{\{ij\}}^{\rm dip}&=4K:t
+ =-4\sum_{ab}\frac{K_{ab}^2}{\epsilon_a+\epsilon_b-o}.&&
+ \label{eq:unique-dipole-energy}
+\end{align}
+The factor four already includes both occupied orientations. This agrees
+with the unique-pair convention and distant-pair formula in Werner,
+J. Chem. Phys. 145, 201101 (2016), Eqs. 1, 3 and 4,
+doi:10.1063/1.4968595. Native storage mirrors this complete unique-pair
+estimate into both $(i,j)$ and $(j,i)$. The old ordered accumulator therefore
+counted it twice. Accumulation now uses $i<j$; the stored estimate, its
+upper bound and the screening test are unchanged. This shared energy fix
+precedes the response implementation. New analytic response is RHF only.
+
+\subsection{Reverse derivatives of both estimates}
+Use the scalar Lagrangian $\mathcal L=E+z:(K-\mathcal A t)$ and
+$X:Y=\operatorname{tr}(X^{\mathsf T}Y)$. The following bars are coefficients
+of the total energy differential after eliminating the amplitude variation:
+\begin{align}
+ z_{\rm SC}&=2\mathcal S(t),&\bar K_{\rm SC}&=4\mathcal S(t),\\
+ \bar F_{\rm SC}&=\operatorname{sym}(zt^{\mathsf T}+t^{\mathsf T}z),&
+ \bar o_{\rm SC}&=-z:t,\\
+ z_{\rm dip}&=4t,&\bar K_{\rm dip}&=8t,\\
+ \bar F_i&=\operatorname{sym}(zt^{\mathsf T}),&
+ \bar F_j&=\operatorname{sym}(t^{\mathsf T}z),\qquad \bar o_{\rm dip}=-z:t.
+ \label{eq:screened-bars}
+\end{align}
+Each occupied diagonal receives $\bar o$. Full virtual Fock covectors,
+including off-diagonal entries, account for semicanonical frame rotation;
+no division by a within-space virtual energy difference is required.
+
+The SC-MP2 exchange uses the original crude three-center panels,
+$K_0=Q_i^{\mathsf T}J^{-1}Q_j$, and the native local parent $X$:
+\begin{equation}
+ K=X^{\mathsf T}K_0X,\qquad
+ F=X^{\mathsf T}N^{\mathsf T}F_{\rm AO}NX,\qquad
+ X^{\mathsf T}N^{\mathsf T}SNX=I.
+\end{equation}
+Reverse the local metric solve, occupied AO overlap refits, distinct
+occupied/virtual AO slices, normalized PAOs and the fixed Cholesky span.
+The native response is formed before crude maps are replaced by refined
+ones. Its explicit metric and three-center derivatives are contracted then,
+including the native AO integral screening decisions. Its remaining sparse
+covectors are saved and merged before the common PAO normalization and
+occupied-projector reverse pass.
+
+For the dipole term the additional sources are
+\begin{align}
+ \bar d_i&=A d_j\bar K^{\mathsf T},&
+ \bar d_j&=A^{\mathsf T}d_i\bar K, &
+ \bar A&=d_i\bar K d_j^{\mathsf T},\\
+ \bar R&=-3\rho^{-5/2}\operatorname{tr}(\bar A)R
+ -3\rho^{-5/2}(\bar A+\bar A^{\mathsf T})R
+ +15\rho^{-7/2}(R^{\mathsf T}\bar A R)R.&&&
+ \label{eq:dipole-centroid-bar}
+\end{align}
+The centroid sources are $\bar r_i=\bar R$, $\bar r_j=-\bar R$.
+For one occupied orbital, with $b_k=\bar d_{k:}^{\mathsf T}$ in its
+orthonormal virtual frame, the moment/centroid contributions are
+\begin{align}
+ \bar L&\mathrel{+}=\sum_k\{\mu_kYb_k+2\bar r_k\mu_kL\},\\
+ \bar Y&\mathrel{+}=\sum_k\mu_kL b_k^{\mathsf T},\\
+ \bar\mu_k&\mathrel{+}=L(Yb_k)^{\mathsf T}+\bar r_kLL^{\mathsf T},&
+ g^{\rm explicit}_{A,\rm dip}&=\sum_k\bar\mu_k:\mu_k^A.
+\end{align}
+The direct $\bar L$ is added to the occupied-orbital response action.
+Together with Fock, overlap and PAO sources, it enters the existing RHF,
+frozen/active partition and Boys or Mulliken-PM adjoints. Thus the total
+gradient contains the response of the whole corrected energy; adding only
+the explicit AO dipole integral derivative would be incomplete.
+
+\subsection{Analytic mixed molecular correction kernels}
+The implementation accepts $S,F,L,\mu_k$, total occupied-density actions,
+raw AO three-center integrals and the auxiliary metric as four-component
+blocks $(X,X^u,X^v,X^{uv})$ evaluated analytically at one geometry.
+
+With \texttt{DLPNO\_KEEP\_LMP2\_RESPONSE} enabled, the code retains
+copies of the native crude domains and parents. For a normalized PAO block
+$N$ and the native reference parent $X_0$, define
+\begin{equation}
+ B=N X_0,\qquad M=B^{\mathsf T}SB,\qquad
+ Y=B M^{-1/2},\qquad X=X_0M^{-1/2}.
+\end{equation}
+This transports the fixed full-rank selected Cholesky pivot span without
+differentiating eigenvector gauges. The full projected Fock matrices enter
+Eq.~\eqref{eq:screened-sylvester}. The code rejects a parent whose active
+row count differs from its rank. Mixed occupied refits obey the local
+overlap equations in Section 22; each auxiliary center uses its actual
+crude occupied and virtual AO lists. Raw-panel replay is checked against
+native stored panels. Current mixed AO integral delivery requires the
+Schwarz screen off; the native gradient has no such additional restriction.
+
+Differentiate the same Sylvester equation:
+\begin{align}
+ t^u&=\mathcal A^{-1}(K^u-\mathcal A^u t),\\
+ t^{uv}&=\mathcal A^{-1}
+ (K^{uv}-\mathcal A^{uv}t-\mathcal A^u t^v-\mathcal A^v t^u).
+\end{align}
+For $E=cK:\mathcal B(t)$, choose $(c,\mathcal B)=(2,\mathcal S)$ for
+SC-MP2 and $(4,I)$ for the dipole estimate. Then
+\begin{equation}
+ E^{uv}=c\{K^{uv}:\mathcal B(t)+K^u:\mathcal B(t^v)
+              +K^v:\mathcal B(t^u)+K:\mathcal B(t^{uv})\}.
+\end{equation}
+All geometric tensor powers are analytic, e.g.
+$(\rho^p)^{uv}=p\rho^{p-1}\rho^{uv}
++p(p-1)\rho^{p-2}\rho^u\rho^v$.
+Both correction values are checked against their native energies.
+No geometry displacement occurs inside either curvature kernel.
+
+\subsection{Verification and remaining scope}
+The nonzero-correction tests use the four-H$_2$/cc-pVDZ chain with Boys
+and Mulliken PM, and a three-LiH/def2-SVP chain with three frozen Li $1s$
+orbitals and Boys. Each has one excluded dipole pair and two excluded
+SC-MP2 pairs. Each test checks two total-gradient components, both first
+correction derivatives and three independent mixed correction entries
+$(u,u),(u,v),(v,v)$. Numerical references reconverge the native energy at
+0.004 and 0.002 bohr and use Richardson extrapolation. Actual native
+domains, pair labels, retained ranks and transported parent spans are
+checked across the displacements. Net total force and torque also pass.
+
+The largest total-gradient error is $3.21\times10^{-10}$ hartree/bohr;
+the largest correction mixed-curvature error is $2.96\times10^{-11}$
+hartree/bohr$^2$. Acceptance thresholds remain $2\times10^{-8}$ and
+$2\times10^{-9}$, respectively. A separate native regression reconstructs
+Eq.~\eqref{eq:unique-dipole-energy} and checks its sum, preventing the
+factor-of-two bug from returning. Matched ordinary/model energies agree.
+These are selected total-gradient and correction-only curvature checks,
+not complete screened CCSD(T) Hessians. The mixed screened PNO/CCSD
+providers and the synthetic operator-probe issue from Section 22 remain
+open; public analytic Hessian routing is still disabled.
 
 \end{document}

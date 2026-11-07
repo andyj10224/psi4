@@ -301,6 +301,8 @@ class DLPNO : public Wavefunction {
 
     /// pre-screening energies
     double de_dipole_; ///< energy correction for distant (LMO, LMO) pairs
+    SparseMap dipole_pao_domains_; ///< fixed prescreening PAO domains for response
+    std::vector<SharedMatrix> dipole_pao_parent_; ///< actual Cholesky/semicanonical parents
     double de_pno_total_; ///< energy correction for PNO truncation (total)
     double de_pno_total_os_; ///< energy correction for PNO truncation (opposite-spin)
     double de_pno_total_ss_; ///< energy correction for PNO truncation (same-spin)
@@ -618,6 +620,7 @@ class PSI_API DLPNOCCSD : public DLPNO {
     /// These functions split up pairs that survive the initial dipole screening
     // The "crude" pre-screening step splits up semi-canonical MP2 pairs from the rest,
     // while the non-crude splits up strong/weak pairs (see Riplinger 2016 for more details)
+    virtual void form_screened_pair_response(const std::vector<double>& energies) {}
     template<bool crude> void pair_prescreening();
     template<bool crude> std::vector<double> compute_pair_energies();
     template<bool crude> double filter_pairs(const std::vector<double>& e_ijs);
@@ -977,6 +980,15 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     SparseResponseRows df_pao_coefficient_bar_, df_sclmo_bar_, df_refit_overlap_bar_;
     double df_coefficient_error_ = 0., df_replay_error_ = 0.;
     void finish_df_refit_response();
+    void form_screened_pair_response(const std::vector<double>& energies) override;
+    void merge_screened_pair_response();
+    struct ScreenedPairResponse {
+        SparseResponseRows foo, fov, fvv, overlap, coefficients, sclmo, refit_overlap;
+    } screened_pair_response_;
+    SharedMatrix screened_lmo_bar_;
+    using ScreenedPairBlocks = std::map<std::pair<int,int>, std::map<std::string,SharedMatrix>>;
+    ScreenedPairBlocks screened_pair_blocks_;
+    std::map<std::string, SparseMap> screened_pair_domains_;
     void reverse_pao_normalization();
     void check_occupied_projection();
     // B is the occupied-projected AO matrix before normalizing its columns.
@@ -1064,6 +1076,7 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     DLPNOCCSD_T(SharedWavefunction ref_wfn, Options& options);
     ~DLPNOCCSD_T() override;
     SharedMatrix orbital_response_action(const std::string& block, const SharedMatrix& rhs) const;
+    std::tuple<std::map<std::string, SparseMap>, ScreenedPairBlocks> screened_pair_state() const;
 
     PairBlocks lmp2_blocks(const std::string& block) const;
     PairBlocks pno_truncation_lmp2_response(bool adjoint);

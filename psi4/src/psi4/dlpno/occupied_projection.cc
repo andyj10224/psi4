@@ -106,6 +106,7 @@ SharedMatrix DLPNOCCSD_T::orbital_response_action(const std::string& block, cons
             f->add(B(sparse_action(r.fov, n, rhs, true)));
             v->add(linalg::doublet(F, f));
             v->add(linalg::doublet(S, sparse_action(df_sclmo_bar_, L->ncol(), rhs)));
+            if (screened_lmo_bar_) v->add(linalg::doublet(screened_lmo_bar_, rhs));
         }
         return v;
     }
@@ -163,7 +164,8 @@ void DLPNOCCSD_T::check_occupied_projection() {
                        dot(r.fov, linalg::triplet(l, f, B, true, false, false)) +
                        dot(r.fvv, linalg::triplet(B, f, B, true, false, false)) +
                        dot(r.overlap, linalg::triplet(B, s, B, true, false, false)) + dot(r.coefficients, B) +
-                       dot(df_refit_overlap_bar_, s) + dot(df_sclmo_bar_, linalg::doublet(s, l));
+                       dot(df_refit_overlap_bar_, s) + dot(df_sclmo_bar_, linalg::doublet(s, l)) +
+                       (screened_lmo_bar_ ? screened_lmo_bar_->vector_dot(l) : 0.);
             };
             constexpr double h = 1.e-3;
             err = std::abs(analytic - (8. * (sample(h) - sample(-h)) - (sample(2*h) - sample(-2*h))) / (12 * h));
