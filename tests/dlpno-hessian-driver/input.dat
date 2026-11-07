@@ -1,0 +1,156 @@
+#! Guarded public analytic DLPNO Hessian routing, identities and failure guards.
+
+import numpy as np
+from unittest.mock import patch
+from psi4.driver.procrouting import proc
+from psi4.driver.procrouting.response import dlpno_hessian
+from psi4.driver.driver_findif import FiniteDifferenceComputer
+from psi4.driver.task_base import AtomicComputer
+from psi4.driver.p4util.exceptions import ValidationError, MissingMethodError
+
+memory 1 GiB
+molecule h2 {
+0 1
+H 0 0 -.37
+H 0 0 .37
+units angstrom
+symmetry c1
+no_com
+no_reorient
+}
+set {
+ basis cc-pvdz
+ reference rhf
+ scf_type df
+ scf_initial_accelerator none
+ diis false
+ freeze_core false
+ dlpno_ao_ints_tol 0.0
+ f_cut 0
+ f_cut_t 0
+ t_cut_do_uv 0
+ t_cut_pre 0
+ t_cut_do 0
+ t_cut_do_pre 0
+ t_cut_do_ij 0
+ t_cut_mkn 0
+ t_cut_clmo 0
+ t_cut_cpao 0
+ t_cut_pno 0
+ t_cut_pno_mp2 0
+ t_cut_tno 0
+}
+
+def expect_error(operation,kind,phrase):
+    try:
+        operation()
+    except kind as error:
+        assert phrase in str(error),(phrase,str(error))
+    else:
+        raise AssertionError('Unsupported operation was accepted: '+phrase)
+
+expect_error(lambda:hessian('dlpno-ccsd(t)',dertype=2,return_plan=True),MissingMethodError,'DLPNO_HESSIAN_MODEL=FALSE')
+set dlpno_hessian_model true
+assert isinstance(hessian('dlpno-ccsd(t)',dertype=2,return_plan=True),AtomicComputer)
+assert isinstance(hessian('dlpno-ccsd(t)',return_plan=True),AtomicComputer)
+for derivative in (0,1):
+    expect_error(lambda:hessian('dlpno-ccsd(t)',dertype=derivative,return_plan=True),ValidationError,'numerical fallback')
+for option,value,phrase in [('f_cut',1e-5,'F_CUT'),('f_cut_t',1e-3,'F_CUT_T'),
+        ('dlpno_ao_ints_tol',1e-10,'DLPNO_AO_INTS_TOL'),('t_cut_do_uv',1e-5,'T_CUT_DO_UV'),
+        ('dlpno_local_orbitals','IBO','localization'),('dlpno_reference_orbitals','BCCD','Brueckner')]:
+    old=core.get_option('DLPNO',option.upper())
+    set_options({option:value})
+    expect_error(lambda:hessian('dlpno-ccsd(t)',dertype=2,return_plan=True),ValidationError,phrase)
+    assert isinstance(gradient('dlpno-ccsd(t)',dertype=1,return_plan=True),AtomicComputer)
+    set_options({option:old})
+for option,value,phrase in [('reference','UHF','RHF'),('scf_type','PK','density-fitted'),
+        ('num_frozen_uocc',1,'frozen virtual'),('relativistic','X2C','nonrelativistic')]:
+    old=core.get_global_option(option.upper())
+    set_options({option:value})
+    expect_error(lambda:hessian('dlpno-ccsd(t)',dertype=2,return_plan=True),ValidationError,phrase)
+    set_options({option:old})
+
+keys=[('DLPNO',key) for key in ('DLPNO_GRADIENT_MODEL','DLPNO_KEEP_LMP2_RESPONSE','DLPNO_KEEP_TRIPLES_RESPONSE',
+    'E_CONVERGENCE','R_CONVERGENCE','LOCAL_CONVERGENCE','LOCAL_GRADIENT_CONVERGENCE','DLPNO_MAXITER')]
+keys += [('SCF',key) for key in ('E_CONVERGENCE','D_CONVERGENCE','SOLVER_CONVERGENCE','SOLVER_MAXITER','INTS_TOLERANCE','MAXITER','SAVE_JK')]
+keys += [('FINDIF',key) for key in ('HESSIAN_WRITE','FD_PROJECT')]
+def state():
+    result={(module,key):(core.get_option(module,key),core.has_local_option_changed(module,key)) for module,key in keys}
+    result.update({('GLOBAL',key):(core.get_global_option(key),core.has_global_option_changed(key)) for key in ('BASIS','SCF_TYPE')})
+    return result
+before=state();xyz=h2.geometry().np.copy();calls=[];forward=proc.run_dlpno
+def spy(name,**kwargs):
+    calls.append(kwargs['molecule'].geometry().np.copy())
+    return forward(name,**kwargs)
+def forbidden(*args,**kwargs):
+    raise AssertionError('Numerical or forbidden forward calculation entered analytic route.')
+with patch.object(proc,'run_dlpno',spy),patch.object(FiniteDifferenceComputer,'compute',forbidden):
+    H,w=hessian('dlpno-ccsd(t)',dertype=2,return_wfn=True)
+assert len(calls)==1
+np.testing.assert_array_equal(calls[0],xyz)
+assert state()==before
+np.testing.assert_array_equal(h2.geometry().np,xyz)
+for source in (core,w):
+    for name in ('CURRENT HESSIAN','DLPNO-CCSD(T) TOTAL HESSIAN'):
+        np.testing.assert_array_equal(H.np,source.variable(name).np)
+    np.testing.assert_array_equal(w.gradient().np,source.variable('CURRENT GRADIENT').np)
+    np.testing.assert_allclose(w.energy(),source.variable('CURRENT ENERGY'),atol=1e-12,rtol=0.)
+parts=[w.variable('DLPNO HESSIAN '+key.upper()).np for key in dlpno_hessian.COMPONENTS]
+np.testing.assert_array_equal(H.np,np.sum(parts,axis=0))
+np.testing.assert_allclose(H.np,H.np.T,atol=2e-9,rtol=0.)
+np.testing.assert_allclose(H.np@np.tile(np.eye(3),(2,1)),0.,atol=2e-9,rtol=0.)
+
+set e_convergence 1e-13
+set d_convergence 1e-13
+set r_convergence 1e-11
+set solver_convergence 1e-13
+central=[]
+for step in (.004,.002):
+    gradients=[]
+    for sign in (1,-1):
+        mol=h2.clone();coords=xyz.copy();coords[0,2]+=sign*step
+        mol.set_geometry(core.Matrix.from_array(coords));mol.update_geometry()
+        gradients.append(gradient('dlpno-ccsd(t)',molecule=mol).np.ravel())
+    central.append((gradients[0]-gradients[1])/(2*step))
+np.testing.assert_allclose(H.np[:,2],(4*central[1]-central[0])/3,atol=2e-7,rtol=0.)
+
+before=state()
+matrix_only=hessian('dlpno-ccsd(t)',molecule=h2,ref_gradient=w.gradient())
+assert isinstance(matrix_only,core.Matrix)
+np.testing.assert_allclose(matrix_only.np,H.np,atol=2e-9,rtol=0.)
+assert state()==before
+def injected_failure(*args,**kwargs):raise RuntimeError('injected assembly failure')
+with patch.object(dlpno_hessian,'assemble_hessian',injected_failure):
+    expect_error(lambda:hessian('dlpno-ccsd(t)',molecule=h2,dertype=2),RuntimeError,'injected assembly failure')
+assert state()==before
+expect_error(lambda:hessian('dlpno-ccsd(t)',molecule=h2,dertype=2,ref_gradient=core.Matrix(2,3)),ValidationError,'ref_gradient')
+assert state()==before
+expect_error(lambda:hessian('dlpno-ccsd(t)',molecule=h2,dertype=2,ref_gradient=np.zeros(1)),ValidationError,'ref_gradient')
+assert state()==before
+
+ghost=geometry('0 1\nH 0 0 -.37\nH 0 0 .37\n@H 2 0 0\nsymmetry c1\nno_com\nno_reorient')
+with patch.object(proc,'run_dlpno',forbidden):
+    expect_error(lambda:hessian('dlpno-ccsd(t)',molecule=h2,dertype=2,ref_wfn=w.reference_wavefunction()),ValidationError,'ref_wfn')
+    expect_error(lambda:hessian('dlpno-ccsd(t)',molecule=h2,dertype=2,external_potentials=[[.1,[3.,0.,0.]]]),ValidationError,'external potentials')
+    expect_error(lambda:hessian('dlpno-ccsd(t)',molecule=ghost,dertype=2),ValidationError,'ghost centers')
+assert state()==before
+na=geometry('1 1\nNa 0 0 0\nsymmetry c1')
+set basis lanl2dz
+with patch.object(proc,'run_dlpno',forbidden):
+    try:
+        hessian('dlpno-ccsd(t)',molecule=na,dertype=2)
+    except ValidationError as error:
+        assert 'effective core potentials' in str(error)
+    except RuntimeError as error:
+        assert 'ECP shells but libecpint addon not enabled' in str(error)
+    else:
+        raise AssertionError('ECP input entered the analytic Hessian route.')
+set basis cc-pvdz
+assert state()==before
+set_memory('256 MiB')
+with patch.object(proc,'run_dlpno',forbidden):
+    expect_error(lambda:hessian('dlpno-ccsd(t)',molecule=h2,dertype=2),ValidationError,'exceeds half')
+set_memory('1 GiB')
+assert state()==before
+assert not any(name in __import__('sys').modules for name in ('screened_corrections','rhf_mixed','first_pno','localization_mixed'))
+print('Public analytic DLPNO Hessian driver checks passed.')

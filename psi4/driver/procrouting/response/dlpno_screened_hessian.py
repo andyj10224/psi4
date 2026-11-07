@@ -1,9 +1,10 @@
 """Assemble a screened RHF DLPNO-CCSD(T) Hessian column on a fixed branch.
 
-This diagnostic consumes analytic molecular inputs at one geometry and a
-native analytic RHF column. It performs no coordinate sampling and does not
-register a public Hessian route. The current input delivery is not a scaling
-implementation. All retained pairs are strong, with ordinary single-space T.
+This backend consumes analytic molecular inputs at one geometry and a native
+analytic RHF column. It performs no coordinate sampling. The guarded public
+driver in dlpno_hessian supplies installed molecular inputs and assembles all
+columns. Dense input delivery does not provide local memory scaling. All
+retained pairs are strong, with ordinary single-space T.
 """
 import numpy as np
 

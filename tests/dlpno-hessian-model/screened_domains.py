@@ -196,7 +196,7 @@ def check_local(w, mol):
     probe_failures = {key: value for key, value in probes.items() if value > 1.e-8}
     assert probes['DLPNO DF ORBITAL REPLAY ERROR'] < 1.e-10
     assert probes['DLPNO DF LMO REFIT DIRECTION ERROR'] < 1.e-8
-    return dict(domains=counts, mixed_nuclear_status='screened_hessian_validated_separately_public_delivery_unavailable', provider_rejections=failures,
+    return dict(domains=counts, mixed_nuclear_status='screened_hessian_validated_separately_guarded_public_delivery', provider_rejections=failures,
                 gradient_comparisons=comparisons, native_debug_probes=probes,
                 debug_probes_above_1e_minus8=probe_failures, gradient=gradient.tolist())
 
@@ -232,19 +232,28 @@ def run(path):
     except MissingMethodError as exc:
         routing = str(exc)
     else:
-        raise AssertionError('A new analytic driver must pass screened Hessian validation first.')
+        raise AssertionError('The guarded analytic driver must require explicit opt-in.')
+    old_screen = psi4.core.get_option('DLPNO', 'T_CUT_DO_UV')
+    psi4.set_options(dict(dlpno_hessian_model=True, t_cut_do_uv=0.))
+    try:
+        from psi4.driver.task_base import AtomicComputer
+        assert isinstance(psi4.hessian('dlpno-ccsd(t)', molecule=mol, dertype=2, return_plan=True), AtomicComputer)
+    finally:
+        psi4.set_options(dict(dlpno_hessian_model=False, t_cut_do_uv=old_screen))
     blockers = ['Full screened matrices cover selected fragment and nonplanar molecular fixtures, including distinct-index '
                 'triplets, unequal TNO ranks and frozen-core off-diagonal pairs; arbitrary molecule/threshold robustness '
                 'and behavior near discrete parent-selection boundaries remain unvalidated.',
-                'Public Hessian delivery and its supported-input contract remain unimplemented; the current mixed-input '
-                'harness uses dense AO tensors with AO Schwarz and Fock screens off.',
-                'Rotational screening accuracy, equilibrium vibrations and end-to-end scaling remain unvalidated.']
+                'Public Hessian delivery is guarded and uses dense AO tensors; AO Schwarz, occupied-Fock and individual '
+                'PAO-pair screens must be off. General screening support and local scaling are not established.',
+                'The equilibrium H2 vibration is only a driver smoke test; full public molecular comparisons '
+                'were interrupted by the workspace outage and require completion.']
     if local['debug_probes_above_1e_minus8']:
         blockers.append('A native synthetic PNO operator probe exceeds its old tolerance.')
     result = dict(graph_only=graph, local_domains=local, coordinates_bohr=mol.geometry().np.tolist(),
                   screening=SCREENING, model_energy=energy, ordinary_energy=ordinary,
                   model_corrections=model_corrections, ordinary_corrections=corrections,
                   analytic_driver_rejection=routing, screened_hessian_validated=False,
+                  guarded_public_plan_available=True,
                   screened_columns_tested_separately=True,
                   screened_matrices_tested_separately=True,
                   screened_molecular_matrices_tested_separately=True,
@@ -267,7 +276,7 @@ def run(path):
                                    'with a PAO-screen rotation control in screened_rotation.py and additional molecular coverage '
                                    'in screened_molecules.py. Conditioned Coulomb inverse response and native first-pivot '
                                    'roundoff are corrected without changing derivative equations or acceptance thresholds. '
-                                   'Public analytic Hessian routing and broader production validation remain outstanding.')
+                                   'The guarded public implementation is preserved on a recovery branch; full end-to-end molecular validation must finish before promotion.')
     Path(path).write_text(json.dumps(result, indent=2)+'\n')
     print(json.dumps({k: result[k] for k in ('screened_hessian_validated', 'production_ready', 'blockers')}, indent=2))
     return result

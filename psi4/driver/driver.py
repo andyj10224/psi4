@@ -1507,52 +1507,61 @@ def hessian(name, **kwargs):
     # Set method-dependent scf convergence criteria (test on procedures['energy'] since that's guaranteed)
     optstash_conv = driver_util.negotiate_convergence_criterion((2, 2), lowername, return_optstash=True)
 
-    # At stationary point?
-    if 'ref_gradient' in kwargs:
-        core.print_out("""hessian() using ref_gradient to assess stationary point.\n""")
-        G0 = kwargs['ref_gradient']
-    else:
-        tmpkwargs = copy.deepcopy(kwargs)
-        tmpkwargs.pop('dertype', None)
-        G0 = gradient(lowername, molecule=molecule, **tmpkwargs)
-    translations_projection_sound, rotations_projection_sound = _energy_is_invariant(G0.rms())
-    core.print_out(
-        '\n  Based on options and gradient (rms={:.2E}), recommend {}projecting translations and {}projecting rotations.\n'
-        .format(G0.rms(), '' if translations_projection_sound else 'not ',
-                '' if rotations_projection_sound else 'not '))
-    if not core.has_option_changed('FINDIF', 'FD_PROJECT'):
-        core.set_local_option('FINDIF', 'FD_PROJECT', rotations_projection_sound)
+    try:
+        # DLPNO delivers its native gradient with the Hessian at the same
+        # reference. Avoid a separate correlation calculation before preflight.
+        wfn = None
+        if lowername == 'dlpno-ccsd(t)':
+            wfn = procedures['hessian'][lowername](lowername, molecule=molecule, **kwargs)
+            G0 = wfn.gradient()
+        elif 'ref_gradient' in kwargs:
+            core.print_out("""hessian() using ref_gradient to assess stationary point.\n""")
+            G0 = kwargs['ref_gradient']
+        else:
+            tmpkwargs = copy.deepcopy(kwargs)
+            tmpkwargs.pop('dertype', None)
+            G0 = gradient(lowername, molecule=molecule, **tmpkwargs)
+        translations_projection_sound, rotations_projection_sound = _energy_is_invariant(G0.rms())
+        core.print_out(
+            '\n  Based on options and gradient (rms={:.2E}), recommend {}projecting translations and {}projecting rotations.\n'
+            .format(G0.rms(), '' if translations_projection_sound else 'not ',
+                    '' if rotations_projection_sound else 'not '))
+        if not core.has_option_changed('FINDIF', 'FD_PROJECT'):
+            core.set_local_option('FINDIF', 'FD_PROJECT', rotations_projection_sound)
 
-    # We have the desired method. Do it.
-    logger.info(f"Compute hessian(): method={lowername}, basis={core.get_global_option('BASIS').lower()}, molecule={molecule.name()}, nre={'w/EFP' if hasattr(molecule, 'EFP') else molecule.nuclear_repulsion_energy()}")
-    logger.debug("w/EFP" if hasattr(molecule, "EFP") else pp.pformat(molecule.to_dict(quiet=kwargs.get("quiet", True))))
-    core.print_out("""hessian() will perform analytic frequency computation.\n""")
-    wfn = procedures['hessian'][lowername](lowername, molecule=molecule, **kwargs)
-    logger.info(f"Return hessian(): {wfn.energy()}")
-    logger.info(nppp(wfn.hessian().np))
+        # We have the desired method. Do it.
+        logger.info(f"Compute hessian(): method={lowername}, basis={core.get_global_option('BASIS').lower()}, molecule={molecule.name()}, nre={'w/EFP' if hasattr(molecule, 'EFP') else molecule.nuclear_repulsion_energy()}")
+        logger.debug("w/EFP" if hasattr(molecule, "EFP") else pp.pformat(molecule.to_dict(quiet=kwargs.get("quiet", True))))
+        core.print_out("""hessian() will perform analytic frequency computation.\n""")
+        if wfn is None:
+            wfn = procedures['hessian'][lowername](lowername, molecule=molecule, **kwargs)
+        logger.info(f"Return hessian(): {wfn.energy()}")
+        logger.info(nppp(wfn.hessian().np))
 
-    wfn.set_gradient(G0)
-    basisstash.restore()
-    optstash.restore()
-    optstash_conv.restore()
+        wfn.set_gradient(G0)
 
-    #if isinstance(lowername, str) and lowername in procedures['energy']:
-    #    # this correctly filters out cbs fn and "hf/cc-pvtz"
-    #    # it probably incorrectly filters out mp5, but reconsider in DDD
-    #    core.set_variable(f"CURRENT HESSIAN", H)
-    #    core.set_variable(f"{lowername.upper()} TOTAL HESSIAN", H)
-    #    core.set_variable(f"{lowername.upper()} TOTAL GRADIENT", G0)
-    #    wfn.set_variable(f"{lowername.upper()} TOTAL HESSIAN", H)
-    #    wfn.set_variable(f"{lowername.upper()} TOTAL GRADIENT", G0)
-    # TODO: check that current energy's being set to the right figure when this code is actually used
-    core.set_variable('CURRENT ENERGY', wfn.energy())
-    core.set_variable("CURRENT GRADIENT", G0)
-    driver_findif.hessian_write(wfn)
+        #if isinstance(lowername, str) and lowername in procedures['energy']:
+        #    # this correctly filters out cbs fn and "hf/cc-pvtz"
+        #    # it probably incorrectly filters out mp5, but reconsider in DDD
+        #    core.set_variable(f"CURRENT HESSIAN", H)
+        #    core.set_variable(f"{lowername.upper()} TOTAL HESSIAN", H)
+        #    core.set_variable(f"{lowername.upper()} TOTAL GRADIENT", G0)
+        #    wfn.set_variable(f"{lowername.upper()} TOTAL HESSIAN", H)
+        #    wfn.set_variable(f"{lowername.upper()} TOTAL GRADIENT", G0)
+        # TODO: check that current energy's being set to the right figure when this code is actually used
+        core.set_variable('CURRENT ENERGY', wfn.energy())
+        core.set_variable("CURRENT GRADIENT", G0)
+        driver_findif.hessian_write(wfn)
 
-    if return_wfn:
-        return (wfn.hessian(), wfn)
-    else:
-        return wfn.hessian()
+        if return_wfn:
+            return (wfn.hessian(), wfn)
+        else:
+            return wfn.hessian()
+
+    finally:
+        basisstash.restore()
+        optstash.restore()
+        optstash_conv.restore()
 
 
 def frequency(name, **kwargs):

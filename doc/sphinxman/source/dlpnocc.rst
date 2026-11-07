@@ -222,65 +222,45 @@ including dertype=0, raise a validation error. The analytic gradient
 assumes locally fixed domains and ranks and a consistent localization
 adjoint. Full-gradient linear scaling has yet to be established.
 
-RHF Hessian development
------------------------
+Guarded RHF Hessian recovery checkpoint
+---------------------------------------
 
-The standalone diagnostics in ``tests/dlpno-hessian-model`` validate complete
-analytic Cartesian Hessians for full AO/fitting-domain water models, including
-finite PNO spaces, frozen-core and all-electron references. This does not yet
-provide a general analytic ``psi4.hessian("dlpno-ccsd(t)")`` implementation.
-An explicit ``dertype=2`` request remains unavailable; a numerical Hessian
-obtained through driver fallback must not be described as analytic.
+This recovery branch contains an experimental public analytic
+``psi4.hessian("dlpno-ccsd(t)")`` implementation with explicit
+``DLPNO_HESSIAN_MODEL=True`` opt-in. The original workspace passed small
+driver regressions and an H2 equilibrium frequency check, but became
+unavailable before full public screened molecular comparisons finished.
+The reconstructed tree requires revalidation. See
+``DLPNO_HESSIAN_M33_RECOVERY.md``; this is not a generally validated
+production route.
 
-``screened_domains.py`` audits an interacting four-H2 chain with actual local
-AO/refit, PAO, occupied and auxiliary lists. Its sparse CCSD residual and mixed
-amplitude checks, and selected screened analytic-gradient checks, pass. The
-screened mixed CCSD/TNO molecular delivery is still incomplete,
-so no screened nuclear Hessian has been validated. The synthetic first-PNO
-operator probe now passes its unchanged tolerance using Richardson
-extrapolation; its old centered error and a DEBUG>1 spacing study are retained. Run with
-``--require-production`` to obtain a nonzero exit status while these blockers
-remain. Domain fingerprints are available through
-``core.dlpno_response_domain_state(wfn)``; these copies exclude AO Schwarz
-decisions, and the audit explicitly disables that integral screen.
+The target is the same RHF all-strong ordinary iterative single-TNO
+functional as the analytic gradient, including both PNO losses and excluded
+SC-MP2/dipole pairs. The initial call requires DF SCF, HF orbitals, Boys or
+Mulliken PM, a full-rank AO metric and zero ``DLPNO_AO_INTS_TOL``, ``F_CUT``,
+``F_CUT_T`` and ``T_CUT_DO_UV``. In Psithon use floating ``0.0`` for the
+convergence-style AO tolerance. Frozen cores and finite domains/ranks are
+allowed on a smooth branch. Ghosts, ECP, external potentials, frozen
+virtuals, Brueckner orbitals and supplied ``ref_wfn`` are refused. A supplied
+gradient must match the native gradient. Native response/gap guards remain.
 
-The Hessian development target is the same energy functional as the public
-gradient, including both screened-pair estimates. ``screened_corrections.py``
-separately validates their analytic mixed nuclear curvatures for Boys and
-Mulliken PM localization and a frozen-core case. Its kernel consumes analytic
-molecular inputs and original crude domains retained with
-|dlpno__dlpno_keep_lmp2_response|, exposed by
-``core.dlpno_screened_pair_state(wfn)``. The mixed AO integral delivery currently
-requires the AO Schwarz screen off; the native gradient has no such additional
-restriction. These correction terms do not complete the screened PNO/CCSD
-molecular providers or enable public analytic Hessian routing. Agreement with
-an ordinary energy calculation also requires matching its retained-pair and
-triples choices. See ``DLPNO_HESSIAN_WORKING_MEMORY.md`` and
-``DLPNO_HESSIAN_EQUATIONS.txt`` for the validation ledger and working equations.
+One reference supplies the native gradient and installed analytic molecular
+inputs. Every ordered Hessian entry is evaluated without nuclear sampling,
+symmetry averaging or rigid-motion projection. The returned ``core.Matrix``
+is in hartree/bohr squared, also stored in ``wfn.hessian()``,
+``CURRENT HESSIAN`` and ``DLPNO-CCSD(T) TOTAL HESSIAN``. Seven matrices with
+prefix ``DLPNO HESSIAN`` and suffixes ``RHF``, ``RETAINED_CCSD``,
+``ITERATIVE_TRIPLES``, ``INITIAL_PNO_LOSS``, ``FINAL_PNO_LOSS``,
+``SCREENED_SCMP2`` and ``DIPOLE_PAIRS`` sum to that result.
+``CURRENT GRADIENT`` retains the same native gradient.
 
-``screened_first_pno.py`` validates the separate analytic first-PNO molecular
-provider in ``response/dlpno_screened_pno.py``. It uses native refined-stage
-local occupied/virtual AO domains, extended-label masks, pair auxiliary lists,
-normalized moving PAOs and selected pivot parents. The copied snapshot from
-``core.dlpno_first_pno_state(wfn)`` requires
-|dlpno__dlpno_keep_lmp2_response| and includes full-rank selections. Its forward
-AO Schwarz screen must be off. Analytic inputs are evaluated at one geometry;
-validation differences independent first-order projector responses. Direct
-second differences of native truncated PNO coefficients remain noisy and are
-recorded separately as unresolved diagnostics. Neither this first-PNO block
-nor the excluded-pair correction kernels supply a complete screened Hessian.
-
-``screened_pno_response`` extends that provider through the native coupled
-LMP2 first/mixed solves and final PNO selection on the retained response graph.
-It transforms the already masked/refitted local exchange into the moving first
-PNO frame and differentiates both legs of every rectangular pair overlap.
-``screened_final_pno.py`` compares AO amplitude and final-projector mixed
-response with differences of independently implemented first derivatives. It
-also checks both PNO-loss curvatures against native energy differences and
-compares direct mixed-amplitude and stationary-adjoint contractions. The
-fixtures exercise nonzero final-stage truncation, Boys/PM localization,
-frozen-core motion and a full-rank zero-loss control. These selected block
-tests do not establish a complete screened Hessian or change public routing.
+The opt-in forbids numerical fallback. Temporary convergence/retention
+settings restore on failure. The mixed-input provider remains dense, with a
+conservative preflight scratch refusal criterion; this is not local scaling.
+Standard downstream frequency mass weighting/projection leaves the raw
+stored Hessian intact. H2 has no triples and does not replace screened
+molecular frequency validation. Broader screen/branch robustness,
+molecular vibrations and runtime/memory scaling remain open.
 
 Higher-Order DLPNO Methods
 --------------------------

@@ -220,6 +220,7 @@ procedures = {
     'hessian' : {
         'hf'            : proc.run_scf_hessian,
         'scf'           : proc.run_scf_hessian,
+        'dlpno-ccsd(t)'  : proc.select_dlpno_hessian,
     },
     'properties' : {
         'hf'           : proc.run_scf_property,

@@ -1,5 +1,8 @@
 # DLPNO Hessian Working Memory Bank
 
+> **Milestone 33 recovery branch:** public analytic delivery was implemented and small tests passed before an execution-environment outage. This reconstructed tree requires revalidation; full public screened matrices were unfinished. See [recovery record](DLPNO_HESSIAN_M33_RECOVERY.md). Milestone 32 remains the last accepted checkpoint.
+
+
 ## Scope and verification policy
 
 Derive the analytic nuclear Hessian of the same closed-shell RHF ordinary iterative DLPNO-CCSD(T) functional selected by the public gradient driver. Start with Boys, then Mulliken PM; exercise both frozen-core and all-electron references. Work in a fixed Cartesian frame, in hartree/bohr², on a smooth local branch. Keep discrete selections fixed while differentiating the moving electronic subspaces. Require a test for each block before using it as a reference for the next block. Keep canonical comparisons, local finite-cutoff checks, and scaling measurements separate. [Working equations (.txt)](DLPNO_HESSIAN_EQUATIONS.txt) · [Typesetting source (.tex)](DLPNO_HESSIAN_EQUATIONS.tex)
@@ -45,7 +48,8 @@ Equation-section numbers refer to both the `.txt` export and `.tex` source. The 
 | 29 | Screened local CCSD mixed residual and matching TNO/triples molecular inputs | `81bb6f66` | 26–26.4 |
 | 30 | Complete screened Hessian columns, gradient references and column invariances | `84175650` | 27–27.3 |
 | 31 | Complete unsymmetrized screened matrices, native gradient references, component invariances and PAO-screen rotation control | `63895aef` | 28–28.4 |
-| 32 | Nonplanar screened molecular matrices with distinct/unequal-rank triplets and frozen-core off-diagonal pairs; Coulomb inverse and native pivot stability | Current checkpoint, parent `63895aef` | 29–29.3 |
+| 32 | Nonplanar screened molecular matrices with distinct/unequal-rank triplets and frozen-core off-diagonal pairs; Coulomb inverse and native pivot stability | `833ec80c` | 29–29.3 |
+| 33 (WIP) | Guarded public analytic delivery, API guards and equilibrium H2 workflow; interrupted full public validation | Recovery branch, parent `833ec80c` | 30–30.3 |
 
 Step 19 was recovered locally as `e8a240b2` and published as `d79f434b`; the localization precision fix was locally `d222a3ab` and published as `063eb109`. These pairs refer to the same tested content at each checkpoint, not additional Hessian steps. The failed all-electron total error of -3.37e-7 at step 19 and its resolution at step 20 are both retained below. Full Cartesian validation is reported explicitly at step 24; a general production Hessian and equilibrium vibrational validation remain open.
 
@@ -936,3 +940,10 @@ This closes the selected distinct-index, unequal-rank and frozen-core off-diagon
 Both cumulative memories and complete equation records are updated (Hessian Section 29, gradient Section 10.13). Complete equation-export synchronization passes (2,545 Hessian / 653 gradient lines); final TeX passes are clean (41 / 11 pages). Python compilation and whitespace checks pass.
 
 **Next faithful step.** Define and implement a guarded public analytic Hessian delivery path for the supported RHF all-strong/single-TNO fixed-branch model, with explicit screen and resource restrictions, then validate end-to-end driver behavior and an equilibrium vibrational example. Broader screening contracts and local integral delivery remain necessary before general production/scaling claims.
+
+
+## 2026-11-07 — Guarded public Hessian integration, interrupted validation
+
+Step 33 adds the explicit public analytic route, installed mixed molecular inputs, same-reference gradient/Hessian delivery, raw seven-component assembly, supported-input/resource guards and option restoration. No energy term or pair weight changes. All previous milestones remain above. The native small-driver regression, seven existing CTests, direct derivative-negotiation cases and H2 equilibrium frequency workflow passed in the original workspace. Full water–H2 Boys/PM and ammonia–H2 Boys public matrices were still running when the environment went offline. Do not label them validated. The recovery record preserves numerical observations, failures, paths and required resume gates. Hessian Section 30 documents the contract; its reconstructed text export is complete but not newly typeset.
+
+Step 33 is a recovery/WIP checkpoint based on `833ec80c`, not a new accepted milestone.

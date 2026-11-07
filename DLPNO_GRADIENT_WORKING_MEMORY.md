@@ -1,5 +1,8 @@
 # Working Memory Bank™
 
+> **Milestone 33 recovery branch:** public analytic delivery was implemented and small tests passed before an execution-environment outage. This reconstructed tree requires revalidation; full public screened matrices were unfinished. See [recovery record](DLPNO_HESSIAN_M33_RECOVERY.md). Milestone 32 remains the last accepted checkpoint.
+
+
 ## RHF DLPNO-CCSD(T) analytic nuclear gradients
 
 **Current capability (7 November 2026).** The public RHF DLPNO-CCSD(T) gradient includes ordinary iterative triples, stationary CCSD, both PNO truncation corrections, LMP2 relaxation, local refits, PAO/PNO/TNO motion, frozen-core response, and Boys or Mulliken-PM localization/RHF adjoints. Step 26 of the Hessian ledger now adds native analytic gradients for excluded crude SC-MP2 and distant dipole estimates, after correcting a factor-of-two error in the dipole energy accumulator. Both estimates are included in the gradient-model energy. All surviving pairs are still strong and the triples use one common TNO cutoff; matching an ordinary energy requires matching those choices.
@@ -345,3 +348,8 @@ The gradient Lagrangian and unique-pair counting are unchanged. Native partial C
 Conditioned full Coulomb inverse responses now use the same analytic product identities evaluated in a reference spectral basis, preserving known tensor symmetry without filtering eigenvalues or projecting CCSD residuals. The generic PNO-gap inverse is unchanged. Positive/indefinite exact-rotation algebra tests pass; a preceding dense symmetrized-product failure is documented. Selected independent retained-CCSD and nonzero triples curvature errors are below 2.055e-10 and 3.674e-12 Eh/bohr². Five native CTests, old screened component checks and full-domain mixed-CCSD regressions for both core choices pass.
 
 The complete evidence is in `screened_molecular_results.json`, Hessian Section 29 and milestone 32; gradient Section 10.13 records the connection. Six checkpoint rejection probes pass, and the updated readiness audit deliberately exits 2 with `--require-production`. Public driver integration, general molecule/threshold robustness, rotational-screening accuracy, equilibrium vibrations and local-scaling delivery remain. All earlier steps and raw PNO precision limitations are preserved. Complete equation-export synchronization passes (2,545 Hessian / 653 gradient lines); final TeX passes are clean (41 / 11 pages). Python compilation and whitespace checks pass.
+
+
+## 2026-11-07 — Guarded public Hessian integration, interrupted validation
+
+The same native gradient functional is used by the guarded public Hessian, with no gradient equation or pair-weight changes. Hessian-only restrictions do not narrow gradient availability. The public wrapper retains one native gradient and restores temporary settings. Before the outage, the H2 equilibrium stretch agreed with native-gradient differences within 3.383e-6 cm^-1; H2 has no triples. Full public screened molecular comparisons remain unverified. See the recovery record for observed tests and failure history; gradient Section 10.14 records the follow-up. Revalidate this reconstructed tree before promotion.

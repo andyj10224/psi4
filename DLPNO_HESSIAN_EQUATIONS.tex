@@ -2543,4 +2543,89 @@ are separate remaining work. The complete matrices, component identities,
 reference samples, solver residuals and unsuccessful trial history are
 preserved with milestone 32.
 
+
+\section{Guarded public delivery: recovery checkpoint}
+Milestone 33 implements an explicit \texttt{DLPNO\_HESSIAN\_MODEL} public
+analytic route for the same RHF all-strong ordinary iterative single-TNO
+functional. The execution environment became unavailable before the full
+public molecular comparisons completed. This recovered implementation and
+documentation require revalidation; milestone 32 remains the accepted
+checkpoint. The recovery Markdown record preserves observations and failures.
+
+\subsection{Same-reference assembly}
+One RHF/DLPNO reference supplies the native analytic gradient and installed
+analytic first/mixed molecular inputs. No displaced calculation enters
+the Hessian. With the seven components of Section 27,
+\begin{equation}
+ H_{AB}=\sum_{c=1}^{7}H^c_{AB},\qquad H^c_{AB}=\partial_B g^c_A,
+ \qquad g_A=\sum_{c=1}^{7}g^c_A.
+\end{equation}
+Every ordered entry is evaluated independently, without mirroring,
+symmetry averaging or rigid-motion projection. Pair weights, energy terms
+and the retained-energy/triples adjoint partition remain unchanged.
+First-gradient replay and component-gradient column agreement retain
+$2\times10^{-8}$ hartree/bohr thresholds. Total/component reciprocity,
+both translations and off-equilibrium rotational covariance retain
+$2\times10^{-7}$ in the relevant atomic units:
+\begin{equation}
+ H^c=(H^c)^{\mathsf T},\quad H^c\tau=0,\quad
+ \tau^{\mathsf T}H^c=0,\quad H^c\rho=\gamma^c.
+\end{equation}
+Grouping Cartesian triples by atom, $\rho_A=\mathbf e\times\mathbf R_A$
+and $\gamma_A^c=\mathbf e\times g_A^c$. The nonstationary gradient term
+is retained. Native force/torque checks use $2\times10^{-8}$; nonfinite
+outputs abort. No projection repairs a failed check. Returned/global
+variables publish the same native gradient and seven raw matrices.
+
+\subsection{Supported model and resource contract}
+Gas-phase nonrelativistic DF-RHF, HF orbitals, Boys/Mulliken PM and a
+full-rank AO metric are required. Frozen cores and finite local domains/ranks
+are allowed on a smooth branch. AO Schwarz, occupied-Fock and individual
+PAO-pair screens must be zero. Ghosts, ECP, external potentials, frozen
+virtuals, Brueckner orbitals and supplied references are refused.
+Non-C1 input uses a C1 working copy. Native gap/localization/solver guards
+remain. Temporary convergence/retention settings and changed flags restore
+on failure. A supplied gradient must match the native gradient. No opted-in
+numerical Hessian fallback is allowed. The wrapper does not change supplied
+domain/rank cutoffs; the gradient model retains its established convention.
+
+For AO count $n$, auxiliary counts $a,b$, $d=3N$, total occupied count $o$,
+$v=\max(0,n-o)$ and $t=o(o+1)(o+2)/6-o$, the dense scratch estimate is
+\begin{equation}
+ M_{\rm est}=128\,2^{20}
+ +8\{64[(a+b)n^2+a^2+b^2]+64tv^3+128dn^2\}.
+\end{equation}
+In bytes, $M_{\rm est}>M_{\rm requested}/2$ rejects before correlation.
+This implementation policy is not a physical approximation, measured
+peak-memory bound or local-scaling claim. Native guards remain independent.
+
+\subsection{Observed validation and outstanding gate}
+Before the outage, the expanded small driver CTest and seven existing
+targeted CTests passed. Eighty derivative-negotiation cases passed direct
+assertions; pytest was unavailable. These observations do not validate the
+reconstructed recovery commit.
+
+The equilibrium H2/cc-pVDZ public workflow found bond 1.4378899324646717
+bohr and maximum gradient $2.123\times10^{-13}$ hartree/bohr. One physical
+stretch was 4382.9304171721 cm$^{-1}$ versus 4382.9304137894 from independent
+$\pm0.004/\pm0.002$ bohr native-gradient differences. The raw column error
+was $5.655\times10^{-10}$ hartree/bohr$^2$. For that independent check,
+\begin{equation}
+ \widetilde\nu=\frac{1}{2\pi c}\sqrt{\frac{k}{\mu}},\qquad
+ \mu=\frac{m_1m_2}{m_1+m_2},
+\end{equation}
+with consistent units. Five modes were translation/rotation. Downstream
+vibrational projection does not alter the stored raw Hessian. H2 has no
+triples, so this is a workflow check, not screened molecular validation.
+
+The 774-entry public water--H2 Boys/PM and ammonia--H2 Boys comparison was
+unfinished at the outage. No completed public molecular result is claimed.
+The accepted milestone-32 matrices/references remain intact. Recovery notes
+preserve the unavailable Python matrix binding, exponent-style integer zero,
+native ECP-library refusal and one-ulp coordinate-check failures. Only the
+coordinate assertion changed to $10^{-14}$ bohr; derivative, residual and
+physical-span tolerances were unchanged. Rebuild and revalidate the exact
+recovered tree before promotion. General branch/screening robustness,
+screened molecular equilibrium spectra and local scaling remain open.
+
 \end{document}

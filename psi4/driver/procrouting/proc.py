@@ -4813,6 +4813,67 @@ def run_dlpno_gradient(name, **kwargs):
         state.restore()
 
 
+def select_dlpno_hessian(name, **kwargs):
+    """Advertise the guarded analytic path only after an explicit opt-in."""
+    from .response.dlpno_hessian import validate_settings
+    if not core.get_option("DLPNO", "DLPNO_HESSIAN_MODEL"):
+        raise ManagedMethodError(["select_dlpno_hessian", name, "DLPNO_HESSIAN_MODEL", "FALSE",
+                                  core.get_option("SCF", "REFERENCE"), ""])
+    probe = kwargs.pop("probe", False)
+    try:
+        validate_settings()
+    except ValidationError as exc:
+        if not probe:
+            raise
+        # Highest-derivative probes also run during gradient planning. An
+        # unavailable Hessian must not disable the existing analytic gradient.
+        raise ManagedMethodError(["select_dlpno_hessian", name, "DLPNO_HESSIAN_SETTINGS", str(exc),
+                                  core.get_option("SCF", "REFERENCE"), ""]) from exc
+    if not probe:
+        return run_dlpno_hessian(name, **kwargs)
+
+
+def run_dlpno_hessian(name, **kwargs):
+    """Analytic Hessian of the explicitly selected RHF gradient model."""
+    from .response.dlpno_hessian import assemble_hessian, preflight
+    estimate = preflight(kwargs.get("molecule", core.get_active_molecule()), kwargs)
+    # Tighten only numerical convergence and retain the native response state.
+    # Pair/domain/rank cutoffs are never silently changed by this driver.
+    tolerances = {("SCF", "E_CONVERGENCE"): 1.e-14, ("SCF", "D_CONVERGENCE"): 1.e-14,
+                  ("SCF", "INTS_TOLERANCE"): 1.e-14, ("SCF", "SOLVER_CONVERGENCE"): 1.e-14,
+                  ("DLPNO", "E_CONVERGENCE"): 1.e-13, ("DLPNO", "R_CONVERGENCE"): 1.e-11,
+                  ("DLPNO", "LOCAL_CONVERGENCE"): 1.e-14,
+                  ("DLPNO", "LOCAL_GRADIENT_CONVERGENCE"): 1.e-13}
+    limits = {("SCF", "MAXITER"): 600, ("SCF", "SOLVER_MAXITER"): 200,
+              ("DLPNO", "DLPNO_MAXITER"): 600}
+    retained = ("DLPNO_GRADIENT_MODEL", "DLPNO_KEEP_LMP2_RESPONSE", "DLPNO_KEEP_TRIPLES_RESPONSE")
+    state = p4util.OptionsState(*[list(k) for k in (*tolerances, *limits)],
+                                *[["DLPNO", key] for key in retained])
+    try:
+        for (module, key), value in tolerances.items():
+            core.set_local_option(module, key, min(core.get_option(module, key), value))
+        for (module, key), value in limits.items():
+            core.set_local_option(module, key, max(core.get_option(module, key), value))
+        for key in retained:
+            core.set_local_option("DLPNO", key, True)
+        core.print_out("\n  Guarded analytic DLPNO-CCSD(T) Hessian: fixed-branch all-strong/single-TNO model.\n"
+                       "  Dense AO derivative delivery; every ordered entry is evaluated without projection.\n")
+        wfn = run_dlpno_gradient(name, **kwargs)
+        supplied = kwargs.get("ref_gradient")
+        if supplied is not None:
+            supplied = np.asarray(supplied)
+            if supplied.shape != wfn.gradient().np.shape or not np.allclose(supplied, wfn.gradient().np, rtol=0., atol=2.e-8):
+                raise ValidationError("ref_gradient does not match the analytic DLPNO gradient at this geometry/model.")
+        assemble_hessian(wfn)
+        wfn.set_variable("DLPNO HESSIAN ESTIMATED MEMORY BYTES", float(estimate))
+        for label, value in wfn.variables().items():
+            core.set_variable(label, value)
+        core.set_variable("CURRENT ENERGY", wfn.energy())
+        return wfn
+    finally:
+        state.restore()
+
+
 def run_dlpnoccsd_property(name, **kwargs):
     """Compute DLPNO-CCSD/BCCD one-electron properties through OEProp."""
     properties = kwargs.pop("properties")

@@ -202,9 +202,15 @@ def negotiate_derivative_type(
     """
     methods = method if isinstance(method, list) else [method]
     dlpno_gradient = target_dertype == "gradient" and "dlpno-ccsd(t)" in methods
-    if (target_dertype == "hessian" and "dlpno-ccsd(t)" in methods
-            and core.get_option("DLPNO", "DLPNO_GRADIENT_MODEL")):
-        raise ValidationError("Hessians of the DLPNO gradient model are unavailable.")
+    dlpno_hessian = target_dertype == "hessian" and "dlpno-ccsd(t)" in methods
+    if dlpno_hessian:
+        if core.get_option("DLPNO", "DLPNO_HESSIAN_MODEL"):
+            if user_dertype not in (None, 2):
+                raise ValidationError("DLPNO_HESSIAN_MODEL requires analytic dertype=2; numerical fallback is disabled.")
+            from .procrouting.response.dlpno_hessian import validate_settings
+            validate_settings()
+        elif core.get_option("DLPNO", "DLPNO_GRADIENT_MODEL"):
+            raise ValidationError("Hessians of the DLPNO gradient model require DLPNO_HESSIAN_MODEL=true.")
     if dlpno_gradient and user_dertype == 0:
         raise ValidationError("DLPNO-CCSD(T) gradients must be analytic; finite differences are unavailable.")
 
@@ -232,6 +238,8 @@ def negotiate_derivative_type(
         mode = sort_derivative_type(target_dertype, highest_analytic_dertype, user_dertype, proc_messages, verbose)
         if dlpno_gradient and mode != (1, 1):
             raise ValidationError("DLPNO-CCSD(T) gradients must be analytic; finite differences are unavailable.")
+        if dlpno_hessian and core.get_option("DLPNO", "DLPNO_HESSIAN_MODEL") and mode != (2, 2):
+            raise ValidationError("DLPNO_HESSIAN_MODEL requires analytic second-derivative integrals; numerical fallback is disabled.")
         return mode
 
 
