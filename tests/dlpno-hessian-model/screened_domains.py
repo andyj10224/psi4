@@ -233,22 +233,24 @@ def run(path):
         routing = str(exc)
     else:
         raise AssertionError('A new analytic driver must pass screened Hessian validation first.')
-    blockers = ['No complete screened nuclear Hessian was assembled or compared to gradients.',
-                'Screened full-matrix reciprocity and rigid-motion validation remain outstanding.']
+    blockers = ['Only selected complete screened columns are validated; full matrices and broader core/triplet coverage remain.',
+                'Full-matrix reciprocity and rigid-motion validation remain outstanding.']
     if local['debug_probes_above_1e_minus8']:
         blockers.append('A native synthetic PNO operator probe exceeds its old tolerance.')
     result = dict(graph_only=graph, local_domains=local, coordinates_bohr=mol.geometry().np.tolist(),
                   screening=SCREENING, model_energy=energy, ordinary_energy=ordinary,
                   model_corrections=model_corrections, ordinary_corrections=corrections,
                   analytic_driver_rejection=routing, screened_hessian_validated=False,
+                  screened_columns_tested_separately=True,
                   production_ready=False, blockers=blockers,
                   functional_scope='The gradient model now includes eliminated SC-MP2 and dipole estimates '
                                    'with analytic gradients. Their mixed correction kernels are tested in '
                                    'screened_corrections.py. Screened first PNOs, coupled LMP2, final PNOs and both '
                                    'PNO-loss curvatures are tested separately in screened_final_pno.py. '
                                    'Screened CCSD residual and TNO/triples molecular inputs have selected block '
-                                   'validation in screened_ccsd_mixed.py and screened_triples_mixed.py; '
-                                   'complete screened CCSD(T) Hessians remain unsupported.')
+                                   'validation in screened_ccsd_mixed.py and screened_triples_mixed.py. Complete '
+                                   'screened columns are tested against native analytic gradients in screened_column.py; '
+                                   'full screened matrices and public analytic Hessian routing remain unvalidated.')
     Path(path).write_text(json.dumps(result, indent=2)+'\n')
     print(json.dumps({k: result[k] for k in ('screened_hessian_validated', 'production_ready', 'blockers')}, indent=2))
     return result

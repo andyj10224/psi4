@@ -2151,3 +2151,135 @@ Raw reciprocity, rigid-motion identities and production scaling also
 require validation. The public
 analytic Hessian request continues to fail explicitly. No full screened
 Hessian or general frozen-core triples validation is claimed here.
+
+27. Complete screened analytic Hessian column
+The molecular blocks of Sections 23--26 now assemble a complete column of
+the same all-strong, single-TNO-space ordinary iterative CCSD(T) gradient
+model. The reference RHF column includes nuclear repulsion. All correlation
+inputs are analytic derivatives at the same reference geometry, with the
+native discrete selections and physical parent spans fixed.
+
+27.1. Seven contributions and stationary amplitude elimination
+The total energy and its column are decomposed as
+\begin{align}
+ E&=E_{\rm RHF}+E_{\rm CC}+E_{(T)}+E_{\rm PNO,1}+E_{\rm PNO,2}
+                  +E_{\rm SC}+E_{\rm dip},\\
+ H_{uv}&=H^{\rm RHF}_{uv}+H^{\rm CC}_{uv}+H^{(T)}_{uv}
+        +E_{\rm PNO,1}^{uv}+E_{\rm PNO,2}^{uv}
+        +E_{\rm SC}^{uv}+E_{\rm dip}^{uv}.
+ \label{eq:screened-complete-column}
+\end{align}
+Each reconstructed energy component and their sum must reproduce the
+native forward state. The two PNO terms use solved first/mixed coupled
+LMP2 amplitudes; their combined curvature is also checked against the
+stationary PNO-loss adjoint. The excluded-pair and dipole terms are the
+already corrected unique-pair functionals of Section 23. No extra pair
+multiplicity is applied at this final summation.
+
+Let $b_{\rm CC}^{uv}$ be the affine mixed CCSD residual source of Section 26,
+with CCSD $t^{uv}=0$. For the native CCSD contraction define
+\begin{equation}
+ \langle\lambda,r\rangle_{\rm CC}
+ =\sum_i\lambda_{1,i}:r_{1,i}
+   +\sum_{i\leq j}\left(1-\frac{\delta_{ij}}2\right)
+       \lambda_{2,ij}:r_{2,ij}.
+\end{equation}
+The triples-only multiplier is $\lambda_T$, and the retained-energy
+multiplier is isolated by $\lambda_E=\lambda_{\rm native}-\lambda_T$.
+Thus the native sourced multiplier is counted exactly once:
+\begin{align}
+ H^{\rm CC}_{uv}
+ &= E_{\rm CC}^{uv}\big|_{t^{uv}=0}
+       +\langle\lambda_E,b_{\rm CC}^{uv}\rangle_{\rm CC},\\
+ H^{(T)}_{uv}
+ &=\mathcal H^{(T)}_{uv}\big|_{t^{uv}=0}
+       +\langle\lambda_T,b_{\rm CC}^{uv}\rangle_{\rm CC}.
+\end{align}
+The retained energy uses the same locally refitted OV panels and exact
+pair metric inverse as the screened CCSD residual, including projected
+singles and unique-pair energy weights. The two multiplier contractions
+retain the diagonal half weight above; it is distinct from energy pair
+weights and from the unweighted PNO-loss adjoint convention.
+
+For clarity, collect all triplets into $T_3,Z_3$ with native rectangular
+transfers and ordered slot permutations inside $B$. Write
+\begin{equation}
+ BT_3+W=0,\qquad B^{\mathsf T}Z_3+e(V)=0,\qquad E_{(T)}=e(V):T_3,
+\end{equation}
+where $e$ is the implemented spin-adapted energy-moment map. At fixed
+reference $T_3,Z_3$, first right/left sources are
+\begin{align}
+ b^u_3&=W^u+B^uT_3,& c^u_3&=e(V)^u+(B^u)^{\mathsf T}Z_3,\\
+ BT_3^v&=-b^v_3,& B^{\mathsf T}Z_3^v&=-c^v_3.
+\end{align}
+The complete trial-path triples curvature is
+\begin{align}
+ \mathcal H^{(T)}_{uv}
+ &=e(V)^{uv}:T_3+Z_3:(W^{uv}+B^{uv}T_3)\nonumber\\
+ &\quad+c^u_3:T_3^v+Z_3^v:b^u_3.
+ \label{eq:screened-triples-column}
+\end{align}
+Only one right and one left triples solve are needed for the fixed column
+$v$. Each row $u$ supplies first sources and mixed molecular blocks.
+The older first-order TNO selection and moment kernels build these sources;
+their frame derivatives must agree with the mixed provider's chart within
+$2\times10^{-8}$. Native triples residual, adjoint and energy replays remain
+active. Cached column molecular/amplitude derivatives are checked for
+consistency across rows. No triples or CCSD mixed amplitude is sampled.
+
+27.2. First-energy replay and independent column reference
+Before comparing Hessians, differentiate each energy component once.
+In particular,
+\begin{equation}
+ E_{(T)}^u=e(V)^u:T_3+Z_3:b^u_3.
+\end{equation}
+The sum of the seven first derivatives must equal the independently
+assembled native analytic Cartesian gradient to $2\times10^{-8}$
+hartree/bohr for every row. This checks that the Hessian differentiates
+the intended complete functional, rather than a subset of corrections.
+
+For verification only, independently reconverge the native wavefunction
+at $R\pm h e_v$ and evaluate its analytic gradient $g$:
+\begin{equation}
+ C_v(h)=\frac{g(R+h e_v)-g(R-h e_v)}{2h},\qquad
+ C_v^{[4]}(h)=\frac{4C_v(h/2)-C_v(h)}3.
+\end{equation}
+Use $h=0.004$ bohr and compare the already saved analytic column against
+$C_v^{[4]}$ at $2\times10^{-7}$ hartree/bohr$^2$. Native occupied matching,
+pair/triplet domains, ranks, edges and physical parent spans are verified
+at all four displaced points. No symmetrization or rigid-motion projection
+is applied to the assembled column. Selected retained-CCSD and triples
+contributions are also compared separately against differences of first
+energy derivatives from the older PNO/LMP2/CCSD response kernels.
+
+The complete H2 column has 24 rows and displaces the first H atom along
+$z$ ($v=2$). It is tested for Boys and Mulliken PM. The frozen-core LiH
+column has 18 rows and displaces the first H along $z$ ($v=5$).
+The largest total errors are $2.57\times10^{-9}$, $4.57\times10^{-9}$ and
+$1.65\times10^{-9}$ hartree/bohr$^2$, respectively. These fixtures retain
+both PNO truncation stages and nonzero excluded SC-MP2/dipole estimates.
+H2 has six screened repeated-index triplets; LiH has no retained triples
+and supplies diagonal frozen-core retained-pair coverage only.
+
+27.3. Column identities and release boundary
+For $v=(C,\beta)$, differentiating zero total force and zero total torque
+provides identities that can be checked from one complete column:
+\begin{align}
+ \sum_A H_{A\alpha,C\beta}&=0,\\
+ \sum_A R_A\mathbin{\times}H_{A,C\beta}
+             +e_\beta\mathbin{\times}g_C&=0.
+\end{align}
+The gradient term in the rotation identity is required away from a
+stationary geometry. Translation and rotation acceptances are
+$2\times10^{-7}$ in their corresponding atomic units. Observed maxima are
+below $3\times10^{-13}$ and $1.3\times10^{-12}$, respectively. Independent
+reversed row/column calculations check selected raw reciprocal entries;
+a few such entries do not establish full-matrix symmetry.
+
+This is the first complete screened column validation. Full screened
+matrices and broader coverage of cores, triplets and ranks remain separate
+work. Equilibrium vibrations, AO and Fock screening, and scaling also
+require further validation.
+The current input harness still materializes dense AO derivative tensors.
+The public analytic Hessian route remains disabled. Numerical references
+and original raw differences are retained in the column JSON and milestone 30.

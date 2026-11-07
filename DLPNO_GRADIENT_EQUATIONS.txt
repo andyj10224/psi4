@@ -589,3 +589,23 @@ Selected screened CCSD source checks pass for Boys/PM H2 and frozen-core LiH;
 TNO/moment checks pass for H2, while LiH has no retained triples. This is
 input-block validation. Complete screened Hessian assembly, full-matrix
 checks and public analytic Hessian routing remain outstanding.
+
+
+10.11. Complete screened column follow-up
+The Hessian assembler now combines the RHF reference, retained CCSD,
+ordinary iterative triples, both PNO losses and the two excluded-pair
+corrections into a complete screened Cartesian column. The retained-energy
+multiplier is the native sourced CCSD multiplier minus the triples-only
+multiplier, so their sum counts the native CCSD adjoint exactly once.
+CCSD residual contractions retain diagonal-pair half weights; the final
+energy-component sum adds no extra pair factors.
+
+The seven independently formed first-energy contributions reproduce this
+native analytic gradient for every tested row. Complete columns agree
+with independently reconverged analytic-gradient differences for Boys/PM
+H2 and frozen-core LiH, with maximum error below
+$4.57\times10^{-9}$ hartree/bohr$^2$. The complete column also satisfies
+translation and off-equilibrium rotation identities without projection.
+Hessian Section 27 records the assembly and tests. These results change no
+native gradient equation or public derivative routing. Full screened
+matrices and broader coverage remain necessary for general Hessian delivery.

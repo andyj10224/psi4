@@ -1,0 +1,115 @@
+"""Assemble a screened RHF DLPNO-CCSD(T) Hessian column on a fixed branch.
+
+This diagnostic consumes analytic molecular inputs at one geometry and a
+native analytic RHF column. It performs no coordinate sampling and does not
+register a public Hessian route. The current input delivery is not a scaling
+implementation. All retained pairs are strong, with ordinary single-space T.
+"""
+import numpy as np
+
+from .dlpno_ccsd_curvature import RetainedCCSDCurvature, project_retained_ccsd_energy
+from .dlpno_ccsd_response import TriplesCCSDAdjoint
+from .dlpno_pno_curvature import pno_truncation_energy
+from .dlpno_screened_pno import screened_pno_response
+from .dlpno_screened_ccsd import screened_ccsd_response
+from .dlpno_screened_triples import ScreenedTriplesInputs
+from .dlpno_screened_curvature import screened_pair_curvature
+from .dlpno_triples_response import TriplesHessianColumn
+
+
+COMPONENTS=('rhf','retained_ccsd','iterative_triples','initial_pno_loss',
+            'final_pno_loss','screened_scmp2','dipole_pairs')
+
+
+def retained_inputs(response):
+    """Retained energy uses the exact same local OV factors as the residual."""
+    fit=response['fitting'];electronic=response['electronic']
+    pairs={p:electronic(('pno',p)) for p in response['base'][1]}
+    one=[electronic(('t1',i)) for i in range(len(response['base'][0]))]
+    two={p:electronic(('t2',p)) for p in pairs}
+    def pair_fit(p):
+        _,ov,*_=fit.projected(p);domain=fit.pair_occ[p]
+        return (fit.df(fit.pair_aux[p])[0],
+                ov.slice((slice(None),domain.index(p[0]),slice(None))),
+                ov.slice((slice(None),domain.index(p[1]),slice(None))))
+    return electronic('lmo'),pairs,fit.S,electronic('fock'),one,two,pair_fit
+
+
+def triples_first_energy(direction):
+    return sum(np.vdot(direction.energy_seed_tangents[r],direction.amplitudes[r])+
+               np.vdot(direction.adjoints[r],direction.right_source[r]) for r in direction.edges)
+
+
+class ScreenedHessianColumn:
+    """Cache the reference CCSD adjoints and one right/left triples tangent.
+
+    inputs(u,v) supplies (S,F,L,occupied_action,dipoles,local_df), all analytic
+    MixedBlocks/actions on this reference branch. rhf_column includes nuclear
+    repulsion and follows the same fixed Cartesian order, in hartree/bohr^2.
+    Separate row evaluations are returned without symmetrizing or projection.
+    """
+    def __init__(self,wfn,column,inputs,rhf_column):
+        from psi4 import core
+        self.wfn,self.coordinate,self.inputs=wfn,column,inputs
+        self.size=3*wfn.molecule().natom()
+        if not 0<=column<self.size:
+            raise ValueError('Invalid Hessian column coordinate.')
+        self.rhf=np.asarray(rhf_column,dtype=float).copy()
+        if self.rhf.shape!=(self.size,) or not np.isfinite(self.rhf).all():
+            raise ValueError('Expected a finite analytic RHF Hessian column.')
+        if abs(wfn.variable('DLPNO LMP2 WEAK PAIR ENERGY'))>1.e-12:
+            raise ValueError('Screened Hessian column requires the all-strong gradient model.')
+        self.rhf_gradient=core.scfgrad(wfn.reference_wavefunction()).np.ravel().copy()
+        self.adjoint=TriplesCCSDAdjoint(wfn)
+        self.retained=RetainedCCSDCurvature(wfn,self.adjoint)
+        self.reference=self._prepare(column)
+        self.column=TriplesHessianColumn(self.reference['triples'].first_direction(2))
+
+    def _prepare(self,u):
+        S,F,L,D,dip,df=self.inputs(u,self.coordinate)
+        pno=screened_pno_response(self.wfn,S,F,L,D,df)
+        response=screened_ccsd_response(self.wfn,pno,S,F,L,D,df)
+        triples=ScreenedTriplesInputs(self.wfn,response['fitting'])
+        corrections=screened_pair_curvature(self.wfn,S,F,L,D,dip,df)
+        initial=pno_truncation_energy(pno.initial,{})
+        final=pno_truncation_energy({},pno.final)
+        np.testing.assert_allclose(initial.uv+final.uv,pno.stationary_loss,atol=2.e-10,rtol=0.)
+        args=retained_inputs(response)
+        retained=project_retained_ccsd_energy(*args)
+        values=[retained.value,initial.value,final.value,corrections['SCMP2'].value,corrections['DIPOLE'].value]
+        names=['DLPNO RETAINED CCSD CORRELATION ENERGY','DLPNO INITIAL PNO TRUNCATION ENERGY',
+               'DLPNO FINAL PNO TRUNCATION ENERGY','DLPNO SC-LMP2 PAIR ENERGY','DLPNO DIPOLE ENERGY']
+        np.testing.assert_allclose(values,[self.wfn.variable(k) for k in names],atol=2.e-10,rtol=0.)
+        np.testing.assert_allclose(self.wfn.reference_wavefunction().energy()+sum(values)+
+            self.wfn.variable('(T) CORRECTION ENERGY'),self.wfn.energy(),atol=2.e-10,rtol=0.)
+        return dict(response=response,triples=triples,corrections=corrections,pno=pno,
+                    initial=initial,final=final,retained=retained,args=args)
+
+    def element(self,u):
+        if not 0<=u<self.size:
+            raise ValueError('Invalid Hessian row coordinate.')
+        data=self.reference if u==self.coordinate else self._prepare(u)
+        response=data['response'];triples=data['triples']
+        # A cached column solve is valid only for the same first molecular and
+        # amplitude direction. Check it independently of this row's mixed data.
+        for key in ('lmo','fock',*[('t1',i) for i in range(len(response['base'][0]))],
+                    *[('t2',p) for p in response['base'][1]],*[('pno',p) for p in response['base'][1]]):
+            np.testing.assert_allclose(response['electronic'](key).v,
+                self.reference['response']['electronic'](key).v,atol=2.e-9,rtol=0.,
+                err_msg='Inconsistent cached column direction')
+        row=self.column.direction if u==self.coordinate else triples.first_direction(1)
+        residual=([x.uv for x in response['residual'][0]],{p:x.uv for p,x in response['residual'][1].items()})
+        retained=self.retained.element(*data['args'],residual)
+        triple=self.column.ccsd_stationary_element(row,lambda i,j:triples.occupied(i,j).uv,
+            triples.mixed_row,lambda r,q:triples.edge(r,q).uv,self.adjoint,residual)
+        values=np.array([self.rhf[u],retained,triple,data['initial'].uv,data['final'].uv,
+                         data['corrections']['SCMP2'].uv,data['corrections']['DIPOLE'].uv],dtype=float)
+        first=np.array([self.rhf_gradient[u],data['retained'].u,triples_first_energy(row),
+                        data['initial'].u,data['final'].u,data['corrections']['SCMP2'].u,
+                        data['corrections']['DIPOLE'].u],dtype=float)
+        if not np.isfinite(values).all() or not np.isfinite(first).all():
+            raise ValueError('Nonfinite screened Hessian or first-energy contribution.')
+        return dict(components=values,gradient_components=first,
+                    cc_residual_errors=response['residual_errors'],pno_residual_errors=data['pno'].residual_errors,
+                    triples_right_residual=self.column.tangent.residual,
+                    triples_left_residual=self.column.tangent.adjoint_residual)
