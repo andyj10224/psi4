@@ -6,6 +6,8 @@
 
 **Next piece.** Complete the screened mixed PNO/CCSD molecular inputs and validate full screened Hessians. The two screened correction curvature kernels are analytic and tested separately, but public analytic Hessian routing remains unavailable. See the cumulative [Hessian working memory](DLPNO_HESSIAN_WORKING_MEMORY.md) and [complete working equations](DLPNO_HESSIAN_EQUATIONS.txt). Historical entries below retain the capabilities and limitations of their original checkpoints.
 
+**Gradient equation record.** [Complete gradient equations (.txt)](DLPNO_GRADIENT_EQUATIONS.txt) · [Typesetting source (.tex)](DLPNO_GRADIENT_EQUATIONS.tex). Section 10 contains the self-contained screened-pair derivation: energy definition and counting, amplitude adjoints, crude local fits/refits, PAO parents, dipole moments and moving centroids, and the total Cartesian assembly. Regenerate the text with `python tests/dlpno-hessian-model/export_equations.py --record gradient`; add `--check` to verify synchronization. `--record all --check` checks both equation records. Every display equation and the gradient's mathematical shorthand definitions are preserved.
+
 ## Implementation history
 
 ### 2026-11-06 · Codex · Ordinary triples adjoint and explicit DF derivatives
@@ -169,7 +171,7 @@ On those runs the largest combined first-PNO operator check was 2.55 × 10⁻¹�
 
 ## Updating the bank
 
-Append a dated entry for each implementation piece. Record the contributor, implementation commit, changes, checks actually run, discrepancies, and next open item. Keep earlier measurements tied to their original commits. Use canonical DF-CCSD(T) as the nuclear-gradient comparison. Reserve any frozen-structure DLPNO nuclear finite-difference check for zero-cutoff DLPNO-CCSD.
+Append a dated entry for each implementation piece. Record the contributor, implementation commit, changes, checks actually run, discrepancies, and next open item. Keep earlier measurements tied to their original commits. Use canonical analytic DF-CCSD(T) to verify the zero-cutoff limit. For finite local cutoffs, distinguish truncation differences from derivative errors: independent numerical validation may difference fully reconverged energies of the same functional, with explicit native domain/rank/branch checks and recorded step sizes. Numerical validation does not replace analytic production derivatives or authorize driver fallback. This current protocol supersedes the earlier zero-cutoff-only validation restriction; historical entries below retain the checks actually performed then.
 
 ## 2026-11-06 — Occupied PAO projection and frozen-core correlation source
 
@@ -226,6 +228,50 @@ Added Andy's requested Natasha Bedingfield quotation to successful public DLPNO-
 
 ### 2026-11-07 · Screened dipole and crude SC-MP2 gradients
 
-The dipole estimate's -4 prefactor already counts both occupied orientations. Its mirrored storage was accumulated twice; the shared energy accumulator now uses i<j. Crude SC-MP2 counting was correct. Both formerly omitted estimates now enter the gradient-model energy and native analytic gradient, including original crude local refits, auxiliary/three-center integral derivatives, PAO parents, Fock/denominator response, dipole transition moments and centroids, explicit AO dipole derivatives, and the common orbital/localization adjoints. Detailed snapshots are optional under `DLPNO_KEEP_LMP2_RESPONSE`.
+**Implementation.** [6a517440](https://github.com/andyj10224/psi4/commit/6a51744038c7ceaa0f92055a7a45b64deaac4c1c), based on `052c494c`. This entry is the gradient counterpart of Hessian milestone 26. The subsequent documentation expansion makes the gradient derivation self-contained in Section 10 of `DLPNO_GRADIENT_EQUATIONS.tex` and the complete `.txt` export. Historical omissions above refer to their original implementations and are superseded here.
 
-Nonzero total-gradient tests pass for Boys and Mulliken PM on four H2 molecules and for Boys on a LiH trimer with three frozen core orbitals (maximum selected error 3.21e-10 Eh/bohr). Analytic mixed correction kernels also pass independent energy differences (maximum 2.96e-11 Eh/bohr²); this does not enable a complete screened Hessian. All four targeted CTests pass, including the new unique-pair counting regression. Full formulas, settings, numerical records, failed exploratory checks and remaining scope are in step 26 of `DLPNO_HESSIAN_WORKING_MEMORY.md` and Section 23 of `DLPNO_HESSIAN_EQUATIONS.txt`/`.tex`. These records supersede the historical omission at the start of this log.
+**Corrected counting, before differentiating.** The dipole routine computes a complete unique off-diagonal pair energy with prefactor -4, then mirrors it into ij and ji storage. The old accumulator summed both copies. Accumulation now uses i<j, so every excluded dipole pair contributes once. The native screening bound, estimate stored for lookup and pair classification are unchanged. This is the unique-pair convention of Werner, JCP **145**, 201101 (2016), equations 1, 3 and 4, [doi:10.1063/1.4968595](https://doi.org/10.1063/1.4968595). Crude SC-MP2 stores one ordered energy K:(2t-t^T); its sum over both orientations was correct and remains unchanged. The shared dipole correction also affects the corresponding DOCC–DOCC energy path in open-shell code; new derivative support is RHF only.
+
+**Expanded gradient functional.** Both formerly zeroed estimates now enter the energy returned with the analytic gradient: RHF + retained CCSD + ordinary iterative (T) + first/final PNO truncation losses + eliminated crude SC-MP2 + distant dipole estimates. Every surviving pair is still strong and allowed triplets use one common TNO cutoff. This matches the ordinary energy when those retained-pair/triples settings are matched; it does not equate all ordinary default choices to the gradient model. Pair/domain membership, retained ranks, screening masks and selected parent spans are locally fixed during differentiation.
+
+| Contribution | Forward unique-pair energy | Analytic gradient response |
+|---|---|---|
+| Excluded crude SC-MP2 | 2 K:(2t-t^T) | Amplitude adjoint; occupied and full virtual Fock matrices; original crude PAO parents, local auxiliary metric and three-center panels; occupied AO overlap refits; normalized PAOs |
+| Distant dipole | 4 K:t, with negative MP2 denominators | Rectangular amplitude adjoint; both virtual parents and occupied denominators; transition moments; moving orbital centroids and their dipole interaction tensor; explicit AO dipole integrals |
+| Shared orbital response | Combined sources from the complete energy | PAO normalization and occupied projector, including frozen core; frozen/active partition; Boys or Mulliken-PM localization and RHF adjoints |
+
+**Implementation mapping.** [screened_pair_response.cc](psi4/src/psi4/dlpno/screened_pair_response.cc) forms the excluded-pair response before the crude domains are overwritten. Its SC-MP2 part contracts explicit metric/three-center nuclear derivatives using the original domains and native AO screening decisions, finishes the original occupied refit reverse, and saves the remaining sparse covectors. The dipole part adds the two-parent Fock/overlap, transition-moment, centroid and direct occupied sources. [triples.cc](psi4/src/psi4/dlpno/triples.cc) merges these covectors before the common PAO-normalization reverse. [occupied_projection.cc](psi4/src/psi4/dlpno/occupied_projection.cc) includes the direct dipole LMO source in the response action and independent diagnostic. The three extra Cartesian arrays enter [assemble_cartesian_gradient](psi4/driver/procrouting/response/dlpno_orbital.py), which the public driver uses.
+
+| Reported quantity | Meaning |
+|---|---|
+| `DLPNO SC-LMP2 PAIRS AUXILIARY METRIC GRADIENT` | Explicit crude correlation-fitting metric derivative at fixed electronic data |
+| `DLPNO SC-LMP2 PAIRS THREE-CENTER GRADIENT` | Explicit crude three-center integral derivative at fixed electronic data |
+| `DLPNO DIPOLE PAIRS EXPLICIT GRADIENT` | Explicit nuclear AO dipole-integral derivative at fixed electronic data |
+| `DLPNO SCREENED SC-MP2 REPLAY ERROR` | Maximum discrepancy between unique-pair response replay and twice the stored ordered SC-MP2 energy |
+| `DLPNO DIPOLE PAIR REPLAY ERROR` | Absolute discrepancy between the unique dipole response replay and accumulated forward energy |
+
+The first three arrays are in Eh/bohr. They are **not individually relaxed correction gradients**: the orbital, denominator, local-parent and localization contributions are included through the combined adjoints. In particular, the explicit dipole-energy term and the Boys-localization operator term have different sources and both are required. Adding the explicit term alone would be incomplete; adding a separate orbital correction after solving the combined adjoints would double count response.
+
+`core.dlpno_screened_pair_state(wfn)` returns copied original crude AO lists, excluded unique pair lists, dipole PAO lists/parents and SC-MP2 pair PAO/auxiliary lists, raw panels and parents. It requires `DLPNO_KEEP_LMP2_RESPONSE`. The gradient itself does not require this snapshot option. Temporary sparse covectors are released after merging. The snapshot excludes AO Schwarz masks. The native three-center DEBUG replay now avoids unavailable crude OO/VV arrays when their densities are zero; this changes the diagnostic access, not the derivative contraction.
+
+**Nonzero numerical validation.** [screened_corrections.py](tests/dlpno-hessian-model/screened_corrections.py) checks two selected total-gradient coordinates per fixture against fully reconverged native energies at ±0.004/±0.002 bohr, with Richardson extrapolation and an unchanged 2e-8 Eh/bohr tolerance. Occupied orbitals are matched before comparing actual pair/triplet/domain lists, PNO/TNO ranks, response edges and physical parent spans. Equivalent redundant Cholesky pivot changes are accepted only if the transported and actual AO projectors agree. Every fixture exercises one excluded dipole pair and two excluded SC-MP2 pairs. Net total force and torque pass at 2e-8 in the corresponding atomic units.
+
+| Fixture | Localizer / core | Coordinates checked (zero-based) | Maximum total-gradient error (Eh/bohr) |
+|---|---|---|---:|
+| Four H2 / cc-pVDZ | Boys / all electron | 2, 18 | 4.08473e-11 |
+| Four H2 / cc-pVDZ | Mulliken PM / all electron | 2, 18 | 5.90954e-11 |
+| Three LiH / def2-SVP | Boys / three frozen Li 1s | 5, 12 | 3.20984e-10 |
+
+The H2 chain places molecular centers at x=0,3.5,7,10.5 Å with H atoms at z=±0.37 Å, using cc-pVDZ-JKFIT/RI. The LiH chain places Li at x=0,6,12 Å and H 1.6 Å above each Li, using def2-universal-JKFIT and def2-SVP-RI. H2 uses pair and dipole screening cutoffs 1e-6; LiH uses pair cutoff 1e-4, dipole cutoff 1e-5 and T_CUT_DO_IJ=1e-3. Other local-domain/convergence settings are explicit in the test and its `configure()` helper. These are coverage fixtures, not recommended accuracy presets.
+
+The Boys H2 SC-MP2/dipole energies are approximately -1.35280068e-6/-5.89927567e-8 Eh; the LiH values are -4.28563586e-5/-2.80892832e-7 Eh. Matched ordinary/model energies agree in every fixture. [screened_corrections_results.json](tests/dlpno-hessian-model/screened_corrections_results.json) preserves full geometry, native lists, correction energies, reference gradients and numerical comparisons. The final compiled H2 Boys rerun reproduced the recorded results exactly.
+
+    python tests/dlpno-hessian-model/screened_corrections.py --system chain --localization BOYS
+    python tests/dlpno-hessian-model/screened_corrections.py --system chain --localization PIPEK_MEZEY
+    python tests/dlpno-hessian-model/screened_corrections.py --system lih --localization BOYS
+
+The same script independently checks both correction first derivatives and three mixed correction entries per fixture. Maximum correction curvature error is 2.95374e-11 Eh/bohr², below 2e-9. Its analytic kernels use original crude domains and require AO Schwarz screening off; the native gradient does not share that additional restriction. These are correction-only Hessian tests. The full screened PNO/CCSD molecular providers remain unsupported and public analytic Hessian routing remains disabled.
+
+**Regression and failed attempts.** All four targeted CTests passed after implementation: `dfccsd-t-grad1`, `dlpno-grad-model`, `dlpnocc-1`, `dlpnolocal-1` (35.31 seconds). The expanded gradient-model test independently reconstructs the unique dipole energy and checks SC-MP2 ordered multiplicity, requiring both correction sets to be nonempty. The first build hit a unity helper-name ambiguity, resolved by explicit namespace qualification. The first LiH setup lacked the requested cc-pVDZ-JKFIT basis; it was switched to the complete def2 combination. Initial LiH screens produced no excluded dipole pair and failed coverage; the explicit cutoffs above exercise both terms. No acceptance tolerance was relaxed. No new Lean proof or complete-gradient scaling result is claimed.
+
+**Documentation follow-up and next work.** The gradient record now contains the full new derivation locally, with a complete `.txt` export synchronized to its `.tex` source. The expanded gradient source compiles cleanly to nine pages, and the complete 546-line text export preserves every display equation and shorthand definition. Both gradient and Hessian export synchronization checks, Python syntax and whitespace checks pass. This follow-up changes documentation/export tooling only; the implementation tests above refer to `6a517440` and are not presented as new calculations. Continue with screened PNO/CCSD mixed molecular delivery and the unresolved synthetic PNO operator probe recorded in Hessian milestone 25, then validate complete screened Hessians before changing public routing. Open-shell gradients, unresolved IBO gauge/metric response and end-to-end scaling remain separate work.

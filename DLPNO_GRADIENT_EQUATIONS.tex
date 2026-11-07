@@ -12,8 +12,9 @@
 This is a cumulative implementation record. Equation labels identify new
 derivative rules. The forward energy, amplitudes, local transformations and
 published Lambda equations retain the definitions of Jiang et al.\ (2024)
-and T\'oth et al.\ (2026). This edition covers propagation from the raw PAO
-and occupied-operator sources to the AO and orbital inputs. All differentials
+and T\'oth et al.\ (2026). This edition includes the complete screened-pair gradient contribution
+and its propagation from raw PAO and occupied-operator sources to the
+AO and orbital inputs. All differentials
 hold pair lists, ranks, and the identities of the frozen orbitals fixed.
 \section{Indices and derivative convention}
 As in Jiang, $\mu,\nu,\lambda,\sigma$ label AOs, $\tilde\nu$ a PAO
@@ -285,31 +286,258 @@ $\langle P_+-P_-,h'\rangle$. Each kernel call computes all Cartesian
 components together with the shell-pair screening and metric conditioning
 of the DF-SCF gradient.
 \section{Screened dipole and crude semicanonical-MP2 corrections}
-The gradient model now includes the previously omitted excluded-pair
-energies. For each unique off-diagonal pair, the crude SC-MP2 contribution
-is $2K:(2t-t\T)$, while the dipole contribution is $4K:t$, with
-$t_{ab}=K_{ab}/(f_{ii}+f_{jj}-\epsilon_a-\epsilon_b)$ at the semicanonical
-reference. The dipole estimate's factor four already includes both occupied
-orientations; mirrored storage must be accumulated only once. The ordinary
-SC-MP2 ordered-pair accumulator is unchanged.
+\label{sec:screened-gradient}
+This section records the implementation in commit \texttt{6a517440}.
+The closed-shell RHF gradient-model energy now includes both estimates:
+\begin{align}
+ E_{\rm grad}&=E_{\rm RHF}+E_{\rm retained\ CCSD}+E_{\rm iterative\ (T)}
+ +\Delta E_{\rm PNO}^{\rm first}+\Delta E_{\rm PNO}^{\rm final}\notag\\
+ &\quad+\sum_{\{ij\}\in\mathcal C}E_{\{ij\}}^{\rm SC}
+       +\sum_{\{ij\}\in\mathcal D}E_{\{ij\}}^{\rm dip}.
+ \label{eq:gradient-screened-functional}
+\end{align}
+The disjoint sets $\mathcal D$ and $\mathcal C$ contain, respectively,
+pairs excluded at dipole/DOI prescreening and pairs subsequently excluded
+by crude semicanonical MP2. Each contains unique off-diagonal pairs $i<j$.
+Their membership, AO/PAO/auxiliary lists and parent pivot spans are fixed
+while the electronic orbitals and integrals respond. No derivative of a
+threshold decision is an energy term on this smooth branch. Every surviving
+pair remains strong, and all allowed triplets use the common TNO cutoff;
+ordinary/model energy agreement also requires matching those choices.
 
-The native reverse differentiates the original crude local metric and
-three-center panels before their domains are overwritten. It merges their
-PAO, Fock, metric and refitted-LMO covectors with the sources above. The
-dipole reverse additionally produces a direct occupied source $B_{\rm dip}$
-and explicit AO dipole-integral covectors $D_k$. Thus extend
-Eq.~\eqref{eq:sources} by
+\subsection{Pair counting and the corrected dipole energy}
+For one pair put $o=f_{ii}+f_{jj}$, with $f_{ii}=L_i\T F L_i$.
+In orthonormal local virtual parents define
+\begin{equation}
+ \mathcal A_{ij}(t)=o t-F_i t-t F_j=K,\qquad
+ t_{ab}=\frac{K_{ab}}{o-\epsilon_a-\epsilon_b}
+ \quad\hbox{at the semicanonical reference}.
+ \label{eq:gradient-screened-amplitudes}
+\end{equation}
+For crude SC-MP2 both virtual slots use the same pair parent,
+$F_i=F_j=F_p$, and $\mathcal S(t)=2t-t\T$. Native storage contains
+\begin{equation}
+ e_{ij}^{\rm SC}=\ip K{\mathcal S(t)},\qquad
+ e_{ji}^{\rm SC}=e_{ij}^{\rm SC},\qquad
+ E_{\{ij\}}^{\rm SC}=2\ip K{\mathcal S(t)}.
+ \label{eq:gradient-sc-counting}
+\end{equation}
+Its existing sum over ordered pairs was correct.
+
+The distant dipole estimate uses different parents $Y_i,Y_j$, the three
+electronic AO dipole matrices $\mu_k$, and the forward sign convention:
+\begin{align}
+ r_{i,k}&=L_i\T\mu_k L_i,& d_{i,ka}&=L_i\T\mu_k Y_{i,a},\\
+ \mathbf R&=\mathbf r_i-\mathbf r_j,& \rho&=\mathbf R\T\mathbf R,\\
+ A(\mathbf R)&=\rho^{-3/2}I-3\rho^{-5/2}\mathbf R\mathbf R\T,&
+ K&=d_i\T A(\mathbf R)d_j,\\
+ E_{\{ij\}}^{\rm dip}&=4\ip Kt
+ =-4\sum_{ab}\frac{K_{ab}^2}{\epsilon_a+\epsilon_b-o}.&&
+ \label{eq:gradient-dipole-counting}
+\end{align}
+This is already the complete unique-pair estimate, consistent with Werner,
+J. Chem. Phys. 145, 201101 (2016), Eqs. 1, 3 and 4,
+doi:10.1063/1.4968595. The old code mirrored this value into $ij$ and $ji$
+and added both. The corrected accumulator adds only $i<j$. The stored
+estimate, its screening bound and the screening test are unchanged.
+The bound selects the branch; it is not substituted for this energy.
+The shared counting fix also affects the corresponding DOCC--DOCC energy
+path in open-shell calculations; the response derived here is RHF only.
+
+\subsection{Amplitude adjoints and Fock sources}
+Use the local scalar Lagrangian
+\begin{equation}
+ \mathcal L_p=E_p+\ip z{K-\mathcal A_{ij}(t)}.
+ \label{eq:gradient-screened-lagrangian}
+\end{equation}
+Here $\mathcal L_p$ is only a notation for this scalar; its residual sign
+is $K-\mathcal A_{ij}(t)$. With symmetric real virtual Fock matrices the
+operator is self-adjoint. In the SC-MP2 case it commutes with transpose.
+Eliminating the amplitude derivative gives
+\begin{align}
+ z_{\rm SC}&=2\mathcal S(t),& \bar K_{\rm SC}&=4\mathcal S(t),\\
+ \bar F_p&=\sym(zt\T+t\T z),& \bar o_{\rm SC}&=-\ip zt,\\
+ z_{\rm dip}&=4t,& \bar K_{\rm dip}&=8t,\\
+ \bar F_i&=\sym(zt\T),& \bar F_j&=\sym(t\T z),\qquad
+ \bar o_{\rm dip}=-\ip zt.
+ \label{eq:gradient-screened-bars}
+\end{align}
+Both occupied diagonals receive $\bar f_{ii}\mathrel{+}=\bar o$ and
+$\bar f_{jj}\mathrel{+}=\bar o$. For example the dipole differential is
+\begin{equation}
+ dE_{\{ij\}}^{\rm dip}=\ip{\bar K}{dK}+\ip{\bar F_i}{dF_i}
+                  +\ip{\bar F_j}{dF_j}+\bar o\,do.
+\end{equation}
+Keep the full virtual Fock covectors, including their off-diagonal entries.
+They include the effects otherwise attributed to semicanonical frame
+rotation, without dividing by within-space virtual energy differences.
+The code rejects amplitude denominators with magnitude at most $10^{-12}$.
+
+\subsection{Crude local density fitting and occupied refits}
+For an excluded SC-MP2 pair let $Q_i,Q_j$ be its original crude panels,
+$J$ its local Coulomb metric and $X$ its PAO-to-orthonormal-parent matrix.
+Then
+\begin{align}
+ b_i&=J^{-1}Q_i,& b_j&=J^{-1}Q_j,& K_0&=Q_i\T b_j,\\
+ K&=X\T K_0 X,& G&=X\bar K X\T.&&
+\end{align}
+The reverse local fitting equations are
+\begin{equation}
+ \bar Q_i=b_jG\T,\qquad \bar Q_j=b_iG,\qquad
+ \bar J=-\sym(b_iG b_j\T).
+ \label{eq:gradient-crude-fit-bars}
+\end{equation}
+Each auxiliary function $q$ uses the actual occupied AO set $A_q$ and
+virtual AO set $B_q$ of its center. Writing $N$ for normalized PAOs and
+$v$ for a PAO label in the pair domain,
+\begin{align}
+ S_{A_qA_q}\widetilde L_i^{,q}&=(SL_i)_{A_q},\\
+ (Q_i)_{qv}&=\sum_{\mu\in A_q,\nu\in B_q}
+       \widetilde L_{\mu i}^{,q}(q|\mu\nu)N_{\nu v}.
+ \label{eq:gradient-crude-panel}
+\end{align}
+The integral sum respects the native AO screening mask. Reverse this
+product into AO three-center, normalized-PAO and fitted-LMO covectors.
+For an incoming fitted-LMO source $\overline{\widetilde L}^{,q}$,
+\begin{equation}
+ Z_q=S_{A_qA_q}^{-\mathsf T}\overline{\widetilde L}^{,q},\qquad
+ \overline{SL}_{A_q}\mathrel{+}=Z_q,\qquad
+ \bar S_{A_qA_q}\mathrel{+}=-\sym(Z_q\widetilde L^{q\mathsf T}).
+ \label{eq:gradient-crude-refit-bars}
+\end{equation}
+The two overlap contributions are distinct: one belongs to the local
+inverse and one to its right-hand side $SL$.
+
+The native code performs these contractions before the crude domains are
+replaced by refined ones. Explicit metric and three-center nuclear terms
+are contracted at that stage; the remaining sparse orbital/Fock/metric
+sources are saved for the common reverse pass. Using later refined lists
+would differentiate a different energy.
+
+\subsection{Local virtual parent and normalized PAO response}
+Let $N$ denote the relevant normalized PAO columns and $M=N\T S N$.
+On the fixed, full-rank Cholesky pivot span, $X\T M X=I$. For any
+projected operator $A_X=X\T A_0X$, its sources are
+\begin{equation}
+ \bar A_0=X\bar A_X X\T,\qquad
+ \bar X\mathrel{+}=A_0X\bar A_X\T+A_0\T X\bar A_X.
+\end{equation}
+Combine all sources on $X$ before applying the parent-metric rule
+\begin{equation}
+ dX=-\tfrac12 X(X\T dM X),\qquad
+ \bar M=-\tfrac12 X\sym(X\T\bar X)X\T.
+ \label{eq:gradient-screened-parent}
+\end{equation}
+This choice fixes a transport gauge; the scalar energy is invariant under
+internal rotations of its complete selected parent. A rank reduction
+inside the selected pivot block requires additional response and is
+rejected by the current parent routine.
+
+Apply the same rules to $F_p=X\T N\T F N X$ and to the separate dipole
+parents. The induced $N\T F N$ and $N\T S N$ sources join the common PAO
+Fock and overlap blocks. Direct moment/DF coefficient sources join the
+normalized-PAO coefficient block. Reverse PAO normalization with
+Eq.~\eqref{eq:normal} before using the raw-PAO formulas
+\eqref{eq:g}--\eqref{eq:s}. The occupied projector includes frozen core.
+Thus frozen orbitals contribute through PAO motion even though the
+screened occupied pair indices themselves are active LMOs.
+
+\subsection{Transition moments, centroids and explicit dipole integrals}
+The dipole coupling gives
+\begin{equation}
+ \bar d_i=A d_j\bar K\T,\qquad
+ \bar d_j=A\T d_i\bar K,\qquad
+ \bar A=d_i\bar K d_j\T.
+\end{equation}
+Differentiating $A(\mathbf R)$ yields
+\begin{align}
+ \overline{\mathbf R}
+ &=-3\rho^{-5/2}\operatorname{tr}(\bar A)\mathbf R
+   -3\rho^{-5/2}(\bar A+\bar A\T)\mathbf R\notag\\
+ &\quad+15\rho^{-7/2}(\mathbf R\T\bar A\mathbf R)\mathbf R,\\
+ \overline{\mathbf r}_i&=\overline{\mathbf R},\qquad
+ \overline{\mathbf r}_j=-\overline{\mathbf R}.
+ \label{eq:gradient-centroid-bar}
+\end{align}
+For either endpoint write $b_k=(\bar d_{k:})\T$, with $Y=NX$ for its
+own local parent. The moment/centroid contributions are
+\begin{align}
+ \bar L^{\rm direct}&\mathrel{+}=\sum_k
+       \{\mu_kYb_k+2\bar r_k\mu_kL\},\\
+ \bar Y^{\rm moment}&=\sum_k\mu_kL b_k\T,\\
+ \bar\mu_k&\mathrel{+}=L(Yb_k)\T+\bar r_kLL\T,\\
+ \bar N&\mathrel{+}=\bar Y^{\rm moment}X\T,\qquad
+ \bar X\mathrel{+}=N\T\bar Y^{\rm moment}.
+ \label{eq:gradient-dipole-moment-bars}
+\end{align}
+The virtual Fock contributions are handled by the preceding parent rules.
+Symmetrizing $\bar\mu_k$ is optional because the AO dipole derivative is
+symmetric. Sum these increments over each unique excluded pair once.
+The electronic dipole operators are used for both Boys and PM references;
+the localization objective does not change the dipole energy formula.
+
+\subsection{Combination with the total Cartesian gradient}
+Let $B_{\rm dip}$ collect the direct occupied covectors and $D_k$ the AO
+dipole covectors. Extend Eq.~\eqref{eq:sources} by
 \begin{equation}
  d\mathcal L_{\rm loc}\mathrel{+}=\ip{B_{\rm dip}}{dL}
-                   +\sum_{k=x,y,z}\ip{D_k}{d\mu_k},\qquad
+                    +\sum_k\ip{D_k}{d\mu_k},\qquad
  \bar L\mathrel{+}=B_{\rm dip}.
+ \label{eq:gradient-screened-assembly-source}
 \end{equation}
-The first source enters the same localization, frozen/active and RHF
-adjoints. Add the explicit dipole contraction and excluded SC-MP2 fitting
-contractions to the total Cartesian gradient. Full reverse formulas,
-moving-centroid derivatives, local-parent response, and the corresponding
-mixed nuclear correction kernels appear in Section 23 of the companion
-Hessian equation record (both the complete text export and TeX source).
-Tests with nonzero corrections cover Boys, Mulliken PM and frozen core.
-They do not establish a complete screened CCSD(T) Hessian.
+All screened-pair sources participate in the existing localization,
+frozen--active and RHF adjoints. Therefore $g^{\rm orb}$ above must be
+formed from the combined sources. With $\mathcal F$ containing CCSD,
+ordinary (T), PNO projector, PNO truncation, LMP2 response and excluded
+SC-MP2 fitting contributions, the complete gradient is
+\begin{equation}
+ g_{A\alpha}=g_{A\alpha}^{\rm RHF}+g_{A\alpha}^{\rm orb}
+ +\sum_{s\in\mathcal F}\left(g_{A\alpha,s}^{\rm metric}
+                         +g_{A\alpha,s}^{\rm three\ center}\right)
+ +\sum_k\ip{D_k}{\mu_k^{A\alpha}}.
+ \label{eq:gradient-screened-total}
+\end{equation}
+The last term is the explicit dipole-energy derivative. For Boys, the
+localization-constraint dipole derivative already contained in
+$g^{\rm orb}$ has a different multiplier and is also required. Neither
+term replaces the other. The screened orbital response is already present
+in the combined adjoints and must not be added a second time.
+
+In code the extra arrays, each in hartree/bohr, are
+\begin{center}
+\begin{tabular}{l}
+\texttt{DLPNO SC-LMP2 PAIRS AUXILIARY METRIC GRADIENT}\\
+\texttt{DLPNO SC-LMP2 PAIRS THREE-CENTER GRADIENT}\\
+\texttt{DLPNO DIPOLE PAIRS EXPLICIT GRADIENT}
+\end{tabular}
+\end{center}
+The first two contain only explicit fitting derivatives at fixed electronic
+data; the third contains only explicit AO dipole derivatives. None is a
+standalone fully relaxed correction gradient. Their orbital response is
+carried by the common adjoints described above.
+
+\subsection{Validation and derivative scope}
+Nonzero screened corrections were tested on four H$_2$/cc-pVDZ molecules
+with Boys and Mulliken PM, and three LiH/def2-SVP molecules with Boys and
+three frozen Li $1s$ orbitals. Each fixture has one excluded dipole pair
+and two excluded SC-MP2 pairs. Two selected total-gradient coordinates per
+fixture agree with independently reconverged energy differences at
+$\pm0.004/\pm0.002$ bohr, Richardson extrapolated, with maximum errors
+$4.09\times10^{-11}$, $5.91\times10^{-11}$ and $3.21\times10^{-10}$
+hartree/bohr, respectively. The acceptance threshold is $2\times10^{-8}$.
+Native domains, pair labels, retained ranks and physical parent spans are
+checked on the displaced branch; net force and torque checks also pass.
+The CTest regression reconstructs the unique dipole energy to catch a
+return of the counting error and verifies SC-MP2 ordered multiplicity.
+
+The native analytic gradient uses the existing AO-screened integral
+contractions. An optional snapshot retained with
+\texttt{DLPNO\_KEEP\_LMP2\_RESPONSE} supplies original crude domains,
+parents and panels for independent mixed-response checks; the gradient
+itself does not require this option. The separate analytic correction
+curvature kernels currently require the AO Schwarz screen off and do not
+complete the screened PNO/CCSD molecular Hessian providers. Public analytic
+Hessian routing remains disabled. These are fixed-branch derivatives;
+threshold crossings, open-shell gradients, complete-gradient linear
+scaling and a general screened Hessian are not established by these tests.
 \end{document}

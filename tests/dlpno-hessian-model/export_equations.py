@@ -1,10 +1,11 @@
-"""Export the complete Hessian equation record without altering its mathematics."""
+"""Export complete gradient or Hessian equations without altering their mathematics."""
 import argparse
 from pathlib import Path
 import re
 
 
-def render(source):
+def render(source, record='hessian'):
+    name = record.upper()
     body = source.split('\\begin{document}\n',1)[1].rsplit('\\end{document}',1)[0]
     body = body.replace('\\maketitle\n','',1).strip()
     section = 0
@@ -22,15 +23,21 @@ def render(source):
                 subsection += 1
                 line = f'{section}.{subsection}. {title}'
         lines.append(line)
-    result = ('DLPNO-CCSD(T) NUCLEAR HESSIAN: COMPLETE WORKING EQUATIONS\n'
+    # Preserve shorthand definitions too, so the text is usable independently
+    # of its TeX preamble (the gradient record defines transpose and pairing).
+    macros = [line for line in source.split('\\begin{document}', 1)[0].splitlines()
+              if line.startswith('\\newcommand')]
+    definitions = ('Mathematical shorthand definitions:\n' + '\n'.join(macros) + '\n\n') if macros else ''
+    command = '' if record == 'hessian' else ' --record gradient'
+    result = (f'DLPNO-CCSD(T) NUCLEAR {name}: COMPLETE WORKING EQUATIONS\n'
               'Quantum Chemistry Grand Battleplan — 7 November 2026\n\n'
-              'Plain-text companion to DLPNO_HESSIAN_EQUATIONS.tex.\n'
+              f'Plain-text companion to DLPNO_{name}_EQUATIONS.tex.\n'
               'All mathematical notation, equation labels and cross-references are\n'
               'retained in LaTeX form to preserve the complete derivations exactly.\n'
               'Section headings are numbered for navigation. The chronological\n'
-              'milestone/validation ledger is DLPNO_HESSIAN_WORKING_MEMORY.md.\n'
-              'Regenerate with tests/dlpno-hessian-model/export_equations.py.\n\n'
-              + '\n'.join(lines) + '\n')
+              f'milestone/validation ledger is DLPNO_{name}_WORKING_MEMORY.md.\n'
+              f'Regenerate with tests/dlpno-hessian-model/export_equations.py{command}.\n\n'
+              + definitions + '\n'.join(lines) + '\n')
     # No display-equation block may be dropped or changed during export.
     pattern = r'\\begin\{(align|equation)\}(.*?)\\end\{\1\}'
     assert re.findall(pattern,source,re.S) == re.findall(pattern,result,re.S)
@@ -39,14 +46,19 @@ def render(source):
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--record', choices=('gradient', 'hessian', 'all'), default='hessian',
+                        help='Equation record to export; default preserves the existing Hessian command.')
     parser.add_argument('--check',action='store_true',help='Fail if the tracked text export is stale.')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
-    text = render((root/'DLPNO_HESSIAN_EQUATIONS.tex').read_text())
-    target = root/'DLPNO_HESSIAN_EQUATIONS.txt'
-    if args.check:
-        if not target.exists() or target.read_text()!=text:
-            raise SystemExit('DLPNO_HESSIAN_EQUATIONS.txt needs regeneration.')
-    else:
-        target.write_text(text)
-    print(f'Complete equation export: {len(text.splitlines())} lines; all display equations preserved.')
+    records = ('gradient', 'hessian') if args.record == 'all' else (args.record,)
+    for record in records:
+        stem = f'DLPNO_{record.upper()}_EQUATIONS'
+        text = render((root/f'{stem}.tex').read_text(), record)
+        target = root/f'{stem}.txt'
+        if args.check:
+            if not target.exists() or target.read_text()!=text:
+                raise SystemExit(f'{target.name} needs regeneration.')
+        else:
+            target.write_text(text)
+        print(f'Complete {record} export: {len(text.splitlines())} lines; all display equations preserved.')
