@@ -40,9 +40,92 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <unordered_set>
 
 namespace psi {
 namespace dlpno {
+// One Cartesian component on ordered subsets of AO and auxiliary functions.
+// The two-/three-center engines omit the zero shells in their derivative buffers.
+std::pair<SharedMatrix, SharedMatrix> df_mixed_integrals(SharedWavefunction wfn, const std::string& aux_name,
+        const std::vector<int>& aux_ids, const std::vector<int>& ao_ids, int u, int v) {
+    if (!wfn) throw PSIEXCEPTION("A wavefunction is required for mixed DF integrals.");
+    auto basis = wfn->basisset(), aux = wfn->get_basisset(aux_name);
+    const int ncoord = 3 * wfn->molecule()->natom();
+    if (u < 0 || u >= ncoord || v < 0 || v >= ncoord)
+        throw PSIEXCEPTION("Invalid Cartesian coordinate for a mixed DF derivative.");
+    using ShellMap = std::map<int, std::vector<std::pair<int, int>>>;
+    auto shells = [](const std::shared_ptr<BasisSet>& bs, const std::vector<int>& ids) {
+        ShellMap selected;
+        std::unordered_set<int> seen;
+        for (size_t i = 0; i < ids.size(); ++i) {
+            const int bf = ids[i];
+            if (bf < 0 || bf >= bs->nbf() || !seen.insert(bf).second)
+                throw PSIEXCEPTION("Expected distinct in-range basis indices for a mixed DF derivative.");
+            const int shell = bs->function_to_shell(bf);
+            selected[shell].emplace_back(bf - bs->shell(shell).function_index(), i);
+        }
+        return selected;
+    };
+    const auto qs = shells(aux, aux_ids), ms = shells(basis, ao_ids);
+    const int nq = aux_ids.size(), nb = ao_ids.size();
+    if (nb && nb > std::numeric_limits<int>::max() / nb)
+        throw PSIEXCEPTION("Mixed DF AO block exceeds the matrix column limit.");
+    auto metric = std::make_shared<Matrix>(nq,nq);
+    auto raw = std::make_shared<Matrix>(nq,nb * nb);
+    raw->set_numpy_shape({nq,nb,nb});
+    if (!nq) return {metric,raw};
+    auto zero = BasisSet::zero_ao_basis_set();
+    IntegralFactory mf(aux,zero,aux,zero), qf(aux,zero,basis,basis);
+    auto mi = mf.eri(2), qi = qf.eri(2);
+    auto components = [u,v](std::initializer_list<int> centers) {
+        std::vector<int> indices;
+        // Equal physical centers must be summed over all ordered slots,
+        // including both orders when the two nuclear coordinates coincide.
+        const int dim = 3 * centers.size();
+        if (std::all_of(centers.begin(), centers.end(), [&](int c){ return c == *centers.begin(); }))
+            return indices;  // rigid translation of all centers
+        for (auto i = centers.begin(); i != centers.end(); ++i) {
+            if (*i != u / 3) continue;
+            for (auto j = centers.begin(); j != centers.end(); ++j) {
+                if (*j != v / 3) continue;
+                int a = 3 * (i-centers.begin()) + u%3, b = 3 * (j-centers.begin()) + v%3;
+                if (a > b) std::swap(a,b);
+                indices.push_back(a*(2*dim-a-1)/2+b);
+            }
+        }
+        return indices;
+    };
+    for (const auto& [P,pids] : qs) {
+        const int cp = aux->shell_to_center(P);
+        for (const auto& [Q,qids] : qs) {
+            const auto parts = components({cp,aux->shell_to_center(Q)});
+            if (parts.empty() || !mi->compute_shell_deriv2(P,0,Q,0)) continue;
+            for (int part : parts) {
+                const auto* buf = mi->buffers()[part];
+                for (const auto& [p,i] : pids)
+                    for (const auto& [q,j] : qids)
+                        (*metric)(i,j) += buf[p*aux->shell(Q).nfunction()+q];
+            }
+        }
+        for (const auto& [M,mids] : ms) {
+            for (const auto& [N,nids] : ms) {
+                const auto parts = components({cp,basis->shell_to_center(M),basis->shell_to_center(N)});
+                if (parts.empty() || !qi->compute_shell_deriv2(P,0,M,N)) continue;
+                const int nm = basis->shell(M).nfunction(), nn = basis->shell(N).nfunction();
+                for (int part : parts) {
+                    const auto* buf = qi->buffers()[part];
+                    for (const auto& [p,i] : pids)
+                        for (const auto& [m,j] : mids)
+                            for (const auto& [n,k] : nids)
+                                (*raw)(i,j*nb+k) += buf[(p*nm+m)*nn+n];
+                }
+            }
+        }
+    }
+    return {metric,raw};
+}
+
+
 SharedMatrix DLPNOCCSD_T::triples_df_response(int r, const SharedMatrix& w_bar, const SharedMatrix& v_bar,
                                               std::vector<ThreeCenterDensity>& three_center,
                                               const SharedMatrix& x_bar) {

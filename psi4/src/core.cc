@@ -188,6 +188,8 @@ std::map<std::tuple<int,int,int>,TriplesRow> triples_response_state(SharedWavefu
 using PairBlocks = std::map<std::pair<int,int>, SharedMatrix>;
 PairBlocks lmp2_blocks(SharedWavefunction,const std::string&);
 std::vector<SharedMatrix> ccsd_mixed_state(SharedWavefunction,int,int,int);
+std::pair<SharedMatrix,SharedMatrix> df_mixed_integrals(SharedWavefunction,const std::string&,
+    const std::vector<int>&,const std::vector<int>&,int,int);
 std::pair<SharedMatrix,SharedMatrix> pair_metric_tangent(SharedMatrix,SharedMatrix);
 std::tuple<std::vector<int>,std::vector<SharedMatrix>,std::map<std::string,SharedMatrix>>
     ccsd_df_pair_state(SharedWavefunction,int,int);
@@ -1433,6 +1435,8 @@ PYBIND11_MODULE(core, core) {
     core.def("dct", py_psi_dct, "ref_wfn"_a, "Runs the density cumulant (functional) theory code.");
     core.def("dfmp2", py_psi_dfmp2, "ref_wfn"_a, "Runs the DF-MP2 code.");
     core.def("dlpno", py_psi_dlpno, "Runs the DLPNO codes.");
+    core.def("dlpno_df_mixed_integrals", &dlpno::df_mixed_integrals, "wfn"_a, "aux_name"_a, "auxiliary"_a,
+             "aos"_a, "u"_a, "v"_a, "Mixed bare Coulomb metric and three-center AO blocks on the requested indices.");
     core.def("dlpno_pair_metric_tangent", &dlpno::pair_metric_tangent, "metric"_a, "direction"_a,
              "Local inverse square root of the CCSD fitting metric and its fixed-rank derivative.");
     core.def("dlpno_ccsd_mixed_state", &dlpno::ccsd_mixed_state, "wfn"_a, "i"_a, "j"_a, "k"_a,

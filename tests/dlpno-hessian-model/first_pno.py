@@ -24,7 +24,7 @@ def paos(ref, domain):
     return B/np.sqrt(np.diag(B.T @ S @ B))
 
 
-def relax_fock(ref, dC):
+def relax_fock(ref, dC, atom=1, xyz=2):
     # Independent small-system DF-SCF derivative provider for the verification.
     import sys
     from pathlib import Path
@@ -36,7 +36,7 @@ def relax_fock(ref, dC):
     eri = (q.T @ np.linalg.solve(J,q)).reshape((n,)*4)
     half = dC @ ref.Ca_subset('AO','OCC').np.T
     dD = half+half.T
-    return (fixed_density_fock(ref)(1)[2] + 2*np.einsum('pqrs,rs->pq',eri,dD)
+    return (fixed_density_fock(ref)(atom)[xyz] + 2*np.einsum('pqrs,rs->pq',eri,dD)
             - np.einsum('prqs,rs->pq',eri,dD))
 
 

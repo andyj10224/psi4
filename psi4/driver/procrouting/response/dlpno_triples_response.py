@@ -1,5 +1,6 @@
 """Amplitude, adjoint and energy response of ordinary single-space RHF iterative triples."""
 from functools import lru_cache
+from dataclasses import dataclass
 from itertools import permutations
 from typing import NamedTuple
 
@@ -17,6 +18,31 @@ class TriplesTangent(NamedTuple):
     energy_tangent: float
     residual: float
     adjoint_residual: float
+
+
+class _TriplesEdge(NamedTuple):
+    source: tuple
+    axes: tuple
+    occupied: tuple
+    fock: float
+    dfock: float
+    overlap: np.ndarray
+    doverlap: np.ndarray
+
+
+@dataclass
+class TriplesGradientDirection:
+    """First derivatives and residual sources in one reference triplet ordering."""
+    wavefunction: object
+    frame_tangents: dict
+    amplitudes: dict
+    adjoints: dict
+    gaps: dict
+    energy_seeds: dict
+    energy_seed_tangents: dict
+    right_source: dict
+    left_source: dict
+    edges: dict
 
 
 def _transfer(y, dy, s, ds, z, dz):
@@ -85,8 +111,8 @@ def _local_fock_action(dv,t,occ):
             + np.einsum('cd,abd->abc',dv,t) - occ*t)
 
 
-def iterative_triples_tangent(wfn, pair_frames, dt1, dt2, dlmo, dfock, parent_for, integrals_for, *, tolerance=1.e-10):
-    """Differentiate the TNO frames, right and adjoint triples, and (T) energy.
+def triples_gradient_direction(wfn, pair_frames, dt1, dt2, dlmo, dfock, parent_for, integrals_for):
+    """Prepare the stationary gradient and both sources without solving triples response.
 
     parent_for(ijk) returns the orthonormal triplet PAO parent and its tangent.
     integrals_for(ijk, domain, aux, Y, dY) returns ovvv(i), ooov(j,k), ovov(j,k) callables.
@@ -104,8 +130,9 @@ def iterative_triples_tangent(wfn, pair_frames, dt1, dt2, dlmo, dfock, parent_fo
     foo = lmo.T @ f @ lmo
     half = dlmo.T @ f @ lmo
     dfoo = half + half.T + lmo.T @ dfock @ lmo
+
     if not rows:
-        return TriplesTangent({}, {}, {}, 0., 0., 0.)
+        return TriplesGradientDirection(wfn,{}, {}, {}, {}, {}, {}, {}, {}, {})
 
     def projected(i,j, y,dy):
         p = tuple(sorted((i,j)))
@@ -226,7 +253,7 @@ def iterative_triples_tangent(wfn, pair_frames, dt1, dt2, dlmo, dfock, parent_fo
             moved = (_transform(z,du.T,u.T,u.T) + _transform(z,u.T,du.T,u.T)
                      + _transform(z,u.T,u.T,du.T)).transpose(back)
             left_source[q] -= dfoo[l,m]*zq + foo[l,m]*moved
-            edges[r].append((q,axes,foo[l,m],u))
+            edges[r].append(_TriplesEdge(q,tuple(axes),(l,m),foo[l,m],dfoo[l,m],u,du))
         if np.max(abs(residual)) > max(2.e-10, 1.01*core.get_option('DLPNO','R_CONVERGENCE')):
             raise ValueError(f"Reconstructed iterative triples residual disagrees for {r}.")
 
@@ -236,7 +263,18 @@ def iterative_triples_tangent(wfn, pair_frames, dt1, dt2, dlmo, dfock, parent_fo
     energy = sum(np.vdot(energy_seeds[r],tensors[r]) for r in rows)
     if not np.isclose(energy,wfn.variable('(T) CORRECTION ENERGY'),rtol=1.e-9,atol=1.e-11):
         raise ValueError("Reconstructed ordinary triples energy disagrees.")
-    keys = list(rows)
+    return TriplesGradientDirection(wfn,dy3,tensors,z3,gaps,energy_seeds,dseeds,sources,left_source,edges)
+
+
+def solve_triples_tangent(direction, *, tolerance=1.e-10):
+    """Solve both tangent equations using the prepared gradient direction."""
+    keys = list(direction.amplitudes)
+    if not keys:
+        return TriplesTangent({}, {}, {}, 0., 0., 0.)
+    tensors, z3 = direction.amplitudes, direction.adjoints
+    gaps, edges = direction.gaps, direction.edges
+    energy_seeds, dseeds = direction.energy_seeds, direction.energy_seed_tangents
+    sources, left_source = direction.right_source, direction.left_source
     cuts = np.cumsum([tensors[r].size for r in keys])[:-1]
     def pack(values):
         return np.concatenate([values[r].ravel() for r in keys])
@@ -246,7 +284,8 @@ def iterative_triples_tangent(wfn, pair_frames, dt1, dt2, dlmo, dfock, parent_fo
         x = unpack(flat)
         result = {r: gaps[r]*x[r] for r in keys}
         for r in keys:
-            for q,axes,fij,u in edges[r]:
+            for edge in edges[r]:
+                q,axes,fij,u = edge.source,edge.axes,edge.fock,edge.overlap
                 if left:
                     result[q] -= fij*_transform(x[r],u.T,u.T,u.T).transpose(np.argsort(axes))
                 else:
@@ -272,4 +311,94 @@ def iterative_triples_tangent(wfn, pair_frames, dt1, dt2, dlmo, dfock, parent_fo
     dual_de = sum(np.vdot(dseeds[r],tensors[r])+np.vdot(z3[r],sources[r]) for r in keys)
     if not np.isclose(de,dual_de,atol=max(1.e-10,tolerance),rtol=1.e-8):
         raise RuntimeError("Triples energy tangent disagrees with its adjoint contraction.")
-    return TriplesTangent(dy3,dt,dz,de,right_error,left_error)
+    return TriplesTangent(direction.frame_tangents,dt,dz,de,right_error,left_error)
+
+
+def iterative_triples_tangent(wfn, pair_frames, dt1, dt2, dlmo, dfock, parent_for, integrals_for, *, tolerance=1.e-10):
+    """Differentiate the TNO frames, right and adjoint triples, and (T) energy."""
+    direction = triples_gradient_direction(wfn,pair_frames,dt1,dt2,dlmo,dfock,parent_for,integrals_for)
+    return solve_triples_tangent(direction,tolerance=tolerance)
+
+
+class TriplesMixedRow(NamedTuple):
+    """Mixed derivatives W_uv, V_uv, and the projected virtual Fock block in this triplet."""
+    right_moment: np.ndarray
+    energy_moment: np.ndarray
+    virtual_fock: np.ndarray
+
+
+def _mixed_transfer(t, edge_u, edge_v, suv, fuv):
+    """Mixed derivative of F_lm S_rs^(tensor 3) acting on a fixed, permuted source."""
+    s, su, sv = edge_u.overlap, edge_u.doverlap, edge_v.doverlap
+    if np.shape(suv) != s.shape:
+        raise ValueError("Mixed intertriplet overlap has incompatible dimensions.")
+    value = fuv * _transform(t,s,s,s)
+    for leg in range(3):
+        factors = [s,s,s]
+        factors[leg] = su
+        value += edge_v.dfock * _transform(t,*factors)
+        factors[leg] = sv
+        value += edge_u.dfock * _transform(t,*factors)
+        factors[leg] = suv
+        value += edge_u.fock * _transform(t,*factors)
+        factors[leg] = su
+        for other in range(3):
+            if other != leg:
+                factors[other] = sv
+                value += edge_u.fock * _transform(t,*factors)
+                factors[other] = s
+    return value
+
+
+class TriplesHessianColumn:
+    """Stationary curvature of ordinary (T) for one fixed column direction.
+
+    Prepare the row and column with triples_gradient_direction in one common
+    transported frame. The row needs no triples solve. Mixed inputs must use
+    the same frame and include the lower-order model's response.
+    """
+    def __init__(self, direction, *, tolerance=1.e-10):
+        self.direction = direction
+        self.tangent = solve_triples_tangent(direction,tolerance=tolerance)
+
+    def relaxation(self, row):
+        """Terms in d_v L_u from relaxing the right and left triples only."""
+        if row.wavefunction is not self.direction.wavefunction or row.edges.keys() != self.direction.edges.keys():
+            raise ValueError("Triples Hessian directions require the same reference wavefunction and triplets.")
+        return sum(np.vdot(row.left_source[r],self.tangent.amplitudes[r])
+                   + np.vdot(self.tangent.adjoints[r],row.right_source[r]) for r in row.edges)
+
+    def element(self, row, occupied_fock_uv, mixed_row, mixed_overlap):
+        """Contract H_uv. Providers supply projected mixed inputs only on native rows/edges.
+
+        mixed_row(r) returns TriplesMixedRow. mixed_overlap(r,s) returns S_rs^uv.
+        occupied_fock_uv is an active LMO matrix or a callable (i,j) -> F_ij^uv.
+        """
+        result = self.relaxation(row)
+        column = self.direction
+        no = column.wavefunction.variable('DLPNO RESPONSE ACTIVE LMOS').np.shape[1]
+        if callable(occupied_fock_uv):
+            occupied = occupied_fock_uv
+        else:
+            if np.shape(occupied_fock_uv) != (no,no):
+                raise ValueError("Mixed occupied Fock block has incompatible dimensions.")
+            occupied = lambda i,j: occupied_fock_uv[i,j]
+        for r in row.edges:
+            t,z = row.amplitudes[r],row.adjoints[r]
+            wuv,vuv,fuv = mixed_row(r)
+            if np.shape(wuv) != t.shape or np.shape(vuv) != t.shape or np.shape(fuv) != (len(t),len(t)):
+                raise ValueError(f"Mixed moment or virtual Fock block has incompatible dimensions for {r}.")
+            result += np.vdot(_energy_moment(r,vuv),t)
+            residual = wuv + _local_fock_action(fuv,t,sum(occupied(a,a) for a in r))
+            if len(row.edges[r]) != len(column.edges[r]):
+                raise ValueError(f"Triples Hessian directions use different edges for {r}.")
+            for eu,ev in zip(row.edges[r],column.edges[r]):
+                if (eu.source,eu.axes,eu.occupied) != (ev.source,ev.axes,ev.occupied):
+                    raise ValueError(f"Inconsistent occupied-slot replacement in triplet {r}.")
+                q = eu.source
+                residual -= _mixed_transfer(row.amplitudes[q].transpose(eu.axes),eu,ev,
+                                            mixed_overlap(r,q),occupied(*eu.occupied))
+            result += np.vdot(z,residual)
+        if not np.isfinite(result):
+            raise ValueError("Nonfinite stationary triples curvature.")
+        return result

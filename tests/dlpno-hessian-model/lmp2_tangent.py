@@ -9,7 +9,7 @@ from psi4.driver.procrouting.response.dlpno_orbital import (
     ccsd_pair_frames, ccsd_projected_fock_source, ccsd_direct_df_source, ccsd_pair_df_factors, PairDFFactors)
 from psi4.driver.procrouting.response.dlpno_ccsd_response import (
     ccsd_pair_intermediate_tangent, ccsd_beta_source, ccsd_mixed_doubles_source, ccsd_singles_source, ccsd_doubles_fock_source, ccsd_residual_source, coupled_ccsd_tangent)
-from psi4.driver.procrouting.response.dlpno_triples_response import iterative_triples_tangent, triples_moment_integrals
+from psi4.driver.procrouting.response.dlpno_triples_response import triples_gradient_direction, solve_triples_tangent, triples_moment_integrals
 from first_pno import raw, relax_fock
 from water_hvp import BASE, STRETCH, molecule
 
@@ -99,7 +99,7 @@ def check_ccsd_tangent(w, source1, source2, frozen, dL, frames, triples):
     for p,j in jt[1].items():
         np.testing.assert_allclose(j,-source2[p],rtol=0.,atol=1.e-10)
 
-    t3 = triples(*tangent)
+    t3 = solve_triples_tangent(triples(*tangent))
     rows = psi4.core.dlpno_triples_response_state(w)
     print("T3 tangent", frozen, len(rows), t3.residual,t3.adjoint_residual,t3.energy_tangent, flush=True)
     assert rows and max(t3.residual,t3.adjoint_residual) < 1.e-10
@@ -192,22 +192,26 @@ def check_ccsd_tangent(w, source1, source2, frozen, dL, frames, triples):
         assert errors[2] < 1.e-5 and errors[3] < 5.e-5
 
 
-def check(frozen, *, amplitude_response=False):
+def check(frozen, *, amplitude_response=False, row_at=None, reference=None, lower_order=None):
+    # row_at requests the prepared triples gradient at a single Cartesian row.
     psi4.set_options({'freeze_core': frozen})
-    w = calculation(BASE)
+    w = calculation(BASE) if reference is None else reference
+    atom,xyz = (1,2) if row_at is None else row_at
+    direction = np.zeros_like(STRETCH)
+    direction[atom,xyz] = 1.
     ref = w.reference_wavefunction()
     S, F = ref.S().np, ref.Fa().np
     C, V = [ref.Ca_subset('AO',s).np for s in ('OCC','VIR')]
     L = w.variable('DLPNO RESPONSE ACTIVE LMOS').np
-    dL = boys_nuclear_tangent(w,STRETCH)
-    dC = psi4.core.rhf_occupied_tangent(ref,psi4.core.Matrix.from_array(STRETCH)).np
+    dL = boys_nuclear_tangent(w,direction)
+    dC = psi4.core.rhf_occupied_tangent(ref,psi4.core.Matrix.from_array(direction)).np
     mints = psi4.core.MintsHelper(ref)
-    ds = mints.ao_oei_deriv1('OVERLAP',1)[2].np
-    df = relax_fock(ref,dC)
+    ds = mints.ao_oei_deriv1('OVERLAP',atom)[xyz].np
+    df = relax_fock(ref,dC,atom,xyz)
     dV = -C @ (dC.T @ S @ V + C.T @ ds @ V) - .5*V @ (V.T @ ds @ V)
     J,Q = raw(ref,ref.get_basisset('DF_BASIS_CC'))
-    dJ = mints.ao_metric_deriv1(1,'DF_BASIS_CC')[2].np.reshape(J.shape)
-    dQ = mints.ao_3center_deriv1(1,'DF_BASIS_CC')[2].np.reshape(Q.shape)
+    dJ = mints.ao_metric_deriv1(atom,'DF_BASIS_CC')[xyz].np.reshape(J.shape)
+    dQ = mints.ao_3center_deriv1(atom,'DF_BASIS_CC')[xyz].np.reshape(Q.shape)
     # With full AO and auxiliary domains the canonical virtuals span each parent.
     qall = [col @ Q for col in L.T]
     dqall = [dL[:,i] @ Q + L[:,i] @ dQ for i in range(L.shape[1])]
@@ -286,7 +290,7 @@ def check(frozen, *, amplitude_response=False):
     singles_source = ccsd_singles_source(w,ccsd_frames,factors_for,doubles,ordered_exchange,L,dL,F,df)
     eg = ccsd_doubles_fock_source(w,ccsd_frames,factors_for,doubles,ordered_exchange,L,dL,F,df)
     total1,total2 = ccsd_residual_source(w,ccsd_frames,factors_for,ordered_exchange,mixed_derivative,dL,df)
-    if amplitude_response:
+    if amplitude_response or row_at is not None:
         def triple_integrals(triplet,domain,aux,y,dy):
             local = np.asarray(aux,dtype=int)
             lm,dlm = L[:,domain],dL[:,domain]
@@ -297,7 +301,17 @@ def check(frozen, *, amplitude_response=False):
             ix = np.ix_(local,local)
             return triples_moment_integrals(domain,J[ix],dJ[ix],PairDFFactors(*values),PairDFFactors(*dvalues))
         def triples(dt1,dt2):
-            return iterative_triples_tangent(w,ccsd_frames,dt1,dt2,dL,df,lambda r:(V,dV),triple_integrals)
+            return triples_gradient_direction(w,ccsd_frames,dt1,dt2,dL,df,lambda r:(V,dV),triple_integrals)
+        if row_at is not None:
+            dt1,dt2 = coupled_ccsd_tangent(w,total1,total2)
+            triple_direction = triples(dt1,dt2)
+            if lower_order is not None:
+                lower_order['lmo'],lower_order['fock'] = dL,df
+                lower_order.update({('t1',i):a for i,a in enumerate(dt1)})
+                lower_order.update({('t2',p):a for p,a in dt2.items()})
+                lower_order.update({('pno',p):a for p,a in ccsd_frames.tangents.items()})
+                lower_order.update({('tno',r):a for r,a in triple_direction.frame_tangents.items()})
+            return triple_direction
         check_ccsd_tangent(w, total1, total2, frozen, dL, ccsd_frames, triples)
         return
     for got,expected in zip(total1,singles_source):

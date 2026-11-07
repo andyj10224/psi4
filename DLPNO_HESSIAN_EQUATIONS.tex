@@ -517,4 +517,85 @@ triplet orientation and its inverse must follow the forward tie convention.
 \end{align}
 The transpose uses the Frobenius product on the stored triplet cubes;
 occupied multiplicities are already included in $A$.
+\section{One stationary triples Hessian column}
+For real packed triplets put $g=A V$ and let $u$ denote an output nuclear
+coordinate and $v$ the specified column. The triples Lagrangian is
+$\mathcal L_{(T)}=g^{\mathsf T}T+Z^{\mathsf T}(W+BT)$, with the Frobenius
+product over stored cubes. All coefficient derivatives below include the
+response of the lower-order model in a common transported frame. Define
+\begin{align}
+ r_u &= W^u+B^uT, & \ell_u &= g^u+(B^u)^{\mathsf T}Z,\\
+ G_u &= (g^u)^{\mathsf T}T+Z^{\mathsf T}r_u .
+\end{align}
+Differentiating $G_u$ with respect to $v$ gives a useful separation:
+\begin{align}
+ H_{uv}^{(T),\mathrm{rel}} &= \ell_u^{\mathsf T}T^v+(Z^v)^{\mathsf T}r_u,\\
+ H_{uv}^{(T)} &= H_{uv}^{(T),\mathrm{rel}}
+       +(A V^{uv})^{\mathsf T}T+Z^{\mathsf T}(W^{uv}+B^{uv}T).
+\end{align}
+Only direction $v$ requires triples tangent solves. In particular
+$H_{uv}^{(T),\mathrm{rel}}=-\ell_u^{\mathsf T}B^{-1}r_v
+-\ell_v^{\mathsf T}B^{-1}r_u$, which is symmetric in $u,v$. Individual
+terms of the separation depend on the chosen frame.
+Here the observable is the separate ordinary (T) energy along the relaxed
+lower-order solution. In the total stationary Hessian one can instead cancel
+second electronic responses against the lower-order stationarity equations.
+
+On an edge, write $F=F_{lm}$, $S=S_{rs}$, and $K=S^{\otimes3}$.
+Work directly with three rectangular factors, including the six ordered
+placements of $u$ and $v$ on distinct slots:
+\begin{align}
+ (FK)^{uv} &= F^{uv}K+F^u K^v+F^v K^u+F K^{uv},\\
+ K^{uv} &= \sum_h K[S^{uv};h]+\sum_{h\ne k}K[S^u;h;S^v;k].
+\end{align}
+Brackets mean replace the indicated factors in $K$. The edge has the minus
+sign of the forward residual and its original occupied permutation $P_e$.
+The diagonal action uses all three legs of $(Y_r^{\mathsf T}F_{\mathrm{AO}}Y_r)^{uv}$
+and subtracts the mixed occupied diagonal sum.
+
+For a multilinear local contraction $C$, differentiate once on each operand
+or twice on the same operand:
+\begin{equation}
+ C^{uv}=\sum_i C[ X_i^{uv};i]+\sum_{i\ne j}C[X_i^u;i;X_j^v;j].
+\end{equation}
+Use this rule on the AO-to-local transformations, both pair--triplet overlap
+legs in $t_p^r$, and the six terms of $P_{ijk}^{abc}$ before the spin sum.
+For example, with $J$ the local metric and $G=J^{-1}$,
+\begin{align}
+ G^u &=-GJ^uG, &
+ G^{uv}&=-G(J^{uv}G+J^uG^v+J^vG^u).
+\end{align}
+For the filtered inverse in OOOV and OVOV, set $f(d)=1/d$ on the retained
+positive eigenvalues and zero on the discarded branch. In the eigenbasis
+of $J$, with tildes for matrices in that basis,
+\begin{equation}
+ \widetilde{G^{uv}}_{ab}
+ = f^{[1]}(d_a,d_b)\widetilde{J^{uv}}_{ab}
+ +\sum_k f^{[2]}(d_a,d_k,d_b)
+ (\widetilde{J^u}_{ak}\widetilde{J^v}_{kb}
+ +\widetilde{J^v}_{ak}\widetilde{J^u}_{kb}).
+\end{equation}
+The local mixed bare Coulomb metric and three-center vertex select all
+ordered shell-center contributions. For atomic coordinates $(A,x),(B,y)$:
+\begin{equation}
+ I^{Ax,By}=\sum_{p:\,c_p=A}\sum_{q:\,c_q=B}
+             \partial_{p x}\partial_{q y} I .
+\end{equation}
+When shell centers coincide, distinct ordered pairs appear separately. The
+bare integral derivative has no orbital-coefficient terms.
+For the water comparison the analytic local ingredients include
+$Q_{P,ab}=\sum_{\mu\nu} C_{\mu a}Q_{P,\mu\nu}C_{\nu b}$,
+$S_{pr}=Y_p^{\mathsf T}SY_r$, and $F_{r}=Y_r^{\mathsf T}F_{\rm AO}Y_r$.
+The multilinear rule above acts on every operand, including mixed orbital
+and amplitude inputs. For a lower-order electronic matrix $X$, the diagnostic
+checks those mixed inputs on the aligned branch using
+\begin{align}
+ X^{uv}(h)&=\frac{X(+h,+h)-X(+h,-h)-X(-h,+h)+X(-h,-h)}{4h^2}
+             && (u\ne v),\\
+ X^{vv}(h)&=\frac{X(+h)-2X(0)+X(-h)}{h^2}.
+\end{align}
+One independent local reference differentiates the stationary $G_u$ at
+$\mathbf X\pm h v$. For the canonical benchmark use
+$G_u^{\rm can}=g_u^{\rm DF\text{-}CCSD(T)}-g_u^{\rm DF\text{-}CCSD}$.
+Extrapolate each centered estimate $D$ as $[4D(h/2)-D(h)]/3$.
 \end{document}
