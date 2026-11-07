@@ -5,6 +5,7 @@ from unittest.mock import patch
 from psi4.driver import p4util
 from psi4.driver.procrouting import proc
 from psi4.driver.procrouting.response import dlpno_hessian
+from psi4.driver.procrouting.response import dlpno_hessian_inputs
 from psi4.driver.driver_findif import FiniteDifferenceComputer
 from psi4.driver.task_base import AtomicComputer
 from psi4.driver.p4util.exceptions import ValidationError, MissingMethodError
@@ -92,8 +93,10 @@ def spy(name,**kwargs):
     return forward(name,**kwargs)
 def forbidden(*args,**kwargs):
     raise AssertionError('Numerical or forbidden forward calculation entered analytic route.')
-with patch.object(proc,'run_dlpno',spy),patch.object(FiniteDifferenceComputer,'compute',forbidden):
+with patch.object(proc,'run_dlpno',spy),patch.object(FiniteDifferenceComputer,'compute',forbidden), \
+     patch.object(dlpno_hessian_inputs,'_occupied_density_tangent',wraps=dlpno_hessian_inputs._occupied_density_tangent) as densities:
     H,w=hessian('dlpno-ccsd(t)',dertype=2,return_wfn=True)
+assert sorted(call.args[1] for call in densities.call_args_list)==list(range(6))
 assert len(calls)==1
 np.testing.assert_array_equal(calls[0],xyz)
 assert state()==before
@@ -107,6 +110,41 @@ parts=[w.variable('DLPNO HESSIAN '+key.upper()).np for key in dlpno_hessian.COMP
 np.testing.assert_array_equal(H.np,np.sum(parts,axis=0))
 np.testing.assert_allclose(H.np,H.np.T,atol=2e-9,rtol=0.)
 np.testing.assert_allclose(H.np@np.tile(np.eye(3),(2,1)),0.,atol=2e-9,rtol=0.)
+
+# Native response entry points must choose their own module, even after an
+# unrelated option query. Distinct global/local limits expose the old leak.
+response_state=p4util.OptionsState(['SOLVER_MAXITER'],['SOLVER_CONVERGENCE'],['R_CONVERGENCE'],
+    ['SCF','SOLVER_MAXITER'],['SCF','SOLVER_CONVERGENCE'],['DLPNO','R_CONVERGENCE'])
+try:
+    core.set_global_option('SOLVER_MAXITER',1)
+    core.set_global_option('SOLVER_CONVERGENCE',1.e-14)
+    core.set_local_option('SCF','SOLVER_MAXITER',200)
+    core.set_local_option('SCF','SOLVER_CONVERGENCE',1.e-14)
+    ref=w.reference_wavefunction()
+    direction=np.zeros((2,3));direction[0,2]=1.
+    core.get_option('SCF','SOLVER_MAXITER')
+    dc=core.rhf_occupied_tangent(ref,core.Matrix.from_array(direction)).np.copy()
+    core.get_option('DLPNO','F_CUT')
+    other=core.rhf_occupied_tangent(ref,core.Matrix.from_array(direction)).np.copy()
+    np.testing.assert_allclose(other,dc,atol=2e-11,rtol=0.)
+    core.set_global_option('R_CONVERGENCE',1.)
+    core.set_local_option('DLPNO','R_CONVERGENCE',1.e-11)
+    frames=core.dlpno_lmp2_blocks(w,'FRAME')
+    source={p:core.Matrix.from_array(np.full((x.ncol(),x.ncol()),1.e-3)) for p,x in frames.items()}
+    core.get_option('DLPNO','R_CONVERGENCE')
+    expected=core.dlpno_lmp2_mixed_tangent(w,source)
+    core.get_option('SCF','SOLVER_MAXITER')
+    actual=core.dlpno_lmp2_mixed_tangent(w,source)
+    zeros={p:core.Matrix(x.nrow(),x.ncol()) for p,x in frames.items()}
+    core.get_option('SCF','SOLVER_MAXITER')
+    first=core.dlpno_lmp2_tangent(w,zeros,source,core.Matrix(ref.nso(),ref.nso()),
+        core.Matrix(ref.nso(),ref.nso()),core.Matrix(ref.nalpha(),ref.nalpha()))
+    assert max(np.max(abs(x.np)) for x in expected.values())>1.e-8
+    for p in expected:
+        np.testing.assert_allclose(actual[p].np,expected[p].np,atol=2e-11,rtol=0.)
+        np.testing.assert_allclose(first[p].np,expected[p].np,atol=2e-11,rtol=0.)
+finally:
+    response_state.restore()
 
 set e_convergence 1e-13
 set d_convergence 1e-13

@@ -5,6 +5,7 @@ and derivative is evaluated at the reference geometry; no energy, gradient,
 coordinate displacement, or import from the test tree occurs here. Full AO
 three-center panels are temporary inputs, so this is not a local-scaling path.
 """
+from functools import lru_cache
 import numpy as np
 from psi4 import core
 from .dlpno_triples_curvature import MixedBlock, mixed_product
@@ -21,15 +22,42 @@ def _raw(ref, aux):
     return J, Q
 
 
+def _occupied_density_tangent(ref, coordinate):
+    """Total one-spin occupied-density derivative, including frozen core."""
+    C=ref.Ca_subset('AO','OCC').np
+    direction=np.zeros((ref.molecule().natom(),3)); direction.flat[coordinate]=1.
+    dc=core.rhf_occupied_tangent(ref,core.Matrix.from_array(direction)).np
+    return dc@C.T+C@dc.T
+
+
+def molecular_input_provider(w):
+    """Own first-density responses for one fixed reference Hessian assembly.
+
+    Repeated native DF/CPHF builds can differ in their last digits under
+    threaded reductions. All mixed entries must use the same first response
+    for a given coordinate. Cache only 3N AO density matrices, not mixed AO
+    integral panels, and release them with this assembly's provider. Never
+    reuse this provider after changing the reference geometry or orbitals.
+    """
+    ref=w.reference_wavefunction()
+    size=3*ref.molecule().natom()
+    @lru_cache(maxsize=None)
+    def density(coordinate):
+        if not 0 <= coordinate < size:
+            raise ValueError('Invalid nuclear response coordinate.')
+        result=_occupied_density_tangent(ref,coordinate)
+        result.setflags(write=False)
+        return result
+    def inputs(u,v):
+        return molecular_inputs(w,u,v,Du=density(u),Dv=density(v))
+    return inputs
+
+
 def _rhf_inputs(ref,u,v,Du=None,Dv=None,partition=False,block_output=None):
     mints=core.MintsHelper(ref)
     C=ref.Ca_subset('AO','OCC').np
-    def tangent(k):
-        direction=np.zeros((ref.molecule().natom(),3)); direction.flat[k]=1.
-        dc=core.rhf_occupied_tangent(ref,core.Matrix.from_array(direction)).np
-        return dc@C.T+C@dc.T
-    if Du is None: Du=tangent(u)
-    if Dv is None: Dv=Du if u==v else tangent(v)
+    if Du is None: Du=_occupied_density_tangent(ref,u)
+    if Dv is None: Dv=Du if u==v else _occupied_density_tangent(ref,v)
     au,xu=divmod(u,3); av,xv=divmod(v,3)
     S=ref.S().np
     overlap=MixedBlock(S,mints.ao_oei_deriv1('OVERLAP',au)[xu].np,
@@ -91,10 +119,10 @@ def _localized_inputs(ref,L,kind,u,v,active=None):
     return quadratic_localization_mixed(L,active,metric,operators)
 
 
-def molecular_inputs(w,u,v):
+def molecular_inputs(w,u,v,*,Du=None,Dv=None):
     ref = w.reference_wavefunction()
     data = {}
-    _,_,active = _rhf_inputs(ref,u,v,partition=True,block_output=data)
+    _,_,active = _rhf_inputs(ref,u,v,Du=Du,Dv=Dv,partition=True,block_output=data)
     S,F,D = (data[k] for k in ('overlap','fock','density'))
     kind = 'BOYS' if w.variable('DLPNO RESPONSE BOYS') else 'PIPEK_MEZEY'
     L = _localized_inputs(ref,w.variable('DLPNO RESPONSE ACTIVE LMOS').np,kind,u,v,active)

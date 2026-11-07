@@ -2,6 +2,43 @@
 
 > **Public routing delivered for local validation:** the user requested pushing the recovered implementation with the cc-pVDZ tests restored. The experimental `DLPNO_HESSIAN_MODEL` route now defaults to `true`, with complete Cython packaging and local test instructions. Source-level checks pass; fresh native numerical validation remains pending. See [recovery record](DLPNO_HESSIAN_M33_RECOVERY.md) and [local test commands](tests/dlpno-hessian-model/README.md). Milestone 32 remains the last fully validated molecular checkpoint.
 
+## Water response regression fixes (7 November 2026)
+
+The user's frozen-core water/cc-pVTZ, TightPNO, 12-thread run at `8807b4c`
+optimized successfully but failed the mixed RHF stationarity guard. Setting
+global solver convergence/maxiter/integral thresholds to 1e-14/200/1e-14
+passed that guard and exposed a cached-column final-PNO first-derivative comparison:
+7 of 2668 elements differed by more than 2e-9, with a displayed difference
+of 3.38e-9. No complete DLPNO Hessian column was returned in either run.
+
+Audit found that `rhf_occupied_tangent` bypassed SCF option preparation.
+The LMP2 tangent, mixed-tangent and PNO-loss adjoint bindings likewise relied
+on the active module when reading local response limits. All four native
+entry points now prepare their respective modules. In particular, the LMP2
+residual tolerance must use the DLPNO-local `R_CONVERGENCE`, independent of
+interleaved SCF calls or Python option queries.
+
+The public assembler now owns a per-reference first-density cache: each
+Cartesian coordinate is solved once and reused in every ordered mixed entry.
+For water, native occupied-response calls decrease from 153 to 9. Each native
+call still computes all nine Cartesian perturbations; exposing a single
+batched native API remains a performance opportunity. The cache stores only
+3N AO density matrices, is read-only, and expires with the Hessian assembly.
+PNO/CCSD and mixed molecular derivatives are still evaluated independently.
+Existing residual, repeatability and raw Hessian tolerances are unchanged.
+Failure messages now identify block/pair, row/column, full-precision entries,
+scientific-notation differences, PNO occupation gaps and upstream differences.
+
+Validation here: 110 source-level routing/cache/diagnostic checks with the
+native boundary mocked; unchanged derivative-algebra comparison, completion
+ordering and equation-export checks. Native C++ rebuild and numerical tests
+remain pending. Added native module-context and solve-count regressions to
+`dlpno-hessian-driver`, plus `water_repeatability.py` for the reported optimized
+water geometry at 1/12 threads and an optional independent gradient-difference
+column with native selection matching. All existing cc-pVDZ tests remain.
+The relative contributions of option-context drift and thread reduction
+roundoff to the reported PNO mismatch are not yet numerically isolated.
+
 
 ## Scope and verification policy
 

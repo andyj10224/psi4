@@ -7,7 +7,9 @@ The response modules are installed for both ordinary Python and Cython builds.
 `DLPNO_HESSIAN_MODEL` defaults to `true`; the existing supported-setting and
 memory checks still apply. Set it to `false` to disable the analytic route.
 
-All numerical cases below use **cc-pVDZ**, with cc-pVDZ-JKFIT and cc-pVDZ-RI.
+The existing numerical cases use **cc-pVDZ**, with cc-pVDZ-JKFIT and cc-pVDZ-RI.
+The new water repeatability regression additionally uses **cc-pVTZ**, matching
+the reported failure; it does not replace any cc-pVDZ tests.
 The LANL2DZ input inside the driver regression is only an ECP-rejection check.
 No smaller orbital basis replaces the derivative tests.
 
@@ -15,6 +17,35 @@ These tests are provided for a local numerical rerun. The recovery checkpoint's
 earlier native results are historical evidence; the recovered implementation
 has not yet passed a fresh native run. Its source-level routing checks do not
 establish numerical Hessian accuracy.
+
+## Water response repeatability regression
+
+Rebuild the native extension as well as installing the Python files. The fix
+prepares SCF options for occupied response and DLPNO options for LMP2 response
+solves, so module queries cannot select another module's convergence limits.
+The public Hessian owns one cached occupied-density derivative per Cartesian
+coordinate. For water this reduces occupied-response calls from 153 to 9;
+each native call still solves all nine perturbations internally. All mixed
+entries, PNO responses and existing residual/identity tolerances are retained.
+
+Your original water input can be rerun directly after rebuilding. To isolate
+the Hessian at the reported optimized geometry, run the new script from two
+separate working/scratch directories with the installed Psi4 Python:
+
+```bash
+python /path/to/psi4/tests/dlpno-hessian-model/water_repeatability.py --threads 1 --output water_1.json
+python /path/to/psi4/tests/dlpno-hessian-model/water_repeatability.py --threads 12 --output water_12.json --compare /absolute/path/to/water_1.json --fd-column 0
+```
+
+The script requests 28 GB, leaves global SCF solver options at their defaults,
+and requires exactly nine first-density response calls. The second command
+compares the component/total Hessians at 2e-7 Eh/bohr² and optionally checks
+one column against independently reconverged gradient differences with native
+selection matching. Omit `--fd-column` for a quicker repeatability-only run.
+An assertion about a displaced selection rejects that numerical stencil; it
+does not establish an analytic Hessian error. `.out` logs share the JSON stem.
+Any remaining column-repeatability failure reports its block/pair, coordinates,
+scientific-notation error, occupation gaps and upstream first-response errors.
 
 ## Driver and existing native regressions
 
@@ -24,6 +55,7 @@ From the source checkout, using your actual configured build directory:
 ctest --test-dir build --output-on-failure -R '^dlpno-hessian-driver$'
 ctest --test-dir build --output-on-failure -R '^(dfccsd-t-grad1|dlpno-grad-model|dlpnocc-1|dlpnolocal-1|scf-cholesky-basis|scf-hess1|scf-hess2)$'
 python -m pytest tests/pytests/test_dertype.py
+python -m pytest tests/pytests/test_dlpno_hessian_response.py
 ```
 
 `dlpno-hessian-driver` uses H2 and 1 GiB. It checks default analytic routing,
@@ -32,6 +64,8 @@ matrix and wavefunction returns, a gradient-difference column,
 same-reference energy/gradient/Hessian publication, option restoration after
 an injected failure, unsupported settings, and memory refusal. It forbids
 finite-difference execution inside the analytic driver. H2 has no triples.
+It also checks one first-density solve per coordinate and native SCF/LMP2
+response after unrelated option queries with conflicting global/local limits.
 
 ## Three complete screened molecular matrices
 

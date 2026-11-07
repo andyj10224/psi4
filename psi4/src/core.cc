@@ -360,6 +360,13 @@ SharedMatrix py_psi_scfhess(std::shared_ptr<scf::HF> ref_wfn) {
     return scfgrad::scfhess(ref_wfn, Process::environment.options);
 }
 
+SharedMatrix py_psi_rhf_occupied_tangent(std::shared_ptr<scf::HF> ref_wfn, SharedMatrix direction) {
+    // Python option queries can leave another module active. Nuclear response
+    // must honor the SCF-local solver and integral thresholds on every call.
+    py_psi_prepare_options_for_module("SCF");
+    return scfgrad::rhf_occupied_tangent(ref_wfn, direction);
+}
+
 SharedWavefunction py_psi_occ(SharedWavefunction ref_wfn) {
     py_psi_prepare_options_for_module("OCC");
     return occwave::occwave(ref_wfn, Process::environment.options);
@@ -1441,7 +1448,7 @@ PYBIND11_MODULE(core, core) {
         return result;
     }, "mints"_a, "factors"_a, "Fixed-density RHF two-electron energy gradient for D = factors factors^T.");
     core.def("scfgrad", py_psi_scfgrad, "ref_wfn"_a, "Run scfgrad, which is a specialized DF-SCF gradient program.");
-    core.def("rhf_occupied_tangent", &scfgrad::rhf_occupied_tangent, "ref_wfn"_a, "direction"_a,
+    core.def("rhf_occupied_tangent", py_psi_rhf_occupied_tangent, "ref_wfn"_a, "direction"_a,
              "Directional AO occupied coefficient derivative for C1 DF-RHF, partitioned at the frozen core.");
     core.def("scfhess", py_psi_scfhess, "ref_wfn"_a, "Run scfhess, which is a specialized DF-SCF hessian program.");
     core.def("dct", py_psi_dct, "ref_wfn"_a, "Runs the density cumulant (functional) theory code.");
@@ -1477,13 +1484,24 @@ PYBIND11_MODULE(core, core) {
              "CCSD singles and doubles residual source from projected bare Fock derivatives.");
     core.def("dlpno_lmp2_blocks", &dlpno::lmp2_blocks, "wfn"_a, "block"_a,
              "First-space AO frames or converged amplitudes keyed by unique occupied pair.");
-    core.def("dlpno_pno_truncation_lmp2_response", &dlpno::pno_truncation_lmp2_response,
+    core.def("dlpno_pno_truncation_lmp2_response", [](SharedWavefunction wfn, bool adjoint) {
+        py_psi_prepare_options_for_module("DLPNO");
+        return dlpno::pno_truncation_lmp2_response(wfn, adjoint);
+    },
              "wfn"_a, "adjoint"_a = true,
              "Return the isolated PNO-loss LMP2 adjoint or its unique-pair energy source.");
-    core.def("dlpno_lmp2_tangent", &dlpno::lmp2_tangent, "wfn"_a, "frame_derivatives"_a,
+    core.def("dlpno_lmp2_tangent", [](SharedWavefunction wfn, const dlpno::PairBlocks& dy,
+                                      const dlpno::PairBlocks& dk, SharedMatrix ds,
+                                      SharedMatrix df, SharedMatrix dfoo) {
+        py_psi_prepare_options_for_module("DLPNO");
+        return dlpno::lmp2_tangent(wfn, dy, dk, ds, df, dfoo);
+    }, "wfn"_a, "frame_derivatives"_a,
              "pair_exchange_derivatives"_a, "overlap_derivative"_a, "ao_fock_derivative"_a,
              "occupied_fock_derivative"_a, "Solve the screened first-space nuclear LMP2 tangent system.");
-    core.def("dlpno_lmp2_mixed_tangent", &dlpno::lmp2_mixed_tangent, "wfn"_a, "mixed_residual_source"_a,
+    core.def("dlpno_lmp2_mixed_tangent", [](SharedWavefunction wfn, const dlpno::PairBlocks& source) {
+        py_psi_prepare_options_for_module("DLPNO");
+        return dlpno::lmp2_mixed_tangent(wfn, source);
+    }, "wfn"_a, "mixed_residual_source"_a,
              "Solve A t_uv = -source on the retained native first-PNO graph, with source = R_uv[t_uv=0].");
     core.def("dlpno_orbital_response_action", &dlpno::orbital_response_action, py::arg("wfn"), py::arg("block"),
              py::arg("rhs"), "Apply an RHF DLPNO correlation orbital or AO operator derivative to a C1 column panel.");

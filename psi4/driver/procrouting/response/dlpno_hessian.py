@@ -3,7 +3,7 @@ import gc
 import numpy as np
 from psi4 import core
 from ...p4util.exceptions import ValidationError
-from .dlpno_hessian_inputs import molecular_inputs
+from .dlpno_hessian_inputs import molecular_input_provider
 from .dlpno_screened_hessian import COMPONENTS, ScreenedHessianColumn
 
 
@@ -74,10 +74,11 @@ def assemble_hessian(wfn):
         raise ValidationError('Analytic DLPNO Hessians require a C1 reference with a full-rank AO metric.')
     gradient=wfn.gradient().np.copy();xyz=wfn.molecule().geometry().np.copy()
     rhf=core.scfhess(ref).np.copy()
+    inputs=molecular_input_provider(wfn)
     parts=np.empty((len(COMPONENTS),size,size));firsts=np.empty_like(parts)
     residuals=np.zeros(4)
     for v in range(size):
-        column=ScreenedHessianColumn(wfn,v,lambda u,c:molecular_inputs(wfn,u,c),rhf[:,v])
+        column=ScreenedHessianColumn(wfn,v,inputs,rhf[:,v])
         for u in range(size):
             entry=column.element(u)
             parts[:,u,v]=entry['components'];firsts[:,u,v]=entry['gradient_components']

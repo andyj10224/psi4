@@ -41,6 +41,45 @@ def triples_first_energy(direction):
                np.vdot(direction.adjoints[r],direction.right_source[r]) for r in direction.edges)
 
 
+def _check_column_direction(data,reference,row,column):
+    """Check repeatability without weakening the original absolute tolerance."""
+    response=data['response'];saved=reference['response']
+    keys=('lmo','fock',*[('t1',i) for i in range(len(response['base'][0]))],
+          *[('t2',p) for p in response['base'][1]],*[('pno',p) for p in response['base'][1]])
+    for key in keys:
+        actual=response['electronic'](key).v
+        expected=saved['electronic'](key).v
+        context=f'block={key!r}, row={row}, column={column} (zero-based Cartesian coordinates)'
+        if actual.shape!=expected.shape:
+            raise RuntimeError(f'Inconsistent cached column direction: {context}; shapes {actual.shape} and {expected.shape}.')
+        if not np.isfinite(actual).all() or not np.isfinite(expected).all():
+            raise RuntimeError(f'Inconsistent cached column direction: {context}; nonfinite response.')
+        delta=np.abs(actual-expected)
+        error=float(np.max(delta,initial=0.))
+        if error<=2.e-9:
+            continue
+        index=np.unravel_index(np.argmax(delta),delta.shape)
+        details=[f'Inconsistent cached column direction: {context}',
+                 f'max_abs={error:.6e}, atol=2.000000e-09, rtol=0',
+                 f'index={index}, actual={actual[index]:.16e}, cached={expected[index]:.16e}']
+        if isinstance(key,tuple) and key[0]=='pno':
+            p=key[1];current,previous=data['pno'],reference['pno']
+            for label,selection,old in (
+                ('first',current.first_response.pairs[p].selection,previous.first_response.pairs[p].selection),
+                ('final',current.final_selection[p],previous.final_selection[p])):
+                details.append(f'{label}_occupation_gap={selection.boundary_gap:.6e} '
+                               f'(cached {old.boundary_gap:.6e})')
+            stages=(('overlap',response['fitting'].S,saved['fitting'].S),
+                    ('lmo',response['electronic']('lmo'),saved['electronic']('lmo')),
+                    ('fock',response['electronic']('fock'),saved['electronic']('fock')),
+                    ('normalized_pao',current.first_response.paos[p],previous.first_response.paos[p]),
+                    ('first_pno',current.first_response.pairs[p].selection.frame,
+                                 previous.first_response.pairs[p].selection.frame),
+                    ('lmp2_amplitude',current.final[p]['amplitudes'],previous.final[p]['amplitudes']))
+            details.extend(f'{label}_column_delta={np.max(abs(a.v-b.v),initial=0.):.6e}' for label,a,b in stages)
+        raise RuntimeError('; '.join(details)+'.')
+
+
 class ScreenedHessianColumn:
     """Cache the reference CCSD adjoints and one right/left triples tangent.
 
@@ -93,11 +132,7 @@ class ScreenedHessianColumn:
         response=data['response'];triples=data['triples']
         # A cached column solve is valid only for the same first molecular and
         # amplitude direction. Check it independently of this row's mixed data.
-        for key in ('lmo','fock',*[('t1',i) for i in range(len(response['base'][0]))],
-                    *[('t2',p) for p in response['base'][1]],*[('pno',p) for p in response['base'][1]]):
-            np.testing.assert_allclose(response['electronic'](key).v,
-                self.reference['response']['electronic'](key).v,atol=2.e-9,rtol=0.,
-                err_msg='Inconsistent cached column direction')
+        _check_column_direction(data,self.reference,u,self.coordinate)
         row=self.column.direction if u==self.coordinate else triples.first_direction(1)
         residual=([x.uv for x in response['residual'][0]],{p:x.uv for p,x in response['residual'][1].items()})
         retained=self.retained.element(*data['args'],residual)
