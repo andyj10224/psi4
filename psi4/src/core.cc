@@ -203,6 +203,7 @@ std::pair<std::vector<SharedMatrix>, PairBlocks> ccsd_amplitude_action(
 std::pair<std::vector<SharedMatrix>, PairBlocks> ccsd_fock_source(
     SharedWavefunction,SharedMatrix,const PairBlocks&,const PairBlocks&);
 PairBlocks lmp2_tangent(SharedWavefunction,const PairBlocks&,const PairBlocks&,SharedMatrix,SharedMatrix,SharedMatrix);
+PairBlocks lmp2_mixed_tangent(SharedWavefunction,const PairBlocks&);
 }
 namespace f12 {
 SharedWavefunction f12(SharedWavefunction, Options&);
@@ -1468,6 +1469,8 @@ PYBIND11_MODULE(core, core) {
     core.def("dlpno_lmp2_tangent", &dlpno::lmp2_tangent, "wfn"_a, "frame_derivatives"_a,
              "pair_exchange_derivatives"_a, "overlap_derivative"_a, "ao_fock_derivative"_a,
              "occupied_fock_derivative"_a, "Solve the screened first-space nuclear LMP2 tangent system.");
+    core.def("dlpno_lmp2_mixed_tangent", &dlpno::lmp2_mixed_tangent, "wfn"_a, "mixed_residual_source"_a,
+             "Solve A t_uv = -source on the retained native first-PNO graph, with source = R_uv[t_uv=0].");
     core.def("dlpno_orbital_response_action", &dlpno::orbital_response_action, py::arg("wfn"), py::arg("block"),
              py::arg("rhs"), "Apply an RHF DLPNO correlation orbital or AO operator derivative to a C1 column panel.");
     core.def("f12", py_psi_f12, "Runs the F12 codes.");

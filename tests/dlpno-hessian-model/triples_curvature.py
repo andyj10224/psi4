@@ -1,7 +1,8 @@
 """Water stretch column of retained CCSD and ordinary (T) on a fixed local branch.
 
 The CCSD-stationary route eliminates mixed T1/T2 and builds mixed TNO frames.
-Remaining mixed lower-order electronic inputs come from aligned displaced states.
+Both PNO selections and their coupled-LMP2 parent response are analytic. The
+mixed CCSD nuclear residual still comes from aligned displaced states.
 The independent local check differences stationary (T) gradients. The canonical
 reference differences analytic DF-CCSD(T) minus DF-CCSD gradients.
 """
@@ -135,7 +136,7 @@ def mixed_coefficients(data,u,v,h):
     return (difference(lambda x:x.occupied_fock),row,lambda r,q:difference(lambda x:x.overlaps[r,q])), lambda key:difference(lambda x:x.electronic[key])
 
 
-def molecular_blocks(w,u,v,lower,lower_u,lower_v,lower_uv,trial_ccsd):
+def molecular_blocks(w,u,v,lower,lower_u,lower_v,lower_uv,trial_ccsd,pno_data=None):
     ref = w.reference_wavefunction()
     mints = psi4.core.MintsHelper(ref)
     au,xu = divmod(u,3)
@@ -147,6 +148,11 @@ def molecular_blocks(w,u,v,lower,lower_u,lower_v,lower_uv,trial_ccsd):
     def rhf_second():
         from rhf_mixed import analytic_inputs
         return analytic_inputs(ref,u,v,lower_u['occupied_density'],lower_v['occupied_density'],partition=True)
+    @lru_cache(None)
+    def final_pnos():
+        if pno_data is not None: return pno_data['final_selection']
+        from final_pno_mixed import analytic_final_pno_inputs
+        return analytic_final_pno_inputs(w,u,v)['final_selection']
     @lru_cache(None)
     def electronic(key):
         if key in ('occupied_density','fock'):
@@ -167,6 +173,12 @@ def molecular_blocks(w,u,v,lower,lower_u,lower_v,lower_uv,trial_ccsd):
                                          overlap,lower['parent'])
             np.testing.assert_allclose(frame.u,lower_u['parent'],atol=2.e-8,rtol=0.)
             np.testing.assert_allclose(frame.v,lower_v['parent'],atol=2.e-8,rtol=0.)
+            return frame
+        if isinstance(key,tuple) and key[0]=='pno':
+            frame = final_pnos()[key[1]].frame
+            np.testing.assert_allclose(frame.value,lower[key],atol=2.e-8,rtol=0.)
+            np.testing.assert_allclose(frame.u,lower_u[key],atol=2.e-8,rtol=0.)
+            np.testing.assert_allclose(frame.v,lower_v[key],atol=2.e-8,rtol=0.)
             return frame
         if trial_ccsd and isinstance(key,tuple):
             if key[0] in ('t1','t2'):
@@ -199,8 +211,8 @@ def molecular_blocks(w,u,v,lower,lower_u,lower_v,lower_uv,trial_ccsd):
     return electronic,overlap,local_df
 
 
-def molecular_inputs(w,rows,u,v,lower,lower_u,lower_v,lower_uv,*,trial_ccsd=False):
-    electronic,overlap,local_df = molecular_blocks(w,u,v,lower,lower_u,lower_v,lower_uv,trial_ccsd)
+def molecular_inputs(w,rows,u,v,lower,lower_u,lower_v,lower_uv,*,trial_ccsd=False,pno_data=None):
+    electronic,overlap,local_df = molecular_blocks(w,u,v,lower,lower_u,lower_v,lower_uv,trial_ccsd,pno_data)
     lmo,fock = electronic('lmo'),electronic('fock')
     def ordered(a,b):
         t = electronic(('t2',tuple(sorted((a,b)))))
@@ -219,8 +231,8 @@ def molecular_inputs(w,rows,u,v,lower,lower_u,lower_v,lower_uv,*,trial_ccsd=Fals
     return occupied,mixed_row,edge
 
 
-def retained_inputs(w,u,v,base,lower_u,lower_v,lower_uv,affine):
-    electronic,s,df = molecular_blocks(w,u,v,base,lower_u,lower_v,lower_uv,affine)
+def retained_inputs(w,u,v,base,lower_u,lower_v,lower_uv,affine,pno_data=None):
+    electronic,s,df = molecular_blocks(w,u,v,base,lower_u,lower_v,lower_uv,affine,pno_data)
     lmo = electronic('lmo')
     pairs = {k[1]:electronic(k) for k in base if isinstance(k,tuple) and k[0]=='pno'}
     singles = [electronic(('t1',i)) for i in range(lmo.value.shape[1])]
@@ -334,7 +346,7 @@ def trial_tno_frame(triplet, parent, metric, pair_frames, doubles, reference_fra
     return frame@(a@b)
 
 
-def trial_mixed_inputs(w, rows, u, v, h, model_at, data, lower_u, lower_v, lower_uv):
+def trial_mixed_inputs(w, rows, u, v, h, model_at, data, lower_u, lower_v, lower_uv, pno_data=None):
     """Independent stencil for trial TNOs and geometry stencil for the residual."""
     base = data((0.,)*9).electronic
     pairs = list(data((0.,)*9).pair_rotations)
@@ -370,7 +382,7 @@ def trial_mixed_inputs(w, rows, u, v, h, model_at, data, lower_u, lower_v, lower
             if key[0] == 'tno':
                 return frame_uv[key[1]]
         return lower_uv(key)
-    return molecular_inputs(w,rows,u,v,base,lower_u,lower_v,adjusted),mixed_residual
+    return molecular_inputs(w,rows,u,v,base,lower_u,lower_v,adjusted,pno_data=pno_data),mixed_residual
 
 
 def check_residual_replay(w, state):
@@ -404,8 +416,8 @@ def benchmark(frozen, coordinates=range(9), *, complete_spaces=False, coarse_ste
     column = TriplesHessianColumn(column_row)
     ccsd_adjoint = TriplesCCSDAdjoint(w)
     retained = RetainedCCSDCurvature(w,ccsd_adjoint)
+    from final_pno_mixed import analytic_final_pno_inputs
     if include_pno:
-        from first_pno_mixed import analytic_pno_entry
         from pno_curvature_water import sampled_entry
         from psi4.driver.procrouting.response.dlpno_pno_curvature import PNOTruncationCurvature
         pno_adjoint = PNOTruncationCurvature(w)
@@ -435,6 +447,7 @@ def benchmark(frozen, coordinates=range(9), *, complete_spaces=False, coarse_ste
     for u in coordinates:
         lower_u = lower_v if u == v else {}
         row = column_row if u == v else check(frozen,row_at=divmod(u,3),reference=w,lower_order=lower_u)
+        pno_data = analytic_final_pno_inputs(w,u,v)
         relax = column.relaxation(row)
         reverse = TriplesHessianColumn(row).relaxation(column_row)
         np.testing.assert_allclose(relax,reverse,rtol=0.,atol=2.e-11)
@@ -446,13 +459,13 @@ def benchmark(frozen, coordinates=range(9), *, complete_spaces=False, coarse_ste
             # Use analytic AO and DF derivatives with lower-order mixed response
             # from the native displaced states. Separately check the result
             # against differentiating the already-assembled native inputs.
-            inputs = molecular_inputs(w,rows,u,v,data((0.,)*9).electronic,lower_u,lower_v,lower_uv)
+            inputs = molecular_inputs(w,rows,u,v,data((0.,)*9).electronic,lower_u,lower_v,lower_uv,pno_data=pno_data)
             element = column.element(row,*inputs)
             direct = column.element(row,*projected)
             print('mixed provider difference',frozen,u,h,element-direct,flush=True)
             assert abs(element-direct) < 5.e-6
             elements.append(element)
-            trial_fd,residual = trial_mixed_inputs(w,rows,u,v,h,model_at,data,lower_u,lower_v,lower_uv)
+            trial_fd,residual = trial_mixed_inputs(w,rows,u,v,h,model_at,data,lower_u,lower_v,lower_uv,pno_data)
             matrix = psi4.core.Matrix.from_array
             nocc = len(residual[0])
             jt1,jt2 = psi4.core.dlpno_ccsd_amplitude_action(w,
@@ -465,10 +478,12 @@ def benchmark(frozen, coordinates=range(9), *, complete_spaces=False, coarse_ste
                 [x.np.ravel()+y for x,y in zip(jt1,residual[0])]
                 + [(jt2[p].np+y).ravel() for p,y in residual[1].items()]))
             def remaining_mixed(key):
-                if isinstance(key,tuple) and key[0] in ('t1','t2','tno'):
+                if key in ('occupied_density','fock','lmo','parent') or (
+                        isinstance(key,tuple) and key[0] in ('t1','t2','tno','pno')):
                     raise AssertionError("The CCSD-stationary path requested an eliminated mixed input.")
                 return lower_uv(key)
-            trial = molecular_inputs(w,rows,u,v,data((0.,)*9).electronic,lower_u,lower_v,remaining_mixed,trial_ccsd=True)
+            trial = molecular_inputs(w,rows,u,v,data((0.,)*9).electronic,lower_u,lower_v,remaining_mixed,
+                                     trial_ccsd=True,pno_data=pno_data)
             tno_comparison = column.element(row,*trial_fd)-column.element(row,*trial)
             print('TNO mixed curvature comparison',frozen,u,h,tno_comparison,flush=True)
             tno_errors.append(tno_comparison)
@@ -476,8 +491,8 @@ def benchmark(frozen, coordinates=range(9), *, complete_spaces=False, coarse_ste
             stationary.append(adjoint_value)
             print('CCSD adjoint correction',frozen,u,h,ccsd_adjoint.correction(*residual),adjoint_value-element,flush=True)
             base = data((0.,)*9).electronic
-            direct_cc = project_retained_ccsd_energy(*retained_inputs(w,u,v,base,lower_u,lower_v,lower_uv,False))
-            affine_inputs = retained_inputs(w,u,v,base,lower_u,lower_v,remaining_mixed,True)
+            direct_cc = project_retained_ccsd_energy(*retained_inputs(w,u,v,base,lower_u,lower_v,lower_uv,False,pno_data))
+            affine_inputs = retained_inputs(w,u,v,base,lower_u,lower_v,remaining_mixed,True,pno_data)
             retained_values.append(retained.element(*affine_inputs,residual))
             retained_direct.append(direct_cc.uv)
             derivatives,cc_gradients = [],[]
@@ -508,7 +523,7 @@ def benchmark(frozen, coordinates=range(9), *, complete_spaces=False, coarse_ste
         np.testing.assert_allclose(cc,[cc_direct,cc_reference],atol=2.e-6,rtol=0.)
         output = (relax,estimated,numerical,cc,cc_reference)
         if include_pno:
-            pno = analytic_pno_entry(w,u,v,pno_adjoint)
+            pno = pno_adjoint.element(pno_data['initial'],pno_data['final'],pno_data['source'])
             # Displaced inputs are an independent oracle, never the assembled value.
             values = [sampled_entry(w,model_at,u,v,h,pno_adjoint) for h in (coarse_step,coarse_step/2)]
             pno_sampled,pno_direct = (4*np.asarray(values[1])-np.asarray(values[0]))/3

@@ -1067,6 +1067,7 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     PairBlocks pno_truncation_lmp2_response(bool adjoint);
     PairBlocks lmp2_tangent(const PairBlocks& dy, const PairBlocks& dk, SharedMatrix ds,
                             SharedMatrix df, SharedMatrix dfoo);
+    PairBlocks lmp2_mixed_tangent(const PairBlocks& source);
 
     double compute_energy() override;
 };

@@ -329,6 +329,50 @@ DLPNOCCSD_T::PairBlocks DLPNOCCSD_T::lmp2_blocks(const std::string& block) const
     return result;
 }
 
+DLPNOCCSD_T::PairBlocks DLPNOCCSD_T::lmp2_mixed_tangent(const PairBlocks& input) {
+    if (lmp2_state_.X.empty()) throw PSIEXCEPTION("LMP2 response state was not retained.");
+    size_t expected = 0;
+    for (const auto& ij : ij_to_i_j_) expected += ij.first <= ij.second;
+    if (input.size() != expected) throw PSIEXCEPTION("Mixed LMP2 source disagrees with the retained pair graph.");
+    std::vector<SharedMatrix> source(ij_to_i_j_.size());
+    for (int p = 0; p < source.size(); ++p) {
+        const auto [i, j] = ij_to_i_j_[p];
+        if (i > j) {
+            source[p] = std::make_shared<Matrix>(0, 0);
+            continue;
+        }
+        auto found = input.find({i, j});
+        const int n = lmp2_state_.X[p]->ncol();
+        if (found == input.end() || !found->second || found->second->nirrep() != 1 ||
+            found->second->nrow() != n || found->second->ncol() != n)
+            throw PSIEXCEPTION("Invalid mixed LMP2 pair source.");
+        const auto& b = found->second;
+        double scale = 1.;
+        for (int a = 0; a < n; ++a)
+            for (int c = 0; c < n; ++c) {
+                if (!std::isfinite((*b)(a, c))) throw PSIEXCEPTION("Nonfinite mixed LMP2 source.");
+                scale = std::max(scale, std::abs((*b)(a, c)));
+            }
+        if (i == j)
+            for (int a = 0; a < n; ++a)
+                for (int c = 0; c < a; ++c)
+                    if (std::abs((*b)(a, c) - (*b)(c, a)) > 1.e-12 * scale)
+                        throw PSIEXCEPTION("Diagonal mixed LMP2 sources must be symmetric.");
+        source[p] = b->clone();
+        if (i == j) source[p]->hermitivitize();
+    }
+    // R_uv[t_uv=0] + A t_uv = 0 in the native reference first-PNO chart.
+    double rms;
+    int iterations;
+    auto mixed = solve_lmp2_system(source, false, rms, iterations);
+    set_scalar_variable("DLPNO LMP2 MIXED TANGENT RESIDUAL", rms);
+    set_scalar_variable("DLPNO LMP2 MIXED TANGENT ITERATIONS", iterations);
+    PairBlocks result;
+    for (int p = 0; p < mixed.size(); ++p)
+        if (mixed[p]->nrow()) result[ij_to_i_j_[p]] = mixed[p];
+    return result;
+}
+
 DLPNOCCSD_T::PairBlocks DLPNOCCSD_T::lmp2_tangent(const PairBlocks& dy, const PairBlocks& dk,
                                                    SharedMatrix ds, SharedMatrix df, SharedMatrix dfoo) {
     const auto y = lmp2_blocks("FRAME");

@@ -249,6 +249,28 @@ def lmp2_mixed_residual(final, occupied_fock, edges, overlap):
         final,occupied_fock,edges,overlap,affine_amplitudes=True).items()}
 
 
+def coupled_lmp2_curvature(wfn, final, occupied_fock, edges, overlap):
+    """Complete the mixed amplitudes with the native fixed-graph right solver.
+
+    All inputs must use the native reference first-PNO frames and their smooth
+    transport. The supplied amplitude uv fields are ignored. Verify the result
+    with the independently assembled moving-frame residual, including both
+    overlap legs and reversed source-pair orientations.
+    """
+    from psi4 import core
+    source = lmp2_mixed_residual(final, occupied_fock, edges, overlap)
+    solved = core.dlpno_lmp2_mixed_tangent(wfn, {p:core.Matrix.from_array(x) for p,x in source.items()})
+    if solved.keys() != final.keys():
+        raise ValueError('Mixed LMP2 response pair graph disagrees with the reference.')
+    amplitudes = {p:inputs['amplitudes']._replace(uv=solved[p].np.copy()) for p,inputs in final.items()}
+    complete = {p:dict(inputs,amplitudes=amplitudes[p]) for p,inputs in final.items()}
+    residual = lmp2_residual(complete, occupied_fock, edges, overlap)
+    error = max((np.max(abs(x.uv), initial=0.) for x in residual.values()), default=0.)
+    if not np.isfinite(error) or error > 2.e-9:
+        raise ValueError('Mixed LMP2 amplitudes fail the moving-frame residual check.')
+    return amplitudes
+
+
 class PNOTruncationCurvature:
     """Eliminate final-stage mixed LMP2 amplitudes using the native loss adjoint.
 

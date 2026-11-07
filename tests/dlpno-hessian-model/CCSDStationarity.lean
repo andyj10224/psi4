@@ -99,4 +99,19 @@ theorem localization_mixed_rotation {R : Type*} [Ring R] (k h j : R) :
     (2*j+k*h+h*k) + (-2*j+h*k+k*h) - 2*k*h - 2*h*k = 0 := by
   noncomm_ring
 
+-- Ordered four-factor product rule. For an LMP2 coupling use the occupied
+-- Fock scalar, left overlap, oriented pair tensor and right overlap. Setting
+-- cuv=0 gives the fifteen terms of the affine mixed source, with no implicit
+-- commutations of matrix factors.
+theorem mixed_four_factor_product {R : Type*} [Ring R]
+    (a au av auv b bu bv buv c cu cv cuv d du dv duv : R) :
+    (auv*b+au*bv+av*bu+a*buv)*(c*d) +
+    (au*b+a*bu)*(cv*d+c*dv) + (av*b+a*bv)*(cu*d+c*du) +
+    (a*b)*(cuv*d+cu*dv+cv*du+c*duv) =
+    auv*b*c*d + a*buv*c*d + a*b*cuv*d + a*b*c*duv +
+    au*bv*c*d + av*bu*c*d + au*b*cv*d + av*b*cu*d +
+    au*b*c*dv + av*b*c*du + a*bu*cv*d + a*bv*cu*d +
+    a*bu*c*dv + a*bv*c*du + a*b*cu*dv + a*b*cv*du := by
+  noncomm_ring
+
 end DLPNOHessian

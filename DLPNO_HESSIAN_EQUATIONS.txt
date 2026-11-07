@@ -1,0 +1,1233 @@
+DLPNO-CCSD(T) NUCLEAR HESSIAN: COMPLETE WORKING EQUATIONS
+Quantum Chemistry Grand Battleplan — 7 November 2026
+
+Plain-text companion to DLPNO_HESSIAN_EQUATIONS.tex.
+All mathematical notation, equation labels and cross-references are
+retained in LaTeX form to preserve the complete derivations exactly.
+Section headings are numbered for navigation. The chronological
+milestone/validation ledger is DLPNO_HESSIAN_WORKING_MEMORY.md.
+Regenerate with tests/dlpno-hessian-model/export_equations.py.
+
+1. Target and differentiability
+Use the ordinary iterative (T) gradient-model energy with the conventions of
+the companion gradient equation record. Indices $i,j,k$ label active occupied
+LMOs, $\mu,\nu$ AOs; $A,B$ below index Cartesian nuclear coordinates in bohr.
+For a branch $\sigma$ with fixed pair and triplet membership, domain and pivot
+lists, and retained PNO/TNO ranks, define
+\begin{equation}
+ g_A=\partial_A E_\sigma,\qquad H_{AB}=\partial_B g_A,\qquad
+ (Hv)_A=\left.\frac{d}{ds}g_A(\mathbf X+s v)\right|_{s=0}.
+ \label{eq:target}
+\end{equation}
+The orbital coefficients, subspace projectors and amplitudes relax. Assume
+a twice differentiable solution with separated retained/discarded spaces
+and a locally determined response after removing redundant rotations.
+
+The current full-domain diagnostic has analytic mixed RHF, Boys, PAO,
+first-PNO, coupled-LMP2 and final-PNO inputs. CCSD stationarity eliminates
+mixed CCSD amplitudes and supplies trial mixed TNO response. The mixed
+nuclear CCSD residual still uses a geometry stencil. Other nonzero screened
+energy corrections, local-domain assembly and full Hessian/vibrational
+validation remain open. The companion working-memory Markdown file contains
+the complete milestone and validation index. The companion text file preserves
+this entire equation record in plain text with LaTeX mathematical notation.
+
+2. Constrained curvature
+Let $q$ denote independent real electronic coordinates after fixing gauges,
+$R$ their defining residuals, and $\lambda$ their multipliers. Contractions
+in vector notation include the ordered-pair weights of the gradient record.
+The scalar Lagrangian and stationary equations are
+\begin{equation}
+ \mathcal L=E(q,\mathbf X)+\lambda^{\mathsf T}R(q,\mathbf X),\qquad
+ R=0,\qquad E_q+R_q^{\mathsf T}\lambda=0 .
+\end{equation}
+Use column gradients; subscripts on $\mathcal L$ below are partial derivatives
+at the reference solution. For dimensionless directions $u,v$ write
+$\partial_v=\sum_A v_A\partial_A$. First-order tangents satisfy
+\begin{equation}
+ R_q q^v=-R_v .
+ \label{eq:tangent}
+\end{equation}
+Since $R$ vanishes along the solution, its contraction with a multiplier held
+at the reference value adds zero along the entire local branch. Differentiating
+that scalar twice leaves
+\begin{align}
+ u^{\mathsf T}Hv
+ &=\mathcal L_{uv}+\mathcal L_{uq}q^v+(q^u)^{\mathsf T}\mathcal L_{qv}
+   +(q^u)^{\mathsf T}\mathcal L_{qq}q^v . \label{eq:curvature}
+\end{align}
+The coefficient of $q^{uv}$ is $\mathcal L_q=0$.
+Alternatively, to obtain the entire column for one tangent $q^v$, solve the
+differentiated left stationarity equation and differentiate the analytic gradient:
+\begin{align}
+ R_q^{\mathsf T}\lambda^v&=-\mathcal L_{qv}-\mathcal L_{qq}q^v,\\
+ (Hv)_A&=\mathcal L_{Av}+\mathcal L_{Aq}q^v+R_A^{\mathsf T}\lambda^v .
+ \label{eq:column}
+\end{align}
+Equation~\eqref{eq:column} avoids a separate right solve for each output row.
+Multiplying its last term by $u_A$ and summing, then using
+Eq.~\eqref{eq:tangent}, recovers Eq.~\eqref{eq:curvature}.
+These identities specify the analytic target; local residual contractions
+will be expanded as each block is derived and tested.
+
+3. Canonical verification at one geometry
+Put O at the origin, H1 on $+z$, and H2 in the $yz$ plane with positive $y$.
+Use $r=0.958$ angstrom and $\theta=104.4776$ degrees:
+\begin{equation}
+ \mathbf X_{\rm H1}=r(0,0,1),\qquad
+ \mathbf X_{\rm H2}=r(0,\sin\theta,\cos\theta),\quad
+ v=e_{{\rm H1},z},\quad u=e_{{\rm O},y}.
+\end{equation}
+Convert $r$ to bohr before displacement. Hold the laboratory frame fixed.
+For an analytic canonical gradient $g$, define
+\begin{align}
+ C(h;v)&=\frac{g(\mathbf X+h v)-g(\mathbf X-h v)}{2h}
+       =Hv+O(h^2),\\
+ T(h;v)&=\frac{4C(h/2;v)-C(h;v)}{3}=Hv+O(h^4).
+\end{align}
+The orders assume sufficient smoothness. Compare $T(0.004;v)$ with
+$T(0.008;v)$ in bohr; the former is the reported reference. Check
+\begin{equation}
+ u^{\mathsf T}Hv=v^{\mathsf T}Hu,\qquad
+ \sum_{\text{atoms }K}(Hv)_{K\alpha}=0\quad(\alpha=x,y,z).
+\end{equation}
+No mass weighting or projection is applied. A directional curvature at
+this test geometry has units of hartree/bohr$^2$.
+
+4. Reusing the restricted SCF nuclear response
+Psi4's restricted Hessian routine forms the nuclear CPHF right-hand sides,
+solves the coupled equations, and writes $U_{pi}^{A}$ for all occupied
+columns (including frozen columns). Here $C$ contains all reference MOs and
+$C_o$ contains all occupied columns. Contract the Cartesian records with
+$v_A$ and use the native occupied gauge
+\begin{equation}
+ U_{ij}^{v}=-\tfrac12(C_o^{\mathsf T}S^v C_o)_{ij},\qquad
+ C_o^v=CU^v,\qquad D^v=C_o^v C_o^{\mathsf T}+C_o(C_o^v)^{\mathsf T}.
+\end{equation}
+The native virtual--occupied record already includes the sign conversion
+from Psi4's CPHF unknown to the coefficient derivative. With $D=C_o C_o^{\mathsf T}$,
+the projected relaxed Fock derivative (at fixed external MO columns) is
+\begin{equation}
+ f^v=C^{\mathsf T}\left(F_{\rm explicit}^{v}+2J[D^v]-K[D^v]\right)C_o.
+\end{equation}
+The native records are Fpi for the explicit derivative and Qpi for the
+induced term. For active occupied $i$ and frozen $c$, rotate these blocks by
+\begin{align}
+ k_{ic}&=-\frac{f^v_{ic}+\epsilon_i U^v_{ic}+\epsilon_c U^v_{ci}}
+                   {\epsilon_i-\epsilon_c},&
+ U^v_{ic}&\gets U^v_{ic}+k_{ic},&
+ U^v_{ci}&\gets U^v_{ci}-k_{ic}.
+\end{align}
+This maintains zero mixed canonical Fock element to first order. It preserves
+$D^v$ and changes the separate core and active coefficient derivatives.
+With $C_v$ the virtual columns, the verification conditions are
+\begin{align}
+ (C_o^v)^{\mathsf T}SC_o+C_o^{\mathsf T}SC_o^v+C_o^{\mathsf T}S^v C_o&=0,\\
+ C_v^{\mathsf T}\big[F^v C_o+FC_o^v-(S^v C_o+SC_o^v)\epsilon_o\big]&=0 .
+\end{align}
+
+5. Nuclear tangent of Boys-localized active occupied orbitals
+Let $C_a$ contain the active occupied columns and $L$ the actual forward
+Boys LMOs. Let $U=C_a^{\mathsf T}SL$. Along the nuclear direction $v$
+define the transported coefficients $T=C_a^v U$. In the final LMO frame,
+the unknown additional rotation $K=-K^{\mathsf T}$ gives
+\begin{equation}
+ L^v=T+LK,\qquad K_{ji}=k_{ij}=-K_{ij}\quad (i<j).
+\end{equation}
+For each of the three AO electronic dipole operators $d_m$, put
+$A_m=L^{\mathsf T}d_m L$. At fixed localization rotation its derivative is
+\begin{equation}
+ B_m=T^{\mathsf T}d_m L+L^{\mathsf T}d_m T+L^{\mathsf T}d_m^v L,\qquad
+ (A_m)^v=B_m+A_mK-KA_m .
+\end{equation}
+Write $\Delta_{ij}A=A_{ii}-A_{jj}$. Differentiating the objective
+$\sum_{mi}(A_m)_{ii}^2$ with respect to $k_{ij}$ gives the stationary
+equations and their driving term
+\begin{align}
+ g_{ij}&=4\sum_m\Delta_{ij}A_m (A_m)_{ij}=0,\\
+ b_{ij}^v&=4\sum_m [\Delta_{ij}B_m (A_m)_{ij}
+                      +\Delta_{ij}A_m (B_m)_{ij}],\\
+ H_{\rm Boys} k&=-b^v .
+\end{align}
+Here $H_{\rm Boys}$ is the same exponential-coordinate rotation Hessian used
+by the gradient adjoint. Require a stationary, locally determined maximum.
+For each column $l_i$ verify
+\begin{equation}
+ (l_i l_i^{\mathsf T})^v=l_i^v l_i^{\mathsf T}+l_i(l_i^v)^{\mathsf T}.
+\end{equation}
+The rank-one AO density factors are sign-invariant. The coefficient-space
+projector acting in the AO metric would have an additional right factor
+$S$, which is itself differentiated. Independently converged displaced
+solutions are matched by maximizing absolute cross-geometry overlaps.
+
+6. Raw PAO projector and normalized PAO coefficients
+Let $O=[C_{\rm c},L]$ contain frozen and localized active orbitals. Their
+metric is $O^{\mathsf T}SO=I$. With PAO columns indexed by their parent AOs,
+\begin{align}
+ B &= I-OO^{\mathsf T}S,\\
+ B^v &=-O^v O^{\mathsf T}S-O(O^v)^{\mathsf T}S-OO^{\mathsf T}S^v .
+\end{align}
+For $L^v=T+LK$, the internal rotation contributes exactly
+\begin{equation}
+ -L(K+K^{\mathsf T})L^{\mathsf T}S=0 .
+\end{equation}
+Compute $B^v_{\rm loc}$ using the Boys and frozen derivatives, and
+$B^v_{\rm can}$ using all canonical occupied coefficients with their RHF
+derivatives. Define the diagnostic by the largest elementwise difference,
+\begin{equation}
+ e_{\rm rot}=\max_{\mu\nu}|(B^v_{\rm loc}-B^v_{\rm can})_{\mu\nu}|.
+\end{equation}
+The per-column squared norm $m=b^{\mathsf T}Sb$ and normalized coefficient
+$n=b/\sqrt m$ have derivatives
+\begin{align}
+ m^v &=2(b^v)^{\mathsf T}Sb+b^{\mathsf T}S^v b,\\
+ n^v &=m^{-1/2}b^v-\tfrac12 b\,m^{-3/2}m^v .
+\end{align}
+Use the same fixed zero-column branch as the energy for $m\le10^{-20}$.
+Differentiated idempotency $B^vB+BB^v=B^v$ and column normalization
+$2(n^v)^{\mathsf T}Sn+n^{\mathsf T}S^vn=0$ give additional checks.
+
+7. First retained PNO space of one pair
+Hold the AO, PAO and fitting domains, parent pivots, AO shell screening
+mask and forward retained rank of pair $ij$ fixed. On each fitting center
+let $l,r$ denote the left and right AO index lists. For LMO $i$ and the
+normalized pair PAO columns $N$, the fitted LMO coefficients and transformed
+three-center integrals obey (one auxiliary index $Q$ is implicit)
+\begin{align}
+ S_{ll}c &= S_{l,:}L_i, &
+ S_{ll}c^v&=S_{l,:}^vL_i+S_{l,:}L_i^v-S_{ll}^v c,\\
+ q_i&=c^{\mathsf T} I_{lr}N_r,&
+ q_i^v&=(c^v)^{\mathsf T}I_{lr}N_r+c^{\mathsf T}I_{lr}^vN_r+c^{\mathsf T}I_{lr}N_r^v .
+\end{align}
+Stack the rows in pair auxiliary order. With the local RIFIT metric $M$,
+\begin{align}
+ M b_i=q_i,\quad M b_i^v=q_i^v-M^v b_i,\qquad
+ K=b_i^{\mathsf T}q_j,\quad K^v=(b_i^v)^{\mathsf T}q_j+b_i^{\mathsf T}q_j^v .
+\end{align}
+Use the forward semicanonical PAO transform $X$, padded outside its fixed
+pivots. The present tangent requires its nonzero rows to span the full pivot
+space. Put $Y=NX$, $W=N^vX$. A metric-preserving frame is
+\begin{align}
+ G&=-\tfrac12(W^{\mathsf T}SY+Y^{\mathsf T}SW+Y^{\mathsf T}S^vY),&
+ Y^v&=W+YG .
+\end{align}
+Thus $f=Y^{\mathsf T}FY$, $k=X^{\mathsf T}KX$, with derivatives
+\begin{align}
+ f^v&=(Y^v)^{\mathsf T}FY+Y^{\mathsf T}F^vY+Y^{\mathsf T}FY^v,\\
+ k^v&=X^{\mathsf T}K^v X+G^{\mathsf T}k+kG .
+\end{align}
+At the origin $f_{ab}=\epsilon_a\delta_{ab}$. Write $s=F_{ii}+F_{jj}$
+in the active LMO basis, so that $s^v$ includes the LMO derivatives and
+the relaxed AO Fock derivative. Differentiating $s t-ft-t f=k$ yields
+\begin{equation}
+ t_{ab}=\frac{k_{ab}}{s-\epsilon_a-\epsilon_b},\qquad
+ t^v_{ab}=\frac{[k^v+f^v t+t f^v-s^v t]_{ab}}{s-\epsilon_a-\epsilon_b}.
+\end{equation}
+For $\tilde t=2t-t^{\mathsf T}$ and $\eta=(1+\delta_{ij})^{-1}$,
+\begin{align}
+ D&=\eta(\tilde t t^{\mathsf T}+\tilde t^{\mathsf T}t),\\
+ D^v&=\eta(\tilde t^v t^{\mathsf T}+\tilde t (t^v)^{\mathsf T}
+              +(\tilde t^v)^{\mathsf T}t+\tilde t^{\mathsf T}t^v).
+\end{align}
+Let $U_r,U_d$ be the retained and discarded eigenvectors of $D$ with
+occupations $n_p,n_a$. In the transported frame,
+\begin{align}
+ Z_{ap}&=(U_d^{\mathsf T}D^vU_r)_{ap}/(n_p-n_a),\\
+ P&=U_r U_r^{\mathsf T},\qquad P^v=U_d Z U_r^{\mathsf T}+U_r Z^{\mathsf T}U_d^{\mathsf T},\\
+ A&=YPY^{\mathsf T},\quad
+ A^v=Y^v P Y^{\mathsf T}+YP^vY^{\mathsf T}+YP(Y^v)^{\mathsf T}.
+\end{align}
+$A$ is the AO contravariant subspace density; $AS$ acts on AO coefficients.
+Differentiating $ASA=A$ supplies a metric diagnostic.
+
+7.1. Mixed first-PNO response in the moving pivot span
+The mixed kernel holds the same pivot rows and retained rank fixed. For
+the occupied refit, let $b=S_{l,:}L_i$; the additional equation is
+\begin{equation}
+ S_{ll}c^{uv}=b^{uv}-S_{ll}^{uv}c-S_{ll}^{u}c^v-S_{ll}^{v}c^u.
+\end{equation}
+Apply the full mixed product rule to $q_i=c^{\mathsf T}I_{lr}N_r$.
+The auxiliary-metric solve has the same form, followed by the mixed
+product $K=q_i^{\mathsf T}M^{-1}q_j$. Fixed screened panels can be
+supplied to these kernels; the present molecular diagnostic uses full
+AO and fitting domains and an unscreened inverse metric.
+
+Write $W=NX$, $G=W^{\mathsf T}SW$, $R=G^{-1/2}$ and $C=XR$.
+The forward transform ensures $G_0=I$. Thus
+\begin{align}
+ R^u&=-\tfrac12G^u,&R^v&=-\tfrac12G^v,\\
+ R^{uv}&=-\tfrac12G^{uv}+\tfrac38(G^uG^v+G^vG^u),&Y&=NC.
+\end{align}
+Construct $f=Y^{\mathsf T}FY$ and $k=C^{\mathsf T}KC$ through mixed
+order. At any orthonormal reference chart define
+$\mathcal B(x)=s x-fx-xf$. Its reference eigenbasis gives a Sylvester
+solve with denominators $s-\epsilon_a-\epsilon_b$, including when
+virtual energies are degenerate. The response equations are
+\begin{align}
+ \mathcal B(t^u)&=k^u-\mathcal B^u(t),\\
+ \mathcal B(t^v)&=k^v-\mathcal B^v(t),\\
+ \mathcal B(t^{uv})&=k^{uv}-\mathcal B^{uv}(t)
+                  -\mathcal B^u(t^v)-\mathcal B^v(t^u).
+\end{align}
+No individual semicanonical eigenvector response or difference of
+virtual eigenvalues is required. Differentiate
+$D=\eta(\tilde t t^{\mathsf T}+\tilde t^{\mathsf T}t)$ by the full
+mixed product rule and use the projector equations below for $P^{uv}$.
+For the actual forward retained frame $Y_{r,0}$, define
+\begin{equation}
+ B=YPY^{\mathsf T}S_0Y_{r,0},\qquad
+ Y_r=B(B^{\mathsf T}SB)^{-1/2}.
+\end{equation}
+This is the fixed-reference polar chart used by the native LMP2 tangent.
+The contraction is performed as rectangular panels without constructing
+an AO-square retained projector. Mixed metric orthonormality and
+$ASA=A$ are checked separately. Degeneracy within the retained or
+discarded cluster is permitted; an unresolved boundary is rejected.
+
+8. Coupled first-space LMP2 amplitude response
+For each retained pair $p=(ij)$ let $Y_p$ be its actual first-stage
+semicanonical AO frame, $Y_p^{\mathsf T} S Y_p=I$, and $P_p=Y_pY_p^{\mathsf T}$.
+From the previous section's AO density derivative $P_p^v$, choose
+\begin{equation}
+ Y_p^v=P_p^v S Y_p+\tfrac12Y_p(Y_p^{\mathsf T}S^vY_p).
+\end{equation}
+This fixes the internal gauge, $Y_p^{\mathsf T}S Y_p^v
+=-Y_p^{\mathsf T}S^vY_p/2$. Define the following blocks in these frames:
+\begin{align}
+ f_p&=Y_p^{\mathsf T}F Y_p,& s_p&=F_{ii}+F_{jj},&
+ S_{pq}&=Y_p^{\mathsf T}S Y_q,\\
+ f_p^v&=(Y_p^v)^{\mathsf T}FY_p+Y_p^{\mathsf T}F^vY_p+Y_p^{\mathsf T}FY_p^v,\\
+ S_{pq}^v&=(Y_p^v)^{\mathsf T}S Y_q+Y_p^{\mathsf T}S^v Y_q+Y_p^{\mathsf T}S Y_q^v .
+\end{align}
+Here $F_{ij}$ is the LMO Fock matrix and $K_p$ the exchange integral
+matrix in frame $Y_p$. For each actual directed coupling $p\gets q$ in
+the screened forward row, $c_{pq}$ denotes its occupied Fock element.
+Use the physical orientation of $q$, transposing the stored unique block
+if the row calls for $T_{ji}=T_{ij}^{\mathsf T}$. The right residual is
+\begin{equation}
+ R_p=K_p+f_pT_p+T_pf_p-s_pT_p-
+        \sum_{p\gets q}c_{pq}S_{pq}T_qS_{pq}^{\mathsf T}.
+\end{equation}
+Let $A$ be its derivative with respect to all independent amplitude blocks.
+The moving-basis right-hand side at fixed amplitudes is
+\begin{align}
+ b_p^v={}&K_p^v+f_p^vT_p+T_pf_p^v-s_p^vT_p \notag\\
+ &-\sum_{p\gets q}\big[
+ c_{pq}^v S_{pq}T_q S_{pq}^{\mathsf T}
+ +c_{pq}(S_{pq}^vT_q S_{pq}^{\mathsf T}
+ +S_{pq}T_q(S_{pq}^v)^{\mathsf T})\big],\\
+ A T^v={}&-b^v .
+\end{align}
+The diagonal-pair blocks are symmetric. Compare the gauge-independent AO
+tensor derivative in an aligned occupied-pair convention:
+\begin{equation}
+ (Y_pT_pY_p^{\mathsf T})^v=Y_p^v T_p Y_p^{\mathsf T}
+ +Y_p T_p^v Y_p^{\mathsf T}+Y_p T_p(Y_p^v)^{\mathsf T}.
+\end{equation}
+
+8.1. Mixed coupled-LMP2 right response
+All blocks above now have analytic mixed geometric derivatives. Let
+$\widehat T=T+uT^u+vT^v$ and evaluate the mixed residual with
+$\widehat T^{uv}=0$. The known source for pair $p$ is
+\begin{align}
+ C_p={}&K_p^{uv}+f_p^{uv}T_p+T_pf_p^{uv}-s_p^{uv}T_p \notag\\
+ &+f_p^uT_p^v+f_p^vT_p^u+T_p^uf_p^v+T_p^vf_p^u
+   -s_p^uT_p^v-s_p^vT_p^u
+   -\sum_{p\gets q} E_{pq}^{uv}[\widehat T],\\
+ A T^{uv}={}&-C .
+ \label{eq:mixed_lmp2_right}
+\end{align}
+For one oriented edge abbreviate $c=c_{pq}$, $S=S_{pq}$ and
+$T=T_q$, so $E=cSTS^{\mathsf T}$. Its fifteen nonzero terms are
+\begin{align}
+ E^{uv}[\widehat T]={}&c^{uv}STS^{\mathsf T}
+       +cS^{uv}TS^{\mathsf T}+cST(S^{uv})^{\mathsf T} \notag\\
+ &+c^u\big[S^vTS^{\mathsf T}+ST^vS^{\mathsf T}+ST(S^v)^{\mathsf T}\big] \notag\\
+ &+c^v\big[S^uTS^{\mathsf T}+ST^uS^{\mathsf T}+ST(S^u)^{\mathsf T}\big] \notag\\
+ &+c\big[S^uT^vS^{\mathsf T}+S^vT^uS^{\mathsf T}
+           +S^uT(S^v)^{\mathsf T}+S^vT(S^u)^{\mathsf T} \notag\\
+ &\hspace{1.8em}+ST^u(S^v)^{\mathsf T}+ST^v(S^u)^{\mathsf T}\big].
+\end{align}
+The omitted sixteenth term is $cST^{uv}S^{\mathsf T}$, already part of
+$AT^{uv}$. The Lean record checks the ordered four-factor product-rule
+regrouping; the transpose and numerical solvers are verified separately.
+The native right solver reuses the
+reference sparse graph, pair dimensions and semicanonical preconditioner.
+It does not form a full amplitude Jacobian or differentiate the iteration
+history. Diagonal sources are symmetric; missing/malformed pairs,
+nonfinite inputs and appreciable diagonal antisymmetry are rejected.
+The zero-source branch returns zero response. Reconstructing
+$R^{uv}[T,T^u,T^v,T^{uv}]$ independently checks the solved equation.
+
+9. Final CCSD PNO subspace after coupled LMP2
+For $p=(ij)$ use the first-stage frame $Y$ and its derivative $Y^v$ from
+the previous section. Here $T$ is the converged coupled LMP2 amplitude
+matrix in $Y$ and $T^v$ its derivative in this same gauge. Define
+$\tilde T=2T-T^{\mathsf T}$ and $\eta=(1+\delta_{ij})^{-1}$.
+The final density and its derivative in the moving parent frame are
+\begin{align}
+ D &=\eta(\tilde T T^{\mathsf T}+\tilde T^{\mathsf T}T),\\
+ D^v&=\eta\big[\tilde T^v T^{\mathsf T}+\tilde T(T^v)^{\mathsf T}
+        +(\tilde T^v)^{\mathsf T}T+\tilde T^{\mathsf T}T^v\big].
+\end{align}
+For the fixed forward rank $r$, let $P=U_rU_r^{\mathsf T}$ project onto the
+$r$ leading eigenvectors of $D$. For retained $b$ and discarded $a$,
+\begin{align}
+ Z_{ab}&=\frac{(U_d^{\mathsf T}D^vU_r)_{ab}}{n_b-n_a},&
+ P^v &= U_d Z U_r^{\mathsf T}+U_r Z^{\mathsf T} U_d^{\mathsf T},\\
+ A &=Y P Y^{\mathsf T},&
+ A^v &= Y^v P Y^{\mathsf T}+Y P^v Y^{\mathsf T}+YP(Y^v)^{\mathsf T}.
+\end{align}
+Even when $r$ equals the parent rank, $A^v$ includes parent motion.
+The final semicanonical rotation within the retained space drops out of $A$.
+The AO coefficient-space projector is $AS$ and its derivative is $A^v S+A S^v$.
+As a sign and gauge test, changing $Y^v$ by $YK$ and $T^v$ by
+$TK-KT$ for $K=-K^{\mathsf T}$ leaves $A^v$ unchanged.
+
+9.1. Mixed final-PNO density, projector and frame
+Insert the mixed amplitudes from Eq.~\eqref{eq:mixed_lmp2_right},
+including all first-order cross terms:
+\begin{align}
+ D^{uv}=\eta\big[&\tilde T^{uv}T^{\mathsf T}
+      +\tilde T^u(T^v)^{\mathsf T}+\tilde T^v(T^u)^{\mathsf T}
+      +\tilde T(T^{uv})^{\mathsf T} \notag\\
+      &+(\tilde T^{uv})^{\mathsf T}T
+      +(\tilde T^u)^{\mathsf T}T^v+(\tilde T^v)^{\mathsf T}T^u
+      +\tilde T^{\mathsf T}T^{uv}\big].
+\end{align}
+Use the same retained/discarded projector equations as for the first PNO
+selection, with the actual final rank and a resolved occupation boundary.
+The AO retained density is $A=YPY^{\mathsf T}$, whose full mixed product
+includes both first-stage frame legs. Its final frame uses
+\begin{equation}
+ B=YPY^{\mathsf T}S_0Z_0,\qquad Z=B(B^{\mathsf T}SB)^{-1/2},
+\end{equation}
+where $Z_0$ is the native final semicanonical frame. As before, the polar
+normalizer is differentiated about the identity. This is not a frozen
+first-PNO-parent approximation. Full final rank has $P^{uv}=0$ internally
+but generally nonzero $A^{uv}$ and $Z^{uv}$ from parent motion.
+
+The column diagnostic now consumes these analytic final frames for all
+projected Fock, fitted-integral and pair-overlap contractions. Its stationary
+path rejects any request for sampled mixed PNO coefficients. The direct
+PNO-loss contraction with solved $T^{uv}$ independently reproduces the
+isolated-adjoint expression; the latter remains the preferred contraction
+when only that correction is needed. AO amplitude tensors and final
+projectors are also checked by differences of the pre-existing first-order
+responses, with occupied labels and signs aligned across geometries.
+
+10. Starting the CCSD residual source
+For a final CCSD frame $Y_p$, insert the final $A^v$ into the parallel
+transport formula used for the first PNO frame. Use
+\begin{equation}
+ S_{pq}^v=(Y_p^v)^{\mathsf T}SY_q+Y_p^{\mathsf T}S^vY_q+
+ Y_p^{\mathsf T}S Y_q^v .
+\end{equation}
+All residual sources in this section hold the CCSD amplitudes fixed in the
+transported frames. The eventual linear equation is $R_{,t}t^v=-b^v$;
+the following contributions to $b^v$ are implemented.
+
+10.1. Projected Fock blocks
+Write $o=L^{\mathsf T}FL$, $h_p=L^{\mathsf T}FY_p$,
+$f_p=Y_p^{\mathsf T}FY_p$. For any such block $M=C_l^{\mathsf T}FC_r$,
+\begin{equation}
+ M^v=(C_l^v)^{\mathsf T}FC_r+C_l^{\mathsf T}F^v C_r+
+ C_l^{\mathsf T}FC_r^v .
+\end{equation}
+Let $n_p$ contain the forward projected singles $S_{p,mm}t_m$ as rows for
+$m$ in the pair domain, and $u_p=2t_p-t_p^{\mathsf T}$.
+For the partial derivative through bare Fock blocks (hold all explicit
+overlap occurrences fixed) define
+\begin{align}
+ V_p&=f_p^v-n_p^{\mathsf T}h_{p,\mathrm{dom}}^v,\\
+ w_{kj}&=o^v_{kj}+(h^v_{jj})_{k:}\,t_j
+ \quad\text{on a retained }kj .
+\end{align}
+Outside the retained list use $w_{kj}=o^v_{kj}$ as in the forward occupied
+Fock intermediate. With $p=ij$ and $d=ii$, the sources are
+\begin{align}
+ b_{1,i}^{F}&=(h_d^v)_{i:}^{\mathsf T}+V_d t_i-
+ n_d^{\mathsf T}o^v_{\mathrm{dom},i}
+ +\sum_{k} S_{ik,d}^{\mathsf T}u_{ik}(h_{ik}^v)_{k:}^{\mathsf T},\\
+ G_{ij}&=-\sum_{k}w_{kj} S_{p,ik}t_{ik}S_{p,ik}^{\mathsf T},\\
+ b_{2,ij}^{F}&=t_{ij} V_p^{\mathsf T}+V_p t_{ij}
+                  +G_{ij}+G_{ji}^{\mathsf T}.
+\end{align}
+The sums use the same occupied neighbors as the right residual. The independent
+Lambda check compares $2\sum_i (h_{ii}^v)_{i:}t_i+\lambda_1:b_1^F+
+\tfrac12\sum_{ij}\lambda_{2,ij}:b_{2,ij}^F$ to the native Fock covectors
+contracted with the same perturbation.
+
+10.2. Direct fitted doubles product and virtual ladder
+On the pair auxiliary domain set $W=M^{-1/2}$ with the same filtered
+eigenspectrum as the gradient. For a raw block $q$, $B=Wq$ and
+$B^v=W^v q+W q^v$. With $M=U\operatorname{diag}(m)U^{\mathsf T}$,
+\begin{equation}
+ W^v=U\big[f^{[1]}(m_a,m_b)\circ(U^{\mathsf T}M^v U)\big]U^{\mathsf T},
+\end{equation}
+where $f^{[1]}$ is the fixed-branch divided difference of the forward
+filtered inverse square root (the same self-adjoint linear map used in the
+CCSD fitting adjoint). For each auxiliary row, let
+$n^v_{m:}=(S^v_{p,mm}t_m)^{\mathsf T}$. Using $B_o,B_h,B_f$ for the
+OO, OV and VV blocks, define for occupied $i$ in the pair
+\begin{align}
+ O_i &= (B_o)_{i:}+B_h n_{i:}^{\mathsf T},\\
+ V_i &= (B_h)_{i:}^{\mathsf T}-n^{\mathsf T}O_i+B_f n_{i:}^{\mathsf T},
+ & D &= B_f-n^{\mathsf T}B_h .
+\end{align}
+Here $O_i$ denotes a domain column. Differentiate each product, e.g.,
+$D^v=B_f^v-(n^v)^{\mathsf T}B_h-n^{\mathsf T}B_h^v$.
+Jiang Eqs.~75 and 76 then contribute to the unique doubles block
+\begin{equation}
+ b_{2,ij}^{75,76}=\sum_Q\big[
+ V_i^v V_j^{\mathsf T}+ V_i(V_j^v)^{\mathsf T}
+ + D^v t_{ij}D^{\mathsf T}+D t_{ij}(D^v)^{\mathsf T}\big]_Q .
+\end{equation}
+10.3. Complete fixed-amplitude CCSD nuclear source
+Let $D_v$ differentiate the molecular inputs, lower-order solutions and
+interpair transfers on the selected branch while keeping the components of
+$t_i$ and $t_{ij}$ fixed in their respective moving frames. For a multilinear
+contraction $C$ (including transposes and permutations), the implemented rule is
+\begin{equation}
+ D_v C(X_1,\ldots,X_n)=\sum_{k=1}^n
+ C(X_1,\ldots,D_v X_k,\ldots,X_n).
+\end{equation}
+For $p=ij$, put $s_{pq}=Y_p^{\mathsf T} S Y_q$, $n_m^p=s_{p,mm}t_m$,
+$u_p=2t_p-t_p^{\mathsf T}$, $L_p=2K_p-K_p^{\mathsf T}$ and
+$P_{pq}(X)=s_{pq}Xs_{qp}$.
+Then $D_v n_m^p=(D_v s_{p,mm})t_m$.
+The additional term $s_{p,mm}t_m^v$ belongs to the amplitude Jacobian action.
+
+For each target auxiliary row $Q$, let $h^Q$ be its occupied--virtual factor,
+and $O_i^Q$ the dressed occupied column defined above. Jiang Eq.~82 gives
+\begin{align}
+ \beta_{p}&=\sum_Q[O_i^Q(O_j^Q)^{\mathsf T}+h^Qt_p(h^Q)^{\mathsf T}],\\
+ b_{2,p}^{B}&=\sum_{kl}\big[(D_v\beta_{p,kl})P_{p,kl}(t_{kl})
+       +\beta_{p,kl}D_v P_{p,kl}(t_{kl})\big].
+\end{align}
+For Eqs.~83--84 the occupied sums below follow the native target domain.
+Write $J_{lc}=(ij|lc)$, $K_{lc}=(il|jc)$ and $V^i_{bac}=(ib|ac)$ in
+the target fit. In matrix notation $n$ stacks the rows $(n_l^p)^{\mathsf T}$:
+\begin{align}
+ \gamma_p={}&-n^{\mathsf T}J+\sum_b(n_j^p)_b V^i_{b::}
+ -\sum_l n_l^p(s_{p,il}K_{il}^{\mathsf T}n_j^{il})^{\mathsf T}
+ -\tfrac12\sum_l s_{p,lj}t_{lj}s_{lj,il}K_{il}s_{il,p},\\
+ (\delta_p)_{ac}={}&-[n^{\mathsf T}(2K-J)]_{ac}
+ +\sum_b(n_i^p)_b(2V^j_{cab}-V^j_{bca})\notag\\
+ &-\sum_l (n_l^p)_a[(n_i^{lj})^{\mathsf T}L_{lj}s_{lj,p}]_c
+ +\tfrac12\sum_l[s_{p,il}u_{il}s_{il,lj}L_{lj}s_{lj,p}]_{ac}.
+\end{align}
+The tangent uses $D_v$ on every nonconstant operand. Use $J^{ijk},K^{ijk}$
+for the native mixed integrals with their second virtual axis in $kj$
+($jk$ shares that frame). The ordered terms and their permutation are
+\begin{align}
+ C_{ij}&=-\sum_k(J^{ijk}+s_{p,ki}\gamma_{ki}s_{ki,kj})t_{kj}^{\mathsf T}s_{kj,p},\\
+ D_{ij}&=\tfrac12\sum_k(2K^{ijk}-J^{ijk}+s_{p,ik}\delta_{ik}s_{ik,jk})
+                 u_{jk}^{\mathsf T}s_{jk,p},\\
+ M_{ij}&=\tfrac12 C_{ij}+C_{ij}^{\mathsf T}+D_{ij},&
+ b_{2,p}^{C,D}&=D_v(M_{ij}+M_{ji}^{\mathsf T}).
+\end{align}
+With $F''$ the fully dressed and doubles-corrected Fock intermediate of the
+right equations (in its indicated frame), the last doubles terms are
+\begin{align}
+ E_p &=t_p(F''_p)^{\mathsf T}+F''_pt_p,&
+ G_{ij}&=-\sum_k F''_{kj}P_{p,ik}(t_{ik}),\\
+ b_{2,p}^{E,G}&=D_v(E_p+G_{ij}+G_{ji}^{\mathsf T}).
+\end{align}
+For singles let $A_i,B_i,C_i$ be the native ordered contractions in Jiang
+Eqs.~88--90 expressed in the diagonal frame $ii$. In the notation of Eq.~87,
+\begin{equation}
+ b_{1,i}=D_v(F^{\rm dressed}_{ai}+A_i+B_i+C_i),\qquad
+ b_{2,p}=b_{2,p}^{75,76}+b_{2,p}^{B}+b_{2,p}^{C,D}+b_{2,p}^{E,G}.
+\end{equation}
+Here $F^{\rm dressed}_{ai}$ denotes the vector over $a$. Its derivative
+includes the moving occupied and virtual legs and all projected singles in
+Eqs.~96 and 98--101. Each bare Fock term occurs once.
+For the coupled amplitude vector $t=(t_1,t_2)$, $R_t t^v=-b^v$.
+Equations~\eqref{eq:curvature} and \eqref{eq:column} explain why stationary
+curvature requires first-order electronic relaxation but no second-order
+amplitude derivatives; in the symmetric expression the reference multipliers
+suffice.
+10.4. Coupled right amplitude response in the transformed representation
+For the Jacobian action all orbital frames, fitted factors, overlap maps and
+rank choices stay at their reference values. Define
+$P_x(s)=R(t_1+s x_1,t_2+s x_2)$ for the ordinary CCSD residual.
+The projected singles and the occupied dressed factor are linear in the
+amplitudes; the dressed virtual leg of the direct integral can be quadratic.
+Its product with the other virtual leg is at most quartic. The virtual
+ladder is at most cubic. The $\beta,\gamma,\delta$ terms are at most quadratic
+before multiplication by a doubles amplitude. The dressed Fock residual
+terms also contain at most four amplitude factors. Pair transfers are linear
+with constant coefficients in this action. Thus
+$P_x(s)=\sum_{m=0}^4 c_m s^m$, with $c_1=Jx$. For any nonzero $a$,
+\begin{align}
+ O_x(a)&=\tfrac12[P_x(a)-P_x(-a)]=a c_1+a^3 c_3,\\
+ Jx&=\frac{8O_x(a)-O_x(2a)}{6a}.
+\end{align}
+The implementation sets $a\|x\|_\infty=1/8$ and returns zero directly for
+$x=0$. Extraction is exact for this polynomial in exact arithmetic.
+It uses four native residual evaluations per nonzero action. All evaluations
+are at one nuclear geometry.
+
+For the real RHF pair symmetry $x_{ji}=x_{ij}^{\mathsf T}$, the metric is
+\begin{equation}
+ \langle z,x\rangle_W=\sum_i z_i^{\mathsf T}x_i
+  +\sum_{i<j}z_{ij}:x_{ij}+\tfrac12\sum_i z_{ii}:x_{ii},
+ \qquad \langle z,Jx\rangle_W=\langle J^{\dagger_W}z,x\rangle_W .
+\end{equation}
+The native Lambda reverse sweep supplies $J^{\dagger_W}z$ by omitting the
+additive CC energy and triples source. The doubles of a diagonal occupied
+pair are symmetric. Store its upper triangle with unit weight off the
+diagonal and components divided by $\sqrt{2}$ on the diagonal, so the
+ordinary packed dot product implements $W$.
+Preconditioned GMRES solves $Jt^v=-b^v$. Its diagonal preconditioner uses
+$F_{aa}^{ii}-F_{ii}$ for singles and
+$F_{aa}^{ij}+F_{bb}^{ij}-F_{ii}-F_{jj}$ for doubles in the reference
+semicanonical pair frames. The unpreconditioned residual is checked at exit.
+11. Iterative ordinary triples response
+Use the unique stored triplet $r=(i,j,k)$ and its transported TNO frame
+$Y_r$. Let $Y_p$ be a pair PNO frame and $C_r$ the orthonormal parent of the
+triplet (columns expressed in AOs). In the moving parent define
+$U_{pr}=Y_p^{\mathsf T} S C_r$, $u_p=2t_p-t_p^{\mathsf T}$,
+\begin{align}
+ d_p&=(u_p t_p^{\mathsf T}+u_p^{\mathsf T}t_p)/(1+\delta_{p_1p_2}),&
+ d_r&=\tfrac13\sum_{p\in(ij,jk,ik)}U_{pr}^{\mathsf T}d_p U_{pr}.
+\end{align}
+The sum uses three slots, including multiplicities when occupied indices
+coincide. Differentiate the products with the solved $t_p^v$, moving pair
+and parent frames, and $S^v$. For orthonormal eigenvectors $C_K,C_D$ of
+$d_r$ in the parent coordinates, use the retained--discarded mixing
+$(C_D^{\mathsf T}d_r^v C_K)_{da}/(n_a-n_d)$ to transport $Y_r$ by the
+same metric and projector rule used for the PNOs.
+
+Let $S_{pr}=Y_p^{\mathsf T}SY_r$ and $t_p^r=S_{pr}^{\mathsf T}t_pS_{pr}$.
+Define $t_i^r=S_{ii,r}^{\mathsf T}t_i$. In Jiang Eqs.~109--110:
+\begin{align}
+ W_{ijk}^{abc}&=P_{ijk}^{abc}\left[\sum_d(ia|bd)(t_{kj}^r)^{cd}
+                         -\sum_l(t_{il}^r)^{ab}(jl|kc)\right],\\
+ V_{ijk}^{abc}&=W_{ijk}^{abc}
+ +(t_i^r)^a(jb|kc)+(t_j^r)^b(ia|kc)+(t_k^r)^c(ia|jb)\notag\\
+ &\qquad +F_i^a(t_{jk}^r)^{bc}+F_j^b(t_{ik}^r)^{ac}+F_k^c(t_{ij}^r)^{ab}.
+\end{align}
+Apply the product rule to every factor including transfer matrices. $P_{ijk}^{abc}$
+here enumerates all six slot permutations. The OVVV vertex uses the full
+triplet Coulomb solve $Mx=q$, $Mx^v=q^v-M^vx$; the OOOV and OVOV vertices
+use the fixed-rank inverse-square-root derivative of the CCSD fitting section.
+
+Let $P_e$ reorder the stored source amplitude for a native occupied-slot
+replacement $m\mapsto l$, and $S_{rs}=Y_r^{\mathsf T} S Y_s$.
+With $D_r$ the Kronecker sum of the three virtual Fock matrices minus
+the occupied diagonal sum, the right operator and its tangent are
+\begin{align}
+ (Bx)_r&=D_r x_r-\sum_{e:r\leftarrow s} F_{lm} S_{rs}^{\otimes3}P_e x_s,\\
+ (B^v x)_r&=D_r^v x_r-\sum_{e:r\leftarrow s}
+ \left[F_{lm}^v S_{rs}^{\otimes3}
+ +F_{lm}\sum_{h=1}^3 S_{rs}^{\otimes(h-1)}\otimes S_{rs}^v
+                         \otimes S_{rs}^{\otimes(3-h)}\right]P_e x_s .
+\end{align}
+The frame is semicanonical at the reference; its transported virtual Fock
+derivative is a full matrix. Let $A_r$ apply the actual spin permutations
+and occupied multiplicity of Jiang Eq.~53, and $g_r=A_r V_r$. The source
+triplet orientation and its inverse must follow the forward tie convention.
+\begin{align}
+ BT&=-W,& B^{\mathsf T}Z&=-g,\\
+ BT^v&=-W^v-B^vT,& B^{\mathsf T}Z^v&=-A V^v-(B^v)^{\mathsf T}Z,\\
+ E_{(T)}^v&=\langle A V^v,T\rangle+\langle g,T^v\rangle
+          =\langle A V^v,T\rangle+\langle Z,W^v+B^vT\rangle .
+\end{align}
+The transpose uses the Frobenius product on the stored triplet cubes;
+occupied multiplicities are already included in $A$.
+12. One stationary triples Hessian column
+For real packed triplets put $g=A V$ and let $u$ denote an output nuclear
+coordinate and $v$ the specified column. The triples Lagrangian is
+$\mathcal L_{(T)}=g^{\mathsf T}T+Z^{\mathsf T}(W+BT)$, with the Frobenius
+product over stored cubes. All coefficient derivatives below include the
+response of the lower-order model in a common transported frame. Define
+\begin{align}
+ r_u &= W^u+B^uT, & \ell_u &= g^u+(B^u)^{\mathsf T}Z,\\
+ G_u &= (g^u)^{\mathsf T}T+Z^{\mathsf T}r_u .
+\end{align}
+Differentiating $G_u$ with respect to $v$ gives a useful separation:
+\begin{align}
+ H_{uv}^{(T),\mathrm{rel}} &= \ell_u^{\mathsf T}T^v+(Z^v)^{\mathsf T}r_u,\\
+ H_{uv}^{(T)} &= H_{uv}^{(T),\mathrm{rel}}
+       +(A V^{uv})^{\mathsf T}T+Z^{\mathsf T}(W^{uv}+B^{uv}T).
+\end{align}
+Only direction $v$ requires triples tangent solves. In particular
+$H_{uv}^{(T),\mathrm{rel}}=-\ell_u^{\mathsf T}B^{-1}r_v
+-\ell_v^{\mathsf T}B^{-1}r_u$, which is symmetric in $u,v$. Individual
+terms of the separation depend on the chosen frame.
+Here the observable is the separate ordinary (T) energy along the relaxed
+lower-order solution. In the total stationary Hessian one can instead cancel
+second electronic responses against the lower-order stationarity equations.
+
+On an edge, write $F=F_{lm}$, $S=S_{rs}$, and $K=S^{\otimes3}$.
+Work directly with three rectangular factors, including the six ordered
+placements of $u$ and $v$ on distinct slots:
+\begin{align}
+ (FK)^{uv} &= F^{uv}K+F^u K^v+F^v K^u+F K^{uv},\\
+ K^{uv} &= \sum_h K[S^{uv};h]+\sum_{h\ne k}K[S^u;h;S^v;k].
+\end{align}
+Brackets mean replace the indicated factors in $K$. The edge has the minus
+sign of the forward residual and its original occupied permutation $P_e$.
+The diagonal action uses all three legs of $(Y_r^{\mathsf T}F_{\mathrm{AO}}Y_r)^{uv}$
+and subtracts the mixed occupied diagonal sum.
+
+For a multilinear local contraction $C$, differentiate once on each operand
+or twice on the same operand:
+\begin{equation}
+ C^{uv}=\sum_i C[ X_i^{uv};i]+\sum_{i\ne j}C[X_i^u;i;X_j^v;j].
+\end{equation}
+Use this rule on the AO-to-local transformations, both pair--triplet overlap
+legs in $t_p^r$, and the six terms of $P_{ijk}^{abc}$ before the spin sum.
+For example, with $J$ the local metric and $G=J^{-1}$,
+\begin{align}
+ G^u &=-GJ^uG, &
+ G^{uv}&=-G(J^{uv}G+J^uG^v+J^vG^u).
+\end{align}
+For the filtered inverse in OOOV and OVOV, set $f(d)=1/d$ on the retained
+positive eigenvalues and zero on the discarded branch. In the eigenbasis
+of $J$, with tildes for matrices in that basis,
+\begin{equation}
+ \widetilde{G^{uv}}_{ab}
+ = f^{[1]}(d_a,d_b)\widetilde{J^{uv}}_{ab}
+ +\sum_k f^{[2]}(d_a,d_k,d_b)
+ (\widetilde{J^u}_{ak}\widetilde{J^v}_{kb}
+ +\widetilde{J^v}_{ak}\widetilde{J^u}_{kb}).
+\end{equation}
+The local mixed bare Coulomb metric and three-center vertex select all
+ordered shell-center contributions. For atomic coordinates $(A,x),(B,y)$:
+\begin{equation}
+ I^{Ax,By}=\sum_{p:\,c_p=A}\sum_{q:\,c_q=B}
+             \partial_{p x}\partial_{q y} I .
+\end{equation}
+When shell centers coincide, distinct ordered pairs appear separately. The
+bare integral derivative has no orbital-coefficient terms.
+For the water comparison the analytic local ingredients include
+$Q_{P,ab}=\sum_{\mu\nu} C_{\mu a}Q_{P,\mu\nu}C_{\nu b}$,
+$S_{pr}=Y_p^{\mathsf T}SY_r$, and $F_{r}=Y_r^{\mathsf T}F_{\rm AO}Y_r$.
+The multilinear rule above acts on every operand, including mixed orbital
+and amplitude inputs. For a lower-order electronic matrix $X$, the diagnostic
+checks those mixed inputs on the aligned branch using
+\begin{align}
+ X^{uv}(h)&=\frac{X(+h,+h)-X(+h,-h)-X(-h,+h)+X(-h,-h)}{4h^2}
+             && (u\ne v),\\
+ X^{vv}(h)&=\frac{X(+h)-2X(0)+X(-h)}{h^2}.
+\end{align}
+One independent local reference differentiates the stationary $G_u$ at
+$\mathbf X\pm h v$. For the canonical benchmark use
+$G_u^{\rm can}=g_u^{\rm DF\text{-}CCSD(T)}-g_u^{\rm DF\text{-}CCSD}$.
+Extrapolate each centered estimate $D$ as $[4D(h/2)-D(h)]/3$.
+13. CCSD stationarity for the separate ordinary triples curvature
+Use the same independent RHF pair coordinates and metric $W$ as for the
+right amplitude tangent. For a given geometry let $t=(t_1,t_2)$,
+$R(t,X)$ the transformed CCSD residual and $J=R_t$. Let
+$\eta$ be the derivative of the stationary triples Lagrangian with respect
+to $t$ at fixed lower-order inputs. It includes the response of the retained
+TNO subspace to $t_2$ at fixed triplet rank. The gradient model already forms
+this source before adding the CCSD energy derivative to its Lambda equations.
+For the isolated (T) contribution solve once per reference
+\begin{equation}
+ J^{\dagger_W}\lambda_{(T)}=-\eta, \qquad
+ \langle x,y\rangle_W=\sum_i x_i^{\mathsf T} y_i+
+ \sum_{i<j}x_{ij}:y_{ij}+\tfrac12\sum_i x_{ii}:y_{ii}.
+\end{equation}
+Here $\lambda_{(T)}$ is a CCSD-space multiplier; $Z$ still denotes the
+triples-space multiplier. In a common transported pair frame take the affine
+trial $\widehat t(s,h)=t+s t^u+h t^v$. Lower-order inputs follow the actual
+branch; TNOs follow $\widehat t$ and the moving pairs. Then
+\begin{align}
+ C_{uv} &= R_{uv}|_t + (\partial_u J)|_t t^v+
+                (\partial_v J)|_t t^u+ R_{tt}[t^u,t^v],\\
+ Jt^{uv}&=-C_{uv},&
+ \langle \eta,t^{uv}\rangle_W &= \langle\lambda_{(T)}, C_{uv}\rangle_W,\\
+ H_{uv}^{(T)}&=H_{uv}^{(T)}[\widehat t]
+                          +\langle\lambda_{(T)},C_{uv}\rangle_W .
+\end{align}
+In the trial term the first-order solutions are the same as on the relaxed
+branch. Only mixed CCSD amplitudes are set to zero. The trial TNO frame
+must include the motion of its PAO parent and the projected pair-density
+products. Differentiating a fully relaxed TNO frame here would count part
+of the CCSD response twice.
+
+For $x=t^u$, $y=t^v$, define
+\begin{equation}
+ D_{a,b}=\frac{1}{4ab}\sum_{i,j\in\{-1,1\}}ij\,
+            R(t+iax+jby,X_0),\qquad
+ R_{tt}[x,y]=\frac{4 D_{a,b}-D_{2a,2b}}{3}.
+\end{equation}
+The odd--odd powers of the quartic residual are $(1,1),(3,1),(1,3)$;
+the formula is exact in polynomial arithmetic, with a zero result for a
+zero direction. Nonzero directions are scaled independently as for the
+first-order Jacobian action. For a centered geometric stencil of weights
+$w_i$ and displacements $(s_i,h_i)$, the semi-analytic source is
+\begin{equation}
+ C_{uv}(h)= R_{tt}[x,y] + \sum_i w_i
+       \{R(t,X_i)+R_t(t,X_i)(s_i x+h_i y)\}.
+\end{equation}
+The Jacobian action at each displaced geometry is extracted from the native
+quartic at the reference amplitude components in the transported coordinates.
+The geometric error is quadratic for the centered stencils. The diagonal
+case uses a single displacement coordinate. The same-geometry polynomial
+evaluation has no nuclear step-size error.
+
+For the mixed TNO selection use $D=d_r$, the triplet density in a moving
+orthonormal PAO parent $Y$. In the eigenbasis of $D$, let $P$ project onto
+the retained eigenvectors, with $a$ retained, $d$ discarded. Differentiating
+$P^2=P$ and $[D,P]=0$ gives
+\begin{align}
+ (P^u)_{da}&=D^u_{da}/(n_a-n_d),\\
+ (P^{uv})_{da}&=\big(D^{uv}+[D^u,P^v]+[D^v,P^u]\big)_{da}/(n_a-n_d),\\
+ (P^{uv})_{KK}&=-(P^uP^v+P^vP^u)_{KK},&
+ (P^{uv})_{DD}&=(P^uP^v+P^vP^u)_{DD}.
+\end{align}
+The opposite off-diagonal block is its transpose. A fully retained parent
+has a constant internal projector. With $Y_{r,0}$ the reference TNO frame,
+form $A=YPY^{\mathsf T}S_0Y_{r,0}$ and $N=A^{\mathsf T}SA$. The polar-aligned
+moving frame is $Y_r=A N^{-1/2}$. Since $N_0=I$,
+\begin{align}
+ (N^{-1/2})^u&=-\tfrac12N^u,&
+ (N^{-1/2})^{uv}&=-\tfrac12N^{uv}
+                     +\tfrac38(N^uN^v+N^vN^u).
+\end{align}
+This form avoids divisions by eigenvalue differences within either cluster.
+For residual replay, let $a=\pi(i), b=\pi(j)$ be the displaced occupied
+labels, $\sigma_i$ their phase corrections, and $Q_{ij}$ the polar rotation
+that takes the native pair frame to its aligned frame. Supply ordered blocks
+and pull the residual back to the reference ordering using
+\begin{align}
+ t_a^{\rm native}&=\sigma_i Q_{ii}\widehat t_i,&
+ t_{ab}^{\rm native}&=\sigma_i\sigma_jQ_{ij}\widehat t_{ij}Q_{ij}^{\mathsf T},\\
+ R_i^{\rm aligned}&=\sigma_i Q_{ii}^{\mathsf T}R_a^{\rm native},&
+ R_{ij}^{\rm aligned}&=\sigma_i\sigma_j Q_{ij}^{\mathsf T}R_{ab}^{\rm native} Q_{ij}.
+\end{align}
+If $a>b$ the unique native block is obtained by transposition.
+14. Stationary retained-pair CCSD correlation curvature
+Use the RHF gradient model, which promotes every surviving occupied pair
+to strong. Let $p=ij$, $i\le j$, $m_{ij}=2-\delta_{ij}$,
+$d_i^p=S_{p,ii}t_i$, and $L_{ij}=2K_{ij}-K_{ij}^{\mathsf T}$.
+Jiang Eq.~45 and the native singles Fock term then give
+\begin{equation}
+ E_{\rm ret}=2\sum_i (f_i^{ii})^{\mathsf T} t_i
+     +\sum_{i\le j}m_{ij}L_{ij}:
+          \big[t_{ij}+d_i^p(d_j^p)^{\mathsf T}\big].
+\end{equation}
+Here $(f_i^{ii})_a$ is the bare occupied--virtual Fock element. In a pair's own
+Coulomb fit $K_{ij}=q_i^{\mathsf T}J^{-1}q_j$ with raw occupied--virtual
+three-center blocks $q_i,q_j$; both project into the pair basis. Use the
+full inverse, as in the exchange term of the forward energy. Apply the
+mixed product rule above to the fit, transfers, Fock row and amplitudes.
+For $\tau_p=t_{ij}+d_i^p(d_j^p)^{\mathsf T}$ the pair part is
+\begin{equation}
+ (L_p:\tau_p)^{uv}=L_p^{uv}:\tau_p+L_p^u:\tau_p^v
+                   +L_p^v:\tau_p^u+L_p:\tau_p^{uv}.
+\end{equation}
+The energy multiplicity $m_{ij}$ differs from the residual metric $W$.
+
+Let $\eta_{\rm ret}$ be the CCSD amplitude covector in that metric and
+$\eta_{(T)}$ the previous triples source. The converged gradient Lambda obeys
+\begin{align}
+ J^{\dagger_W}\lambda_{\rm tot}&=-(\eta_{\rm ret}+\eta_{(T)}),&
+ J^{\dagger_W}\lambda_{(T)}&=-\eta_{(T)},\\
+ \lambda_{\rm ret}&=\lambda_{\rm tot}-\lambda_{(T)},&
+ J^{\dagger_W}\lambda_{\rm ret}&=-\eta_{\rm ret}.
+\end{align}
+For example, the independent-$ij$ doubles component of $\eta_{\rm ret}$
+is $2L_{ij}$, also on diagonal occupied pairs. Each ordered energy occurrence
+of $d_i^p(d_j^p)^{\mathsf T}$ contributes
+$S_{p,ii}^{\mathsf T} L_{ij}d_j^p$ to the $i$ singles source and
+$S_{p,jj}^{\mathsf T} L_{ij}^{\mathsf T}d_i^p$ to the $j$ source, in
+addition to the bare singles Fock term.
+On the same affine CCSD trial used in the triples column,
+\begin{equation}
+ H_{uv}^{\rm ret}=E_{\rm ret}^{uv}[\widehat t]
+               +\langle\lambda_{\rm ret}, C_{uv}\rangle_W .
+\end{equation}
+All first CCSD derivatives and mixed lower-order inputs are included;
+$\widehat t^{uv}=0$. The same $C_{uv}$ serves both correlation contributions.
+The reference benchmark for the complete-space retained block is a centered
+difference of $g_{\rm DF\text{-}CCSD}-g_{\rm DF\text{-}RHF}$. For the
+complete-space total longitudinal benchmark, add the analytic DF-RHF Hessian
+entry to $H_{uv}^{\rm ret}+H_{uv}^{(T)}$. At finite cutoffs the remaining
+local energy corrections must be differentiated separately.
+
+15. Two-stage PNO truncation-energy curvature
+This section differentiates the scalar implemented in
+\texttt{pno\_truncation\_response.cc}. Each stage uses its own moving,
+orthonormal parent chart. Let $t^{ij}$ be the initial semicanonical MP2
+or final coupled-LMP2 amplitude, respectively, and define
+\begin{align}
+ \widetilde t^{ij}&=2t^{ij}-(t^{ij})^{\mathsf T},\\
+ D^{ij}&=\frac{\widetilde t^{ij}(t^{ij})^{\mathsf T}
+                  +(\widetilde t^{ij})^{\mathsf T}t^{ij}}{1+\delta_{ij}},
+ &P^{ij}&=X^{ij}(X^{ij})^{\mathsf T}.
+\end{align}
+Here $X^{ij}$ spans the retained density eigenvectors. For one ordered
+orientation the native loss is
+\begin{align}
+ \Delta e^{ij}&=K^{ij}:\widetilde t^{ij}
+       -K^{ij}:\bigl(P^{ij}\widetilde t^{ij}P^{ij}\bigr)
+       +\delta_{ij}\bigl(s^{ii}-s^{ii}_{\rm kept}\bigr),\\
+ s^{ii}&=(f^{ii})^{\mathsf T}(f_{ii}I-F^{ii})^{-1}f^{ii},\\
+ s^{ii}_{\rm kept}&=(X^{ii\mathsf T}f^{ii})^{\mathsf T}
+  (f_{ii}I-X^{ii\mathsf T}F^{ii}X^{ii})^{-1}(X^{ii\mathsf T}f^{ii}),\\
+ \Delta E_{\rm PNO}&=\sum_{i\leq j}(2-\delta_{ij})
+       \left(\Delta e^{ij}_{\rm initial}+\Delta e^{ij}_{\rm final}\right).
+\end{align}
+The singles expression uses the fully active denominator mask. The new
+kernel rejects a denominator within $10^{-12}$ of zero; it does not
+approximate the response of a screened denominator. Native gradient
+code supports the fixed spectral mask more generally.
+
+The retained projector uses the differentiated idempotency and commutator
+relations already derived for the TNO projector. Its mixed derivative
+includes the retained--retained and discarded--discarded blocks.
+For the singles contraction an orthonormal retained frame is reconstructed
+in the reference polar gauge,
+\begin{equation}
+ Y=P X_0,\qquad G=Y^{\mathsf T}Y,\qquad X=Y G^{-1/2}.
+\end{equation}
+At the reference point $G=I$, so
+\begin{equation}
+ (G^{-1/2})^{uv}=-\tfrac12 G^{uv}
+       +\tfrac38(G^uG^v+G^vG^u).
+\end{equation}
+All products use the mixed product rule. For a product of $m$ factors,
+its mixed derivative is the sum of the $m$ terms with one mixed factor
+and the $m(m-1)$ terms with distinct first derivatives $u$ and $v$.
+This includes parent-frame motion in $K,F,f,t$, when supplied consistently.
+
+For the initial stage define the pair Sylvester action
+\begin{equation}
+ \mathcal A^{ij}[z]=(f_{ii}+f_{jj})z-F^{ij}z-zF^{ij}.
+\end{equation}
+The energy code uses $\mathcal A^{ij}[t^{ij}]=K^{ij}$. Its derivatives obey
+\begin{align}
+ \mathcal A[t^u]&=K^u-\mathcal A^u[t],\\
+ \mathcal A[t^v]&=K^v-\mathcal A^v[t],\\
+ \mathcal A[t^{uv}]&=K^{uv}-\mathcal A^{uv}[t]
+                             -\mathcal A^u[t^v]-\mathcal A^v[t^u].
+\end{align}
+One diagonalization of the reference pair Fock matrix supplies all these
+solves, with denominators $f_{ii}+f_{jj}-\epsilon_a-\epsilon_b$.
+No matrix on the pair-tensor product space is formed.
+
+The final-stage $t^{uv}_{\rm LMP2}$ is an input to this implementation.
+It must not be set to zero: no isolated PNO-loss LMP2 adjoint has been
+introduced here. The current molecular diagnostic supplies aligned total
+mixed lower-order inputs from displaced native electronic states, so the
+molecular result remains semi-analytic. The resulting contribution is
+\begin{equation}
+ H^{\rm PNO}_{uv}=\sum_{i\leq j}(2-\delta_{ij})
+  \left[(\Delta e^{ij}_{\rm initial})^{uv}
+                       +(\Delta e^{ij}_{\rm final})^{uv}\right].
+\end{equation}
+At full retained rank each loss and each of its derivatives is zero.
+Fixed ranks and a resolved retained/discarded eigenvalue gap are required.
+Per pair the matrix solves and contractions are cubic in the parent rank
+with quadratic storage. Linear aggregate work requires bounded local ranks
+and a number of retained pairs proportional to system size; the dense water
+input diagnostic does not establish this property for the molecular pipeline.
+
+
+16. Isolated PNO-loss LMP2 adjoint and stationary curvature
+The previous section's direct contraction remains a verification route.
+The stationary route now eliminates the final-stage coupled-LMP2 mixed
+amplitude. In the native first-PNO charts use the residual convention
+\begin{equation}
+ R^{ij}=K^{ij}+F^{ij}t^{ij}+t^{ij}F^{ij}
+ -(f_{ii}+f_{jj})t^{ij}
+ -\sum_{e\in\mathcal E_{ij}} f_{a_e b_e}
+       S^{ij,q_e}t^{q_e}S^{ij,q_e\mathsf T}=0.
+\end{equation}
+Each edge is taken directly from the stored, screened LMP2 graph; it includes
+an ordered source pair $q_e$. A reversed source pair uses the transpose
+of its unique-pair tensor. The diagonal residual is symmetrized.
+Write $R=K+\mathcal A t$, and define $\eta_{ij}$ by
+\begin{equation}
+ d_t\Delta E_{\rm PNO}=\sum_{i\leq j}\eta_{ij}:dt^{ij}.
+\end{equation}
+The initial-selection loss is independent of the coupled-LMP2 tensor
+at fixed parent inputs. The native reverse derivative of the final loss,
+including its density-projector response and singles loss, supplies
+$\eta_{ij}$. Its factor $(2-\delta_{ij})$ is already included.
+Consequently the pairing here is the unweighted unique-pair Frobenius sum,
+not the CCSD Lambda pairing defined in earlier sections.
+
+The native transpose solver computes the isolated multiplier
+\begin{equation}
+ \mathcal A^\dagger z=-\eta,\qquad
+ \langle x,y\rangle=\sum_{i\leq j}x^{ij}:y^{ij}.
+\end{equation}
+It uses symmetric diagonal-pair tensors. No full Jacobian is formed.
+The combined gradient's LMP2 multiplier has other sources and must not
+be substituted for $z$ in this isolated correction.
+
+For the affine amplitude path
+$\widehat t=t+u t^u+v t^v$, form
+\begin{equation}
+ C_{uv}=R^{uv}[\widehat t]
+       =K^{uv}+\mathcal A^{uv}t+\mathcal A^u t^v+\mathcal A^v t^u.
+\end{equation}
+All products in the native graph, including both overlap legs, use the
+mixed product rule. The mixed amplitude constraint is
+$\mathcal A t^{uv}=-C_{uv}$. Thus
+\begin{align}
+ \langle\eta,t^{uv}\rangle
+ &=-\langle\mathcal A^\dagger z,t^{uv}\rangle
+   =\langle z,C_{uv}\rangle,\\
+ H^{\rm PNO}_{uv}
+ &=\Delta E^{uv}_{\rm PNO}[\widehat t]+\langle z,C_{uv}\rangle.
+\end{align}
+Only the final-stage coupled-LMP2 mixed amplitude is zeroed in the affine
+energy. The initial semicanonical MP2 mixed solve and all moving-parent
+responses remain included. First-order coupled-LMP2 responses remain required.
+The Lean theorem \texttt{eliminate\_mixed\_lmp2} proves the displayed
+finite-dimensional elimination identity under the mixed constraint and
+adjoint hypotheses; it does not prove the numerical solvers or nuclear inputs.
+
+The full-domain molecular provider now supplies mixed RHF density/Fock,
+Boys LMOs, the virtual parent, first-PNO frames and fitted exchange
+analytically. Native first-order LMP2 tangents complete these inputs.
+Consequently this isolated stationary PNO-loss curvature uses no nuclear
+displacements or mixed LMP2 amplitudes. The older displaced construction
+is retained only as a verification oracle. The column diagnostic sums
+this analytic correction with retained CCSD and iterative triples.
+The final-PNO frames in those other contributions now use the mixed right
+LMP2 solve above. Their CCSD nuclear mixed residual remains sampled;
+nonzero remaining screened-energy corrections and local-domain assembly
+require separate treatment.
+
+
+17. Mixed PAO and full-virtual parent from the occupied projector
+Let $D=C_o C_o^{\mathsf T}$ include all RHF occupied orbitals, including
+frozen core, with $C_o^{\mathsf T}S C_o=I$. The supplied occupied response
+may be represented by mixed coefficient blocks or by the gauge-invariant
+mixed density. Acting on a moving panel $B$ gives
+\begin{equation}
+ (DB)^{uv}=D^{uv}B+D^u B^v+D^v B^u+D B^{uv}.
+\end{equation}
+The coefficient implementation contracts $C_o(C_o^{\mathsf T}B)$ without
+forming $D$. Internal occupied rotations cancel, including their mixed
+exponential-coordinate term.
+
+For fixed AO-domain columns $E_{\cal D}$, the raw PAOs are
+\begin{equation}
+ A=E_{\cal D}-D S E_{\cal D},\qquad
+ A^{uv}=-(D^{uv}S+D^uS^v+D^vS^u+DS^{uv})E_{\cal D}.
+\end{equation}
+Define $q_a=A_a^{\mathsf T} S A_a$ and $N_a=A_a q_a^{-1/2}$.
+The mixed product rule supplies $q_a^u,q_a^v,q_a^{uv}$, and
+\begin{equation}
+ (q_a^{-1/2})^{uv}
+ =\tfrac34 q_a^{-5/2}q_a^u q_a^v-\tfrac12 q_a^{-3/2}q_a^{uv}.
+\end{equation}
+The native fixed zero-column mask $q_a>10^{-20}$ is retained. Inactive
+normalized columns and their derivatives are zero on that branch.
+
+For a reference full-virtual frame $V_0$, use a fixed panel $B=S_0V_0$.
+The projected frame and its reference polar normalization are
+\begin{equation}
+ Y=(S^{-1}-D)B,\qquad G=Y^{\mathsf T}S Y,\qquad V=Y G^{-1/2}.
+\end{equation}
+At the reference $Y=V_0$, $G=I$. The mixed inverse-square-root formula
+from the previous sections therefore applies. To avoid forming a metric
+inverse, solve $S Z=B$ on the supplied panel and differentiate:
+\begin{align}
+ S Z^u&=B^u-S^u Z,\\
+ S Z^v&=B^v-S^v Z,\\
+ S Z^{uv}&=B^{uv}-S^{uv}Z-S^u Z^v-S^v Z^u.
+\end{align}
+The implementation uses $Y=Z-DB$ with the constant $B=S_0V_0$.
+This reproduces the fixed-reference polar gauge used in the displaced
+full-virtual diagnostics. A separately truncated local parent requires
+its own selection response; this formula does not replace it.
+
+The triples mixed-input provider now reconstructs $V^{uv}$ through this
+formula rather than requesting the sampled aligned virtual coefficients.
+Its $D^u,D^v$ are from native RHF tangents; $D^{uv}$ is still sampled.
+Thus the frame transformation is analytic conditional on its occupied
+response inputs, while the molecular Hessian remains semi-analytic.
+The full-domain water diagnostic materializes $D$; the general coefficient
+panel action avoids that materialization. Dense metric solves and global
+occupied actions do not establish end-to-end linear scaling.
+
+
+18. Analytic mixed RHF occupied density and Fock response
+The one-spin RHF density satisfies
+\begin{equation}
+ D S D=D,\qquad F D S-S D F=0,\qquad F=h+\mathcal G[D],
+ \quad\mathcal G[D]=2J[D]-K[D].
+\end{equation}
+All derivatives below refer to AO coefficient matrices in a fixed Cartesian
+frame. The total occupied density includes frozen core. Assume a full-rank
+AO metric and a complete reference MO matrix $C=(C_o,C_v)$.
+For known first responses, collect the mixed idempotency terms excluding
+those linear in $D^{uv}$:
+\begin{align}
+ B_{uv}={}&D^u S D^v+D^v S D^u+D^u S^v D+D^v S^u D\nonumber\\
+          &+D S^u D^v+D S^v D^u+D S^{uv}D.
+\end{align}
+Then $D^{uv}=D^{uv}SD+DSD^{uv}+B_{uv}$. In the fixed reference
+orthonormal chart $\overline B=C^{\mathsf T}S B_{uv}S C$, the diagonal
+blocks of $\overline {D^{uv}}$ are
+\begin{equation}
+ \overline {D^{uv}}_{oo}=-\overline B_{oo},\qquad
+ \overline {D^{uv}}_{vv}=+\overline B_{vv}.
+\end{equation}
+Define the corresponding AO seed $D_{\rm seed}^{uv}$ with zero cross
+blocks. Parameterize the remaining response by an occupied-by-virtual
+matrix $X$:
+\begin{equation}
+ D^{uv}=D_{\rm seed}^{uv}+C_o X C_v^{\mathsf T}+C_v X^{\mathsf T}C_o^{\mathsf T}.
+\end{equation}
+The mixed Fock source independent of this unknown density is
+\begin{equation}
+ F_{\rm known}^{uv}=h^{uv}+\mathcal G^{uv}[D]
+                       +\mathcal G^u[D^v]+\mathcal G^v[D^u],\qquad
+ F^{uv}=F_{\rm known}^{uv}+\mathcal G[D^{uv}].
+\end{equation}
+Evaluate the mixed stationarity residual $R_{\rm seed}^{uv}$ of
+$FDS-SDF$ using the seed density and
+$F_{\rm known}^{uv}+\mathcal G[D_{\rm seed}^{uv}]$.
+Psi4's native RHF CPHF action has the negative orbital-gap and Fock-response
+convention, so the implemented solve is
+\begin{equation}
+ H_{\rm CPHF}[X]=(C_v^{\mathsf T}R_{\rm seed}^{uv}C_o)^{\mathsf T}.
+\end{equation}
+The code checks the native CPHF residual and the full AO mixed idempotency
+and stationarity residuals after constructing $D^{uv}$ and $F^{uv}$.
+A temporary JK object is created only if needed and the reference handle
+is restored. Density and Fock reference matrices are preserved.
+
+For the full-domain DF verification provider, let $Q_{P,\mu\nu}$ be raw
+three-center integrals and $J_{PQ}$ the auxiliary metric. Solve
+$J B=Q$ on flattened AO-pair panels using the earlier mixed metric-solve
+rule. Contract
+\begin{equation}
+ \mathcal G[D]_{\mu\nu}
+ =2\sum_{P\rho\sigma} Q_{P,\mu\nu}B_{P,\rho\sigma}D_{\rho\sigma}
+  -\sum_{P\rho\sigma} Q_{P,\mu\rho}B_{P,\nu\sigma}D_{\rho\sigma}.
+\end{equation}
+Applying the mixed product rule includes both differentiated fit legs and
+the metric response without a four-index ERI tensor. The provider uses
+analytic one-electron and native two-/three-center mixed integral
+engines, with no nuclear displacement in the response construction.
+It assumes full-rank inverse-metric DF. This dense verification provider
+has storage $O(n_{\rm aux}n_{\rm AO}^2)$ and is not a local-scaling proof.
+
+For the frozen/active occupied partition, form an orthonormal occupied
+parent
+\begin{equation}
+ O=Y(Y^{\mathsf T}S Y)^{-1/2},\qquad Y=D S_0 C_{o,0}.
+\end{equation}
+If $P_c$ is the spectral projector onto the lowest $n_c$ eigenvalues of
+$O^{\mathsf T}F O$, then
+\begin{equation}
+ D_c=O P_c O^{\mathsf T},\qquad D_a=D-D_c.
+\end{equation}
+The mixed spectral projector machinery supplies the derivatives, requiring
+an open frozen/active eigenvalue gap. For $n_c=0$ the frozen response is
+identically zero. This computes subspace densities, not individual
+canonical eigenvector or localized-orbital mixed derivatives.
+
+The retained-CCSD/triples mixed molecular provider now uses these analytic
+$D^{uv}$ and $F^{uv}$ and reconstructs its virtual parent from them.
+At this stage mixed localized orbitals, first/final PNO frames and the
+CCSD nuclear mixed residual remained sampled. The next section replaces
+the mixed localized-orbital input analytically. The separate PNO-loss diagnostic still samples
+its projected lower-order inputs. Thus the molecular Hessian remains
+semi-analytic despite this analytic RHF block.
+
+
+19. Mixed quadratic Boys and Mulliken-PM localization response
+Let $D_a$ be the active occupied density from the preceding spectral
+partition, and $L_0$ the reference localized occupied frame. Define its
+polar-transported parent by
+\begin{equation}
+ Y=D_a S_0 L_0,\qquad B=Y(Y^{\mathsf T}S Y)^{-1/2}.
+\end{equation}
+For Boys the AO operators $O^\kappa$ are the three electronic dipoles.
+For quadratic Mulliken PM they are the symmetrized atomic populations,
+\begin{equation}
+ O^A=\tfrac12(E_A S+S E_A),
+\end{equation}
+where $E_A$ selects AO functions centered on atom $A$. Both use
+\begin{equation}
+ \Phi(L)=\sum_{\kappa i}(A^\kappa_{ii})^2,\qquad
+ A^\kappa=L^{\mathsf T}O^\kappa L,\qquad
+ g_{ij}=4\sum_\kappa(A^\kappa_{ii}-A^\kappa_{jj})A^\kappa_{ij}=0.
+\end{equation}
+The independent antisymmetric generator uses $K_{ji}=\theta_{ij}$ and
+$K_{ij}=-\theta_{ij}$ for $i<j$. At a stationary maximum the existing
+localization rotation Hessian $H=\partial g/\partial\theta$ supplies
+\begin{equation}
+ H\theta^u=-g^u[B],\qquad H\theta^v=-g^v[B].
+\end{equation}
+With $L=B\exp(uK^u+vK^v+uvK^{uv})$, the mixed coefficient derivative is
+\begin{equation}
+ L^{uv}=B^{uv}+B^uK^v+B^vK^u
+             +B\left[K^{uv}+\tfrac12(K^uK^v+K^vK^u)\right].
+\end{equation}
+Set $K^{uv}=0$ to form a trial frame $\widehat L$ and solve
+\begin{equation}
+ H\theta^{uv}=-g^{uv}[\widehat L].
+\end{equation}
+For each operator put $\delta_{ij}=A_{ii}-A_{jj}$. Its mixed gradient is
+\begin{equation}
+ g_{ij}^{uv}=4\sum_\kappa\left[
+ \delta_{ij}^{uv}A_{ij}+\delta_{ij}^u A_{ij}^v
+ +\delta_{ij}^v A_{ij}^u+\delta_{ij}A_{ij}^{uv}\right].
+\end{equation}
+Every AO-operator, parent and rotation cross term is included through the
+mixed product rule. The reference must be stationary and the Hessian a
+nonsingular maximum. A nonunique PM or Boys branch is rejected rather
+than assigning an arbitrary mixed derivative. First and mixed stationarity
+and metric-orthonormality residuals are checked after the solves.
+
+19.1. Analytic mixed electronic dipole integrals
+At fixed operator origin, a Gaussian center derivative acts only on the
+basis functions. For an unnormalized primitive angular factor,
+\begin{equation}
+ \partial_{A_x}g_l=2\alpha g_{l+1}-l g_{l-1}.
+\end{equation}
+Applying this rule twice, including the updated angular power on the
+second application, evaluates all mixed shell-center dipole derivatives.
+The native multipole recurrence now supplies order-one multipoles with
+second derivatives; arbitrary higher multipoles retain their previous
+first-derivative limit. There are 21 symmetric second derivatives of the
+six shell-center coordinates per dipole component. Nuclear derivatives
+sum every matching shell-center assignment, including both cross terms
+when the centers belong to the same atom. The electronic sign is negative.
+
+The Mints interface returns 27 AO matrices ordered by dipole component,
+then the Cartesian derivative on atom 1, then that on atom 2. Mixed
+reciprocity, AO symmetry, spherical/Cartesian basis handling and the
+translation identity are tested:
+\begin{equation}
+ \sum_A \mu_\kappa^{A_x B_y}=-\delta_{\kappa x}S^{B_y}.
+\end{equation}
+The nuclear dipole is linear in nuclear coordinates and has zero mixed
+second derivative. Only the electronic dipole enters the Boys objective.
+
+19.2. Forward stationarity below objective roundoff
+The response equations require a stationary forward localized frame. For
+the quadratic Boys/PM Jacobi rotation of orbitals $i,j$, define
+\begin{equation}
+ d=\sum_\kappa\left[(A^\kappa_{ii}-A^\kappa_{jj})^2
+                         -4(A^\kappa_{ij})^2\right],\qquad
+ o=4\sum_\kappa(A^\kappa_{ii}-A^\kappa_{jj})A^\kappa_{ij}.
+\end{equation}
+The exact pair maximizer has
+\begin{equation}
+ \theta=\tfrac14\operatorname{atan2}(o,d),\qquad
+ \Delta\Phi=\tfrac14\left(\sqrt{d^2+o^2}-d\right)
+ =\frac{o^2}{4(\sqrt{d^2+o^2}+d)}\quad(d>0).
+\end{equation}
+The rationalized form resolves the gain near a maximum. Rejecting every
+gain below objective roundoff imposes an artificial square-root-of-machine-
+precision floor on the gradient $o$. The quadratic implementation instead
+accepts positive exact pair gains and uses the requested gradient criterion
+to stop. The fourth-power proposal retains its objective acceptance test.
+Independent AO-projected stationarity checks cover small-rotation restarts
+with augmented-Hessian steps both enabled and disabled.

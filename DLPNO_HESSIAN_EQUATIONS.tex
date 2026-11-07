@@ -22,6 +22,15 @@ The orbital coefficients, subspace projectors and amplitudes relax. Assume
 a twice differentiable solution with separated retained/discarded spaces
 and a locally determined response after removing redundant rotations.
 
+The current full-domain diagnostic has analytic mixed RHF, Boys, PAO,
+first-PNO, coupled-LMP2 and final-PNO inputs. CCSD stationarity eliminates
+mixed CCSD amplitudes and supplies trial mixed TNO response. The mixed
+nuclear CCSD residual still uses a geometry stencil. Other nonzero screened
+energy corrections, local-domain assembly and full Hessian/vibrational
+validation remain open. The companion working-memory Markdown file contains
+the complete milestone and validation index. The companion text file preserves
+this entire equation record in plain text with LaTeX mathematical notation.
+
 \section{Constrained curvature}
 Let $q$ denote independent real electronic coordinates after fixing gauges,
 $R$ their defining residuals, and $\lambda$ their multipliers. Contractions
@@ -315,6 +324,40 @@ tensor derivative in an aligned occupied-pair convention:
  +Y_p T_p^v Y_p^{\mathsf T}+Y_p T_p(Y_p^v)^{\mathsf T}.
 \end{equation}
 
+\subsection{Mixed coupled-LMP2 right response}
+All blocks above now have analytic mixed geometric derivatives. Let
+$\widehat T=T+uT^u+vT^v$ and evaluate the mixed residual with
+$\widehat T^{uv}=0$. The known source for pair $p$ is
+\begin{align}
+ C_p={}&K_p^{uv}+f_p^{uv}T_p+T_pf_p^{uv}-s_p^{uv}T_p \notag\\
+ &+f_p^uT_p^v+f_p^vT_p^u+T_p^uf_p^v+T_p^vf_p^u
+   -s_p^uT_p^v-s_p^vT_p^u
+   -\sum_{p\gets q} E_{pq}^{uv}[\widehat T],\\
+ A T^{uv}={}&-C .
+ \label{eq:mixed_lmp2_right}
+\end{align}
+For one oriented edge abbreviate $c=c_{pq}$, $S=S_{pq}$ and
+$T=T_q$, so $E=cSTS^{\mathsf T}$. Its fifteen nonzero terms are
+\begin{align}
+ E^{uv}[\widehat T]={}&c^{uv}STS^{\mathsf T}
+       +cS^{uv}TS^{\mathsf T}+cST(S^{uv})^{\mathsf T} \notag\\
+ &+c^u\big[S^vTS^{\mathsf T}+ST^vS^{\mathsf T}+ST(S^v)^{\mathsf T}\big] \notag\\
+ &+c^v\big[S^uTS^{\mathsf T}+ST^uS^{\mathsf T}+ST(S^u)^{\mathsf T}\big] \notag\\
+ &+c\big[S^uT^vS^{\mathsf T}+S^vT^uS^{\mathsf T}
+           +S^uT(S^v)^{\mathsf T}+S^vT(S^u)^{\mathsf T} \notag\\
+ &\hspace{1.8em}+ST^u(S^v)^{\mathsf T}+ST^v(S^u)^{\mathsf T}\big].
+\end{align}
+The omitted sixteenth term is $cST^{uv}S^{\mathsf T}$, already part of
+$AT^{uv}$. The Lean record checks the ordered four-factor product-rule
+regrouping; the transpose and numerical solvers are verified separately.
+The native right solver reuses the
+reference sparse graph, pair dimensions and semicanonical preconditioner.
+It does not form a full amplitude Jacobian or differentiate the iteration
+history. Diagonal sources are symmetric; missing/malformed pairs,
+nonfinite inputs and appreciable diagonal antisymmetry are rejected.
+The zero-source branch returns zero response. Reconstructing
+$R^{uv}[T,T^u,T^v,T^{uv}]$ independently checks the solved equation.
+
 \section{Final CCSD PNO subspace after coupled LMP2}
 For $p=(ij)$ use the first-stage frame $Y$ and its derivative $Y^v$ from
 the previous section. Here $T$ is the converged coupled LMP2 amplitude
@@ -339,6 +382,38 @@ The final semicanonical rotation within the retained space drops out of $A$.
 The AO coefficient-space projector is $AS$ and its derivative is $A^v S+A S^v$.
 As a sign and gauge test, changing $Y^v$ by $YK$ and $T^v$ by
 $TK-KT$ for $K=-K^{\mathsf T}$ leaves $A^v$ unchanged.
+
+\subsection{Mixed final-PNO density, projector and frame}
+Insert the mixed amplitudes from Eq.~\eqref{eq:mixed_lmp2_right},
+including all first-order cross terms:
+\begin{align}
+ D^{uv}=\eta\big[&\tilde T^{uv}T^{\mathsf T}
+      +\tilde T^u(T^v)^{\mathsf T}+\tilde T^v(T^u)^{\mathsf T}
+      +\tilde T(T^{uv})^{\mathsf T} \notag\\
+      &+(\tilde T^{uv})^{\mathsf T}T
+      +(\tilde T^u)^{\mathsf T}T^v+(\tilde T^v)^{\mathsf T}T^u
+      +\tilde T^{\mathsf T}T^{uv}\big].
+\end{align}
+Use the same retained/discarded projector equations as for the first PNO
+selection, with the actual final rank and a resolved occupation boundary.
+The AO retained density is $A=YPY^{\mathsf T}$, whose full mixed product
+includes both first-stage frame legs. Its final frame uses
+\begin{equation}
+ B=YPY^{\mathsf T}S_0Z_0,\qquad Z=B(B^{\mathsf T}SB)^{-1/2},
+\end{equation}
+where $Z_0$ is the native final semicanonical frame. As before, the polar
+normalizer is differentiated about the identity. This is not a frozen
+first-PNO-parent approximation. Full final rank has $P^{uv}=0$ internally
+but generally nonzero $A^{uv}$ and $Z^{uv}$ from parent motion.
+
+The column diagnostic now consumes these analytic final frames for all
+projected Fock, fitted-integral and pair-overlap contractions. Its stationary
+path rejects any request for sampled mixed PNO coefficients. The direct
+PNO-loss contraction with solved $T^{uv}$ independently reproduces the
+isolated-adjoint expression; the latter remains the preferred contraction
+when only that correction is needed. AO amplitude tensors and final
+projectors are also checked by differences of the pre-existing first-order
+responses, with occupied labels and signs aligned across geometries.
 
 \section{Starting the CCSD residual source}
 For a final CCSD frame $Y_p$, insert the final $A^v$ into the parallel
@@ -917,9 +992,10 @@ Consequently this isolated stationary PNO-loss curvature uses no nuclear
 displacements or mixed LMP2 amplitudes. The older displaced construction
 is retained only as a verification oracle. The column diagnostic sums
 this analytic correction with retained CCSD and iterative triples.
-Mixed final-PNO frames and the CCSD nuclear mixed residual in those
-other contributions remain sampled; nonzero remaining screened-energy
-corrections and local-domain assembly require separate treatment.
+The final-PNO frames in those other contributions now use the mixed right
+LMP2 solve above. Their CCSD nuclear mixed residual remains sampled;
+nonzero remaining screened-energy corrections and local-domain assembly
+require separate treatment.
 
 
 \section{Mixed PAO and full-virtual parent from the occupied projector}

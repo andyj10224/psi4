@@ -101,7 +101,8 @@ def analytic_pno_inputs(w,u,v,verify_first=False):
     errors = [max(np.max(abs(r[k])) for r in residual.values()) for k in (0,1,2)]
     np.testing.assert_allclose(errors,0,atol=2.e-9,rtol=0)
     source = lmp2_mixed_residual(final,foo,edges,overlap)
-    data.update(initial=initial,final=final,first=first,foo=foo,source=source,residual_errors=errors)
+    data.update(initial=initial,final=final,first=first,foo=foo,source=source,residual_errors=errors,
+                edges=edges,pair_overlap=overlap)
     return data
 
 
@@ -111,7 +112,7 @@ def analytic_pno_entry(w,u,v,adjoint=None):
     return adjoint.element(data['initial'],data['final'],data['source'])
 
 
-def first_projector_derivative(w,u,reference):
+def first_projector_derivative(w,u,reference,response=None):
     """Independent pre-existing first-order route, used only as a mixed oracle."""
     ref,ref0 = w.reference_wavefunction(),reference.reference_wavefunction()
     S,F = ref.S().np,ref.Fa().np
@@ -137,6 +138,7 @@ def first_projector_derivative(w,u,reference):
     assert min(abs(match[np.arange(len(order)),order])) > .999
     native,old = blocks(w,'FRAME'),blocks(reference,'FRAME')
     result = {}
+    dy,dk_first = {},{}
     for p,y in old.items():
         i,j = sorted(order[list(p)])
         assert native[i,j].shape == y.shape
@@ -144,6 +146,16 @@ def first_projector_derivative(w,u,reference):
         selected = first_pno_tangent(V,dV,S,dS,F,dF,k,dk,foo[i,i]+foo[j,j],dfoo[i,i]+dfoo[j,j],
                                      np.eye(V.shape[1]),y.shape[1],i==j)
         result[p] = selected.retained_density_tangent
+        if response is not None:
+            # Optional native-chart inputs for independent LMP2/final-PNO tests.
+            frame = native[i,j]
+            dy[i,j] = _transport_pno_frame(frame,selected,S,dS,(i,j))
+            pair_panels = [(L[:,k]@Q@frame,dL[:,k]@Q@frame+L[:,k]@dQ@frame+L[:,k]@Q@dy[i,j])
+                           for k in (i,j)]
+            _,dk_first[i,j] = pair_exchange_tangent(J,dJ,*pair_panels[0],*pair_panels[1])
+    if response is not None:
+        response.update(frames=native,frame_derivatives=dy,exchange_derivatives=dk_first,
+                        overlap_derivative=dS,fock_derivative=dF,occupied_fock_derivative=dfoo)
     return result
 
 

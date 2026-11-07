@@ -60,6 +60,12 @@ DLPNOCCSD_T::PairBlocks lmp2_tangent(SharedWavefunction wfn, const DLPNOCCSD_T::
     return local->lmp2_tangent(dy,dk,ds,df,dfoo);
 }
 
+DLPNOCCSD_T::PairBlocks lmp2_mixed_tangent(SharedWavefunction wfn, const DLPNOCCSD_T::PairBlocks& source) {
+    auto local = std::dynamic_pointer_cast<DLPNOCCSD_T>(wfn);
+    if (!local) throw PSIEXCEPTION("Mixed LMP2 tangent requires an RHF DLPNO gradient model.");
+    return local->lmp2_mixed_tangent(source);
+}
+
 std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> triples_ccsd_source(SharedWavefunction wfn) {
     auto local = std::dynamic_pointer_cast<DLPNOCCSD_T>(wfn);
     if (!local) throw PSIEXCEPTION("Expected an RHF DLPNO triples wavefunction.");

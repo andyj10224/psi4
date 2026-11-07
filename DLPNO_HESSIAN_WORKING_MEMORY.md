@@ -2,9 +2,42 @@
 
 ## Scope and verification policy
 
-Derive the analytic nuclear Hessian of the same closed-shell RHF ordinary iterative DLPNO-CCSD(T) functional selected by the public gradient driver. Start with Boys, then Mulliken PM; exercise both frozen-core and all-electron references. Work in a fixed Cartesian frame, in hartree/bohr², on a smooth local branch. Keep discrete selections fixed while differentiating the moving electronic subspaces. Require a test for each block before using it as a reference for the next block. Keep canonical comparisons, local finite-cutoff checks, and scaling measurements separate. [Equation record](DLPNO_HESSIAN_EQUATIONS.tex)
+Derive the analytic nuclear Hessian of the same closed-shell RHF ordinary iterative DLPNO-CCSD(T) functional selected by the public gradient driver. Start with Boys, then Mulliken PM; exercise both frozen-core and all-electron references. Work in a fixed Cartesian frame, in hartree/bohr², on a smooth local branch. Keep discrete selections fixed while differentiating the moving electronic subspaces. Require a test for each block before using it as a reference for the next block. Keep canonical comparisons, local finite-cutoff checks, and scaling measurements separate. [Working equations (.txt)](DLPNO_HESSIAN_EQUATIONS.txt) · [Typesetting source (.tex)](DLPNO_HESSIAN_EQUATIONS.tex)
 
-**Current checkpoint (7 November 2026).** Mixed first-stage PNO response and the separate stationary PNO truncation-energy curvature now have analytic full-domain molecular inputs. The assembled retained-CCSD/triples diagnostic still samples the final PNO frames and mixed nuclear CCSD residual. Next solve the mixed coupled-LMP2 response and use it in the final PNO selection. See the final entry for validation and scope; earlier entries record their historical status.
+**Current checkpoint (7 November 2026).** Both PNO selections, including the mixed coupled-LMP2 amplitudes between them, now have analytic full-domain molecular inputs. The separate stationary PNO truncation-energy curvature is analytic in that diagnostic. The assembled retained-CCSD/triples path no longer samples mixed PNO coefficients; the mixed nuclear CCSD residual is the next major analytic block. Nonzero other screened-energy corrections, screened molecular assembly, full Cartesian invariance/vibrational validation and scaling remain. See the final entry for validation and scope; historical “Next” statements below describe the state at that earlier checkpoint.
+
+## Complete Hessian milestone index across both chats
+
+This index reconciles the Hessian phase of **“Implement DLPNO Gradients”** with the continuation in this chat. It was checked against every commit from `0af1a1eb` through `1b9f1b23`, all 21 pre-existing chronological entries below, and the recovered older-chat context. Each previous Hessian commit has a corresponding ledger entry and working-equation section. The current mixed-LMP2/final-PNO checkpoint is step 22. Earlier unsuccessful checks, numerical dependencies and their later resolutions are preserved in the chronological entries; they are not silently replaced by the latest passing result.
+
+Equation-section numbers refer to both the `.txt` export and `.tex` source. The text export contains the entire equation body with mathematical notation preserved, not a shortened recap. Regenerate it with `python tests/dlpno-hessian-model/export_equations.py`; `--check` verifies synchronization. The exporter also checks that every displayed equation is preserved verbatim.
+
+| Step | Hessian milestone | Commit | Working-equation sections |
+|---:|---|---|---|
+| 1 | Fixed-frame water targets from canonical analytic-gradient differences; symmetry and translation checks | `0af1a1eb` | 1–3 |
+| 2 | Native RHF nuclear orbital tangent, including frozen/active occupied partition | `2c7d6d1b` | 4 |
+| 3 | Nuclear tangent of Boys-localized occupied orbitals | `cb05d5b2` | 5 |
+| 4 | Raw/normalized PAO tangent; occupied-rotation cancellation | `dd2f9639` | 6 |
+| 5 | First semicanonical MP2 PNO selection, refits, metric solves and retained projector | `4e14bd09` | 7 |
+| 6 | Coupled first-space LMP2 right-amplitude tangent on the retained graph | `bf77748e` | 8 |
+| 7 | Final CCSD PNO tangent in the moving first-PNO parent | `44dfb798` | 9 |
+| 8 | Projected CCSD Fock source and first T1-dressed fitted doubles terms | `876c7add` | 10.1–10.2 |
+| 9 | Complete fixed-amplitude transformed CCSD nuclear residual source | `09eab08f` | 10.3 |
+| 10 | Coupled transformed CCSD amplitude tangent and weighted-adjoint checks | `c4af6e7e` | 10.4 |
+| 11 | Ordinary iterative triples right/left response, moments and TNO tangents | `a50ea0b8` | 11 |
+| 12 | Stationary triples curvature; analytic mixed DF integrals, metric inverses and moments | `306480bf` | 12 |
+| 13 | Eliminate mixed CCSD amplitudes; analytic trial TNO curvature and semi-analytic CCSD mixed source | `dbd06055` | 13 |
+| 14 | Stationary retained-pair CCSD curvature using the converged gradient Lambda | `fd6e9086` | 14 |
+| 15 | Both PNO truncation-energy losses, projector response and diagonal-pair singles curvature | `6aac84c9` | 15 |
+| 16 | Isolated PNO-loss LMP2 adjoint; eliminate mixed LMP2 amplitudes for this correction | `46539933` | 16 |
+| 17 | Mixed PAO and full-virtual parent response from occupied-projector actions | `c2cc6533` | 17 |
+| 18 | Analytic mixed RHF density/Fock and frozen/active spectral partition | `b6dbf057` | 18 |
+| 19 | Mixed quadratic Boys/Mulliken-PM response and native electronic dipole second derivatives | `d79f434b` | 19–19.1 |
+| 20 | Remove forward localization precision floor; resolve failed all-electron assembled entry | `063eb109` | 19.2 |
+| 21 | Analytic mixed first PNOs; remove sampled molecular inputs from PNO-loss curvature | `1b9f1b23` | 7.1, 16 |
+| 22 | Native mixed coupled-LMP2 solve and final-PNO curvature; analytic frame integration | Current checkpoint | 8.1, 9.1 |
+
+Step 19 was recovered locally as `e8a240b2` and published as `d79f434b`; the localization precision fix was locally `d222a3ab` and published as `063eb109`. These pairs refer to the same tested content at each checkpoint, not additional Hessian steps. The failed all-electron total error of -3.37e-7 at step 19 and its resolution at step 20 are both retained below. No completed full Cartesian molecular Hessian or vibrational result is implied by the milestone count.
 
 ## 2026-11-06 — First canonical Hessian column
 
@@ -416,3 +449,53 @@ Reproduce the new algebra and nuclear tests in the built Psi4 environment:
     python tests/dlpno-hessian-model/first_pno_mixed.py
 
 **Next.** The newly analytic source is ready for the mixed coupled-LMP2 equation `A t_uv = -R_uv[t_uv=0]`. Solve it with the native right-response operator and feed the mixed amplitudes into the final PNO density and retained frame. That will remove the remaining sampled final-PNO motion from the CCSD/triples inputs. The mixed nuclear CCSD residual is a separate remaining block. Nonzero other screened-energy corrections, actual screened molecular input assembly, full Cartesian invariance/vibrational checks and scaling work remain. The full-domain Boys diagnostic and fixed-domain algebra kernels do not establish a complete production analytic Hessian, PM molecular Hessian or local scaling.
+
+## 2026-11-07 — Mixed coupled-LMP2 amplitudes and final PNO response
+
+**Native solve.** Added `core.dlpno_lmp2_mixed_tangent(wfn, mixed_residual_source)`. It solves `A t_uv = -C_uv` with the existing native right operator, sparse retained graph, unique-pair convention, semicanonical preconditioner and DIIS/Jacobi solver. The source is the full moving-frame residual differentiated with `t_uv=0`; it includes mixed exchange/Fock/occupied energies, first-amplitude cross terms and both overlap legs of every oriented coupling. No full Jacobian or derivative of the iterative history is formed. The interface checks the complete pair graph, dimensions, finiteness and diagonal symmetry, preserves the caller's source and the forward amplitudes, and handles exactly zero sources without iterations. It records the mixed response residual and iteration count.
+
+`coupled_lmp2_curvature` assembles that source, completes the mixed amplitude blocks and checks the solved equation with the independent Python moving-frame residual. `final_pno_mixed.py` propagates these amplitudes through all eight terms of the final pair-density mixed derivative, the retained/discarded spectral projector and the fixed-reference polar frame. The parent is the analytically moving first PNO space. Full final rank still includes parent motion. First derivatives are checked against the original independent orbital/first-PNO/LMP2/final-PNO tangent path.
+
+**Integration.** The retained-CCSD/triples molecular provider now consumes analytic mixed final PNO frames. One PNO response is prepared per coordinate pair and reused across the comparison stencils and stationary contractions. The stationary callback rejects requests for sampled mixed occupied density, Fock, LMOs, virtual parent, PNO frames, eliminated CCSD amplitudes or trial TNO frames. The remaining sampled object is the mixed nuclear CCSD residual, including its displaced local geometry; the independent direct verification routes still use displaced states. The PNO-loss adjoint remains available and avoids this extra right solve when only that correction is wanted.
+
+**Isolated nuclear verification.** Water/cc-pVDZ with full AO/fitting domains, first/final PNO cutoffs 1e-5/1e-4, TNO cutoff 1e-5, retained pair cutoff 1e-9 and Fock-coupling screens zero. Independently reconverged native models supply the pre-existing first-order responses; Richardson differences at 0.001/0.0005 bohr check the mixed AO LMP2 amplitude tensor and final AO projector over all retained pairs. The following are maximum absolute coefficient/tensor errors, separate from energy-curvature errors.
+
+| Core | Entry | AO LMP2 amplitude error | Final AO projector error | Native mixed-solve RMS residual | Reconstructed mixed residual, max component |
+|---|---|---:|---:|---:|---:|
+| Frozen O 1s | O-y/H1-z | 7.99e-9 | 1.01e-6 | 5.96e-14 | 3.41e-13 |
+| Frozen O 1s | H1-z/H1-z | 4.55e-9 | 1.07e-6 | 1.27e-14 | 1.02e-13 |
+| All-electron | O-y/H1-z | 8.02e-9 | 1.04e-6 | 5.71e-14 | 2.39e-13 |
+| All-electron | H1-z/H1-z | 4.67e-9 | 1.04e-6 | 8.20e-14 | 4.36e-13 |
+
+Mixed metric orthonormality and projector idempotency pass; interchanging u/v agrees within 2e-9 for amplitudes and 2e-8 for final frames. The direct two-stage PNO-loss curvature with solved mixed amplitudes agrees with the existing stationary adjoint contraction within 1.1e-14 hartree/bohr² in this tighter coefficient fixture. Missing pairs, wrong dimensions, NaNs and asymmetric diagonal sources are rejected. The zero-source solve and preservation of both inputs and forward amplitudes pass.
+
+**Precision investigation and unchanged acceptance.** At the earlier reference settings, the frozen H1-z projector difference was 2.58e-6 at 0.002/0.001 bohr. At 0.001/0.0005 it was 1.95e-6, while the all-electron result was 2.23e-6, just outside the new 2e-6 coefficient criterion. The all-electron value changed to 9.34e-6 at 0.004/0.002 and 2.46e-6 at 0.0005/0.00025, so smaller steps alone did not resolve the sensitivity. Tightening the mixed CPHF solve or LMP2 residual convergence separately did not materially remove it; those exploratory changes were not retained.
+
+The isolated coefficient fixture now requests SCF integral tolerance 1e-14, SCF energy/density convergence 1e-14, orbital solver convergence 1e-14 and localization gradient convergence 1e-13. Its LMP2/CCSD `R_CONVERGENCE` remains 1e-11. These reference/orbital settings reduce all projector errors to at most 1.07e-6. The largest analytic projector components in the limiting pairs are about 111–180 per bohr². The amplitude criterion remains 2e-7 and the projector criterion remains 2e-6; no acceptance tolerance was relaxed. The assembled energy benchmarks retain their prior settings and independent criteria.
+
+**Finite-cutoff column checks.** With the standard integration fixture and its remaining 0.004/0.002 bohr CCSD-residual stencils, retained CCSD + iterative triples + analytic PNO loss gives the following correlation-only entries (hartree/bohr²):
+
+| Core | O-y/H1-z | H1-z/H1-z |
+|---|---:|---:|
+| Frozen O 1s | +0.004191804380112 | -0.002000856398485 |
+| All-electron | +0.004128133472784 | -0.002843503139993 |
+
+All existing retained-energy, triples, TNO, residual and adjoint checks pass. These finite-cutoff values are not canonical total-Hessian references. The direct-versus-stationary PNO-loss comparisons remain consistent with the previous checkpoint.
+
+**Canonical full-rank check.** With zero PNO/TNO cutoffs and the existing nonzero retained-pair cutoff, the assembled total (analytic RHF + retained CCSD + ordinary iterative triples) was compared again with differences of canonical DF-CCSD(T) analytic gradients. The remaining CCSD mixed-residual stencils use 0.008/0.004 bohr. All component and total errors pass the unchanged 2e-7 criterion; the largest component error is 5.28e-9. Total errors, in hartree/bohr², are:
+
+| Core | O-y/H1-z total error | H1-z/H1-z total error |
+|---|---:|---:|
+| Frozen O 1s | -2.76e-10 | -2.45e-9 |
+| All-electron | -8.62e-11 | -2.48e-9 |
+
+This exercises full retained PNO rank with moving parents in both core treatments. It validates these selected entries; it is not a full Cartesian Hessian or vibrational validation.
+
+**Records and formal checks.** The `.md` ledger now indexes every Hessian milestone from both chats, including the earlier failed all-electron localization check and its resolution. The complete `.txt` equation export preserves all displayed equations from the updated `.tex` source; it includes the mixed LMP2 equation, the fifteen affine four-factor edge terms and all eight final-density mixed terms. The new Lean `mixed_four_factor_product` identity verifies their ordered product-rule regrouping. It does not prove the native solver or the entire molecular algorithm. Lean, the typesetting source, lossless equation export, native build/install and the four existing regressions pass.
+
+Reproduce the new response checks in the built Psi4 environment:
+
+    python tests/dlpno-hessian-model/final_pno_mixed.py
+    python tests/dlpno-hessian-model/export_equations.py --check
+
+**Next analytic block.** Replace `semi_analytic_ccsd_mixed_source` with the analytic mixed nuclear source of the t1-transformed CCSD residual in the same moving final-PNO charts. This includes the T1-dressed fitted integrals and intermediates, occupied couplings, projected singles and all explicit interpair overlaps; the existing native CCSD adjoints then contract that source. Keep the existing stationary elimination of mixed CCSD amplitudes. Other nonzero screened-energy corrections, screened-domain input delivery, PM molecular integration, full Cartesian symmetry/translation/rotation/vibrational checks and scaling validation remain separate work. A complete production analytic molecular Hessian is not claimed.
