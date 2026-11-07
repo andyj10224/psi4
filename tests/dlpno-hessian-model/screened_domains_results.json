@@ -15437,8 +15437,8 @@
       },
       "missing_kj_couplings": 2
     },
-    "residual_value_error": 1.427330476033717e-14,
-    "amplitude_mixed_error": 6.117610758249459e-17
+    "residual_value_error": 3.026051631493942e-14,
+    "amplitude_mixed_error": 7.508100044462118e-17
   },
   "local_domains": {
     "domains": {
@@ -21990,7 +21990,7 @@
       },
       "missing_kj_couplings": 2
     },
-    "mixed_nuclear_status": "complete_screened_hessian_unsupported",
+    "mixed_nuclear_status": "screened_hessian_validated_separately_public_delivery_unavailable",
     "provider_rejections": {
       "ccsd_mixed": "Mixed CCSD molecular replay currently requires full orbital/AO domains.",
       "legacy_full_domain_pno": "Full-domain mixed PNO diagnostic requires T_CUT_DO = 0."
@@ -21998,100 +21998,100 @@
     "gradient_comparisons": [
       {
         "coordinate": 2,
-        "analytic": 0.015397767745446848,
+        "analytic": 0.015397767750846995,
         "centered_estimates": [
           0.015401489048882944,
-          0.015398698036905856
+          0.015398698036683811
         ],
-        "richardson_error": 4.586668891914947e-11
+        "richardson_error": 5.1562894579082474e-11
       },
       {
         "coordinate": 18,
-        "analytic": -6.258275052286081e-05,
+        "analytic": -6.2582750502116e-05,
         "centered_estimates": [
-          -6.258306939344038e-05,
-          -6.258281382010011e-05
+          -6.258306917139578e-05,
+          -6.258281404214472e-05
         ],
-        "richardson_error": -2.1893874124138783e-11
+        "richardson_error": -2.1503054965419342e-11
       }
     ],
     "native_debug_probes": {
       "DLPNO (T) FINAL PNO PROJECTOR DIRECTION ERROR": 0.0,
-      "DLPNO (T) FOCK DIRECTION ERROR": 6.471861128496756e-14,
-      "DLPNO (T) INITIAL PNO PROJECTOR DIRECTION ERROR": 1.4184638198451536e-15,
-      "DLPNO (T) L1 SOURCE DIRECTION ERROR": 6.6566929661286375e-18,
-      "DLPNO (T) L2 SOURCE DIRECTION ERROR": 7.151947148218037e-15,
-      "DLPNO (T) L2 TNO DIRECTION ERROR": 7.167997893172914e-15,
-      "DLPNO (T) PAO OVERLAP DIRECTION ERROR": 9.700318298883069e-17,
-      "DLPNO (T) PNO COEFFICIENT DIRECTION ERROR": 2.9689709705630696e-15,
-      "DLPNO ACTIVE PROJECTOR DIRECTION ERROR": 2.3446496480450385e-12,
+      "DLPNO (T) FOCK DIRECTION ERROR": 6.510340476729081e-14,
+      "DLPNO (T) INITIAL PNO PROJECTOR DIRECTION ERROR": 5.855496412721616e-17,
+      "DLPNO (T) L1 SOURCE DIRECTION ERROR": 5.470542437507197e-19,
+      "DLPNO (T) L2 SOURCE DIRECTION ERROR": 9.257539870864522e-14,
+      "DLPNO (T) L2 TNO DIRECTION ERROR": 9.258515271654932e-14,
+      "DLPNO (T) PAO OVERLAP DIRECTION ERROR": 7.8985058678322e-16,
+      "DLPNO (T) PNO COEFFICIENT DIRECTION ERROR": 6.627713322025108e-16,
+      "DLPNO ACTIVE PROJECTOR DIRECTION ERROR": 1.6496342052779722e-12,
       "DLPNO CCSD FINAL PNO PROJECTOR DIRECTION ERROR": 0.0,
-      "DLPNO CCSD FOCK DIRECTION ERROR": 1.89020659078026e-12,
-      "DLPNO CCSD INITIAL PNO PROJECTOR DIRECTION ERROR": 2.90837990572345e-10,
-      "DLPNO CCSD INTEGRAL DIRECTION ERROR": 9.618143954892577e-13,
-      "DLPNO CCSD L1 DIRECTION ERROR": 5.863504126679686e-13,
-      "DLPNO CCSD L2 DIRECTION ERROR": 1.2956996586765968e-13,
-      "DLPNO CCSD OVERLAP DIRECTION ERROR": 1.1200205563346999e-10,
-      "DLPNO CCSD PNO COEFFICIENT DIRECTION ERROR": 5.808763192671762e-12,
-      "DLPNO DF LMO REFIT DIRECTION ERROR": 3.981032517530458e-12,
-      "DLPNO DF ORBITAL COEFFICIENT DIRECTION ERROR": 3.4072623195102736e-12,
-      "DLPNO DF ORBITAL REPLAY ERROR": 9.020562075079397e-17,
+      "DLPNO CCSD FOCK DIRECTION ERROR": 1.6391284308574634e-12,
+      "DLPNO CCSD INITIAL PNO PROJECTOR DIRECTION ERROR": 4.6100702465537435e-11,
+      "DLPNO CCSD INTEGRAL DIRECTION ERROR": 2.215059732857405e-12,
+      "DLPNO CCSD L1 DIRECTION ERROR": 1.146836098309123e-12,
+      "DLPNO CCSD L2 DIRECTION ERROR": 7.416393887904604e-13,
+      "DLPNO CCSD OVERLAP DIRECTION ERROR": 1.0985515882383501e-10,
+      "DLPNO CCSD PNO COEFFICIENT DIRECTION ERROR": 1.6289417731352174e-12,
+      "DLPNO DF LMO REFIT DIRECTION ERROR": 3.288317534932972e-12,
+      "DLPNO DF ORBITAL COEFFICIENT DIRECTION ERROR": 3.1202115544082254e-12,
+      "DLPNO DF ORBITAL REPLAY ERROR": 5.551115123125783e-17,
       "DLPNO DIPOLE PAIR REPLAY ERROR": 0.0,
       "DLPNO FINAL PNO TRUNCATION DIRECTION ERROR": 0.0,
       "DLPNO FINAL PNO TRUNCATION SINGLES DIRECTION ERROR": 0.0,
-      "DLPNO FOCK PROJECTOR DIRECTION ERROR": 7.424616477180734e-14,
+      "DLPNO FOCK PROJECTOR DIRECTION ERROR": 7.896808207341621e-14,
       "DLPNO FROZEN PROJECTOR DIRECTION ERROR": 0.0,
-      "DLPNO INITIAL PNO TRUNCATION DIRECTION ERROR": 2.474381404693395e-10,
-      "DLPNO INITIAL PNO TRUNCATION SINGLES DIRECTION ERROR": 2.477398376504389e-10,
+      "DLPNO INITIAL PNO TRUNCATION DIRECTION ERROR": 1.4698293267832342e-10,
+      "DLPNO INITIAL PNO TRUNCATION SINGLES DIRECTION ERROR": 1.467520928995908e-10,
       "DLPNO LMP2 TANGENT DIRECTION ERROR": 0.0,
-      "DLPNO OVERLAP PROJECTOR DIRECTION ERROR": 4.793049637741298e-13,
-      "DLPNO PAO NORMALIZATION DIRECTION ERROR": 1.3733764125944958e-11,
-      "DLPNO PARENT PAO METRIC DIRECTION ERROR": 1.26033825302209e-11,
-      "DLPNO PNO PROJECTOR OPERATOR DIRECTION ERROR": 7.649825720321417e-10,
-      "DLPNO PNO TRUNCATION DF DIRECTION ERROR": 3.172139412743139e-09,
-      "DLPNO SCREENED SC-MP2 REPLAY ERROR": 6.617444900424222e-24
+      "DLPNO OVERLAP PROJECTOR DIRECTION ERROR": 7.180792419014814e-13,
+      "DLPNO PAO NORMALIZATION DIRECTION ERROR": 6.7040262230477765e-12,
+      "DLPNO PARENT PAO METRIC DIRECTION ERROR": 4.281563797080279e-11,
+      "DLPNO PNO PROJECTOR OPERATOR DIRECTION ERROR": 8.702382463731881e-10,
+      "DLPNO PNO TRUNCATION DF DIRECTION ERROR": 3.2270816880276137e-09,
+      "DLPNO SCREENED SC-MP2 REPLAY ERROR": 1.0587911840678754e-22
     },
     "debug_probes_above_1e_minus8": {},
     "gradient": [
       [
-        6.258269734426669e-05,
-        -7.712534541494719e-18,
-        0.015397767745446848
+        6.258269737162069e-05,
+        -8.556906513571671e-19,
+        0.015397767750846995
       ],
       [
-        6.258274525606361e-05,
-        7.690008017123821e-18,
-        -0.015397767755367643
+        6.258274524096158e-05,
+        8.333533347463671e-19,
+        -0.015397767760801567
       ],
       [
-        -3.18496722697518e-07,
-        1.606892071041848e-16,
-        0.015329017620352346
+        -3.1849705769362836e-07,
+        1.610685056762834e-16,
+        0.015329017638833962
       ],
       [
-        -3.184827581382053e-07,
-        -1.6082936179057303e-16,
-        -0.015329017611596567
+        -3.184824306787721e-07,
+        -1.6113040083031012e-16,
+        -0.015329017630081274
       ],
       [
-        3.184711753372695e-07,
-        -2.0931306917593865e-16,
-        0.015329017619525948
+        3.184711727680817e-07,
+        -2.0906509285478175e-16,
+        0.015329017622470383
       ],
       [
-        3.1850826620233364e-07,
-        2.090216351187752e-16,
-        -0.015329017623707914
+        3.185082702306398e-07,
+        2.095291270638476e-16,
+        -0.01532901762666182
       ],
       [
-        -6.258275052286081e-05,
-        1.573029305583918e-16,
-        0.015397767753746974
+        -6.2582750502116e-05,
+        1.5776789067267635e-16,
+        0.01539776776088234
       ],
       [
-        -6.258269202503984e-05,
-        -1.5684881529507423e-16,
-        -0.015397767748379853
+        -6.258269205987e-05,
+        -1.5814769241809115e-16,
+        -0.015397767755505424
       ]
     ]
   },
@@ -22150,24 +22150,25 @@
   "ordinary_energy": -4.653501443256336,
   "model_corrections": {
     "DLPNO LMP2 WEAK PAIR ENERGY": 0.0,
-    "DLPNO SC-LMP2 PAIR ENERGY": -1.4123797074041482e-06,
+    "DLPNO SC-LMP2 PAIR ENERGY": -1.4123797074032804e-06,
     "DLPNO DIPOLE ENERGY": 0.0
   },
   "ordinary_corrections": {
     "DLPNO LMP2 WEAK PAIR ENERGY": 0.0,
-    "DLPNO SC-LMP2 PAIR ENERGY": -1.4123797074041482e-06,
+    "DLPNO SC-LMP2 PAIR ENERGY": -1.4123797074032804e-06,
     "DLPNO DIPOLE ENERGY": 0.0
   },
   "analytic_driver_rejection": "Method=dlpno-ccsd(t) is not available for requested derivative level (reqd=2 > avail=1) under any conditions. See (possibly) https://psicode.org/psi4manual/master/introduction.html#ss-dlpnoccsd-prt-pr.",
   "screened_hessian_validated": false,
   "screened_columns_tested_separately": true,
   "screened_matrices_tested_separately": true,
-  "screened_matrix_validation_scope": "Boys/PM H2 and frozen-core LiH: complete raw matrices pass native gradient differences; totals and seven components pass symmetry, translations and rotation tolerances. LiH has no retained triples. The small H2 rotation defect is reproduced by native gradients and controlled by the individual PAO-pair screen. General production scope is not validated.",
+  "screened_molecular_matrices_tested_separately": true,
+  "screened_matrix_validation_scope": "Boys/PM H2 and frozen-core LiH: complete raw matrices pass native gradient differences; totals and seven components pass symmetry, translations and rotation tolerances. LiH has no retained triples. The small H2 rotation defect is reproduced by native gradients and controlled by the individual PAO-pair screen. Nonplanar Boys/PM water-H2 and Boys ammonia-H2 add frozen-core off-diagonal pairs, distinct triplets and nonzero unequal-rank couplings with individual PAO-pair screening off. Native reference stencils must preserve the parent branch. General production scope is not validated.",
   "production_ready": false,
   "blockers": [
-    "Full screened matrices pass three planar fragment fixtures; distinct-index triplets, unequal TNO ranks and frozen-core off-diagonal pairs need broader molecular coverage.",
+    "Full screened matrices cover selected fragment and nonplanar molecular fixtures, including distinct-index triplets, unequal TNO ranks and frozen-core off-diagonal pairs; arbitrary molecule/threshold robustness and behavior near discrete parent-selection boundaries remain unvalidated.",
     "Public Hessian delivery and its supported-input contract remain unimplemented; the current mixed-input harness uses dense AO tensors with AO Schwarz and Fock screens off.",
     "Rotational screening accuracy, equilibrium vibrations and end-to-end scaling remain unvalidated."
   ],
-  "functional_scope": "The gradient model now includes eliminated SC-MP2 and dipole estimates with analytic gradients. Their mixed correction kernels are tested in screened_corrections.py. Screened first PNOs, coupled LMP2, final PNOs and both PNO-loss curvatures are tested separately in screened_final_pno.py. Screened CCSD residual and TNO/triples molecular inputs have selected block validation in screened_ccsd_mixed.py and screened_triples_mixed.py. Complete screened columns are tested against native analytic gradients in screened_column.py. Complete unsymmetrized screened matrices are tested separately in screened_matrix.py with a PAO-screen rotation control in screened_rotation.py. Broader molecular coverage and public analytic Hessian routing remain outstanding."
+  "functional_scope": "The gradient model now includes eliminated SC-MP2 and dipole estimates with analytic gradients. Their mixed correction kernels are tested in screened_corrections.py. Screened first PNOs, coupled LMP2, final PNOs and both PNO-loss curvatures are tested separately in screened_final_pno.py. Screened CCSD residual and TNO/triples molecular inputs have selected block validation in screened_ccsd_mixed.py and screened_triples_mixed.py. Complete screened columns are tested against native analytic gradients in screened_column.py. Complete unsymmetrized screened matrices are tested separately in screened_matrix.py with a PAO-screen rotation control in screened_rotation.py and additional molecular coverage in screened_molecules.py. Conditioned Coulomb inverse response and native first-pivot roundoff are corrected without changing derivative equations or acceptance thresholds. Public analytic Hessian routing and broader production validation remain outstanding."
 }

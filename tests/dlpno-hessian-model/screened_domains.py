@@ -196,7 +196,7 @@ def check_local(w, mol):
     probe_failures = {key: value for key, value in probes.items() if value > 1.e-8}
     assert probes['DLPNO DF ORBITAL REPLAY ERROR'] < 1.e-10
     assert probes['DLPNO DF LMO REFIT DIRECTION ERROR'] < 1.e-8
-    return dict(domains=counts, mixed_nuclear_status='complete_screened_hessian_unsupported', provider_rejections=failures,
+    return dict(domains=counts, mixed_nuclear_status='screened_hessian_validated_separately_public_delivery_unavailable', provider_rejections=failures,
                 gradient_comparisons=comparisons, native_debug_probes=probes,
                 debug_probes_above_1e_minus8=probe_failures, gradient=gradient.tolist())
 
@@ -233,8 +233,9 @@ def run(path):
         routing = str(exc)
     else:
         raise AssertionError('A new analytic driver must pass screened Hessian validation first.')
-    blockers = ['Full screened matrices pass three planar fragment fixtures; distinct-index triplets, unequal TNO ranks '
-                'and frozen-core off-diagonal pairs need broader molecular coverage.',
+    blockers = ['Full screened matrices cover selected fragment and nonplanar molecular fixtures, including distinct-index '
+                'triplets, unequal TNO ranks and frozen-core off-diagonal pairs; arbitrary molecule/threshold robustness '
+                'and behavior near discrete parent-selection boundaries remain unvalidated.',
                 'Public Hessian delivery and its supported-input contract remain unimplemented; the current mixed-input '
                 'harness uses dense AO tensors with AO Schwarz and Fock screens off.',
                 'Rotational screening accuracy, equilibrium vibrations and end-to-end scaling remain unvalidated.']
@@ -246,10 +247,14 @@ def run(path):
                   analytic_driver_rejection=routing, screened_hessian_validated=False,
                   screened_columns_tested_separately=True,
                   screened_matrices_tested_separately=True,
+                  screened_molecular_matrices_tested_separately=True,
                   screened_matrix_validation_scope='Boys/PM H2 and frozen-core LiH: complete raw matrices pass native gradient '
                       'differences; totals and seven components pass symmetry, translations and rotation tolerances. '
                       'LiH has no retained triples. The small H2 rotation defect is reproduced by native gradients '
-                      'and controlled by the individual PAO-pair screen. General production scope is not validated.',
+                      'and controlled by the individual PAO-pair screen. Nonplanar Boys/PM water-H2 and Boys ammonia-H2 '
+                      'add frozen-core off-diagonal pairs, distinct triplets and nonzero unequal-rank couplings with '
+                      'individual PAO-pair screening off. Native reference stencils must preserve the parent branch. '
+                      'General production scope is not validated.',
                   production_ready=False, blockers=blockers,
                   functional_scope='The gradient model now includes eliminated SC-MP2 and dipole estimates '
                                    'with analytic gradients. Their mixed correction kernels are tested in '
@@ -259,8 +264,10 @@ def run(path):
                                    'validation in screened_ccsd_mixed.py and screened_triples_mixed.py. Complete '
                                    'screened columns are tested against native analytic gradients in screened_column.py. '
                                    'Complete unsymmetrized screened matrices are tested separately in screened_matrix.py '
-                                   'with a PAO-screen rotation control in screened_rotation.py. Broader molecular coverage '
-                                   'and public analytic Hessian routing remain outstanding.')
+                                   'with a PAO-screen rotation control in screened_rotation.py and additional molecular coverage '
+                                   'in screened_molecules.py. Conditioned Coulomb inverse response and native first-pivot '
+                                   'roundoff are corrected without changing derivative equations or acceptance thresholds. '
+                                   'Public analytic Hessian routing and broader production validation remain outstanding.')
     Path(path).write_text(json.dumps(result, indent=2)+'\n')
     print(json.dumps({k: result[k] for k in ('screened_hessian_validated', 'production_ready', 'blockers')}, indent=2))
     return result

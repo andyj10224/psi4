@@ -2413,4 +2413,134 @@ remains disabled. Full matrices, component matrices, native references,
 solver checks and raw invariance errors are preserved in the matrix JSON
 and milestone 31, alongside the unchanged earlier precision limitations.
 
+\section{Screened molecular matrices with distinct triplets and unequal ranks}
+Milestone 32 extends the complete-matrix experiment to nonplanar water--H2
+(Boys and Mulliken PM) and ammonia--H2 (Boys), each with one frozen O/N 1s
+orbital. All three have five active occupied orbitals, eleven retained
+unique pairs including six off-diagonal pairs, and sixteen retained
+triplets including four with three distinct occupied indices. Triplet
+ranks are unequal and nonzero occupied-Fock couplings connect rectangular
+TNO spaces. Both PNO losses and both excluded-pair energy corrections are
+nonzero. These cases exercise the existing seven-component analytic
+assembly; no new physical energy term or pair-counting factor is added.
+
+\subsection{Symmetric Coulomb inverse response in a reference spectral basis}
+Let the real local auxiliary Coulomb matrix and all supplied derivatives
+be symmetric. Its full inverse satisfies
+\begin{align}
+ G_u&=-GM_uG,\qquad G_v=-GM_vG,\qquad MG=I,\\
+ G_{uv}&=GM_uGM_vG+GM_vGM_uG-GM_{uv}G.
+\end{align}
+These identities are unchanged. A dense LU inverse may acquire an
+antisymmetric roundoff component, and products of several conditioned
+inverses may suffer cancellation even after that component is removed.
+For the Coulomb call sites, evaluate the same identities in a reference
+spectral basis, without differentiating eigenvectors:
+\begin{align}
+ M&=U\operatorname{diag}(\lambda_a)U^{\mathsf T},\qquad d_a=\lambda_a^{-1},\\
+ E_x&=U^{\mathsf T} M_xU,\qquad x=u,v,uv,\\
+ (\widehat G_u)_{ab}&=-d_a(E_u)_{ab}d_b,\qquad
+ (\widehat G_v)_{ab}=-d_a(E_v)_{ab}d_b,\\
+ (\widehat G_{uv})_{ab}
+ &=d_a\left[\sum_c d_c\left((E_u)_{ac}(E_v)_{cb}
+ +(E_v)_{ac}(E_u)_{cb}\right)-(E_{uv})_{ab}\right]d_b,\\
+ G_x&=U\widehat G_xU^{\mathsf T},\qquad G=U\operatorname{diag}(d_a)U^{\mathsf T}.
+\end{align}
+Known tensor symmetry is preserved at the inverse itself. No CCSD source,
+Hessian element, or rigid-motion residual is projected. Inputs outside
+the symmetric-metric contract are rejected. No eigenvalue is discarded
+or regularized; signed nonsingular spectra are supported. The separately
+filtered inverse used by products of whitened native fitting factors is
+unchanged. General matrix inverses used in PNO gap response retain their
+original implementation and do not inherit this symmetric-input guard.
+
+An independent algebra test uses orthogonal rotations of matrices with
+condition number $2\times10^6$, including both positive and indefinite
+spectra. For skew matrices $K,L$ and a rotated matrix path, exact
+responses are $G_u=[K,G]$, $G_v=[L,G]$ and
+$G_{uv}=[K,[L,G]]$. Maximum relative error is
+$4.481\times10^{-10}$ and the largest differentiated $MG=I$ residual is
+$1.747\times10^{-10}$, below the unchanged $2\times10^{-9}$ and
+$5\times10^{-9}$ limits. A prior dense symmetrized-product trial failed
+this test and is retained in the numerical history.
+
+\subsection{Native Cholesky pivots and smooth-branch references}
+For a normalized overlap matrix
+\begin{equation}
+ \widetilde S_{ij}=S_{ij}/\sqrt{S_{ii}S_{jj}},\qquad
+ \widetilde S_{ii}=1,
+\end{equation}
+the partial-Cholesky pivot-selection copy now sets its diagonal exactly
+to one. Previously, an ulp in normalization could override the existing
+overlap-based ordering and choose a different first pivot at nearby
+geometries. Canonicalization still uses the original normalized overlap
+submatrix. This is a numerical pivot-selection correction, not a change
+to the smooth-branch gradient or Hessian equations.
+
+Discrete parent spans can still change at genuine pivot boundaries.
+The independent native gradient oracle continues to check actual pair,
+triplet, AO/PAO/auxiliary lists, ranks, response edges and physical parent
+spans; the $2\times10^{-8}$ span threshold is not relaxed. A rejected
+stencil cannot validate a derivative on a different branch. Reducing
+the displacement is permitted only when the new native wavefunctions
+pass these same checks; numerical samples remain exclusive to validation.
+The final reference searches the fixed descending coarse spacings
+$0.004,0.002,0.0015,0.001$ bohr separately for each column, using
+$\pm h$ and $\pm h/2$. It selects the first branch-preserving stencil
+before comparing any derivative with the analytic Hessian. Rejected
+stencils and their reasons are saved; SCF/gradient failures still abort.
+A uniform tiny step can amplify gradient noise, while a larger step
+can cross a genuine branch boundary. Neither failure licenses relaxing
+the Hessian tolerance. The SCF iteration limit is 600 with all
+convergence thresholds unchanged.
+In the ammonia coordinate-5 regression, the original physical-span error
+$8.689\times10^{-7}$ falls below $1.599\times10^{-13}$ over all four
+$\pm0.004/\pm0.002$ bohr displacements after the pivot correction.
+Normalizing the old parent did not remove its physical-span error.
+
+\subsection{Molecular coverage and complete-matrix acceptance}
+All three fixtures use cc-pVDZ orbitals, the matching JKFIT/RI fitting
+bases, finite pair/domain cutoffs, first/final PNO cutoffs
+$10^{-5}/10^{-3}$ and TNO cutoff $10^{-4}$. Individual PAO-pair screening
+is disabled ($T_{\rm CUT\_DO\_UV}=0$) to separate this molecular coverage
+from the rotational screening defect recorded in Section 28. The earlier
+nonzero-screen matrices and their raw defects are preserved.
+
+The independently evaluated matrices have sizes $15\times15$,
+$15\times15$ and $18\times18$, giving 774 ordered entries. Against 192
+accepted native analytic gradients, maximum absolute errors are
+$5.5214\times10^{-8}$,
+$8.4175\times10^{-8}$,
+$6.1937\times10^{-8}$ hartree/bohr$^2$
+for Boys water, PM water and Boys ammonia, respectively. All pass the
+unchanged $2\times10^{-7}$ acceptance. Maximum total asymmetry is
+$3.0442\times10^{-13}$; left/right translations are below
+$2.7308\times10^{-11}$ and rotational covariance below
+$7.5469\times10^{-11}$. Component symmetry, translations and rotation also pass.
+First-gradient replay is below $3.4195\times10^{-11}$ hartree/bohr
+against a $2\times10^{-8}$ threshold. The accepted coarse step is
+0.004 bohr for 42 columns, 0.002 for water columns 1 and 4 in each
+localizer, 0.0015 for ammonia column 1 and 0.001 for ammonia column 4
+(zero-based). Nine rejected candidate stencils are preserved.
+
+
+No symmetry averaging, mirroring of ordered entries, or rigid-motion
+projection is applied. For every component, both translation contractions
+and off-equilibrium rotational covariance are checked with the gradient
+term retained, as in Section 28. Selected retained-CCSD and nonzero triples
+curvatures also have independent older-first-kernel gradient references;
+their maximum errors are $2.055\times10^{-10}$ and
+$3.674\times10^{-12}$ hartree/bohr$^2$, respectively.
+
+This closes the selected distinct-index, unequal-rank and frozen-core
+off-diagonal molecular coverage gaps. It does not establish arbitrary
+molecule/threshold robustness, differentiability across discrete selection
+boundaries, equilibrium vibrational accuracy, or local runtime/memory
+scaling. The dense AO derivative input harness still requires AO Schwarz
+and occupied-Fock screens to be disabled. General public analytic Hessian
+routing remains disabled; a supported driver contract and its integration
+are separate remaining work. The complete matrices, component identities,
+reference samples, solver residuals and unsuccessful trial history are
+preserved with milestone 32.
+
 \end{document}

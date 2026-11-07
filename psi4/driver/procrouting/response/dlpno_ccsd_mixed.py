@@ -6,7 +6,7 @@ or mixed CCSD amplitude is constructed here. Discrete pair/domain lists stay fix
 """
 from functools import lru_cache
 import numpy as np
-from .dlpno_triples_curvature import MixedBlock, mixed_product, _inverse, _filtered_inverse
+from .dlpno_triples_curvature import MixedBlock, mixed_product, _symmetric_inverse as _inverse, _filtered_inverse
 
 
 def _sum(*terms):

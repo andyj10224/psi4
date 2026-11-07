@@ -266,6 +266,12 @@ void BasisSetOrthogonalization::compute_partial_cholesky_orthog() {
                 Stmp->set(h, i, j, normalized_overlap_->get(h, order[h][i], order[h][j]));
                 Stmp->set(h, j, i, normalized_overlap_->get(h, order[h][i], order[h][j]));
             }
+            // All normalized diagonal elements are analytically one. An ulp
+            // from normalization must not override the overlap-based ordering
+            // and select a different first Cholesky pivot at each geometry.
+            // Only the pivot-selection copy is changed; canonicalization below
+            // still uses the original normalized overlap submatrix.
+            Stmp->set(h, i, i, 1.0);
         }
     }
 

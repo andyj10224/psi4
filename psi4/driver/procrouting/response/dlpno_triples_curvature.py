@@ -43,11 +43,38 @@ def mixed_product(subscripts, *blocks):
 
 
 def _inverse(metric):
-    """Full local Coulomb inverse from differentiating M G = I."""
+    """Full matrix inverse from differentiating M G = I."""
     m,mu,mv,muv = metric
     g = np.linalg.solve(m,np.eye(len(m)))
     gu,gv = -g@mu@g, -g@mv@g
     return MixedBlock(g,gu,gv,-g@(muv@g + mu@gv + mv@gu))
+
+
+def _symmetric_inverse(metric):
+    """Differentiate M G = I while preserving the real metric's symmetry.
+
+    A general LU inverse can acquire an antisymmetric roundoff component on
+    conditioned fitting metrics. Its derivatives can then leave the physical
+    symmetric diagonal-pair CCSD space. Preserve this known tensor symmetry
+    at the inverse itself; do not project residual sources or Hessian entries.
+    The full Coulomb inverse remains unfiltered; signed spectra are supported.
+    """
+    symmetric=lambda x:(x+x.T)*.5
+    if any(not np.allclose(x,x.T,rtol=1.e-12,atol=1.e-12) for x in metric):
+        raise ValueError('Expected symmetric metric and metric derivatives.')
+    m,mu,mv,muv = (symmetric(x) for x in metric)
+    eig,rot=np.linalg.eigh(m)
+    if np.any(eig==0.):raise np.linalg.LinAlgError('Singular metric.')
+    inverse=1./eig
+    # Work in the reference spectral basis. Dense products of several full
+    # inverses amplify cancellation on conditioned metrics even after their
+    # antisymmetric roundoff has been removed. No eigenvalue is filtered here.
+    eu,ev,euv=(symmetric(rot.T@x@rot) for x in (mu,mv,muv))
+    scale=inverse[:,None]*inverse[None,:]
+    cross=(eu*inverse)@ev
+    back=lambda x:symmetric(rot@x@rot.T)
+    return MixedBlock(symmetric((rot*inverse)@rot.T),back(-scale*eu),back(-scale*ev),
+                      back(scale*((cross+cross.T)-euv)))
 
 
 def _filtered_inverse(metric, full):
@@ -93,7 +120,7 @@ def triples_moment_blocks(triplet, domain, metric, oo, ov, vv, transfer, single,
     """
     pos = {i:n for n,i in enumerate(domain)}
     n = vv.value.shape[-1]
-    full = _inverse(metric)
+    full = _symmetric_inverse(metric)
     filtered = _filtered_inverse(metric,full)
 
     @lru_cache(None)

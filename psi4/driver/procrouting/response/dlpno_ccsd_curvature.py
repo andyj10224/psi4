@@ -3,7 +3,7 @@
 import numpy as np
 
 from .dlpno_ccsd_response import TriplesCCSDAdjoint, ccsd_weighted_dot
-from .dlpno_triples_curvature import MixedBlock, _inverse, mixed_product
+from .dlpno_triples_curvature import MixedBlock, _symmetric_inverse as _inverse, mixed_product
 
 
 def retained_ccsd_energy(singles, doubles, transfer, exchange, fov):

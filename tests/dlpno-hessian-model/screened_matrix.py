@@ -15,6 +15,7 @@ import time
 import numpy as np
 import psi4
 from screened_first_pno import fixture,align_snapshot
+from screened_molecules import fixture as molecular_fixture,coverage as molecular_coverage,SYSTEM_SIZES
 from screened_corrections import mixed_inputs
 from psi4.driver.procrouting.response.dlpno_orbital import assemble_cartesian_gradient
 from psi4.driver.procrouting.response import dlpno_screened_hessian as assembly
@@ -29,16 +30,20 @@ def write(path,data):
 def fingerprint():
     root=Path(assembly.__file__).parent
     paths=[Path(__file__),Path(__file__).with_name('screened_first_pno.py'),
-           Path(__file__).with_name('screened_corrections.py'),
+           Path(__file__).with_name('screened_corrections.py'),Path(__file__).with_name('screened_molecules.py'),
            Path(__file__).with_name('rhf_mixed.py'),Path(__file__).with_name('localization_mixed.py')]
     paths+=sorted(root.glob('dlpno_*.py'))
     h=hashlib.sha256()
     for p in paths:h.update(p.name.encode()+b'\0'+p.read_bytes())
+    # A changed native orthogonalizer/response binary must invalidate shards too.
+    with Path(psi4.core.__file__).open('rb') as binary:
+        for chunk in iter(lambda:binary.read(1024*1024),b''):h.update(chunk)
     return h.hexdigest()
 
 
 def configure(args):
-    mol,w=fixture(args.system,args.localization,False,final_cutoff=1.e-3,tight=True,screened_triplets=True)
+    mol,w=(molecular_fixture(args.system,args.localization) if args.system in SYSTEM_SIZES else
+           fixture(args.system,args.localization,False,final_cutoff=1.e-3,tight=True,screened_triplets=True))
     psi4.set_options({'dlpno__debug':0})
     xyz=mol.geometry().np.copy()
     gradient=assemble_cartesian_gradient(w)
@@ -52,12 +57,13 @@ def configure(args):
               energy=w.energy(),rhf_energy=w.reference_wavefunction().energy(),
               correlation_energies={key:w.variable(key) for key in keys},
               native_domains=psi4.core.dlpno_response_domain_state(w),
-              retained_triplets=len(psi4.core.dlpno_triples_response_state(w)))
+              retained_triplets=len(psi4.core.dlpno_triples_response_state(w)),
+              coverage=molecular_coverage(w) if args.system in SYSTEM_SIZES else None)
     return mol,w,meta
 
 
 def matching(left,right):
-    for key in ('system','localization','fingerprint','size','component_order','native_domains','retained_triplets'):
+    for key in ('system','localization','fingerprint','size','component_order','native_domains','retained_triplets','coverage'):
         # JSON roundtrip normalizes tuples in records and freshly built metadata.
         if json.dumps(left[key],sort_keys=True)!=json.dumps(right[key],sort_keys=True):
             raise ValueError(f'Incompatible column metadata: {key}.')
@@ -102,29 +108,49 @@ def analytic(args,mol,w,meta):
 
 def reference(args,mol,w,meta):
     xyz=np.array(meta['coordinates_bohr']);size=xyz.size
+    candidates=args.adaptive_steps or [args.step]
     for v in (range(size) if args.columns is None else args.columns):
         path=args.output_dir/f'reference-{v:03d}.json'
         if args.resume and path.exists():
             old=json.loads(path.read_text());matching(old['metadata'],meta)
-            if old['column']==v and old['step_bohr']==args.step and old['complete']:
+            if old['column']==v and old.get('step_candidates_bohr',[old['step_bohr']])==candidates and old['complete']:
                 print('reused complete reference column',v,flush=True);continue
-        record=dict(metadata=meta,column=v,step_bohr=args.step,samples=[],complete=False)
-        central=[]
-        for h in (args.step,args.step/2):
-            gradients=[]
-            for sign in (1,-1):
-                coords=xyz.copy();coords.flat[v]+=sign*h
-                m=mol.clone();m.set_geometry(psi4.core.Matrix.from_array(coords));m.update_geometry()
-                _,other=psi4.energy('dlpno-ccsd(t)',molecule=m,return_wfn=True)
-                align_snapshot(other,w)
-                g=assemble_cartesian_gradient(other)
-                gradients.append(g.ravel())
-                record['samples'].append(dict(displacement_bohr=sign*h,energy=other.energy(),gradient=g.tolist()))
-                write(path,record);print('reference gradient',v,sign*h,flush=True)
-            central.append((gradients[0]-gradients[1])/(2*h))
-        record.update(complete=True,central_columns=[x.tolist() for x in central],
-                      richardson_column=((4*central[1]-central[0])/3).tolist())
-        write(path,record);print('complete reference column',v,flush=True)
+        rejected=[]
+        for step in candidates:
+            record=dict(metadata=meta,column=v,step_bohr=step,step_candidates_bohr=candidates,
+                        rejected_stencils=list(rejected),samples=[],complete=False)
+            central=[];failure=None
+            for h in (step,step/2):
+                gradients=[]
+                for sign in (1,-1):
+                    coords=xyz.copy();coords.flat[v]+=sign*h
+                    m=mol.clone();m.set_geometry(psi4.core.Matrix.from_array(coords));m.update_geometry()
+                    _,other=psi4.energy('dlpno-ccsd(t)',molecule=m,return_wfn=True)
+                    try:
+                        align_snapshot(other,w)
+                    except (AssertionError,ValueError) as exc:
+                        # Select a stencil solely by its native branch, before
+                        # looking at an analytic Hessian or numerical error.
+                        failure=dict(step_bohr=step,displacement_bohr=sign*h,
+                                     energy=other.energy(),reason=str(exc),samples=list(record['samples']))
+                        rejected.append(failure);record['rejected_stencils']=list(rejected)
+                        write(path,record)
+                        if args.adaptive_steps is None:raise
+                        print('rejected native branch',v,sign*h,flush=True)
+                        break
+                    g=assemble_cartesian_gradient(other)
+                    gradients.append(g.ravel())
+                    record['samples'].append(dict(displacement_bohr=sign*h,energy=other.energy(),gradient=g.tolist()))
+                    write(path,record);print('reference gradient',v,sign*h,flush=True)
+                if failure is not None:break
+                central.append((gradients[0]-gradients[1])/(2*h))
+            if failure is not None:continue
+            record.update(complete=True,central_columns=[x.tolist() for x in central],
+                          richardson_column=((4*central[1]-central[0])/3).tolist())
+            write(path,record);print('complete reference column',v,'step',step,flush=True)
+            break
+        else:
+            raise ValueError(f'No branch-preserving reference stencil for column {v}.')
         gc.collect()
 
 
@@ -150,13 +176,19 @@ def verify(args):
         for record in (a,r):
             matching(record['metadata'],meta)
             if record['column']!=v or not record['complete']:raise ValueError('Incomplete column.')
-        if r['step_bohr']!=args.step:raise ValueError('Inconsistent reference spacing.')
+        candidates=args.adaptive_steps or [args.step]
+        if r.get('step_candidates_bohr',[r['step_bohr']])!=candidates or r['step_bohr'] not in candidates:
+            raise ValueError('Inconsistent reference spacing policy.')
+        attempts=r.get('rejected_stencils',[])
+        if [x['step_bohr'] for x in attempts]!=candidates[:candidates.index(r['step_bohr'])]:
+            raise ValueError('Reference did not select the first branch-preserving stencil.')
+        if any(not x['reason'] for x in attempts):raise ValueError('Missing branch-rejection evidence.')
         if [e['row'] for e in a['entries']]!=list(range(size)):raise ValueError('Wrong ordered rows.')
         columns.append(a);references.append(r)
     parts=np.array([[e['components'] for e in col['entries']] for col in columns]).transpose(2,1,0)
     firsts=np.array([[e['gradient_components'] for e in col['entries']] for col in columns]).transpose(2,1,0)
     H=parts.sum(axis=0);target=np.array([r['richardson_column'] for r in references]).T
-    if not np.isfinite(parts).all() or not np.isfinite(target).all():raise ValueError('Nonfinite Hessian.')
+    if not all(np.isfinite(x).all() for x in (parts,target,firsts)):raise ValueError('Nonfinite Hessian or component gradient.')
     xyz=np.array(meta['coordinates_bohr']);gradient=np.array(meta['gradient'])
     errors=identities(H,gradient,xyz)
     errors.update(gradient_difference=float(np.max(abs(H-target))),reference_symmetry=float(np.max(abs(target-target.T))),
@@ -186,16 +218,21 @@ def verify(args):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--system',choices=('chain','lih'),default='chain')
+    p.add_argument('--system',choices=('chain','lih',*SYSTEM_SIZES),default='chain')
     p.add_argument('--localization',choices=('BOYS','PIPEK_MEZEY'),default='BOYS')
     p.add_argument('--stage',choices=('analytic','reference','verify','all'),default='all')
     p.add_argument('--columns',type=int,nargs='+')
     p.add_argument('--step',type=float,default=.004)
+    p.add_argument('--adaptive-steps',type=float,nargs='+',
+                   help='Reference only: try strictly decreasing spacings, selecting by native branch checks before comparing Hessians.')
     p.add_argument('--resume',action='store_true')
     p.add_argument('--output-dir',type=Path,default=Path('screened_matrix'))
     args=p.parse_args()
-    if args.step<=0:p.error('--step must be positive.')
-    size=24 if args.system=='chain' else 18
+    if not np.isfinite(args.step) or args.step<=0:p.error('--step must be positive.')
+    if args.adaptive_steps is not None and (any(not np.isfinite(x) or x<=0 for x in args.adaptive_steps)
+            or any(a<=b for a,b in zip(args.adaptive_steps,args.adaptive_steps[1:]))):
+        p.error('--adaptive-steps must be finite, positive and strictly decreasing.')
+    size=SYSTEM_SIZES.get(args.system,24 if args.system=='chain' else 18)
     if args.columns is not None and (len(set(args.columns))!=len(args.columns) or any(not 0<=x<size for x in args.columns)):
         p.error('Invalid or duplicated Cartesian columns.')
     if args.stage=='all' and args.columns is not None:p.error('Use a separate stage for column shards.')

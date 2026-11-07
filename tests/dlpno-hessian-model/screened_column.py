@@ -12,6 +12,7 @@ import time
 import numpy as np
 import psi4
 from screened_first_pno import fixture,align_snapshot
+from screened_molecules import fixture as molecular_fixture,coverage as molecular_coverage,SYSTEM_SIZES
 from screened_corrections import mixed_inputs
 from screened_ccsd_mixed import first
 from lmp2_tangent import blocks
@@ -50,7 +51,8 @@ def independent_components(w,u):
 
 
 def run(args):
-    mol,w=fixture(args.system,args.localization,False,final_cutoff=1.e-3,tight=True,screened_triplets=True)
+    mol,w=(molecular_fixture(args.system,args.localization) if args.system in SYSTEM_SIZES else
+           fixture(args.system,args.localization,False,final_cutoff=1.e-3,tight=True,screened_triplets=True))
     psi4.set_options({'dlpno__debug':0})
     xyz=mol.geometry().np.copy();size=xyz.size
     column=(2 if args.system=='chain' else 5) if args.column is None else args.column
@@ -60,7 +62,8 @@ def run(args):
     rhf=psi4.hessian('scf',molecule=mol.clone(),dertype=2).np.copy()
     result=dict(system=args.system,localization=args.localization,column=column,rows=rows,
                 units='hartree/bohr^2',coordinates_bohr=xyz.tolist(),component_order=COMPONENTS,
-                gradient=gradient.tolist(),step_bohr=args.step,entries=[],passed=False)
+                gradient=gradient.tolist(),step_bohr=args.step,entries=[],passed=False,
+                coverage=molecular_coverage(w) if args.system in SYSTEM_SIZES else None)
     path=Path(args.output)
     def save():path.write_text(json.dumps(result,indent=2)+'\n')
     start=time.monotonic()
@@ -103,6 +106,10 @@ def run(args):
             np.testing.assert_allclose(errors,0.,atol=2.e-9,rtol=0.)
             gc.collect()
     component_rows=[u for u in (column,18 if args.system=='chain' else 12) if u in rows] if args.component_checks else []
+    if args.component_rows is not None:
+        if not args.component_checks or len(set(args.component_rows))!=len(args.component_rows) or any(u not in rows for u in args.component_rows):
+            raise ValueError('Component rows must be unique assembled rows with --component-checks.')
+        component_rows=args.component_rows
     estimates=[];samples=[];component_estimates=[]
     for h in (args.step,args.step/2):
         gradients=[];components=[]
@@ -139,12 +146,13 @@ def run(args):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--system',choices=('chain','lih'),default='chain')
+    p.add_argument('--system',choices=('chain','lih',*SYSTEM_SIZES),default='chain')
     p.add_argument('--localization',choices=('BOYS','PIPEK_MEZEY'),default='BOYS')
     p.add_argument('--column',type=int)
     p.add_argument('--reciprocity',action='store_true')
     p.add_argument('--component-checks',action='store_true')
     p.add_argument('--rows',type=int,nargs='+')
+    p.add_argument('--component-rows',type=int,nargs='+')
     p.add_argument('--step',type=float,default=.004)
     p.add_argument('--output',default='screened_column_results.json')
     args=p.parse_args()

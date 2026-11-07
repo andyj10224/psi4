@@ -622,4 +622,30 @@ triplet coverage, equilibrium vibrations and production delivery remain;
 the LiH fixture has no retained triples. All earlier gradient and Hessian
 milestones and precision limitations are preserved.
 
+\subsection{Screened molecular matrix and numerical stability follow-up}
+Hessian Section 29 extends complete unsymmetrized matrices to nonplanar
+water--H2 with Boys or Mulliken PM localization and ammonia--H2 with Boys.
+These cases include a frozen O or N 1s orbital,
+off-diagonal retained pairs, distinct-index triplets and unequal coupled
+TNO ranks. Both excluded-pair gradients and both PNO-loss contributions
+remain in every reference gradient. Individual PAO-pair screening is off
+in these additional fixtures; the earlier nonzero-screen evidence remains.
+
+The analytic gradient equations and unique-pair weights are unchanged.
+A native partial-Cholesky correction sets the analytically unit diagonal
+of the pivot-selection copy exactly to one, preventing normalization
+roundoff from defeating the existing first-pivot ordering. It may select
+a different numerical parent branch from the former roundoff-driven
+choice; subsequent canonicalization still uses the original overlap.
+Gradient differences must remain on one physical parent branch. Genuine
+pivot-boundary crossings are rejected by the unchanged span guard.
+
+The Hessian's local Coulomb inverse response is evaluated in a reference
+spectral basis to preserve its known symmetry and reduce conditioned
+matrix-product cancellation. This changes numerical evaluation of the
+existing inverse identities, not the energy functional or gradient
+Lagrangian. All earlier equations, milestones and precision limitations
+are preserved. Public analytic Hessian delivery, equilibrium vibrations,
+rotational-screening accuracy and end-to-end scaling remain separate work.
+
 \end{document}

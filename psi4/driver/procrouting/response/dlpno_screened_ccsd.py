@@ -7,7 +7,7 @@ be off. This is molecular response delivery, not a public Hessian driver.
 from functools import lru_cache
 import numpy as np
 from .dlpno_frame_curvature import mixed_paos, mixed_metric_solve
-from .dlpno_triples_curvature import MixedBlock, mixed_product as C, _inverse, _filtered_inverse
+from .dlpno_triples_curvature import MixedBlock, mixed_product as C, _symmetric_inverse as _inverse, _filtered_inverse
 
 
 class ScreenedFitting:
