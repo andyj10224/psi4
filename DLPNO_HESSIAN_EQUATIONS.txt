@@ -2283,3 +2283,133 @@ require further validation.
 The current input harness still materializes dense AO derivative tensors.
 The public analytic Hessian route remains disabled. Numerical references
 and original raw differences are retained in the column JSON and milestone 30.
+
+28. Complete unsymmetrized screened Cartesian matrices
+\label{sec:screened-matrices}
+The column assembly in Section 27 now covers every ordered Cartesian
+pair, with $u,v=0,\ldots,3N-1$. For each energy contribution $k$, store
+\begin{equation}
+ H^{[k]}_{uv}=\mathcal C^{[k]}_v(u),\qquad
+ H_{uv}=\sum_{k=1}^{7}H^{[k]}_{uv}.
+\end{equation}
+Here $\mathcal C_v$ denotes the existing analytic column assembler,
+including one cached right and left triples response for direction $v$.
+Every off-diagonal partner is evaluated independently: a value at $(u,v)$
+is never copied into $(v,u)$. Neither averaging with the transpose nor a
+rigid-motion projection enters the saved matrices. The RHF contribution
+comes from the native analytic RHF Hessian; all correlation entries use
+analytic first and mixed inputs at the reference geometry.
+
+28.1. Restartable assembly and independent references
+The validation harness separates analytic columns, displaced-gradient
+references, and final verification. Disjoint column shards may run in
+independent scratch directories. Each atomic JSON checkpoint records the
+ordered rows, seven component values and first derivatives, residual
+checks, and reference metadata. Completed checkpoints can be reused only
+when implementation fingerprints, geometry, native domains, triplet
+counts, energies, gradient and RHF Hessian match. Final verification
+requires exactly $3N$ complete analytic and reference columns, with every
+ordered row present once. It rejects partial records and inconsistent
+reference spacings.
+
+For every $v$, the independent reference is the Richardson column
+$C_v^{[4]}(h)$ of Section 27, using native analytic gradients at the four
+reconverged geometries $R\pm h e_v$ and $R\pm(h/2)e_v$, with
+$h=0.004$ bohr. All native branch, rank, graph and parent-span checks remain
+active at each displaced geometry. These gradients are validation data;
+they do not enter the analytic matrix. Save both central estimates, all
+four raw gradients and energies, the extrapolated reference matrix and
+its difference from the analytic matrix. The three fixtures require
+$24^2+24^2+18^2=1476$ ordered analytic entries and $4(24+24+18)=264$
+displaced native gradients.
+
+28.2. Raw symmetry and rigid-motion identities
+For a Cartesian axis $a$, define $3N$-component vectors
+\begin{equation}
+ (\tau_a)_A=e_a,\qquad
+ (\rho_a)_A=e_a\mathbin{\times}R_A,\qquad
+ (\gamma_a)_A=e_a\mathbin{\times}g_A.
+\end{equation}
+A scalar translationally and rotationally invariant energy satisfies
+\begin{equation}
+ H=H^{\mathsf T},\qquad H\tau_a=0,\qquad
+ \tau_a^{\mathsf T}H=0,\qquad H\rho_a=\gamma_a.
+ \label{eq:screened-matrix-identities}
+\end{equation}
+Both translation contractions are checked on the raw matrix. Away from
+stationarity, $\gamma_a$ generally does not vanish: rotational covariance
+must not be replaced by three rotational zero modes. Also check
+$\sum_Ag_A=0$ and $\sum_AR_A\times g_A=0$.
+Each of the seven component matrices is tested separately with its own
+first-energy gradient. Those component gradients must agree across
+independent column calculations, and their sum must reproduce the native
+complete gradient.
+
+The predeclared maximum absolute tolerance is $2\times10^{-7}$
+hartree/bohr$^2$ for native gradient differences and raw symmetry.
+The translation and rotational covariance checks use $2\times10^{-7}$
+in their respective atomic units, for both the total and each component.
+First-gradient replay, agreement of component gradients across columns,
+and total force/torque use $2\times10^{-8}$. No acceptance threshold is
+relaxed or numerical discrepancy removed by symmetrization.
+
+28.3. Rotation control for the individual PAO-pair screen
+The largest raw rotational covariance defect is about
+$3.99\times10^{-8}$ in the Boys and PM H2 matrices. It is below the
+predeclared tolerance, but is not roundoff. The ideal rotation identity
+also tests the approximation used in the energy: an individual
+basis-function PAO-pair mask need not be closed under angular rotations.
+The native code selects these pairs by
+$|\mathrm{DOI}_{uv}|>T_{\mathrm{DO},uv}$ before forming the VV panels.
+
+A separate Boys control rigidly rotates the molecule about $x$ by
+$\theta=\pm0.004,\pm0.002$ radians, reconverges the native energy/gradient,
+and rotates each gradient back. In column-vector notation its derivative is
+\begin{equation}
+ \left.\frac{d}{d\theta}
+ Q_x(\theta)^{\mathsf T}g(Q_x(\theta)R)\right|_0
+ =H\rho_x-\gamma_x.
+\end{equation}
+All eight displaced points across the two cutoff choices pass the native
+branch checks. At the matrix fixture's $T_{\mathrm{DO},uv}=10^{-5}$,
+the independent native-gradient result is $3.98574\times10^{-8}$,
+reproducing the analytic matrix defect $3.98605\times10^{-8}$.
+With that cutoff set to zero, the gradient-difference diagnostic falls to
+$2.32\times10^{-9}$ overall, while its affected $y$ components fall below
+$1.76\times10^{-11}$. A separate analytic zero-cutoff torque-column
+contraction for the first atom's $y$ coordinate has defect
+$-7.47\times10^{-12}$ (acceptance $2\times10^{-9}$).
+This control identifies the dominant small rotation defect with the PAO-pair
+screening approximation, rather than an omitted Hessian term. It changes
+neither the three main fixtures nor their thresholds. The original
+screened matrices are retained unmodified. Screening covariance and its
+accuracy budget remain part of production and vibrational validation.
+
+28.4. Validated scope and remaining delivery work
+The complete Boys H2, Mulliken-PM H2 and frozen-core LiH matrices have
+sizes $24\times24$, $24\times24$ and $18\times18$. Maximum absolute errors
+against native gradient differences are $1.132\times10^{-8}$,
+$1.911\times10^{-8}$ and $7.133\times10^{-9}$ hartree/bohr$^2$.
+Raw total asymmetries are below $2.124\times10^{-14}$; both translation
+contractions are below $3.113\times10^{-13}$.
+Component asymmetries are below $2.257\times10^{-14}$ and component
+translation defects below $2.660\times10^{-13}$. The largest total
+rotational defect is $3.987\times10^{-8}$ for H2; LiH is below
+$7.858\times10^{-12}$. First-energy replay is below $7.758\times10^{-12}$
+hartree/bohr and the spread of component gradients across columns is
+below $6.894\times10^{-16}$. All checks pass their original tolerances.
+
+These complete screened matrices extend milestone 30; they do not replace
+its separate retained-CCSD and nonzero triples curvature comparisons or
+the earlier block-level tests. The H2 fixtures exercise seven unique
+retained pairs and six repeated-index triplets in screened PAO and fitting
+domains. The LiH fixture has three frozen Li 1s orbitals, three diagonal
+retained pairs and no retained triples. Both PNO losses and both excluded
+pair corrections remain nonzero. Distinct-index triplets, unequal TNO
+ranks, and off-diagonal frozen-core retained pairs require broader screened
+molecular coverage. AO Schwarz and Fock screens remain off; the derivative
+input harness materializes dense AO tensors. Equilibrium frequencies and
+end-to-end scaling are not established. Public analytic Hessian routing
+remains disabled. Full matrices, component matrices, native references,
+solver checks and raw invariance errors are preserved in the matrix JSON
+and milestone 31, alongside the unchanged earlier precision limitations.

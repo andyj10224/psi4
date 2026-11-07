@@ -233,8 +233,11 @@ def run(path):
         routing = str(exc)
     else:
         raise AssertionError('A new analytic driver must pass screened Hessian validation first.')
-    blockers = ['Only selected complete screened columns are validated; full matrices and broader core/triplet coverage remain.',
-                'Full-matrix reciprocity and rigid-motion validation remain outstanding.']
+    blockers = ['Full screened matrices pass three planar fragment fixtures; distinct-index triplets, unequal TNO ranks '
+                'and frozen-core off-diagonal pairs need broader molecular coverage.',
+                'Public Hessian delivery and its supported-input contract remain unimplemented; the current mixed-input '
+                'harness uses dense AO tensors with AO Schwarz and Fock screens off.',
+                'Rotational screening accuracy, equilibrium vibrations and end-to-end scaling remain unvalidated.']
     if local['debug_probes_above_1e_minus8']:
         blockers.append('A native synthetic PNO operator probe exceeds its old tolerance.')
     result = dict(graph_only=graph, local_domains=local, coordinates_bohr=mol.geometry().np.tolist(),
@@ -242,6 +245,11 @@ def run(path):
                   model_corrections=model_corrections, ordinary_corrections=corrections,
                   analytic_driver_rejection=routing, screened_hessian_validated=False,
                   screened_columns_tested_separately=True,
+                  screened_matrices_tested_separately=True,
+                  screened_matrix_validation_scope='Boys/PM H2 and frozen-core LiH: complete raw matrices pass native gradient '
+                      'differences; totals and seven components pass symmetry, translations and rotation tolerances. '
+                      'LiH has no retained triples. The small H2 rotation defect is reproduced by native gradients '
+                      'and controlled by the individual PAO-pair screen. General production scope is not validated.',
                   production_ready=False, blockers=blockers,
                   functional_scope='The gradient model now includes eliminated SC-MP2 and dipole estimates '
                                    'with analytic gradients. Their mixed correction kernels are tested in '
@@ -249,8 +257,10 @@ def run(path):
                                    'PNO-loss curvatures are tested separately in screened_final_pno.py. '
                                    'Screened CCSD residual and TNO/triples molecular inputs have selected block '
                                    'validation in screened_ccsd_mixed.py and screened_triples_mixed.py. Complete '
-                                   'screened columns are tested against native analytic gradients in screened_column.py; '
-                                   'full screened matrices and public analytic Hessian routing remain unvalidated.')
+                                   'screened columns are tested against native analytic gradients in screened_column.py. '
+                                   'Complete unsymmetrized screened matrices are tested separately in screened_matrix.py '
+                                   'with a PAO-screen rotation control in screened_rotation.py. Broader molecular coverage '
+                                   'and public analytic Hessian routing remain outstanding.')
     Path(path).write_text(json.dumps(result, indent=2)+'\n')
     print(json.dumps({k: result[k] for k in ('screened_hessian_validated', 'production_ready', 'blockers')}, indent=2))
     return result

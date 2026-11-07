@@ -609,3 +609,19 @@ translation and off-equilibrium rotation identities without projection.
 Hessian Section 27 records the assembly and tests. These results change no
 native gradient equation or public derivative routing. Full screened
 matrices and broader coverage remain necessary for general Hessian delivery.
+10.12. Complete screened matrix follow-up
+Every ordered entry of the screened Cartesian Hessian is now assembled
+independently from the seven contributions of Section 10.11. Their first
+energy derivatives reproduce this native analytic gradient across all
+columns. Full Boys/PM H2 and frozen-core LiH matrices are compared against
+independently reconverged native analytic-gradient differences; both the
+total and each component undergo raw symmetry, left/right translation
+and off-equilibrium rotational covariance checks. Neither symmetrization
+nor a rigid-motion projection enters these comparisons.
+
+Hessian Section 28 records the complete matrices, restartable validation
+and numerical evidence. This step changes no gradient equation, pair
+counting convention or public derivative route. Broader screened core and
+triplet coverage, equilibrium vibrations and production delivery remain;
+the LiH fixture has no retained triples. All earlier gradient and Hessian
+milestones and precision limitations are preserved.
