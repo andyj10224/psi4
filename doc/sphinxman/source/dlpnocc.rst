@@ -235,7 +235,7 @@ obtained through driver fallback must not be described as analytic.
 ``screened_domains.py`` audits an interacting four-H2 chain with actual local
 AO/refit, PAO, occupied and auxiliary lists. Its sparse CCSD residual and mixed
 amplitude checks, and selected screened analytic-gradient checks, pass. The
-complete coupled-LMP2/final-PNO/CCSD molecular delivery is still incomplete,
+screened mixed CCSD/TNO molecular delivery is still incomplete,
 so no screened nuclear Hessian has been validated. The synthetic first-PNO
 operator probe now passes its unchanged tolerance using Richardson
 extrapolation; its old centered error and a DEBUG>1 spacing study are retained. Run with
@@ -269,6 +269,18 @@ validation differences independent first-order projector responses. Direct
 second differences of native truncated PNO coefficients remain noisy and are
 recorded separately as unresolved diagnostics. Neither this first-PNO block
 nor the excluded-pair correction kernels supply a complete screened Hessian.
+
+``screened_pno_response`` extends that provider through the native coupled
+LMP2 first/mixed solves and final PNO selection on the retained response graph.
+It transforms the already masked/refitted local exchange into the moving first
+PNO frame and differentiates both legs of every rectangular pair overlap.
+``screened_final_pno.py`` compares AO amplitude and final-projector mixed
+response with differences of independently implemented first derivatives. It
+also checks both PNO-loss curvatures against native energy differences and
+compares direct mixed-amplitude and stationary-adjoint contractions. The
+fixtures exercise nonzero final-stage truncation, Boys/PM localization,
+frozen-core motion and a full-rank zero-loss control. These selected block
+tests do not establish a complete screened Hessian or change public routing.
 
 Higher-Order DLPNO Methods
 --------------------------

@@ -30,8 +30,9 @@ Four complete full-domain water Hessians are validated in Section 21.
 Section 23 adds the screened semicanonical-MP2 and dipole corrections to
 the gradient energy and implements their analytic gradients and mixed
 curvatures. Section 24 adds screened first-PNO molecular response and resolves
-the synthetic operator diagnostic. Complete screened PNO/CCSD delivery, public analytic
-Hessian routing and equilibrium vibrational validation remain open.
+the synthetic operator diagnostic. Section 25 propagates screened coupled
+LMP2/final-PNO response and both PNO losses. Screened CCSD/TNO delivery, public
+analytic Hessian routing and equilibrium vibrational validation remain open.
 Later sections supersede the explicitly historical checkpoints.
 The companion working-memory Markdown file contains
 the complete milestone and validation index. The companion text file preserves
@@ -1867,3 +1868,127 @@ $10^{-8}$. This is a diagnostic refinement, not a gradient formula change.
 The next molecular block is the coupled first-space LMP2 and final-PNO
 response on these same local domains, followed by screened CCSD/TNO
 assembly and complete Hessian validation before production routing.
+
+25. Screened coupled LMP2 and final-PNO molecular response
+Section 24 now supplies the actual screened first-PNO frames and local exchange
+blocks to the existing native fixed-graph LMP2 response solvers. This section
+completes both PNO selections and both PNO-loss curvatures on that branch.
+Screened CCSD/TNO molecular delivery and a complete screened CCSD(T) Hessian
+remain separate unfinished work; public analytic Hessian routing is unchanged.
+
+25.1. Local first-space operators and native graph
+For a unique retained pair $p=(i,j)$ let $B_p$ denote its moving local PAO
+parent, $Y_p$ its first-PNO frame, and $K_p^{B}$ the local exchange expressed
+in that orthonormal parent. With all quantities carrying value, $u$, $v$ and
+$uv$ blocks, form
+\begin{align}
+ C_p&=B_p^{\mathsf T}S Y_p,\qquad
+ K_p=C_p^{\mathsf T}K_p^{B}C_p,\\
+ F_p&=Y_p^{\mathsf T}F^{\rm AO}Y_p,\qquad
+ f_{ij}=L_i^{\mathsf T}F^{\rm AO}L_j,\qquad
+ S_{pq}=Y_p^{\mathsf T}SY_q .
+\end{align}
+The exchange has already undergone the actual local overlap refits,
+different AO restrictions and extended-label masks. Projecting this exchange
+preserves those operations; substituting a full-AO $L$--three-center--$Y$
+contraction would not. Both moving legs and the AO overlap enter $S_{pq}$.
+Use the native \texttt{RESPONSE\_EDGES} rows $(k,l,f_1,f_2)$ without rerunning
+any selection. For $q=(\min(k,l),\max(k,l))$, write
+$\widehat t_q=t_q$ if $k\leq l$, otherwise $\widehat t_q=t_q^{\mathsf T}$.
+The first-space residual is
+\begin{equation}
+ R_p=K_p+F_pt_p+t_pF_p-(f_{ii}+f_{jj})t_p
+       -\sum_{e\in\mathcal E_p}f_{f_1f_2}S_{pq}\widehat t_qS_{pq}^{\mathsf T}.
+ \label{eq:screened-lmp2-residual}
+\end{equation}
+Diagonal-pair residuals and amplitudes are symmetrized. Rectangular overlaps
+and reversed source-pair orientations are preserved. Missing pairs create no
+new source amplitude or coupling beyond the retained native graph.
+
+25.2. First and mixed amplitudes and final selection
+Define the linear operator $A$ by $R=K+At$. Its first response uses
+\begin{equation}
+ At^u=-K^u-A^u t,\qquad At^v=-K^v-A^v t.
+\end{equation}
+The native first tangent constructs $K^u$, projected Fock derivatives and
+both overlap-leg derivatives in the reference first-PNO chart. Assemble the
+mixed source with $t^{uv}$ held zero:
+\begin{equation}
+ b^{uv}=K^{uv}+A^{uv}t+A^u t^v+A^v t^u,\qquad
+ At^{uv}=-b^{uv}.
+ \label{eq:screened-lmp2-mixed}
+\end{equation}
+All solves use the same reference native graph and Jacobian. For example,
+holding an oriented source amplitude $x$ fixed, one coupling $fSxS^{\mathsf T}$
+has mixed operator derivative
+\begin{align}
+ (fSxS^{\mathsf T})^{uv}_{x\,\mathrm{fixed}}
+ &=f^{uv}SxS^{\mathsf T}
+   +f^u(S^vxS^{\mathsf T}+Sx(S^v)^{\mathsf T})\nonumber\\
+ &\quad+f^v(S^uxS^{\mathsf T}+Sx(S^u)^{\mathsf T})\nonumber\\
+ &\quad+f\bigl(S^{uv}xS^{\mathsf T}+Sx(S^{uv})^{\mathsf T}
+                  +S^ux(S^v)^{\mathsf T}+S^vx(S^u)^{\mathsf T}\bigr).
+\end{align}
+The $A^ut^v$ and $A^vt^u$ terms add all first-amplitude cross terms. An
+independent moving-frame residual reconstruction verifies value, both first
+orders and mixed order to $2\times10^{-9}$; the native solve also reports its
+own residual. The source and converged forward amplitudes are not mutated.
+
+For final PNOs construct the pair density in the moving first-PNO parent,
+\begin{equation}
+ \widetilde t_p=2t_p-t_p^{\mathsf T},\qquad
+ D_p=\frac{\widetilde t_pt_p^{\mathsf T}+\widetilde t_p^{\mathsf T}t_p}
+                  {1+\delta_{ij}} .
+\end{equation}
+Apply the mixed retained-subspace response of Section 7.1 with parent $Y_p$
+and the actual native final rank/frame. Only a retained/discarded occupation
+gap is inverted. The final frame is anchored to its native reference
+projector; internal semicanonical rotations need not be differentiated.
+The gauge-invariant comparison objects are the AO pair tensor
+$Y_pt_pY_p^{\mathsf T}$ and final AO density factor
+$Z_pZ_p^{\mathsf T}$. At full final rank the latter equals the first-parent
+subspace density factor and the final truncation loss vanishes.
+
+25.3. Both PNO losses and independent checks
+Use Section 15's complete loss functional for both selections, including
+diagonal singles and weights one for $i=j$ and two for unique $i<j$ pairs.
+Let $E_{\rm loss}^{uv}[t^{uv}=0]$ denote its affine-amplitude mixed derivative.
+For the native isolated loss adjoint $z$, whose stored source already
+includes the unique-pair energy multiplicities,
+\begin{align}
+ A^{\mathsf T}z&=-E_{{\rm loss},t},\\
+ E_{\rm loss}^{uv}
+ &=E_{\rm loss}^{uv}[t^{uv}=0]+
+   \sum_{p\;\mathrm{unique}}z_p:b_p^{uv}.
+ \label{eq:screened-pno-loss-stationary}
+\end{align}
+No additional pair weights multiply this adjoint contraction. The direct
+loss evaluated with the solved mixed amplitudes must agree with
+Eq.~\eqref{eq:screened-pno-loss-stationary} to $2\times10^{-10}$ hartree/bohr$^2$.
+
+The screened H2 Boys and Mulliken-PM fixtures have seven unique pairs,
+22 LMP2 edges, six reversed sources and 18 rectangular overlaps. A final
+occupation cutoff $10^{-3}$ produces diagonal first/final ranks $9\to8$;
+off-diagonal pairs remain $5\to5$. The three-LiH frozen-core fixture has
+three diagonal $12\to8$ pairs and no interpair LMP2 edges. Thus H2 provides
+coupled/rectangular coverage and LiH provides frozen-core diagonal coverage;
+this is not a screened off-diagonal frozen-core validation. A full-rank H2
+control retains diagonal $10\to10$ and off-diagonal $20\to20$ spaces.
+
+The older first-order local-refit/projector implementation plus native first
+LMP2 response is differentiated numerically only in the verification harness.
+Mixed AO-amplitude and final-projector thresholds remain $2\times10^{-7}$
+and $2\times10^{-6}$, the earlier full-domain final-PNO criteria.
+Native scalar loss differences use $2\times10^{-8}$ hartree/bohr$^2$.
+The largest observed AO-amplitude and final-projector component errors are
+$9.99\times10^{-10}$ and $5.62\times10^{-7}$ per bohr$^2$. The largest
+scalar loss-curvature error is $5.80\times10^{-10}$ hartree/bohr$^2$.
+Direct and stationary loss curvatures agree within $1.72\times10^{-14}$.
+Metric orthonormality, projector idempotency, both ordered mixed evaluations,
+source-contract rejection and preservation of forward amplitudes also pass.
+The full-rank analytic loss and derivatives are below $2\times10^{-18}$.
+These are selected block and correction tests. No complete screened Hessian,
+rigid-motion Hessian check, equilibrium frequency or scaling claim follows.
+The working memory and JSON record specify geometry, cutoffs, convergence,
+spacings and individual errors; the prior raw second-value PNO precision
+limits are retained in milestone 27.

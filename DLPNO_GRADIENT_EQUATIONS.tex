@@ -554,4 +554,18 @@ $7.65\times10^{-10}$ without relaxing the $10^{-8}$ threshold.
 The analytic local first/mixed PNO response and its parent-chart conditioning
 are documented in Hessian equation Section 24. They do not complete screened
 CCSD(T) Hessian assembly or alter public gradient routing.
+\subsection{Screened two-stage PNO curvature follow-up}
+The separate screened molecular response provider now propagates the local
+first-PNO derivatives through coupled LMP2 amplitudes, final PNO selection,
+and both PNO-loss curvatures. It uses the same native reference response graph
+and loss adjoint as this gradient, without altering the gradient functional.
+The stationary mixed loss uses the unweighted contraction of unique-pair
+adjoints with the mixed residual source: the native adjoint source already
+contains pair multiplicities. Direct mixed-amplitude and stationary evaluations
+agree within $1.72\times10^{-14}$ hartree/bohr$^2$ in the selected tests.
+Native scalar loss differences agree within $5.80\times10^{-10}$ hartree/bohr$^2$.
+Hessian equation Section 25 records the local exchange transformation,
+rectangular overlap derivatives, coupled right equations and final selection.
+These correction and subspace checks do not complete screened CCSD(T)
+Hessian assembly or change the public analytic gradient/Hessian routing.
 \end{document}

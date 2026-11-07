@@ -151,7 +151,7 @@ def check_local(w, mol):
         raise AssertionError('Unsupported mixed provider consumed full-domain inputs.')
     for label, operation in (
         ('ccsd_mixed', lambda: mixed_ccsd_residual(w, forbidden, None, forbidden)),
-        ('pno_molecular', lambda: molecular_inputs(w, 2, 18))):
+        ('legacy_full_domain_pno', lambda: molecular_inputs(w, 2, 18))):
         try:
             operation()
         except ValueError as exc:
@@ -233,7 +233,7 @@ def run(path):
         routing = str(exc)
     else:
         raise AssertionError('A new analytic driver must pass screened Hessian validation first.')
-    blockers = ['Screened coupled-LMP2/final-PNO and CCSD molecular delivery is incomplete.',
+    blockers = ['Screened mixed CCSD/TNO molecular delivery is incomplete.',
                 'No screened nuclear Hessian was assembled or compared to gradients.']
     if local['debug_probes_above_1e_minus8']:
         blockers.append('A native synthetic PNO operator probe exceeds its old tolerance.')
@@ -244,8 +244,9 @@ def run(path):
                   production_ready=False, blockers=blockers,
                   functional_scope='The gradient model now includes eliminated SC-MP2 and dipole estimates '
                                    'with analytic gradients. Their mixed correction kernels are tested in '
-                                   'screened_corrections.py. Screened first-PNO response is tested separately in '
-                                   'screened_first_pno.py; complete screened PNO/CCSD Hessians remain unsupported.')
+                                   'screened_corrections.py. Screened first PNOs, coupled LMP2, final PNOs and both '
+                                   'PNO-loss curvatures are tested separately in screened_final_pno.py; '
+                                   'complete screened CCSD(T) Hessians remain unsupported.')
     Path(path).write_text(json.dumps(result, indent=2)+'\n')
     print(json.dumps({k: result[k] for k in ('screened_hessian_validated', 'production_ready', 'blockers')}, indent=2))
     return result

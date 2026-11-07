@@ -21993,7 +21993,7 @@
     "mixed_nuclear_status": "complete_screened_hessian_unsupported",
     "provider_rejections": {
       "ccsd_mixed": "Mixed CCSD molecular replay currently requires full orbital/AO domains.",
-      "pno_molecular": "Full-domain mixed PNO diagnostic requires T_CUT_DO = 0."
+      "legacy_full_domain_pno": "Full-domain mixed PNO diagnostic requires T_CUT_DO = 0."
     },
     "gradient_comparisons": [
       {
@@ -22162,8 +22162,8 @@
   "screened_hessian_validated": false,
   "production_ready": false,
   "blockers": [
-    "Screened coupled-LMP2/final-PNO and CCSD molecular delivery is incomplete.",
+    "Screened mixed CCSD/TNO molecular delivery is incomplete.",
     "No screened nuclear Hessian was assembled or compared to gradients."
   ],
-  "functional_scope": "The gradient model now includes eliminated SC-MP2 and dipole estimates with analytic gradients. Their mixed correction kernels are tested in screened_corrections.py. Screened first-PNO response is tested separately in screened_first_pno.py; complete screened PNO/CCSD Hessians remain unsupported."
+  "functional_scope": "The gradient model now includes eliminated SC-MP2 and dipole estimates with analytic gradients. Their mixed correction kernels are tested in screened_corrections.py. Screened first PNOs, coupled LMP2, final PNOs and both PNO-loss curvatures are tested separately in screened_final_pno.py; complete screened CCSD(T) Hessians remain unsupported."
 }

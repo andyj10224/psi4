@@ -16,21 +16,24 @@ from localization_integration import configure
 from screened_corrections import assert_branch, mixed_inputs, normalized_paos
 from psi4.driver.procrouting.response.dlpno_frame_curvature import mixed_paos
 from psi4.driver.procrouting.response.dlpno_orbital import (
-    first_pno_tangent, pair_three_center_tangent, pair_exchange_tangent)
+    first_pno_tangent, pair_three_center_tangent, pair_exchange_tangent, _transport_pno_frame)
 from psi4.driver.procrouting.response.dlpno_screened_pno import screened_first_pno_response
 from psi4.driver.procrouting.response.dlpno_triples_curvature import mixed_product
 
 
-def fixture(system,localization,full_rank):
+def fixture(system,localization,full_rank,*,final_cutoff=1.e-4,tight=False):
     configure()
     frozen = system == 'lih'
     psi4.set_options(dict(freeze_core=frozen,save_jk=True,t_cut_pairs_mp2=1.e-6,t_cut_pairs=1.e-6,
         t_cut_pre=1.e-6,t_cut_do_ij=1.e-5,t_cut_do=.01,t_cut_do_pre=.03,t_cut_mkn=.001,
         t_cut_clmo=.01,t_cut_cpao=.01,t_cut_do_uv=1.e-5,dlpno__debug=2,dlpno_local_orbitals=localization,
-        t_cut_pno_mp2=0. if full_rank else 1.e-5,t_cut_pno=0. if full_rank else 1.e-4,t_cut_tno=1.e-5))
+        t_cut_pno_mp2=0. if full_rank else 1.e-5,t_cut_pno=0. if full_rank else final_cutoff,t_cut_tno=1.e-5))
     if frozen:
         psi4.set_options(dict(basis='def2-svp',df_basis_scf='def2-universal-jkfit',df_basis_cc='def2-svp-ri',
             t_cut_pairs_mp2=1.e-4,t_cut_pairs=1.e-4,t_cut_pre=1.e-5,t_cut_do_ij=1.e-3))
+    if tight:
+        psi4.set_options(dict(scf__ints_tolerance=1.e-14,e_convergence=1.e-14,d_convergence=1.e-14,
+                              solver_convergence=1.e-14,local_gradient_convergence=1.e-13))
     atoms = ([('H',x,0,z) for x in (0,3.5,7,10.5) for z in (-.37,.37)] if not frozen else
              [(a,x,0,z) for x in (0,6,12) for a,z in (('Li',0),('H',1.6))])
     mol=psi4.geometry('0 1\n'+'\n'.join(f'{a} {x} {y} {z}' for a,x,y,z in atoms)+
@@ -44,7 +47,7 @@ def response(w,u,v):
     return screened_first_pno_response(w,S,F,L,occupied,df),S
 
 
-def independent_first(w,u):
+def independent_first(w,u,response=None):
     """Older first-order refit, metric solve and spectral projector response."""
     S,F,L,occupied,_,df=mixed_inputs(w,u,u)
     d,b=psi4.core.dlpno_first_pno_state(w)
@@ -52,6 +55,9 @@ def independent_first(w,u):
     foo=L.value.T@F.value@L.value
     dfoo=L.u.T@F.value@L.value+L.value.T@F.u@L.value+L.value.T@F.value@L.u
     result={}
+    if response is not None:
+        response.update(frames={},frame_derivatives={},exchange_derivatives={},
+                        overlap_derivative=S.u,fock_derivative=F.u,occupied_fock_derivative=dfoo)
     for p,ids,aux in zip(d['PAIRS'],d['PAIR_PAO'],d['PAIR_AUX']):
         p=tuple(p); i,j=p
         N=mixed_paos(occupied,S,np.array(ids,dtype=int))[1]
@@ -82,6 +88,18 @@ def independent_first(w,u):
         out=first_pno_tangent(N.value,N.u,S.value,S.u,F.value,F.u,K,dK,foo[i,i]+foo[j,j],
                               dfoo[i,i]+dfoo[j,j],X,b[p]['FRAME'].np.shape[1],i==j)
         result[p]=out.retained_density_tangent
+        if response is not None:
+            Y=b[p]['FRAME'].np.copy()
+            dY=_transport_pno_frame(Y,out,S.value,S.u,p)
+            B,Bu=N.value@X,N.u@X
+            G=B.T@S.value@B
+            Gu=Bu.T@S.value@B+B.T@S.u@B+B.T@S.value@Bu
+            Z=np.linalg.solve(G,B.T@S.value@Y)
+            Zu=np.linalg.solve(G,Bu.T@S.value@Y+B.T@S.u@Y+B.T@S.value@dY-Gu@Z)
+            C,Cu=X@Z,X@Zu
+            response['frames'][p]=Y
+            response['frame_derivatives'][p]=dY
+            response['exchange_derivatives'][p]=Cu.T@K@C+C.T@dK@C+C.T@K@Cu
     return result
 
 
