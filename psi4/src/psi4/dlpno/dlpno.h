@@ -721,6 +721,7 @@ class PSI_API DLPNOCCSD : public DLPNO {
         SharedVector occupations;
     };
     std::vector<PairSelection> initial_pno_selection_, final_pno_selection_;
+    std::vector<SharedMatrix> pno_loss_lmp2_source_; ///< Isolated loss source retained only on request
     struct InitialPNOResponse {
         SharedMatrix final_transform;
         SharedVector virtual_energy;
@@ -1063,6 +1064,7 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     SharedMatrix orbital_response_action(const std::string& block, const SharedMatrix& rhs) const;
 
     PairBlocks lmp2_blocks(const std::string& block) const;
+    PairBlocks pno_truncation_lmp2_response(bool adjoint);
     PairBlocks lmp2_tangent(const PairBlocks& dy, const PairBlocks& dk, SharedMatrix ds,
                             SharedMatrix df, SharedMatrix dfoo);
 

@@ -46,6 +46,12 @@ DLPNOCCSD_T::PairBlocks lmp2_blocks(SharedWavefunction wfn, const std::string& b
     return local->lmp2_blocks(block);
 }
 
+DLPNOCCSD_T::PairBlocks pno_truncation_lmp2_response(SharedWavefunction wfn, bool adjoint) {
+    auto local = std::dynamic_pointer_cast<DLPNOCCSD_T>(wfn);
+    if (!local) throw PSIEXCEPTION("PNO truncation response requires an RHF DLPNO gradient model.");
+    return local->pno_truncation_lmp2_response(adjoint);
+}
+
 DLPNOCCSD_T::PairBlocks lmp2_tangent(SharedWavefunction wfn, const DLPNOCCSD_T::PairBlocks& dy,
                                     const DLPNOCCSD_T::PairBlocks& dk, SharedMatrix ds, SharedMatrix df,
                                     SharedMatrix dfoo) {

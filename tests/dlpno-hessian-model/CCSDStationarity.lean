@@ -20,6 +20,16 @@ theorem eliminate_mixed_ccsd {I : Type*} [Fintype I] (J W : Matrix I I ℝ)
   rw [mixed, adjoint, dotProduct_neg, neg_dotProduct] at h
   exact (neg_inj.mp h).symm
 
+-- LMP2 uses the unweighted unique-pair Frobenius product: energy
+-- multiplicities are already in eta. Flattening the independent symmetric
+-- diagonal blocks gives this identity in an orthonormal coordinate chart.
+theorem eliminate_mixed_lmp2 {I : Type*} [Fintype I] [DecidableEq I]
+    (A : Matrix I I ℝ) (tuv c eta z : I → ℝ)
+    (mixed : A *ᵥ tuv = -c) (adjoint : A.transpose *ᵥ z = -eta) :
+    eta ⬝ᵥ tuv = z ⬝ᵥ c := by
+  simpa using (eliminate_mixed_ccsd A (1 : Matrix I I ℝ) tuv c eta z mixed
+    (by simpa using adjoint))
+
 -- The native gradient Lambda has the combined CCSD and ordinary triples
 -- source. Subtract the triples-only solution in the same packed metric.
 theorem retained_adjoint {I : Type*} [Fintype I] (J W : Matrix I I ℝ)

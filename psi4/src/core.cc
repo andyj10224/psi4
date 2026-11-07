@@ -187,6 +187,7 @@ using TriplesRow = std::tuple<std::vector<int>,std::vector<int>,SharedMatrix,Sha
 std::map<std::tuple<int,int,int>,TriplesRow> triples_response_state(SharedWavefunction);
 using PairBlocks = std::map<std::pair<int,int>, SharedMatrix>;
 PairBlocks lmp2_blocks(SharedWavefunction,const std::string&);
+PairBlocks pno_truncation_lmp2_response(SharedWavefunction,bool);
 std::vector<SharedMatrix> ccsd_mixed_state(SharedWavefunction,int,int,int);
 std::pair<SharedMatrix,SharedMatrix> df_mixed_integrals(SharedWavefunction,const std::string&,
     const std::vector<int>&,const std::vector<int>&,int,int);
@@ -1461,6 +1462,9 @@ PYBIND11_MODULE(core, core) {
              "CCSD singles and doubles residual source from projected bare Fock derivatives.");
     core.def("dlpno_lmp2_blocks", &dlpno::lmp2_blocks, "wfn"_a, "block"_a,
              "First-space AO frames or converged amplitudes keyed by unique occupied pair.");
+    core.def("dlpno_pno_truncation_lmp2_response", &dlpno::pno_truncation_lmp2_response,
+             "wfn"_a, "adjoint"_a = true,
+             "Return the isolated PNO-loss LMP2 adjoint or its unique-pair energy source.");
     core.def("dlpno_lmp2_tangent", &dlpno::lmp2_tangent, "wfn"_a, "frame_derivatives"_a,
              "pair_exchange_derivatives"_a, "overlap_derivative"_a, "ao_fock_derivative"_a,
              "occupied_fock_derivative"_a, "Solve the screened first-space nuclear LMP2 tangent system.");

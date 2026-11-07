@@ -370,7 +370,7 @@ def check_residual_replay(w, state):
     assert max(np.max(abs(x)) for x in [*base1,*base2.values()]) < 1.e-8
 
 
-def benchmark(frozen, coordinates=range(9), *, complete_spaces=False, coarse_step=.002):
+def benchmark(frozen, coordinates=range(9), *, complete_spaces=False, coarse_step=.002, include_pno=False):
     psi4.set_options({'freeze_core':frozen})
     w = calculation(BASE)
     rows = psi4.core.dlpno_triples_response_state(w)
@@ -380,6 +380,10 @@ def benchmark(frozen, coordinates=range(9), *, complete_spaces=False, coarse_ste
     column = TriplesHessianColumn(column_row)
     ccsd_adjoint = TriplesCCSDAdjoint(w)
     retained = RetainedCCSDCurvature(w,ccsd_adjoint)
+    if include_pno:
+        from pno_curvature_water import sampled_entry
+        from psi4.driver.procrouting.response.dlpno_pno_curvature import PNOTruncationCurvature
+        pno_adjoint = PNOTruncationCurvature(w)
     eta1,eta2 = psi4.core.dlpno_triples_ccsd_source(w)
     eta1,eta2 = [x.np.ravel() for x in eta1], {p:x.np for p,x in eta2.items()}
 
@@ -477,7 +481,15 @@ def benchmark(frozen, coordinates=range(9), *, complete_spaces=False, coarse_ste
                                      (retained_values,retained_direct,retained_reference))
         print('retained CCSD curvature',frozen,u,cc,cc_direct,cc_reference,cc-cc_reference,flush=True)
         np.testing.assert_allclose(cc,[cc_direct,cc_reference],atol=2.e-6,rtol=0.)
-        results.append((relax,estimated,numerical,cc,cc_reference))
+        output = (relax,estimated,numerical,cc,cc_reference)
+        if include_pno:
+            values = [sampled_entry(w,model_at,u,v,h,pno_adjoint) for h in (coarse_step,coarse_step/2)]
+            pno,pno_direct = (4*np.asarray(values[1])-np.asarray(values[0]))/3
+            np.testing.assert_allclose(pno,pno_direct,rtol=0,atol=3.e-7)
+            print('assembled retained CCSD + triples + PNO curvature',frozen,u,cc+estimated+pno,
+                  'PNO',pno,'direct check',pno-pno_direct,flush=True)
+            output += (pno,)
+        results.append(output)
     result = np.asarray(results)
     np.testing.assert_allclose(result[:,1],result[:,2],rtol=0.,atol=2.e-7)
     if list(coordinates) == list(range(9)):

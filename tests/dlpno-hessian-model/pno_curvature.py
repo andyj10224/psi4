@@ -75,5 +75,52 @@ def verify():
     print('PNO mixed curvature maximum error',maximum)
 
 
+def verify_lmp2_residual():
+    from psi4.driver.procrouting.response.dlpno_pno_curvature import lmp2_residual, lmp2_mixed_residual
+    rng=np.random.default_rng(732)
+    def block(shape,sym=False):
+        parts=[rng.normal(size=shape)*scale for scale in (1.,.1,.1,.03)]
+        return MixedBlock(*((x+x.T)/2 if sym else x for x in parts))
+    ranks={(0,0):2,(0,1):3,(1,1):2}
+    final={p:dict(exchange=block((n,n),p[0]==p[1]),fock=block((n,n),True),
+                  amplitudes=block((n,n),p[0]==p[1])) for p,n in ranks.items()}
+    foo=block((2,2),True)
+    edges={(0,0):[(1,0,0,1),(0,1,0,1)],(0,1):[(0,0,0,1),(1,1,0,1)],
+           (1,1):[(0,1,0,1),(1,0,0,1)]}
+    ov={(p,tuple(sorted((k,l)))):block((ranks[p],ranks[tuple(sorted((k,l)))]))
+        for p,es in edges.items() for k,l,_,_ in es}
+    def explicit(u,v):
+        occupied=at(foo,u,v)
+        result={}
+        for p,inputs in final.items():
+            i,j=p
+            K,F,t=(at(inputs[key],u,v) for key in ('exchange','fock','amplitudes'))
+            r=K+F@t+t@F-(occupied[i,i]+occupied[j,j])*t
+            for k,l,a,b in edges[p]:
+                q=tuple(sorted((k,l)))
+                tq=at(final[q]['amplitudes'],u,v)
+                if k>l: tq=tq.T
+                S=at(ov[p,q],u,v)
+                r-=occupied[a,b]*S@tq@S.T
+            result[p]=(r+r.T)/2 if i==j else r
+        return result
+    actual=lmp2_residual(final,foo,edges,lambda p,q:ov[p,q])
+    def fd(h):
+        samples={(a,b):explicit(a*h,b*h) for a in (-1,1) for b in (-1,1)}
+        return {p:sum(a*b*x[p] for (a,b),x in samples.items())/(4*h*h) for p in ranks}
+    coarse,fine=fd(.002),fd(.001)
+    error=max(np.max(abs(actual[p].uv-(4*fine[p]-coarse[p])/3)) for p in ranks)
+    assert error<2.e-8,error
+    source=lmp2_mixed_residual(final,foo,edges,lambda p,q:ov[p,q])
+    const=lambda x:MixedBlock(x,np.zeros_like(x),np.zeros_like(x),np.zeros_like(x))
+    trial={p:dict(exchange=const(np.zeros_like(a['exchange'].value)),fock=const(a['fock'].value),
+                  amplitudes=const(a['amplitudes'].uv)) for p,a in final.items()}
+    action=lmp2_residual(trial,const(foo.value),edges,lambda p,q:const(ov[p,q].value))
+    for p in ranks:
+        np.testing.assert_allclose(actual[p].uv,source[p]+action[p].value,rtol=0,atol=1.e-13)
+    print('LMP2 mixed residual maximum error',error)
+
+
 if __name__=='__main__':
     verify()
+    verify_lmp2_residual()

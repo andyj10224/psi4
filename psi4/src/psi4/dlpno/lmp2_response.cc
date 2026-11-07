@@ -298,12 +298,21 @@ void DLPNOCCSD_T::form_lmp2_response() {
 
 DLPNOCCSD_T::PairBlocks DLPNOCCSD_T::lmp2_blocks(const std::string& block) const {
     if (lmp2_state_.X.empty()) throw PSIEXCEPTION("LMP2 response state was not retained.");
-    if (block != "FRAME" && block != "AMPLITUDE" && block != "FINAL_FRAME" && block != "OCC_DOMAIN" && block != "CCSD_DOUBLES") throw PSIEXCEPTION("Invalid LMP2 response block.");
+    if (block != "RESPONSE_EDGES" && block != "FRAME" && block != "AMPLITUDE" && block != "FINAL_FRAME" && block != "OCC_DOMAIN" && block != "CCSD_DOUBLES") throw PSIEXCEPTION("Invalid LMP2 response block.");
     PairBlocks result;
     for (int p = 0; p < ij_to_i_j_.size(); ++p) {
         const auto ij = ij_to_i_j_[p];
         if (ij.first > ij.second) continue;
-        if (block == "OCC_DOMAIN") {
+        if (block == "RESPONSE_EDGES") {
+            const auto& edges = lmp2_state_.edges[p];
+            auto rows = std::make_shared<Matrix>(edges.size(), 4);
+            for (size_t e = 0; e < edges.size(); ++e) {
+                const auto [k,l] = ij_to_i_j_[edges[e].source];
+                (*rows)(e,0) = k; (*rows)(e,1) = l;
+                (*rows)(e,2) = edges[e].f1; (*rows)(e,3) = edges[e].f2;
+            }
+            result[ij] = rows;
+        } else if (block == "OCC_DOMAIN") {
             const auto& dom = lmopair_to_lmos_[p];
             auto ids = std::make_shared<Matrix>(dom.size(), 1);
             for (size_t k = 0; k < dom.size(); ++k) (*ids)(k, 0) = dom[k];

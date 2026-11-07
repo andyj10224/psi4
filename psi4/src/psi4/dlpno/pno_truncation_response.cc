@@ -30,6 +30,7 @@
 
 #include "psi4/libmints/basisset.h"
 #include "psi4/libmints/matrix.h"
+#include "psi4/liboptions/liboptions.h"
 
 #include <algorithm>
 #include <cmath>
@@ -279,10 +280,44 @@ SharedMatrix DLPNOCCSD_T::transported_first_pno(int p, const SharedMatrix& K, co
     return align_pnos(X, ref, parent);
 }
 
+// Isolate only the final-selection loss. The initial-selection loss has no
+// dependence on the converged coupled-LMP2 amplitudes in this parent chart.
+DLPNOCCSD_T::PairBlocks DLPNOCCSD_T::pno_truncation_lmp2_response(bool adjoint) {
+    const size_t pairs = ij_to_i_j_.size();
+    if (!gradient_model_ || lmp2_state_.T.size() != pairs || pno_loss_lmp2_source_.size() != pairs)
+        throw PSIEXCEPTION("PNO-loss adjoint requires retained RHF LMP2 and loss-source states.");
+    std::vector<SharedMatrix> source(pairs);
+    size_t words = 0;
+    for (size_t p = 0; p < pairs; ++p) {
+        const auto [i,j] = ij_to_i_j_[p];
+        const int n = i <= j ? lmp2_state_.T[p]->nrow() : 0;
+        source[p] = std::make_shared<Matrix>(n,n);
+        if (i <= j && pno_loss_lmp2_source_[p]) source[p]->copy(pno_loss_lmp2_source_[p]);
+        if (i == j) source[p]->hermitivitize();
+        words += size_t(n)*n;
+    }
+    if (adjoint && toggle_memory_ &&
+        (ccsd_response_words_ + words*(13 + 2*options_.get_int("DIIS_MAX_VECS")))*sizeof(double) > .9*memory_)
+        throw PSIEXCEPTION("Insufficient memory for the isolated PNO-loss LMP2 adjoint.");
+    if (adjoint) {
+        double rms;
+        int iterations;
+        source = solve_lmp2_system(source,true,rms,iterations);
+        set_scalar_variable("DLPNO PNO LOSS LMP2 ADJOINT RESIDUAL",rms);
+        set_scalar_variable("DLPNO PNO LOSS LMP2 ADJOINT ITERATIONS",iterations);
+    }
+    PairBlocks result;
+    for (size_t p = 0; p < pairs; ++p)
+        if (ij_to_i_j_[p].first <= ij_to_i_j_[p].second) result[ij_to_i_j_[p]] = source[p];
+    return result;
+}
+
 void DLPNOCCSD_T::form_pno_truncation_response() {
     MetricShellBlocks metric(ribasis_->nshell());
     std::vector<ThreeCenterDensity> density(ribasis_->nbf());
     const size_t pairs = ij_to_i_j_.size();
+    pno_loss_lmp2_source_.clear();
+    if (options_.get_bool("DLPNO_KEEP_LMP2_RESPONSE")) pno_loss_lmp2_source_.resize(pairs);
     truncation_parent_.assign(pairs, {});
     truncation_parent_bar_.assign(pairs, {});
     double energy[2]{}, error[2]{}, singles_error[2]{}, nested_df_error = 0.;
@@ -347,6 +382,7 @@ void DLPNOCCSD_T::form_pno_truncation_response() {
             // Scale this stage's own loss once for both ordered orientations.
             g.K->scale(weight);
             g.T->scale(weight);
+            if (!initial && !pno_loss_lmp2_source_.empty()) pno_loss_lmp2_source_[p] = g.T->clone();
             g.F->scale(weight);
             g.f->scale(weight);
             occupied_sum *= weight;

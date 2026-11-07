@@ -1,8 +1,9 @@
 """Two-stage RHF PNO truncation-energy curvature on a fixed selection branch.
 
-Inputs are total mixed derivatives in an orthonormal parent chart. In particular,
-final-stage coupled-LMP2 amplitudes require their mixed derivative. This module
-is a local contraction kernel, not a molecular response solver.
+Inputs are total mixed derivatives in an orthonormal parent chart. The direct
+contraction accepts mixed LMP2 amplitudes; the stationary route replaces them
+with a native loss adjoint and a mixed residual source. Lower-order molecular
+response inputs are still supplied by the caller.
 """
 import numpy as np
 
@@ -94,3 +95,74 @@ def pno_truncation_energy(initial, final):
             total += (1 if i == j else 2)*np.asarray(
                 pno_truncation_loss(**inputs, diagonal=(i == j)))
     return MixedBlock(*total)
+
+
+def lmp2_residual(final, occupied_fock, edges, overlap, *, affine_amplitudes=False):
+    """LMP2 residual and its derivatives in native first-PNO frames.
+
+    edges[p] contains ordered (k,l,f1,f2) rows from RESPONSE_EDGES. overlap(p,q)
+    supplies a MixedBlock of first-PNO overlaps for unique q. No edge screen is
+    recomputed here. The residual convention is K + F t + t F - o t - couplings.
+    """
+    def affine(t):
+        return MixedBlock(t.value,t.u,t.v,np.zeros_like(t.value)) if affine_amplitudes else t
+    result = {}
+    for p, inputs in final.items():
+        i,j = p
+        t = affine(inputs['amplitudes'])
+        F = inputs['fock']
+        occ = MixedBlock(*(x[i,i]+x[j,j] for x in occupied_fock))
+        left = mixed_product('ac,cb->ab',F,t)
+        right = mixed_product('ac,cb->ab',t,F)
+        diagonal = mixed_product(',ab->ab',occ,t)
+        residual = MixedBlock(*(k+a+b-c for k,a,b,c in zip(inputs['exchange'],left,right,diagonal)))
+        for k,l,f1,f2 in edges[p]:
+            q = min(k,l),max(k,l)
+            tq = affine(final[q]['amplitudes'])
+            if k > l:
+                tq = MixedBlock(*(x.T for x in tq))
+            S = overlap(p,q)
+            term = mixed_product(',ac,cd,bd->ab',occupied_fock.slice((f1,f2)),S,tq,S)
+            residual = MixedBlock(*(a-b for a,b in zip(residual,term)))
+        if i==j:
+            residual = MixedBlock(*(.5*(x+x.T) for x in residual))
+        result[p] = residual
+    return result
+
+
+def lmp2_mixed_residual(final, occupied_fock, edges, overlap):
+    """Mixed residual source with t_uv=0, for the stationary PNO-loss curvature."""
+    return {p:r.uv for p,r in lmp2_residual(
+        final,occupied_fock,edges,overlap,affine_amplitudes=True).items()}
+
+
+class PNOTruncationCurvature:
+    """Eliminate final-stage mixed LMP2 amplitudes using the native loss adjoint.
+
+    Native sources already include ordered-pair energy multiplicities. Their
+    dual uses an unweighted Frobenius sum over unique pairs, unlike CCSD Lambda.
+    All inputs must be in the reference native first-PNO chart.
+    """
+    def __init__(self,wfn):
+        from psi4 import core
+        self.adjoint = {p:x.np.copy() for p,x in core.dlpno_pno_truncation_lmp2_response(wfn,True).items()}
+        self.reference_energy = wfn.variable('DLPNO PNO TRUNCATION ERROR')
+
+    def element(self,initial,final,mixed_residual):
+        if final.keys()!=self.adjoint.keys() or mixed_residual.keys()!=self.adjoint.keys():
+            raise ValueError('PNO-loss response pair graph disagrees with the reference.')
+        affine = {}
+        correction = 0.
+        for p,inputs in final.items():
+            t = inputs['amplitudes']
+            if t.value.shape!=self.adjoint[p].shape or mixed_residual[p].shape!=t.value.shape:
+                raise ValueError('PNO-loss response pair dimensions disagree with the reference.')
+            affine[p] = dict(inputs,amplitudes=MixedBlock(t.value,t.u,t.v,np.zeros_like(t.value)))
+            correction += np.vdot(self.adjoint[p],mixed_residual[p])
+        trial = pno_truncation_energy(initial,affine)
+        if not np.isclose(trial.value,self.reference_energy,rtol=1.e-9,atol=1.e-11):
+            raise ValueError('Reconstructed PNO loss disagrees with the native correction.')
+        value = trial.uv+correction
+        if not np.isfinite(value):
+            raise ValueError('Nonfinite stationary PNO-loss curvature.')
+        return value

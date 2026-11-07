@@ -809,4 +809,68 @@ with quadratic storage. Linear aggregate work requires bounded local ranks
 and a number of retained pairs proportional to system size; the dense water
 input diagnostic does not establish this property for the molecular pipeline.
 
+
+\section{Isolated PNO-loss LMP2 adjoint and stationary curvature}
+The previous section's direct contraction remains a verification route.
+The stationary route now eliminates the final-stage coupled-LMP2 mixed
+amplitude. In the native first-PNO charts use the residual convention
+\begin{equation}
+ R^{ij}=K^{ij}+F^{ij}t^{ij}+t^{ij}F^{ij}
+ -(f_{ii}+f_{jj})t^{ij}
+ -\sum_{e\in\mathcal E_{ij}} f_{a_e b_e}
+       S^{ij,q_e}t^{q_e}S^{ij,q_e\mathsf T}=0.
+\end{equation}
+Each edge is taken directly from the stored, screened LMP2 graph; it includes
+an ordered source pair $q_e$. A reversed source pair uses the transpose
+of its unique-pair tensor. The diagonal residual is symmetrized.
+Write $R=K+\mathcal A t$, and define $\eta_{ij}$ by
+\begin{equation}
+ d_t\Delta E_{\rm PNO}=\sum_{i\leq j}\eta_{ij}:dt^{ij}.
+\end{equation}
+The initial-selection loss is independent of the coupled-LMP2 tensor
+at fixed parent inputs. The native reverse derivative of the final loss,
+including its density-projector response and singles loss, supplies
+$\eta_{ij}$. Its factor $(2-\delta_{ij})$ is already included.
+Consequently the pairing here is the unweighted unique-pair Frobenius sum,
+not the CCSD Lambda pairing defined in earlier sections.
+
+The native transpose solver computes the isolated multiplier
+\begin{equation}
+ \mathcal A^\dagger z=-\eta,\qquad
+ \langle x,y\rangle=\sum_{i\leq j}x^{ij}:y^{ij}.
+\end{equation}
+It uses symmetric diagonal-pair tensors. No full Jacobian is formed.
+The combined gradient's LMP2 multiplier has other sources and must not
+be substituted for $z$ in this isolated correction.
+
+For the affine amplitude path
+$\widehat t=t+u t^u+v t^v$, form
+\begin{equation}
+ C_{uv}=R^{uv}[\widehat t]
+       =K^{uv}+\mathcal A^{uv}t+\mathcal A^u t^v+\mathcal A^v t^u.
+\end{equation}
+All products in the native graph, including both overlap legs, use the
+mixed product rule. The mixed amplitude constraint is
+$\mathcal A t^{uv}=-C_{uv}$. Thus
+\begin{align}
+ \langle\eta,t^{uv}\rangle
+ &=-\langle\mathcal A^\dagger z,t^{uv}\rangle
+   =\langle z,C_{uv}\rangle,\\
+ H^{\rm PNO}_{uv}
+ &=\Delta E^{uv}_{\rm PNO}[\widehat t]+\langle z,C_{uv}\rangle.
+\end{align}
+Only the final-stage coupled-LMP2 mixed amplitude is zeroed in the affine
+energy. The initial semicanonical MP2 mixed solve and all moving-parent
+responses remain included. First-order coupled-LMP2 responses remain required.
+The Lean theorem \texttt{eliminate\_mixed\_lmp2} proves the displayed
+finite-dimensional elimination identity under the mixed constraint and
+adjoint hypotheses; it does not prove the numerical solvers or nuclear inputs.
+
+The current molecular provider still samples the remaining mixed local
+frames, occupied/virtual Fock blocks and fitted exchange blocks.
+Therefore this change removes one numerical mixed-amplitude dependency
+without making the whole Hessian analytic. The column diagnostic can
+now sum retained CCSD, iterative triples and stationary PNO-loss curvature.
+Other nonzero screened-energy corrections require separate treatment.
+
 \end{document}
