@@ -90,22 +90,24 @@ void DLPNOCCSD::estimate_gradient_lambda_memory() {
 }
 
 void DLPNOCCSD::gradient_lambda_residual(const std::vector<SharedMatrix>& z1, const std::vector<SharedMatrix>& z2,
-                                         std::vector<SharedMatrix>& l1, std::vector<SharedMatrix>& l2) {
+                                         std::vector<SharedMatrix>& l1, std::vector<SharedMatrix>& l2, bool include_source) {
     // Differentiate E_CC + lambda1 . R1 + 1/2 sum_ij lambda2_ij . R2_ij.
     // Reverse the right-hand contractions in their original pair domains.
     CCAdjoints g(*this, z1, z2);
-    for (int i = 0; i < g.t1.size(); ++i) {
-        const int ii = i_j_to_ij_[i][i];
-        auto f = submatrix_rows_and_cols(*F_lmo_pao_, {i}, lmopair_to_paos_[ii]);
-        g.t1[i]->axpy(2., linalg::doublet(X_pno_[ii], f, true, true));
-    }
-    for (int p = 0; p < g.t2.size(); ++p) {
-        const auto [i, j] = ij_to_i_j_[p];
-        auto si = S_PNO(p, i_j_to_ij_[i][i]), sj = S_PNO(p, i_j_to_ij_[j][j]);
-        auto ti = linalg::doublet(si, T_ia_[i]), tj = linalg::doublet(sj, T_ia_[j]);
-        g.t1[i]->add(linalg::triplet(si, L_iajb_[p], tj, true, false, false));
-        g.t1[j]->add(linalg::triplet(sj, L_iajb_[p], ti, true, true, false));
-        g.t2[p]->add(L_iajb_[p]);
+    if (include_source) {
+        for (int i = 0; i < g.t1.size(); ++i) {
+            const int ii = i_j_to_ij_[i][i];
+            auto f = submatrix_rows_and_cols(*F_lmo_pao_, {i}, lmopair_to_paos_[ii]);
+            g.t1[i]->axpy(2., linalg::doublet(X_pno_[ii], f, true, true));
+        }
+        for (int p = 0; p < g.t2.size(); ++p) {
+            const auto [i, j] = ij_to_i_j_[p];
+            auto si = S_PNO(p, i_j_to_ij_[i][i]), sj = S_PNO(p, i_j_to_ij_[j][j]);
+            auto ti = linalg::doublet(si, T_ia_[i]), tj = linalg::doublet(sj, T_ia_[j]);
+            g.t1[i]->add(linalg::triplet(si, L_iajb_[p], tj, true, false, false));
+            g.t1[j]->add(linalg::triplet(sj, L_iajb_[p], ti, true, true, false));
+            g.t2[p]->add(L_iajb_[p]);
+        }
     }
     reverse_R1(g);
     reverse_R2(g);
@@ -114,7 +116,7 @@ void DLPNOCCSD::gradient_lambda_residual(const std::vector<SharedMatrix>& z1, co
 
     for (int i = 0; i < l1.size(); ++i) {
         l1[i] = g.t1[i];
-        l1[i]->add(triples_source1_[i]);
+        if (include_source) l1[i]->add(triples_source1_[i]);
     }
     for (int p = 0; p < l2.size(); ++p) {
         g.t2[p]->axpy(2., g.u[p]);
@@ -123,8 +125,93 @@ void DLPNOCCSD::gradient_lambda_residual(const std::vector<SharedMatrix>& z1, co
     for (int p = 0; p < l2.size(); ++p) {
         l2[p] = g.t2[p]->clone();
         l2[p]->add(g.t2[ij_to_ji_[p]]->transpose());
-        l2[p]->add(triples_source2_[p]);
+        if (include_source) l2[p]->add(triples_source2_[p]);
     }
+}
+
+std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> DLPNOCCSD::ccsd_amplitude_action(
+    const std::vector<SharedMatrix>& x1, const PairBlocks& unique, bool transpose) {
+    if (!gradient_model_ || beta_.size() != T_iajb_.size() || x1.size() != T_ia_.size())
+        throw PSIEXCEPTION("Expected singles on the RHF gradient-model occupied space.");
+    auto validate = [](const SharedMatrix& x, const SharedMatrix& model) {
+        if (!x || x->nirrep() != 1 || x->nrow() != model->nrow() || x->ncol() != model->ncol())
+            throw PSIEXCEPTION("CCSD amplitude direction has incompatible dimensions.");
+    };
+    for (size_t i = 0; i < x1.size(); ++i) validate(x1[i], T_ia_[i]);
+    std::vector<SharedMatrix> x2(T_iajb_.size());
+    size_t count = 0;
+    for (size_t p = 0; p < x2.size(); ++p) {
+        auto [i,j] = ij_to_i_j_[p];
+        if (i > j) continue;
+        ++count;
+        const auto& block = unique.at({i,j});
+        validate(block, T_iajb_[p]);
+        if (i == j) {
+            auto antisymmetric = block->transpose();
+            antisymmetric->subtract(block);
+            if (antisymmetric->absmax() > 1.e-12 * std::max(1., block->absmax()))
+                throw PSIEXCEPTION("Diagonal CCSD amplitude directions must be symmetric.");
+        }
+        x2[p] = block;
+        if (i < j) x2[ij_to_ji_[p]] = block->transpose();
+    }
+    if (unique.size() != count) throw PSIEXCEPTION("Expected one doubles block per retained unique pair.");
+    auto y1 = ccsd_detail::zero_blocks(T_ia_);
+    auto y2 = ccsd_detail::zero_blocks(T_iajb_);
+    if (transpose) {
+        gradient_lambda_residual(x1, x2, y1, y2, false);
+    } else {
+        double largest = 0.;
+        for (const auto& x : x1) largest = std::max(largest, x->absmax());
+        for (const auto& x : x2) largest = std::max(largest, x->absmax());
+        if (largest > 0.) {
+            // R(t+s*x) is at most quartic. Its linear coefficient follows
+            // exactly from the two odd parts at s=1 and s=2 (see equation record).
+            const double scale = 0.125 / largest;
+            auto r1 = ccsd_detail::zero_blocks(T_ia_), r2 = ccsd_detail::zero_blocks(T_iajb_);
+            auto rn = ccsd_detail::zero_blocks(T_iajb_);
+            std::vector<std::vector<SharedMatrix>> buffers(Process::environment.get_n_threads());
+            for (auto& buffer : buffers) buffer = ccsd_detail::zero_blocks(T_ia_);
+            const auto t1 = T_ia_, t2 = T_iajb_, u = Tt_iajb_;
+            auto restore = [&]() {
+                T_ia_ = t1;
+                T_iajb_ = t2;
+                Tt_iajb_ = u;
+                prepare_ccsd_residual();
+            };
+            try {
+                for (int node : {-2,-1,1,2}) {
+                    for (size_t i = 0; i < t1.size(); ++i) {
+                        T_ia_[i] = t1[i]->clone();
+                        T_ia_[i]->axpy(node * scale, x1[i]);
+                    }
+                    for (size_t p = 0; p < t2.size(); ++p) {
+                        T_iajb_[p] = t2[p]->clone();
+                        T_iajb_[p]->axpy(node * scale, x2[p]);
+                        Tt_iajb_[p] = T_iajb_[p]->clone();
+                        Tt_iajb_[p]->scale(2.);
+                        Tt_iajb_[p]->subtract(T_iajb_[p]->transpose());
+                    }
+                    prepare_ccsd_residual();
+                    compute_R_ia(r1, buffers);
+                    compute_R_iajb(r2, rn);
+                    const double weight = (std::abs(node) == 1 ? 8.*node : -0.5*node) / (12.*scale);
+                    for (size_t i = 0; i < t1.size(); ++i) y1[i]->axpy(weight, r1[i]);
+                    for (size_t p = 0; p < t2.size(); ++p) y2[p]->axpy(weight, r2[p]);
+                }
+            } catch (...) {
+                restore();
+                throw;
+            }
+            restore();
+        }
+    }
+    PairBlocks result;
+    for (size_t p = 0; p < y2.size(); ++p) {
+        const auto ij = ij_to_i_j_[p];
+        if (ij.first <= ij.second) result[ij] = y2[p];
+    }
+    return {y1, result};
 }
 
 void DLPNOCCSD::reverse_R1(CCAdjoints& g) {

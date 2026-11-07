@@ -358,3 +358,81 @@ def ccsd_residual_source(wfn, frames, factors_for, exchange, mixed_integrals, dl
         doubles_source[ij] += ccsd_beta_source(wfn,ij,frames,intermediate(*ij).beta,doubles)
         doubles_source[ij] += ccsd_mixed_doubles_source(wfn,ij,frames,intermediate,doubles,mixed_integrals)
     return singles,doubles_source
+
+
+def coupled_ccsd_tangent(wfn, source1, source2, *, tolerance=1.e-10, maxiter=100):
+    """Solve J t^v = -b^v in the independent, pair-weighted RHF amplitude space.
+
+    The diagonal-pair upper triangle carries half weight on its diagonal
+    and unit weight elsewhere. Off-diagonal occupied pairs have unit weight.
+    The returned components use the moving frames used to form the source.
+    """
+    from scipy.sparse.linalg import LinearOperator, gmres
+    from psi4 import core
+
+    frames = core.dlpno_lmp2_blocks(wfn, 'FINAL_FRAME')
+    pairs = sorted(frames)
+    lmo = wfn.variable('DLPNO RESPONSE ACTIVE LMOS').np
+    if len(source1) != lmo.shape[1] or set(source2) != set(pairs):
+        raise ValueError("Expected the full CCSD singles and unique-pair doubles sources.")
+    ranks = {p: frames[p].np.shape[1] for p in pairs}
+    triangles = {p: np.triu_indices(ranks[p]) for p in pairs if p[0] == p[1]}
+    weights = {p: np.where(a == b, np.sqrt(.5), 1.) for p, (a,b) in triangles.items()}
+
+    def pack(one, two):
+        pieces = [np.asarray(x).reshape(ranks[i,i]) for i,x in enumerate(one)]
+        for p in pairs:
+            x = np.asarray(two[p]).reshape(ranks[p], ranks[p])
+            if p in triangles:
+                if not np.allclose(x, x.T, rtol=1.e-10, atol=1.e-12):
+                    raise ValueError("Expected symmetric diagonal-pair doubles.")
+                pieces.append(x[triangles[p]] * weights[p])
+            else:
+                pieces.append(x.ravel())
+        return np.concatenate(pieces)
+
+    def unpack(flat):
+        one, two = [], {}
+        at = 0
+        for i in range(lmo.shape[1]):
+            n = ranks[i,i]
+            one.append(flat[at:at+n])
+            at += n
+        for p in pairs:
+            n = ranks[p]
+            if p in triangles:
+                a,b = triangles[p]
+                block = np.empty((n,n))
+                block[a,b] = block[b,a] = flat[at:at+a.size] / weights[p]
+                two[p] = block
+                at += a.size
+            else:
+                two[p] = flat[at:at+n*n].reshape(n,n)
+                at += n*n
+        return one,two
+
+    def apply(flat):
+        one,two = unpack(flat)
+        matrix = core.Matrix.from_array
+        r1,r2 = core.dlpno_ccsd_amplitude_action(
+            wfn, [matrix(x[:,None]) for x in one], {p: matrix(x) for p,x in two.items()})
+        return pack([x.np for x in r1], {p: x.np for p,x in r2.items()})
+
+    rhs = -pack(source1, source2)
+    fock = wfn.reference_wavefunction().Fa().np
+    occ = np.sum(lmo * (fock @ lmo), axis=0)
+    vir = {p: np.sum(y.np * (fock @ y.np), axis=0) for p,y in frames.items()}
+    gaps1 = [vir[i,i] - e for i,e in enumerate(occ)]
+    gaps2 = {p: eps[:,None] + eps - occ[p[0]] - occ[p[1]] for p,eps in vir.items()}
+    # A diagonal operator takes the same eigenvalues in the weighted coordinates.
+    gaps = np.concatenate([*gaps1, *(gaps2[p][triangles[p]] if p in triangles else gaps2[p].ravel()
+                                    for p in pairs)])
+    if not np.all(np.isfinite(rhs)) or not np.all(np.isfinite(gaps)) or np.any(abs(gaps) < 1.e-12):
+        raise ValueError("Invalid CCSD source or singular orbital-gap preconditioner.")
+    operator = LinearOperator((rhs.size,rhs.size), matvec=apply, dtype=float)
+    inverse = LinearOperator(operator.shape, matvec=lambda x: x/gaps, dtype=float)
+    solved,info = gmres(operator, rhs, M=inverse, rtol=tolerance, atol=0., maxiter=maxiter)
+    residual = np.linalg.norm(apply(solved)-rhs)
+    if info or not np.isfinite(residual) or residual > tolerance * max(np.linalg.norm(rhs), 1.e-14):
+        raise RuntimeError(f"CCSD amplitude response failed with residual {residual:.3e} (info={info}).")
+    return unpack(solved)

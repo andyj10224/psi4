@@ -755,7 +755,7 @@ class PSI_API DLPNOCCSD : public DLPNO {
     void estimate_gradient_lambda_memory();
     void solve_gradient_lambda();
     void gradient_lambda_residual(const std::vector<SharedMatrix>& z1, const std::vector<SharedMatrix>& z2,
-                                  std::vector<SharedMatrix>& l1, std::vector<SharedMatrix>& l2);
+                                  std::vector<SharedMatrix>& l1, std::vector<SharedMatrix>& l2, bool include_source = true);
     void reverse_R1(CCAdjoints& g);
     void reverse_R2(CCAdjoints& g);
     void reverse_pair_intermediates(CCAdjoints& g);
@@ -774,6 +774,8 @@ class PSI_API DLPNOCCSD : public DLPNO {
 
    public:
     using PairBlocks = std::map<std::pair<int,int>, SharedMatrix>;
+    std::pair<std::vector<SharedMatrix>, PairBlocks> ccsd_amplitude_action(
+        const std::vector<SharedMatrix>& singles, const PairBlocks& doubles, bool transpose);
     std::pair<std::vector<SharedMatrix>, PairBlocks> ccsd_fock_source(
         SharedMatrix oo, const PairBlocks& ov, const PairBlocks& vv);
     using DFPairState = std::tuple<std::vector<int>, std::vector<SharedMatrix>, std::map<std::string,SharedMatrix>>;

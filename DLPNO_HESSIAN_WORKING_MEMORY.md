@@ -114,3 +114,20 @@ Checked an O–H stretch in water/cc-pVDZ, with Boys localization, full fitting 
 Next implement the coupled Jacobian action, check its weighted transpose against the Lambda action and solve for the first-order amplitudes. The present water test verifies the residual source. Screened molecular integral delivery, its scaling, the triples response and the final Hessian comparison with differences of canonical DF-CCSD(T) gradients remain open. [Water check](tests/dlpno-hessian-model/lmp2_tangent.py)
 
 Native build and install passed. The water diagnostic and the three regressions dfccsd-t-grad1, dlpno-grad-model and dlpnocc-1 passed. The equation record compiled in two LaTeX passes.
+
+## 2026-11-07 — Coupled transformed CCSD right amplitude response
+
+Implemented a matrix-free right action on simultaneous singles and doubles directions. Four evaluations of the original transformed residual at fixed geometry extract the linear coefficient of its quartic amplitude polynomial. Reference amplitudes, spin-adapted doubles and their dressed intermediates are restored after an action. The Lambda reverse contractions supply the weighted adjoint directly with their additive CC and triples energy sources omitted. Added a GMRES solve for the coupled right tangent with the semicanonical orbital gaps as preconditioner, unique occupied pairs, and symmetric diagonal-pair coordinates. Both the solver and the molecular check inspect the true unpreconditioned residual. [Native actions](psi4/src/psi4/dlpno/ccsd_gradient_lambda.cc) · [Solver](psi4/driver/procrouting/response/dlpno_ccsd_response.py) · [Equations](DLPNO_HESSIAN_EQUATIONS.tex)
+
+The original symmetric water stretch diagnostic made the fixed-branch condition observable. For frozen-core water the first PNO parent of occupied pair (2,3) changed from 15 to 14 functions at both signs of 0.001 and 0.0005 bohr. Final ranks and the screened occupied Fock graph alone would have missed this change. The apparent maximum errors in the singles and doubles derivatives on that comparison were 2.67e-4 and 4.59e-3 per bohr. The original fixed-rank reconstruction test is retained.
+
+The new independent check uses water/cc-pVDZ, Boys orbitals, full fitting domains, nonzero pair cutoffs (1e-9), and occupancy-only PNO selection (first/final occupation cutoffs 1e-5/1e-4). It recomputes the native DLPNO wavefunction at each displaced geometry, matches occupied signs and permutations, polar-aligns the final PNO frames with the reference metric, and verifies both PNO ranks and the occupied Fock graph. It compares two Richardson windows using displacements of 0.002, 0.001 and 0.0005 bohr. [Reproduction script](tests/dlpno-hessian-model/lmp2_tangent.py)
+
+| Core | Absolute weighted transpose error | Finest-window max T1 error / bohr⁻¹ | Finest-window max T2 error / bohr⁻¹ |
+| --- | ---: | ---: | ---: |
+| Frozen O 1s | 7.82e-14 | 2.14e-11 | 3.41e-10 |
+| All-electron | 3.42e-13 | 3.18e-8 | 5.33e-7 |
+
+The all-electron extrapolation is sensitive to the displacement window. The coarser window gave 4.19e-9 and 3.55e-8 per bohr for T1 and T2. The solver check requires every component of J t^v + b^v to be within 1e-10 Hartree/bohr. This tests a single stretch on a fixed local branch. Four native residual evaluations per application preserve the cost order of a native application; large-system iteration counts and end-to-end scaling have not been measured. Next propagate the solved tangents into the iterative triples and moving triple spaces, followed by the remaining curvature contractions and the canonical DF-CCSD(T) gradient-difference Hessian comparison.
+
+The native build, both original and new water diagnostics, dfccsd-t-grad1, dlpno-grad-model and dlpnocc-1 passed. The LaTeX equation record compiled in two passes.

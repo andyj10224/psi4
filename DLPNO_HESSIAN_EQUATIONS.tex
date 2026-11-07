@@ -428,4 +428,40 @@ Equations~\eqref{eq:curvature} and \eqref{eq:column} explain why stationary
 curvature requires first-order electronic relaxation but no second-order
 amplitude derivatives; in the symmetric expression the reference multipliers
 suffice.
+\subsection{Coupled right amplitude response in the transformed representation}
+For the Jacobian action all orbital frames, fitted factors, overlap maps and
+rank choices stay at their reference values. Define
+$P_x(s)=R(t_1+s x_1,t_2+s x_2)$ for the ordinary CCSD residual.
+The projected singles and the occupied dressed factor are linear in the
+amplitudes; the dressed virtual leg of the direct integral can be quadratic.
+Its product with the other virtual leg is at most quartic. The virtual
+ladder is at most cubic. The $\beta,\gamma,\delta$ terms are at most quadratic
+before multiplication by a doubles amplitude. The dressed Fock residual
+terms also contain at most four amplitude factors. Pair transfers are linear
+with constant coefficients in this action. Thus
+$P_x(s)=\sum_{m=0}^4 c_m s^m$, with $c_1=Jx$. For any nonzero $a$,
+\begin{align}
+ O_x(a)&=\tfrac12[P_x(a)-P_x(-a)]=a c_1+a^3 c_3,\\
+ Jx&=\frac{8O_x(a)-O_x(2a)}{6a}.
+\end{align}
+The implementation sets $a\|x\|_\infty=1/8$ and returns zero directly for
+$x=0$. Extraction is exact for this polynomial in exact arithmetic.
+It uses four native residual evaluations per nonzero action. All evaluations
+are at one nuclear geometry.
+
+For the real RHF pair symmetry $x_{ji}=x_{ij}^{\mathsf T}$, the metric is
+\begin{equation}
+ \langle z,x\rangle_W=\sum_i z_i^{\mathsf T}x_i
+  +\sum_{i<j}z_{ij}:x_{ij}+\tfrac12\sum_i z_{ii}:x_{ii},
+ \qquad \langle z,Jx\rangle_W=\langle J^{\dagger_W}z,x\rangle_W .
+\end{equation}
+The native Lambda reverse sweep supplies $J^{\dagger_W}z$ by omitting the
+additive CC energy and triples source. The doubles of a diagonal occupied
+pair are symmetric. Store its upper triangle with unit weight off the
+diagonal and components divided by $\sqrt{2}$ on the diagonal, so the
+ordinary packed dot product implements $W$.
+Preconditioned GMRES solves $Jt^v=-b^v$. Its diagonal preconditioner uses
+$F_{aa}^{ii}-F_{ii}$ for singles and
+$F_{aa}^{ij}+F_{bb}^{ij}-F_{ii}-F_{jj}$ for doubles in the reference
+semicanonical pair frames. The unpreconditioned residual is checked at exit.
 \end{document}

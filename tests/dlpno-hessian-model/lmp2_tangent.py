@@ -8,7 +8,7 @@ from psi4.driver.procrouting.response.dlpno_orbital import (
     boys_nuclear_tangent, first_pno_tangent, coupled_lmp2_tangent, pair_exchange_tangent, final_pno_tangent,
     ccsd_pair_frames, ccsd_projected_fock_source, ccsd_direct_df_source, ccsd_pair_df_factors, PairDFFactors)
 from psi4.driver.procrouting.response.dlpno_ccsd_response import (
-    ccsd_pair_intermediate_tangent, ccsd_beta_source, ccsd_mixed_doubles_source, ccsd_singles_source, ccsd_doubles_fock_source, ccsd_residual_source)
+    ccsd_pair_intermediate_tangent, ccsd_beta_source, ccsd_mixed_doubles_source, ccsd_singles_source, ccsd_doubles_fock_source, ccsd_residual_source, coupled_ccsd_tangent)
 from first_pno import raw, relax_fock
 from water_hvp import BASE, STRETCH, molecule
 
@@ -22,7 +22,88 @@ def blocks(w, name):
     return {ij: m.np.copy() for ij,m in psi4.core.dlpno_lmp2_blocks(w,name).items()}
 
 
-def check(frozen):
+def check_ccsd_tangent(w, source1, source2, frozen, dL, frames):
+    """Check the weighted transpose and transport reconverged displaced amplitudes."""
+    matrix = psi4.core.Matrix.from_array
+    rng = np.random.default_rng(122)
+    def probe():
+        one = [rng.normal(size=x.shape) for x in source1]
+        two = {p: rng.normal(size=x.shape) for p,x in source2.items()}
+        for (i,j),x in two.items():
+            if i == j:
+                two[i,j] = (x + x.T)/2
+        return one,two
+    def action(x, transpose=False):
+        a,b = psi4.core.dlpno_ccsd_amplitude_action(
+            w, [matrix(v[:,None]) for v in x[0]], {p: matrix(v) for p,v in x[1].items()}, transpose)
+        return [v.np.ravel() for v in a], {p: v.np for p,v in b.items()}
+    def dot(x,y):
+        return (sum(np.vdot(a,b) for a,b in zip(x[0],y[0])) +
+                sum((.5 if i == j else 1.)*np.vdot(v,y[1][i,j]) for (i,j),v in x[1].items()))
+    x,z = probe(),probe()
+    lhs,rhs = dot(z,action(x)),dot(action(z,True),x)
+    print('CCSD weighted transpose', frozen, lhs, rhs, abs(lhs-rhs), flush=True)
+    np.testing.assert_allclose(lhs,rhs,rtol=2.e-12,atol=2.e-11)
+    tangent = coupled_ccsd_tangent(w, source1, source2)
+    jt = action(tangent)
+    for j,b in zip(jt[0],source1):
+        np.testing.assert_allclose(j,-b,rtol=0.,atol=1.e-10)
+    for p,j in jt[1].items():
+        np.testing.assert_allclose(j,-source2[p],rtol=0.,atol=1.e-10)
+
+    original = blocks(w, 'FINAL_FRAME')
+    parent = blocks(w,'FRAME')
+    ref = w.reference_wavefunction()
+    L = w.variable('DLPNO RESPONSE ACTIVE LMOS').np
+    def displaced(h):
+        other = calculation(BASE+h*STRETCH)
+        scf = other.reference_wavefunction()
+        moved = other.variable('DLPNO RESPONSE ACTIVE LMOS').np
+        cross = psi4.core.MintsHelper(scf).ao_overlap(ref.basisset(),scf.basisset()).np
+        ov = L.T @ cross @ moved
+        _,order = linear_sum_assignment(-abs(ov))
+        signs = np.sign(ov[np.arange(len(order)),order])
+        local = moved[:,order]*signs
+        foo0 = L.T @ ref.Fa().np @ L
+        fooh = local.T @ scf.Fa().np @ local
+        cut = psi4.core.get_option('DLPNO','F_CUT')
+        np.testing.assert_array_equal(abs(foo0) > cut, abs(fooh) > cut)
+        assert min(abs(ov[np.arange(len(order)),order])) > .999
+        virtual = blocks(other,'FINAL_FRAME')
+        doubles = blocks(other,'CCSD_DOUBLES')
+        par = blocks(other,'FRAME')
+        assert len(virtual) == len(original)
+        one,two = {},{}
+        dy = []
+        for (i,j),y in original.items():
+            a,b = order[i],order[j]
+            p = tuple(sorted((int(a),int(b))))
+            assert virtual[p].shape == y.shape
+            assert par[p].shape == parent[i,j].shape, (h, (i,j), 'first PNO rank changed')
+            left,_,right = np.linalg.svd(virtual[p].T @ ref.S().np @ y)
+            rotation = left @ right
+            dy.append((virtual[p] @ rotation).ravel())
+            t = doubles[p] if a <= b else doubles[p].T
+            two[i,j] = signs[i]*signs[j]*(rotation.T @ t @ rotation)
+            if i == j:
+                dom,t1,_ = psi4.core.dlpno_ccsd_df_pair_state(other,int(a),int(a))
+                one[i] = signs[i]*(rotation.T @ t1[dom.index(a)].np).ravel()
+        return (np.concatenate([one[i] for i in range(len(one))]),
+                np.concatenate([two[p].ravel() for p in original]), local.ravel(), np.concatenate(dy))
+    expected = (np.concatenate(tangent[0]), np.concatenate([tangent[1][p].ravel() for p in original]),
+                dL.ravel(), np.concatenate([frames.tangents[p].ravel() for p in original]))
+    estimates = []
+    for h in (.002,.001,.0005):
+        plus,minus = displaced(h),displaced(-h)
+        estimates.append([(a-b)/(2*h) for a,b in zip(plus,minus)])
+    for coarse,fine in zip(estimates,estimates[1:]):
+        errors = [np.max(abs(v-(4*f-c)/3)) for v,c,f in zip(expected,coarse,fine)]
+        print('CCSD reconverged errors (T1, T2, LMO, PNO)', frozen, errors, flush=True)
+        assert max(errors[:2]) < 1.e-6
+        assert errors[2] < 1.e-5 and errors[3] < 5.e-5
+
+
+def check(frozen, *, amplitude_response=False):
     psi4.set_options({'freeze_core': frozen})
     w = calculation(BASE)
     ref = w.reference_wavefunction()
@@ -116,6 +197,9 @@ def check(frozen):
     singles_source = ccsd_singles_source(w,ccsd_frames,factors_for,doubles,ordered_exchange,L,dL,F,df)
     eg = ccsd_doubles_fock_source(w,ccsd_frames,factors_for,doubles,ordered_exchange,L,dL,F,df)
     total1,total2 = ccsd_residual_source(w,ccsd_frames,factors_for,ordered_exchange,mixed_derivative,dL,df)
+    if amplitude_response:
+        check_ccsd_tangent(w, total1, total2, frozen, dL, ccsd_frames)
+        return
     for got,expected in zip(total1,singles_source):
         np.testing.assert_allclose(got,expected,atol=1.e-12,rtol=0)
     np.testing.assert_allclose(total2[target],df_direct+beta_source+cd_source+eg[target],atol=1.e-12,rtol=0)
@@ -466,3 +550,10 @@ if __name__ == '__main__':
                                       'dlpno_ao_ints_tol').split()})
     for frozen in (True, False):
         check(frozen)
+    # The trace/energy rank selectors give different first-space ranks at
+    # displaced geometries on the original fixture. Check the native solve
+    # on an occupation-selected branch, asserting both ranks at each point.
+    psi4.set_options(dict(t_cut_trace_mp2=0., t_cut_energy_mp2=0., t_cut_trace=0., t_cut_energy=0.,
+                          t_cut_pairs=1.e-9, t_cut_pairs_mp2=1.e-9))
+    for frozen in (True, False):
+        check(frozen, amplitude_response=True)
