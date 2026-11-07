@@ -730,4 +730,83 @@ difference of $g_{\rm DF\text{-}CCSD}-g_{\rm DF\text{-}RHF}$. For the
 complete-space total longitudinal benchmark, add the analytic DF-RHF Hessian
 entry to $H_{uv}^{\rm ret}+H_{uv}^{(T)}$. At finite cutoffs the remaining
 local energy corrections must be differentiated separately.
+
+\section{Two-stage PNO truncation-energy curvature}
+This section differentiates the scalar implemented in
+\texttt{pno\_truncation\_response.cc}. Each stage uses its own moving,
+orthonormal parent chart. Let $t^{ij}$ be the initial semicanonical MP2
+or final coupled-LMP2 amplitude, respectively, and define
+\begin{align}
+ \widetilde t^{ij}&=2t^{ij}-(t^{ij})^{\mathsf T},\\
+ D^{ij}&=\frac{\widetilde t^{ij}(t^{ij})^{\mathsf T}
+                  +(\widetilde t^{ij})^{\mathsf T}t^{ij}}{1+\delta_{ij}},
+ &P^{ij}&=X^{ij}(X^{ij})^{\mathsf T}.
+\end{align}
+Here $X^{ij}$ spans the retained density eigenvectors. For one ordered
+orientation the native loss is
+\begin{align}
+ \Delta e^{ij}&=K^{ij}:\widetilde t^{ij}
+       -K^{ij}:\bigl(P^{ij}\widetilde t^{ij}P^{ij}\bigr)
+       +\delta_{ij}\bigl(s^{ii}-s^{ii}_{\rm kept}\bigr),\\
+ s^{ii}&=(f^{ii})^{\mathsf T}(f_{ii}I-F^{ii})^{-1}f^{ii},\\
+ s^{ii}_{\rm kept}&=(X^{ii\mathsf T}f^{ii})^{\mathsf T}
+  (f_{ii}I-X^{ii\mathsf T}F^{ii}X^{ii})^{-1}(X^{ii\mathsf T}f^{ii}),\\
+ \Delta E_{\rm PNO}&=\sum_{i\leq j}(2-\delta_{ij})
+       \left(\Delta e^{ij}_{\rm initial}+\Delta e^{ij}_{\rm final}\right).
+\end{align}
+The singles expression uses the fully active denominator mask. The new
+kernel rejects a denominator within $10^{-12}$ of zero; it does not
+approximate the response of a screened denominator. Native gradient
+code supports the fixed spectral mask more generally.
+
+The retained projector uses the differentiated idempotency and commutator
+relations already derived for the TNO projector. Its mixed derivative
+includes the retained--retained and discarded--discarded blocks.
+For the singles contraction an orthonormal retained frame is reconstructed
+in the reference polar gauge,
+\begin{equation}
+ Y=P X_0,\qquad G=Y^{\mathsf T}Y,\qquad X=Y G^{-1/2}.
+\end{equation}
+At the reference point $G=I$, so
+\begin{equation}
+ (G^{-1/2})^{uv}=-\tfrac12 G^{uv}
+       +\tfrac38(G^uG^v+G^vG^u).
+\end{equation}
+All products use the mixed product rule. For a product of $m$ factors,
+its mixed derivative is the sum of the $m$ terms with one mixed factor
+and the $m(m-1)$ terms with distinct first derivatives $u$ and $v$.
+This includes parent-frame motion in $K,F,f,t$, when supplied consistently.
+
+For the initial stage define the pair Sylvester action
+\begin{equation}
+ \mathcal A^{ij}[z]=(f_{ii}+f_{jj})z-F^{ij}z-zF^{ij}.
+\end{equation}
+The energy code uses $\mathcal A^{ij}[t^{ij}]=K^{ij}$. Its derivatives obey
+\begin{align}
+ \mathcal A[t^u]&=K^u-\mathcal A^u[t],\\
+ \mathcal A[t^v]&=K^v-\mathcal A^v[t],\\
+ \mathcal A[t^{uv}]&=K^{uv}-\mathcal A^{uv}[t]
+                             -\mathcal A^u[t^v]-\mathcal A^v[t^u].
+\end{align}
+One diagonalization of the reference pair Fock matrix supplies all these
+solves, with denominators $f_{ii}+f_{jj}-\epsilon_a-\epsilon_b$.
+No matrix on the pair-tensor product space is formed.
+
+The final-stage $t^{uv}_{\rm LMP2}$ is an input to this implementation.
+It must not be set to zero: no isolated PNO-loss LMP2 adjoint has been
+introduced here. The current molecular diagnostic supplies aligned total
+mixed lower-order inputs from displaced native electronic states, so the
+molecular result remains semi-analytic. The resulting contribution is
+\begin{equation}
+ H^{\rm PNO}_{uv}=\sum_{i\leq j}(2-\delta_{ij})
+  \left[(\Delta e^{ij}_{\rm initial})^{uv}
+                       +(\Delta e^{ij}_{\rm final})^{uv}\right].
+\end{equation}
+At full retained rank each loss and each of its derivatives is zero.
+Fixed ranks and a resolved retained/discarded eigenvalue gap are required.
+Per pair the matrix solves and contractions are cubic in the parent rank
+with quadratic storage. Linear aggregate work requires bounded local ranks
+and a number of retained pairs proportional to system size; the dense water
+input diagnostic does not establish this property for the molecular pipeline.
+
 \end{document}

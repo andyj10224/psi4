@@ -21,4 +21,4 @@ foreach(py ${sources})
             LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}${PYMOD_INSTALL_LIBDIR}/psi4/driver/procrouting/response)
 endforeach()
 
-install(FILES dlpno_ccsd_curvature.py dlpno_orbital.py dlpno_ccsd_response.py dlpno_triples_response.py dlpno_triples_curvature.py DESTINATION ${CMAKE_INSTALL_LIBDIR}${PYMOD_INSTALL_LIBDIR}/psi4/driver/procrouting/response)
+install(FILES dlpno_pno_curvature.py dlpno_ccsd_curvature.py dlpno_orbital.py dlpno_ccsd_response.py dlpno_triples_response.py dlpno_triples_curvature.py DESTINATION ${CMAKE_INSTALL_LIBDIR}${PYMOD_INSTALL_LIBDIR}/psi4/driver/procrouting/response)
