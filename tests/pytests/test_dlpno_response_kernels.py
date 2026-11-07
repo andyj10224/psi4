@@ -76,3 +76,38 @@ def test_df_fock_rejects_inconsistent_dimensions():
     d = psi4.core.Matrix.from_array(np.ones((2,2)))
     with pytest.raises(RuntimeError, match='dimensions'):
         psi4.core.dlpno_df_fock_response([q],[d],[d])
+
+
+
+@pytest.mark.parametrize('shape',[(3,4,2),(1,5,1),(4,0,3),(0,2,3),(3,2,0)])
+@pytest.mark.parametrize('threads',[1,4])
+def test_mixed_gemm_product_rule(shape,threads):
+    m,k,n=shape;rng=np.random.default_rng(93)
+    a=[rng.normal(size=(m,k)) for _ in range(4)]
+    b=[rng.normal(size=(k,n)) for _ in range(4)]
+    previous=psi4.get_num_threads()
+    try:
+        psi4.set_num_threads(threads)
+        for sparse in (False,True):
+            if sparse:a[1]*=0;b[3]*=0
+            # Strided views exercise packing at the actual production binding.
+            aa=[x[::-1,::-1] for x in a];bb=[x[::-1,::-1] for x in b]
+            result=psi4.core.dlpno_mixed_gemm(aa,bb)
+            expected=[np.zeros((m,n)) for _ in range(4)]
+            for i in range(4):
+                for j in range(4):
+                    if not (i&j):expected[i|j]+=aa[i]@bb[j]
+            np.testing.assert_allclose(result,expected,atol=2e-12,rtol=0.)
+    finally:psi4.set_num_threads(previous)
+
+
+def test_mixed_gemm_rejects_nonfinite_and_mismatched_blocks():
+    a=[np.eye(2) for _ in range(4)];b=[np.eye(2) for _ in range(4)]
+    with pytest.raises((ValueError,RuntimeError),match='four matrices'):
+        psi4.core.dlpno_mixed_gemm(a[:3],b)
+    a[1]=np.zeros((2,3))
+    with pytest.raises((ValueError,RuntimeError),match='dimensions'):
+        psi4.core.dlpno_mixed_gemm(a,b)
+    a[1]=np.full((2,2),np.nan);b=[np.zeros((2,2)) for _ in range(4)]
+    with pytest.raises((ValueError,RuntimeError),match='Nonfinite'):
+        psi4.core.dlpno_mixed_gemm(a,b)

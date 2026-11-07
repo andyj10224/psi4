@@ -12,7 +12,7 @@ from .dlpno_triples_curvature import MixedBlock, mixed_product as C, _symmetric_
 
 class ScreenedFitting:
     """Differentiate the actual raw OO/OV/VV fit and cross-pair J/K vertices."""
-    def __init__(self,wfn,electronic,overlap,occupied_action,local_df):
+    def __init__(self,wfn,electronic,overlap,occupied_action,local_df,reference_cache=None):
         from psi4 import core
         if core.get_option('DLPNO','F_CUT') != 0.:
             raise ValueError('Screened mixed fitting currently requires F_CUT=0.')
@@ -21,8 +21,13 @@ class ScreenedFitting:
         # Instance-owned caches release raw panels with this response direction.
         for name in ('paos','refit','pair_coefficients','raw','projected','mixed_integrals'):
             setattr(self,name,lru_cache(None)(getattr(self,name)))
-        self.domains=core.dlpno_response_domain_state(wfn)
-        first,self.parents=core.dlpno_first_pno_state(wfn)
+        if reference_cache is not None and reference_cache.wfn is not wfn:
+            raise ValueError('Fitting snapshot belongs to a different wavefunction.')
+        if reference_cache is None or reference_cache.fitting_state is None:
+            state=(core.dlpno_response_domain_state(wfn),core.dlpno_first_pno_state(wfn))
+            if reference_cache is not None:reference_cache.fitting_state=state
+        else:state=reference_cache.fitting_state
+        self.domains,(first,self.parents)=state
         if wfn.variable('DLPNO FIRST PNO AO INTS TOL') != 0.:
             raise ValueError('Screened mixed fitting requires the forward AO Schwarz screen off.')
         self.pair_paos={tuple(p):tuple(ids) for p,ids in zip(first['PAIRS'],first['PAIR_PAO'])}
@@ -125,6 +130,8 @@ class CCSDFirstResponseCache:
         self.entries={}
         self.source_replays=0
         self.solves=0
+        self.base=None
+        self.fitting_state=None
 
     @staticmethod
     def chart(overlap,fock,lmo,pnos,k):
@@ -171,11 +178,17 @@ def screened_ccsd_response(wfn,pnos,overlap,fock,lmo,occupied_action,local_df,*,
             raise ValueError('Expected two in-range nuclear coordinates for the CCSD first-response cache.')
     elif coordinates is not None:
         raise ValueError('CCSD response coordinates require a reference cache.')
-    t2={p:x.np.copy() for p,x in core.dlpno_lmp2_blocks(wfn,'CCSD_DOUBLES').items()}
-    t1=[]
-    for i in range(lmo.value.shape[1]):
-        dom,one,_=core.dlpno_ccsd_df_pair_state(wfn,i,i)
-        t1.append(one[dom.index(i)].np.ravel().copy())
+    if first_cache is not None and first_cache.base is not None:
+        t1,t2=first_cache.base
+    else:
+        t2={p:x.np.copy() for p,x in core.dlpno_lmp2_blocks(wfn,'CCSD_DOUBLES').items()}
+        t1=[]
+        for i in range(lmo.value.shape[1]):
+            dom,one,_=core.dlpno_ccsd_df_pair_state(wfn,i,i)
+            t1.append(one[dom.index(i)].np.ravel().copy())
+        if first_cache is not None:
+            for x in [*t1,*t2.values()]:x.setflags(write=False)
+            first_cache.base=(t1,t2)
     constant=lambda x:MixedBlock(x,*[np.zeros_like(x) for _ in range(3)])
     amplitudes={('t1',i):constant(x) for i,x in enumerate(t1)}
     amplitudes.update({('t2',p):constant(x) for p,x in t2.items()})
@@ -184,7 +197,8 @@ def screened_ccsd_response(wfn,pnos,overlap,fock,lmo,occupied_action,local_df,*,
         if key=='fock':return fock
         if isinstance(key,tuple) and key[0]=='pno':return pnos.final_selection[key[1]].frame
         return amplitudes[key]
-    fit=ScreenedFitting(wfn,electronic,overlap,occupied_action,local_df)
+    fit=ScreenedFitting(wfn,electronic,overlap,occupied_action,local_df,first_cache)
+    if fit is not None:fit.amplitude_pairs=tuple(t2)
     fixed=None
     tangent=[]
     pending={}

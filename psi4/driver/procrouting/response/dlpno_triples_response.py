@@ -111,7 +111,7 @@ def _local_fock_action(dv,t,occ):
             + np.einsum('cd,abd->abc',dv,t) - occ*t)
 
 
-def triples_gradient_direction(wfn, pair_frames, dt1, dt2, dlmo, dfock, parent_for, integrals_for):
+def triples_gradient_direction(wfn, pair_frames, dt1, dt2, dlmo, dfock, parent_for, integrals_for,*,reference_rows=None):
     """Prepare the stationary gradient and both sources without solving triples response.
 
     parent_for(ijk) returns the orthonormal triplet PAO parent and its tangent.
@@ -122,7 +122,7 @@ def triples_gradient_direction(wfn, pair_frames, dt1, dt2, dlmo, dfock, parent_f
     """
     from psi4 import core
 
-    rows = core.dlpno_triples_response_state(wfn)
+    rows = core.dlpno_triples_response_state(wfn) if reference_rows is None else reference_rows
     doubles = {p: v.np for p,v in core.dlpno_lmp2_blocks(wfn,'CCSD_DOUBLES').items()}
     s,ds = pair_frames.overlap,pair_frames.doverlap
     lmo = wfn.variable('DLPNO RESPONSE ACTIVE LMOS').np
@@ -350,6 +350,40 @@ def _mixed_transfer(t, edge_u, edge_v, suv, fuv):
     return value
 
 
+class _TriplesOverlapCurvature:
+    """Column response of <z, S^(tensor 3) t>, with z and t fixed.
+
+    The original implementation built sixteen rank-three mixed transfers per
+    edge/entry, only to contract them with z. Retain the overlap covector and
+    its column derivative instead: subsequent rows need matrix dot products.
+    """
+    def __init__(self,z,t,s,sv):
+        from .dlpno_triples_curvature import MixedBlock,mixed_product
+        if (z.shape!=(s.shape[0],)*3 or t.shape!=(s.shape[1],)*3 or sv.shape!=s.shape):
+            raise ValueError('Inconsistent triples overlap curvature dimensions.')
+        def fixed(x):
+            zero=np.zeros_like(x)
+            return MixedBlock(x,zero,zero,zero)
+        zero=np.zeros_like(s)
+        overlap=MixedBlock(s,zero,sv,zero)
+        self.bar=np.zeros_like(s);self.column_bar=np.zeros_like(s)
+        for leg,axes in enumerate(((0,1,2),(1,0,2),(2,1,0))):
+            block=mixed_product('ijk,abc,jb,kc->ia',fixed(z.transpose(axes)),
+                                fixed(t.transpose(axes)),overlap,overlap)
+            if leg==0:self.value=float(np.vdot(s,block.value))
+            self.bar+=block.value
+            self.column_bar+=block.v
+        self.column=float(np.vdot(self.bar,sv))
+        self.bar.setflags(write=False);self.column_bar.setflags(write=False)
+
+    def element(self,edge_u,edge_v,suv,fuv):
+        if np.shape(suv)!=self.bar.shape or edge_u.doverlap.shape!=self.bar.shape:
+            raise ValueError('Mixed intertriplet overlap has incompatible dimensions.')
+        gu=np.vdot(self.bar,edge_u.doverlap)
+        guv=np.vdot(self.bar,suv)+np.vdot(self.column_bar,edge_u.doverlap)
+        return fuv*self.value+edge_u.dfock*self.column+edge_v.dfock*gu+edge_u.fock*guv
+
+
 class TriplesHessianColumn:
     """Stationary curvature of ordinary (T) for one fixed column direction.
 
@@ -360,6 +394,7 @@ class TriplesHessianColumn:
     def __init__(self, direction, *, tolerance=1.e-10):
         self.direction = direction
         self.tangent = solve_triples_tangent(direction,tolerance=tolerance)
+        self._overlap_curvatures={}
 
     def relaxation(self, row):
         """Terms in d_v L_u from relaxing the right and left triples only."""
@@ -390,15 +425,18 @@ class TriplesHessianColumn:
                 raise ValueError(f"Mixed moment or virtual Fock block has incompatible dimensions for {r}.")
             result += np.vdot(_energy_moment(r,vuv),t)
             residual = wuv + _local_fock_action(fuv,t,sum(occupied(a,a) for a in r))
+            result += np.vdot(z,residual)
             if len(row.edges[r]) != len(column.edges[r]):
                 raise ValueError(f"Triples Hessian directions use different edges for {r}.")
-            for eu,ev in zip(row.edges[r],column.edges[r]):
+            for edge_index,(eu,ev) in enumerate(zip(row.edges[r],column.edges[r])):
                 if (eu.source,eu.axes,eu.occupied) != (ev.source,ev.axes,ev.occupied):
                     raise ValueError(f"Inconsistent occupied-slot replacement in triplet {r}.")
                 q = eu.source
-                residual -= _mixed_transfer(row.amplitudes[q].transpose(eu.axes),eu,ev,
-                                            mixed_overlap(r,q),occupied(*eu.occupied))
-            result += np.vdot(z,residual)
+                key=(r,edge_index)
+                if key not in self._overlap_curvatures:
+                    self._overlap_curvatures[key]=_TriplesOverlapCurvature(
+                        column.adjoints[r],column.amplitudes[q].transpose(ev.axes),ev.overlap,ev.doverlap)
+                result -= self._overlap_curvatures[key].element(eu,ev,mixed_overlap(r,q),occupied(*eu.occupied))
         if not np.isfinite(result):
             raise ValueError("Nonfinite stationary triples curvature.")
         return result

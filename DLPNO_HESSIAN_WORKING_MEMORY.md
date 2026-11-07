@@ -1144,3 +1144,70 @@ three frequencies above. Twelve old/new orbital-gradient contractions with
 identical mock operators agree exactly; wrapper checks verify one Hessian per
 frequency call, completion order and failure paths. This is not a full native
 Psi4 build, a molecular timing comparison or independent derivative validation.
+
+
+## 2026-11-07 — Shared contractions and columnwise triples reuse
+
+The user's `water_freq_test(4).out` at `6ac570a` finishes the water/cc-pVTZ
+frequency job in 1177.93 s, compared with 1806.67 s at `991427f`. The nine
+Hessian columns total 1051.1 s versus 1678.2 s: 37.37% less time, or 1.60x
+speedup. The printed frequencies are 1669.3180, 3840.8971 and 3945.3762 cm^-1.
+Nine first CCSD solves and nine source replays are confirmed. The run passes
+its internal derivative guards but is not an independent derivative test.
+
+Measured column costs are 445.31 s CCSD mixed response, 284.01 s triples mixed
+curvature, 170.71 s triples first directions, 96.08 s PNO/LMP2 response and
+22.93 s triples tangent solves. This pass targets the first three costs:
+
+* `mixed_product` differentiates a shared binary contraction tree; it no longer
+  replays each complete multi-operand contraction for every product-rule term.
+  Ordinary nodes flatten to the new C++ four-block GEMM kernel using Psi4's
+  row-major BLAS wrapper. Packing is once per operand. Shape validation and
+  finite checks precede exact-zero skipping. Repeated-index, broadcast and
+  nonbinary expressions retain an exact NumPy fallback. Path metadata stays
+  bounded, and no molecular tensors enter global caches.
+* For fixed reference T and Z, the triples overlap scalar is
+  G(S) = <Z, (S tensor S tensor S) T>. Each column stores barS = dG/dS and
+  d_v barS. A row then uses G_u = barS:S_u and
+  G_uv = barS:S_uv + (d_v barS):S_u. The Fock product rule is contracted as
+  F_uv G + F_u G_v + F_v G_u + F G_uv. This removes sixteen rank-three mixed
+  transfers per edge/entry while retaining edge multiplicity and all ordered
+  entries. Right/left relaxation remains in the existing tangent terms.
+* A reference-owned native triples snapshot and byte-bounded first-direction
+  cache remove repeated first-direction construction. Water's 81 requests
+  become nine builds and 72 hits when they fit. Read-only copies, first
+  AO/PNO/amplitude chart checks and the existing TNO chart check guard reuse.
+  The cache reserves at most one eighth of requested memory; LRU eviction and
+  oversized-entry fallback preserve correctness at smaller budgets. The
+  memory refusal accounts for that reservation. Reference CCSD amplitudes
+  and fitting/domain snapshots are also exported only once.
+
+The native gradient now reuses serially constructed, read-only triples
+reference overlaps across its existing OpenMP iterations. Its cache is
+bounded by min(64 MiB, requested memory/64), with on-demand fallback. New
+native phase timings resolve triples/densities, CCSD Lambda, DF contractions,
+PNO projectors, truncation, LMP2 and local-basis/refit work. No new concurrent
+PSIO access or nested OpenMP-over-BLAS region was introduced. All convergence
+thresholds, full ordered matrices, raw symmetry/rigid-motion guards and
+cc-pVDZ numerical fixtures remain unchanged. Native rebuilding is required.
+
+Validation: 259 focused checks pass with both OpenMP-enabled and serial
+isolated kernel builds. Of these, 22 exercise compiled production response
+kernels and the actual new binding with storage/thread adapters and production
+BLAS wrappers; the remaining checks use mocked native molecular boundaries.
+The tests include independent product rules for all 84 literal response
+contractions, unequal-rank/all-permutation overlap curvature versus both the
+old full transfer and scalar finite differences, complete coupled triples
+columns with actual small tangent solves, cache eviction/ownership and
+unaltered native domain ordering. This is not a full native Psi4 build.
+
+At rank 53, 139 auxiliaries and nine row directions, single-thread OpenBLAS
+0.3.30 kernel benchmarks give 1.50x for mixed AO projection, 2.15x for mixed
+DF pair contraction and 11.24x for column overlap curvature including its
+preparation. Maximum absolute discrepancy is 1.16e-14. An initial reference-
+BLAS/optimized-BLAS comparison was not comparable for timing; these reported
+figures use optimized BLAS on both sides. `benchmark_response.py` reproduces
+those comparisons on the user's installed build. No full Hessian speedup or
+energy-relative target is claimed for this new pass before the local rerun.
+First PNO/LMP2 reconstruction, mixed response solves and dense AO storage
+remain; full stationarity/local scaling are separate work.

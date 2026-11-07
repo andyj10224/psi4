@@ -29,13 +29,46 @@
 #include "psi4/libmints/matrix.h"
 #include "psi4/libpsi4util/process.h"
 #include "psi4/libqt/qt.h"
+#include "response_kernels.h"
 
 #include <algorithm>
 #include <climits>
+#include <cmath>
+#include <stdexcept>
 #include <vector>
 
 namespace psi {
 namespace dlpno {
+
+void mixed_gemm(int m, int n, int k, const std::array<const double*, 4>& a,
+                const std::array<const double*, 4>& b, const std::array<double*, 4>& out) {
+    if (m < 0 || n < 0 || k < 0) throw std::invalid_argument("Negative mixed GEMM dimension.");
+    std::array<bool, 4> az{}, bz{};
+    auto zero = [](const double* p, size_t count) {
+        bool result = true;
+        for (size_t i = 0; i < count; ++i) {
+            if (!std::isfinite(p[i])) throw std::invalid_argument("Nonfinite mixed GEMM input.");
+            result = result && p[i] == 0.;
+        }
+        return result;
+    };
+    for (int i = 0; i < 4; ++i) {
+        az[i] = zero(a[i], size_t(m)*k);
+        bz[i] = zero(b[i], size_t(k)*n);
+        std::fill_n(out[i], size_t(m)*n, 0.);
+    }
+    if (!m || !n || !k) return;
+    // Each output owns its accumulation. BLAS owns contraction parallelism;
+    // no outer OpenMP region multiplies the configured BLAS thread count.
+    for (int mask = 0; mask < 4; ++mask)
+        for (int i = 0; i < 4; ++i) {
+            if ((i & mask) != i) continue;
+            const int j = mask ^ i;
+            if (az[i] || bz[j]) continue;
+            C_DGEMM('N', 'N', m, n, k, 1., const_cast<double*>(a[i]), k,
+                    const_cast<double*>(b[j]), n, 1., out[mask], n);
+        }
+}
 
 // Q and R contain (Q|mn) and J^{-1}(Q|mn), flattened as naux by nao^2.
 // Components use the bit masks 0, u=1, v=2, uv=3. Disjoint derivative masks

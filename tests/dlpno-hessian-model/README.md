@@ -13,43 +13,78 @@ the reported failure; it does not replace any cc-pVDZ tests.
 The LANL2DZ input inside the driver regression is only an ECP-rejection check.
 No smaller orbital basis replaces the derivative tests.
 
-The user's water/cc-pVTZ run at `991427f` completed all 81 ordered Hessian
-entries and passed the native residual, gradient-replay and rigid-motion
-guards. This is fresh execution evidence for that revision, not an independent
-finite-difference validation. The subsequent first-response cache still needs
-a native numerical rerun. Source-level routing checks do not establish
-numerical Hessian accuracy.
+The user's water/cc-pVTZ run at `6ac570a` completed all 81 ordered Hessian
+entries and printed frequencies of 1669.3180, 3840.8971 and 3945.3762 cm^-1.
+Its native residual, gradient-replay and rigid-motion guards passed. This is
+execution evidence for that revision, not an independent finite-difference
+validation. The new native contraction changes below still need a molecular
+rerun. Source-level routing checks do not establish numerical Hessian accuracy.
 
 ## Response reuse and timing
 
 At `991427f`, the water run took 1806.67 seconds, including optimization;
-1678.2 seconds were spent in the nine Hessian columns. The current pass caches
-each first CCSD response for one reference geometry, reducing water's first
-solves from 162 to nine and constant-amplitude source replays from 81 to nine.
-Cached amplitudes are read-only. Every reuse checks the first AO/PNO frame,
-and every ordered entry still replays the value/first CCSD residual. All
-mixed entries, residual tolerances and raw symmetry checks remain in place.
-The memory estimate includes the cached frames and amplitudes.
+1678.2 seconds were spent in the nine Hessian columns. At `6ac570a` the job
+took 1177.93 seconds and the columns totaled 1051.1 seconds: 1.60 times faster
+for the columns. The log confirms nine first CCSD solves and nine fixed-source
+replays. CCSD mixed response (445.31 s), triples mixed curvature (284.01 s),
+and first triples directions (170.71 s) dominate the remaining column time.
+The gradient's Python orbital assembly takes about 0.4--0.47 s; its DF Fock
+panels take 0.37--0.42 s, so combining those 16 native J/K calls is a lower
+priority than the measured response costs.
 
-Mixed contractions now share a bounded cache of NumPy contraction plans keyed
-by equation and shapes; this cache contains no molecular tensors. Per-column
-timings distinguish molecular inputs, PNO/LMP2 response, CCSD response, and
-triples stages. Orbital-gradient timings separately report local sources,
-the RHF adjoint, AO covectors/density transport, DF Fock panels and atomic
-derivative contractions. These are wall times; the gradient table covers only
-orbital assembly, not all native gradient work.
+The new pass makes these changes:
 
-On water's 58-AO basis, 16-column Fock panels currently make 16 native DF
-J/K-gradient calls. A native cross-density derivative contraction is a next
-optimization target; it is not implemented by this cache. First PNO/LMP2
-responses and many mixed fitting/triples blocks are still reconstructed for
-each entry. More complete stationarity would remove the need for second
-electronic responses, but requires a separate derivation and validation.
+- Differentiate one shared binary contraction tree rather than repeatedly
+  evaluating the full multi-operand contraction for every product-rule term.
+  Eligible nodes use the C++ `dlpno_mixed_gemm` kernel and Psi4's BLAS wrapper.
+  Strided inputs are packed once per operand; zero derivative blocks are
+  skipped only after finite-value checks. BLAS owns contraction threading.
+- Contract triples overlap derivatives with the adjoint once per column/edge.
+  Subsequent rows use two small overlap covectors, avoiding repeated rank-three
+  mixed transfers. Edge multiplicity and every ordered Hessian entry remain.
+- Cache the native triples snapshot and first directions on the Hessian
+  reference. Nine-coordinate water requires nine builds and 72 hits when the
+  cache fits. Read-only copies, first-frame checks, a byte budget of one eighth
+  of requested memory and LRU eviction preserve reference ownership and allow
+  an uncached fallback. The preflight reserves that budget.
+- Reuse reference CCSD amplitudes and native fitting/domain snapshots instead
+  of exporting full tensor state for every mixed entry.
+- Reuse native triples overlap matrices during right/left gradient iterations.
+  This cache is populated serially and read by the existing OpenMP loops,
+  bounded by the smaller of 64 MiB and one sixty-fourth of requested memory.
+  Native gradient phase timings now complement the Python orbital timings.
 
-This pass changes Python only. An existing `991427f` native build can use the
-updated Python installation; Cython installations must rebuild the changed
-modules. Older native builds still require the full rebuild described below.
-Use the printed counters and stage timings to assess the speedup locally.
+All convergence thresholds, first-response consistency checks, raw Hessian
+symmetry/rigid-motion checks, and existing cc-pVDZ tests are retained. First
+PNO/LMP2 reconstruction and mixed LMP2 solves remain. A fully stationary
+adjoint formulation is a separate derivation and validation project.
+
+**Rebuild the native extension and install the changed Python modules.** The
+new binding cannot be obtained by updating Python files alone. The previous
+Python-only build advice applied to `6ac570a`, not this pass.
+
+For an isolated kernel comparison on the installed build:
+
+```bash
+OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 OMP_NUM_THREADS=1 \
+python tests/dlpno-hessian-model/benchmark_response.py \
+    --rank 53 --auxiliary 139 --directions 9 --threads 1 --output response_kernels.json
+```
+
+An isolated compile of the exact production kernel/binding and BLAS wrappers,
+using small Matrix/thread adapters and single-thread OpenBLAS 0.3.30, gave:
+
+| Kernel | Previous (s) | New (s) | Speedup |
+| --- | ---: | ---: | ---: |
+| Mixed AO projection | 0.06641 | 0.04429 | 1.50x |
+| Mixed DF pair contraction | 0.15289 | 0.07103 | 2.15x |
+| Nine-row triples overlap curvature, including preparation | 0.21717 | 0.01932 | 11.24x |
+
+Maximum old/new absolute discrepancy was 1.16e-14 on these synthetic inputs.
+These are isolated kernels, not a full Psi4 build or end-to-end Hessian timing.
+An initial comparison with reference BLAS on the C++ side and optimized BLAS
+on the NumPy side was unsuitable for timing; both sides above use optimized
+OpenBLAS. The user's energy-relative runtime targets remain unverified.
 
 ## Frequencies and completed-run recovery
 
@@ -152,8 +187,9 @@ python /path/to/psi4/tests/dlpno-hessian-model/water_repeatability.py --threads 
 ```
 
 The script requests 28 GB, leaves global SCF solver options at their defaults,
-and requires exactly one first-density response batch, nine first CCSD solves
-and nine fixed-source replays. The second command
+and requires exactly one first-density response batch, nine first CCSD solves,
+nine fixed-source replays, nine first triples builds and 72 triples cache hits.
+The second command
 compares the component/total Hessians at 2e-7 Eh/bohr² and optionally checks
 one column against independently reconverged gradient differences with native
 selection matching. Omit `--fd-column` for a quicker repeatability-only run.
@@ -170,7 +206,7 @@ From the source checkout, using your actual configured build directory:
 ctest --test-dir build --output-on-failure -R '^dlpno-hessian-driver$'
 ctest --test-dir build --output-on-failure -R '^(dfccsd-t-grad1|dlpno-grad-model|dlpnocc-1|dlpnolocal-1|scf-cholesky-basis|scf-hess1|scf-hess2)$'
 python -m pytest tests/pytests/test_dertype.py
-python -m pytest tests/pytests/test_dlpno_hessian_response.py tests/pytests/test_dlpno_response_kernels.py tests/pytests/test_dlpno_mixed_products.py
+python -m pytest tests/pytests/test_dlpno_hessian_response.py tests/pytests/test_dlpno_response_kernels.py tests/pytests/test_dlpno_mixed_products.py tests/pytests/test_dlpno_triples_contractions.py
 ```
 
 `dlpno-hessian-driver` uses H2 and 1 GiB. It checks default analytic routing,

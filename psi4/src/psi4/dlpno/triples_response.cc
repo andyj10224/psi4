@@ -36,11 +36,13 @@
 #include "psi4/liboptions/liboptions.h"
 #include "psi4/libpsio/psio.hpp"
 #include "psi4/libpsi4util/PsiOutStream.h"
+#include "psi4/libpsi4util/process.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <limits>
+#include <map>
 
 namespace psi {
 namespace dlpno {
@@ -93,6 +95,7 @@ class TriplesBlocks {
 struct TriplesEdge {
     int target, source, l, m;
     std::array<int, 3> ordered_source;
+    SharedMatrix overlap, overlap_transpose;
 };
 
 }  // namespace
@@ -215,6 +218,17 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only, const SharedMatr
     const int maxiter = options_.get_int("DLPNO_MAXITER");
     const double tol = options_.get_double("R_CONVERGENCE");
 
+    auto reference_overlap = [&](int r, int s) {
+        auto metric = submatrix_rows_and_cols(*S_pao_, lmotriplet_to_paos_[r], lmotriplet_to_paos_[s]);
+        return linalg::triplet(X_tno_[r], metric, X_tno_[s], true, false, false);
+    };
+    // The same reference transfers are used in every right/left iteration.
+    // Populate serially, then share read-only matrices across OpenMP rows.
+    // Retain the original on-demand path when this small cache is exhausted.
+    std::map<std::pair<int,int>,std::pair<SharedMatrix,SharedMatrix>> overlap_cache;
+    size_t overlap_bytes = 0;
+    const size_t overlap_limit = std::min<size_t>(64ULL*1024*1024, Process::environment.get_memory()/64);
+
     std::vector<std::vector<TriplesEdge>> forward(count), transpose(count);
     for (int r = 0; r < count; ++r) {
         if (!n_tno_[r]) continue;
@@ -230,7 +244,19 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only, const SharedMatr
                 ordered[slot] = l;
                 auto it = i_j_k_to_ijk_.find(triplet_key(ordered[0], ordered[1], ordered[2], naocc));
                 if (it == i_j_k_to_ijk_.end() || !n_tno_[it->second]) continue;
-                TriplesEdge edge{r, it->second, l, m, ordered};
+                TriplesEdge edge{r, it->second, l, m, ordered, {}, {}};
+                const auto key = std::make_pair(r, it->second);
+                auto cached = overlap_cache.find(key);
+                const size_t bytes = 2*sizeof(double)*size_t(n_tno_[r])*n_tno_[it->second];
+                if (cached == overlap_cache.end() && bytes <= overlap_limit-overlap_bytes) {
+                    auto s = reference_overlap(r, it->second);
+                    cached = overlap_cache.emplace(key, std::make_pair(s,s->transpose())).first;
+                    overlap_bytes += bytes;
+                }
+                if (cached != overlap_cache.end()) {
+                    edge.overlap = cached->second.first;
+                    edge.overlap_transpose = cached->second.second;
+                }
                 forward[r].push_back(edge);
                 transpose[it->second].push_back(edge);
             }
@@ -238,9 +264,7 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only, const SharedMatr
     }
 
     auto overlap = [&](const TriplesEdge& edge) {
-        const int r = edge.target, s = edge.source;
-        auto metric = submatrix_rows_and_cols(*S_pao_, lmotriplet_to_paos_[r], lmotriplet_to_paos_[s]);
-        return linalg::triplet(X_tno_[r], metric, X_tno_[s], true, false, false);
+        return edge.overlap ? edge.overlap : reference_overlap(edge.target,edge.source);
     };
 
     auto projected = [&](const TriplesEdge& edge, const SharedMatrix& x, bool left) {
@@ -248,7 +272,7 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only, const SharedMatr
         const auto& p = edge.ordered_source;
         const int nr = n_tno_[edge.target], ns = n_tno_[edge.source];
         if (left) {
-            auto y = matmul_3d(x, S->transpose(), nr, ns);
+            auto y = matmul_3d(x, edge.overlap_transpose ? edge.overlap_transpose : S->transpose(), nr, ns);
             return triples_permuter(y, p[0], p[1], p[2], true);
         }
         return matmul_3d(triples_permuter(x, p[0], p[1], p[2]), S, ns, nr);

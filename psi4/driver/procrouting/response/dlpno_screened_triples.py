@@ -1,10 +1,75 @@
 """Screened fixed-branch TNO and ordinary-triples molecular mixed inputs."""
 from functools import lru_cache
+from collections import OrderedDict
+from dataclasses import fields
 import numpy as np
 
 from .dlpno_pno_curvature import _moving_pao_parent
 from .dlpno_triples_curvature import MixedBlock, mixed_product as C, mixed_tno_frame, triples_moment_blocks
 from .dlpno_triples_response import TriplesMixedRow
+
+
+class TriplesFirstResponseCache:
+    """Reference-owned, byte-bounded first directions and one native snapshot."""
+    def __init__(self,wfn,max_bytes=None):
+        from psi4 import core
+        self.wfn=wfn
+        self.max_bytes=max(0,int(core.get_memory()//8 if max_bytes is None else max_bytes))
+        self.entries=OrderedDict();self.bytes=0;self.builds=0;self.hits=0
+        self.native=None
+
+    def snapshot(self):
+        from psi4 import core
+        if self.native is None:
+            self.native=(core.dlpno_triples_response_state(self.wfn),core.dlpno_triples_basis_state(self.wfn))
+        return self.native
+
+    @staticmethod
+    def freeze(value):
+        if isinstance(value,np.ndarray):
+            if not np.isfinite(value).all():raise ValueError('Nonfinite cached triples response.')
+            result=value.copy();result.setflags(write=False);return result
+        if isinstance(value,dict):return {k:TriplesFirstResponseCache.freeze(v) for k,v in value.items()}
+        if isinstance(value,(tuple,list)):
+            result=[TriplesFirstResponseCache.freeze(v) for v in value]
+            return type(value)(*result) if hasattr(value,'_fields') else tuple(result)
+        return value
+
+    @staticmethod
+    def storage(value):
+        if isinstance(value,np.ndarray):return value.nbytes
+        if isinstance(value,dict):return sum(TriplesFirstResponseCache.storage(v) for v in value.values())
+        if isinstance(value,(tuple,list)):return sum(TriplesFirstResponseCache.storage(v) for v in value)
+        return 0
+
+    def get(self,provider,component,coordinate):
+        if provider.fit.wfn is not self.wfn:
+            raise ValueError('Triples first-response cache belongs to a different wavefunction.')
+        if not 0<=coordinate<3*self.wfn.molecule().natom():
+            raise ValueError('Invalid triples first-response coordinate.')
+        chart=provider.first_chart(component)
+        if coordinate in self.entries:
+            record=self.entries[coordinate]
+            if record['chart'].keys()!=chart.keys():raise ValueError('Cached triples first-response blocks changed.')
+            for key,value in chart.items():
+                old=record['chart'][key]
+                if value.shape!=old.shape or not np.isfinite(value).all() or not np.allclose(value,old,atol=2.e-9,rtol=0.):
+                    raise ValueError(f'Cached triples first-response chart changed: coordinate={coordinate}, block={key!r}.')
+            direction=record['direction']
+            provider.check_first_frames(direction,component)
+            self.entries.move_to_end(coordinate);self.hits+=1
+            return direction
+        direction=provider._first_direction(component);self.builds+=1
+        # Count before copying; oversized directions remain ephemeral.
+        values={f.name:getattr(direction,f.name) for f in fields(direction) if f.name!='wavefunction'}
+        cost=self.storage(values)+self.storage(chart)
+        if cost>self.max_bytes:return direction
+        while self.entries and self.bytes+cost>self.max_bytes:
+            _,old=self.entries.popitem(last=False);self.bytes-=old['bytes']
+        frozen=type(direction)(wavefunction=direction.wavefunction,**self.freeze(values))
+        self.entries[coordinate]=dict(direction=frozen,chart=self.freeze(chart),bytes=cost)
+        self.bytes+=cost
+        return frozen
 
 
 class ScreenedTriplesInputs:
@@ -15,15 +80,20 @@ class ScreenedTriplesInputs:
     Native triplet PAO lists and full parent pivots are retained explicitly,
     including for full-rank TNO selections. No geometry samples enter here.
     """
-    def __init__(self,wfn,fitting):
+    def __init__(self,wfn,fitting,first_cache=None):
         from psi4 import core
         if core.get_option('DLPNO','F_CUT_T') != 0.:
             raise ValueError('Screened mixed triples currently requires F_CUT_T=0.')
         self.fit=fitting
+        self.first_cache=first_cache
         for name in ('parent','frame','projected','blocks','edge','occupied'):
             setattr(self,name,lru_cache(None)(getattr(self,name)))
-        self.rows=core.dlpno_triples_response_state(wfn)
-        self.basis=core.dlpno_triples_basis_state(wfn)
+        if first_cache is None:
+            self.rows=core.dlpno_triples_response_state(wfn)
+            self.basis=core.dlpno_triples_basis_state(wfn)
+        else:
+            if first_cache.wfn is not wfn:raise ValueError('Triples snapshot belongs to a different wavefunction.')
+            self.rows,self.basis=first_cache.snapshot()
         self.electronic,self.S=fitting.electronic,fitting.S
         self.F,self.L=self.electronic('fock'),self.electronic('lmo')
         if self.rows.keys()!=self.basis.keys():
@@ -79,7 +149,23 @@ class ScreenedTriplesInputs:
     def occupied(self,i,j):
         return C('m,mn,n->',self.L.slice((slice(None),i)),self.F,self.L.slice((slice(None),j)))
 
-    def first_direction(self,component):
+    def first_chart(self,component):
+        keys=['lmo','fock',*[('pno',p) for p in self.fit.pair_paos],
+              *[('t2',p) for p in self.fit.pair_paos],*[('t1',i) for i in range(self.L.value.shape[1])]]
+        return {'overlap':self.S[component],**{key:self.electronic(key)[component] for key in keys}}
+
+    def check_first_frames(self,direction,component):
+        for r,dy in direction.frame_tangents.items():
+            np.testing.assert_allclose(dy,self.frame(r)[component],atol=2.e-8,rtol=0.,
+                                       err_msg='First/mixed TNO chart consistency')
+
+    def first_direction(self,component,coordinate=None):
+        if component not in (1,2):raise ValueError('Expected a first-derivative component, 1 or 2.')
+        if self.first_cache is not None and coordinate is not None:
+            return self.first_cache.get(self,component,coordinate)
+        return self._first_direction(component)
+
+    def _first_direction(self,component):
         """Prepare native triples right/left sources using the older first kernel.
 
         The independent first TNO selection must agree with this provider's
@@ -105,8 +191,6 @@ class ScreenedTriplesInputs:
             return triples_moment_integrals(domain,metric.value,metric[component],
                 PairDFFactors(*(x.value for x in panels)),PairDFFactors(*(x[component] for x in panels)))
         direction=triples_gradient_direction(self.fit.wfn,response,t1,t2,self.L[component],
-                                             self.F[component],parent,integrals)
-        for r,dy in direction.frame_tangents.items():
-            np.testing.assert_allclose(dy,self.frame(r)[component],atol=2.e-8,rtol=0.,
-                                       err_msg='First/mixed TNO chart consistency')
+                                             self.F[component],parent,integrals,reference_rows=self.rows)
+        self.check_first_frames(direction,component)
         return direction

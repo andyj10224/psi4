@@ -47,6 +47,7 @@
 #include "psi4/libqt/qt.h"
 
 #include <ctime>
+#include <chrono>
 #include <algorithm>
 #include <array>
 #include <unordered_map>
@@ -2020,21 +2021,25 @@ void DLPNOCCSD_T::post_ccsd_correction(DLPNOCCSDPhase phase) {
             if (write_qab_pno_) psio_->close(PSIF_DLPNO_QAB_PNO, 0);
         };
         try {
+            auto timed = [&](const char* label, auto&& operation) {
+                const auto start = std::chrono::steady_clock::now();
+                operation();
+                const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
+                outfile->Printf("    DLPNO native gradient %-29s: %9.3f s\n", label, seconds);
+            };
             fitted_coefficient_bar_.assign(molecule_->natom(), {});
             df_pao_coefficient_bar_.assign(C_pao_->nrow(), {});
             df_coefficient_error_ = df_replay_error_ = 0.;
-            compute_gradient_model_triples();
-            solve_gradient_lambda();
-            contract_ccsd_df_response();
-            form_pno_projector_response(ccsd_pno_coefficient_response_);
+            timed("triples state and densities", [&]() { compute_gradient_model_triples(); });
+            timed("CCSD Lambda and pair response", [&]() { solve_gradient_lambda(); });
+            timed("CCSD DF density contraction", [&]() { contract_ccsd_df_response(); });
+            timed("CCSD PNO projector", [&]() { form_pno_projector_response(ccsd_pno_coefficient_response_); });
             if (debug_) check_ccsd_coefficient_response();
-            form_pno_projector_response(triples_pair_bar_, true);
-            form_pno_truncation_response();
-            form_lmp2_response();
-            finish_local_basis_response();
-            finish_df_refit_response();
-            merge_screened_pair_response();
-            reverse_pao_normalization();
+            timed("triples PNO projector", [&]() { form_pno_projector_response(triples_pair_bar_, true); });
+            timed("PNO truncation response", [&]() { form_pno_truncation_response(); });
+            timed("LMP2 response", [&]() { form_lmp2_response(); });
+            timed("local basis and DF refit", [&]() { finish_local_basis_response(); finish_df_refit_response(); });
+            timed("screened pairs and PAO", [&]() { merge_screened_pair_response(); reverse_pao_normalization(); });
             set_scalar_variable("DLPNO PROJECTOR FROZEN ORBITALS", gradient_frozen_occ_->ncol());
             if (debug_) check_occupied_projection();
         } catch (...) {

@@ -14,7 +14,7 @@ from .dlpno_pno_curvature import pno_truncation_energy
 from .dlpno_screened_pno import screened_pno_response
 from .dlpno_screened_ccsd import screened_ccsd_response, CCSDFirstResponseCache
 from time import perf_counter
-from .dlpno_screened_triples import ScreenedTriplesInputs
+from .dlpno_screened_triples import ScreenedTriplesInputs,TriplesFirstResponseCache
 from .dlpno_screened_curvature import screened_pair_curvature
 from .dlpno_triples_response import TriplesHessianColumn
 
@@ -87,6 +87,7 @@ class ScreenedHessianReference:
         from psi4 import core
         self.wfn = wfn
         self.ccsd_first = CCSDFirstResponseCache(wfn)
+        self.triples_first = TriplesFirstResponseCache(wfn)
         self.rhf_gradient = core.scfgrad(wfn.reference_wavefunction()).np.ravel().copy()
         self.adjoint = TriplesCCSDAdjoint(wfn)
         self.retained = RetainedCCSDCurvature(wfn, self.adjoint)
@@ -117,9 +118,10 @@ class ScreenedHessianColumn:
         self.adjoint=reference.adjoint
         self.retained=reference.retained
         self.ccsd_first=reference.ccsd_first
+        self.triples_first=reference.triples_first
         self.timings={}
         self.reference=self._prepare(column)
-        direction=self._timed('triples first directions',self.reference['triples'].first_direction,2)
+        direction=self._timed('triples first directions',self.reference['triples'].first_direction,2,column)
         self.column=self._timed('triples tangent solve',TriplesHessianColumn,direction)
 
     def _timed(self,name,operation,*args,**kwargs):
@@ -132,7 +134,7 @@ class ScreenedHessianColumn:
         pno=self._timed('PNO/LMP2 response',screened_pno_response,self.wfn,S,F,L,D,df)
         response=self._timed('CCSD mixed response',screened_ccsd_response,self.wfn,pno,S,F,L,D,df,
                              first_cache=self.ccsd_first,coordinates=(u,self.coordinate))
-        triples=ScreenedTriplesInputs(self.wfn,response['fitting'])
+        triples=ScreenedTriplesInputs(self.wfn,response['fitting'],self.triples_first)
         corrections=self._timed('screened pair curvature',screened_pair_curvature,self.wfn,S,F,L,D,dip,df)
         initial=pno_truncation_energy(pno.initial,{})
         final=pno_truncation_energy({},pno.final)
@@ -157,7 +159,7 @@ class ScreenedHessianColumn:
         # amplitude direction. Check it independently of this row's mixed data.
         _check_column_direction(data,self.reference,u,self.coordinate)
         row=(self.column.direction if u==self.coordinate else
-             self._timed('triples first directions',triples.first_direction,1))
+             self._timed('triples first directions',triples.first_direction,1,u))
         residual=([x.uv for x in response['residual'][0]],{p:x.uv for p,x in response['residual'][1].items()})
         retained=self._timed('retained CCSD curvature',self.retained.element,*data['args'],residual)
         triple=self._timed('triples mixed curvature',self.column.ccsd_stationary_element,

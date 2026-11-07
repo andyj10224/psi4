@@ -53,9 +53,13 @@ def preflight(molecule, kwargs):
     pairs=no*(no+1)//2
     estimate=128*1024**2+8*(64*((a+b)*n*n+a*a+b*b)+64*triplets*nv**3+128*size*n*n
                           +size*(pairs*(n*nv+nv*nv)+no*nv))
+    # The bounded triples-direction cache reserves at most one eighth of
+    # requested memory. Column-local overlap covectors remain in the bound above.
+    minimum_memory=8*estimate/3
+    estimate+=core.get_memory()//8
     if estimate>core.get_memory()//2:
         raise ValidationError(f'Dense analytic DLPNO Hessian estimate {estimate/1024**2:.1f} MiB exceeds half '
-                              f'the requested memory; request at least {2*estimate/1024**3:.2f} GiB. '
+                              f'the requested memory; request at least {minimum_memory/1024**3:.2f} GiB. '
                               'This experimental driver does not provide local memory scaling.')
     return estimate
 
@@ -96,6 +100,9 @@ def assemble_hessian(wfn):
             core.print_out(f'      {stage:28s}: {seconds:9.2f} s\n')
         core.print_out(f'      Cumulative CCSD first solves: {reference.ccsd_first.solves}; '
                        f'source replays: {reference.ccsd_first.source_replays}.\n')
+        core.print_out(f'      Triples first builds: {reference.triples_first.builds}; '
+                       f'cache hits: {reference.triples_first.hits}; '
+                       f'cached: {reference.triples_first.bytes/1024**2:.1f} MiB.\n')
         del column
         gc.collect()
     hessian=parts.sum(axis=0)
@@ -119,6 +126,8 @@ def assemble_hessian(wfn):
     wfn.set_variable('DLPNO HESSIAN COMPONENT GRADIENT SPREAD',spread)
     wfn.set_variable('DLPNO HESSIAN CCSD FIRST RESPONSE SOLVES',reference.ccsd_first.solves)
     wfn.set_variable('DLPNO HESSIAN CCSD SOURCE REPLAYS',reference.ccsd_first.source_replays)
+    wfn.set_variable('DLPNO HESSIAN TRIPLES FIRST BUILDS',reference.triples_first.builds)
+    wfn.set_variable('DLPNO HESSIAN TRIPLES FIRST CACHE HITS',reference.triples_first.hits)
     for name,value in zip(('CCSD','LMP2','TRIPLES RIGHT','TRIPLES LEFT'),residuals):
         wfn.set_variable('DLPNO HESSIAN '+name+' RESIDUAL ERROR',float(value))
     for label in ('CURRENT HESSIAN','DLPNO-CCSD(T) TOTAL HESSIAN'):

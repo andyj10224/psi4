@@ -43,7 +43,8 @@ def mixed_ccsd_residual(wfn, electronic, overlap, local_df, *, fitted=None):
             raise ValueError('Mixed CCSD molecular replay currently requires full orbital/AO domains.')
     C = mixed_product
     lmo, fock = electronic('lmo'), electronic('fock')
-    pairs = tuple(core.dlpno_lmp2_blocks(wfn,'CCSD_DOUBLES'))
+    cached_metadata = fitted is not None and hasattr(fitted,'amplitude_pairs')
+    pairs = fitted.amplitude_pairs if cached_metadata else tuple(core.dlpno_lmp2_blocks(wfn,'CCSD_DOUBLES'))
     nocc = lmo.value.shape[1]
     singles = [electronic(('t1',i)) for i in range(nocc)]
     doubles = {p:electronic(('t2',p)) for p in pairs}
@@ -51,9 +52,12 @@ def mixed_ccsd_residual(wfn, electronic, overlap, local_df, *, fitted=None):
         raise ValueError('The mixed CCSD source requires an affine amplitude path (t_uv = 0).')
     domains, auxiliaries = {}, {}
     for p in pairs:
-        dom,_,state = core.dlpno_ccsd_df_pair_state(wfn,*p)
-        domains[p] = tuple(dom)
-        auxiliaries[p] = tuple(state['AUX'].np[:,0].astype(int))
+        if cached_metadata:
+            domains[p],auxiliaries[p]=fitted.pair_occ[p],fitted.pair_aux[p]
+        else:
+            dom,_,state = core.dlpno_ccsd_df_pair_state(wfn,*p)
+            domains[p] = tuple(dom)
+            auxiliaries[p] = tuple(state['AUX'].np[:,0].astype(int))
     key = lambda p:tuple(sorted(p))
     frame = lambda p:electronic(('pno',key(p)))
     def amp(p):

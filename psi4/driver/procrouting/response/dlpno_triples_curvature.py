@@ -26,7 +26,95 @@ def _mixed_contraction_path(subscripts, shapes):
     return tuple(np.einsum_path(subscripts,*operands,optimize=True)[0])
 
 
+def _bilinear_product(contract, a, b):
+    return MixedBlock(contract(a[0],b[0]),
+        contract(a[1],b[0])+contract(a[0],b[1]),
+        contract(a[2],b[0])+contract(a[0],b[2]),
+        contract(a[3],b[0])+contract(a[1],b[2])+contract(a[2],b[1])+contract(a[0],b[3]))
+
+
+@lru_cache(maxsize=1024)
+def _binary_layout(equation, shapes):
+    left,right=equation.split('->')[0].split(',');out=equation.split('->')[1]
+    if any(len(set(x))!=len(x) for x in (left,right)):
+        return None
+    common=set(left)&set(right)
+    # Shared free axes (batched/Hadamard products) and unary reductions use
+    # the exact NumPy fallback. Ordinary contractions flatten to one GEMM.
+    if common&set(out) or set(out)!=(set(left)|set(right))-common:
+        return None
+    contracted=''.join(x for x in left if x in common)
+    lfree=''.join(x for x in left if x not in common)
+    rfree=''.join(x for x in right if x not in common)
+    dims=dict(zip(left,shapes[0]))
+    for label,dim in zip(right,shapes[1]):
+        if label in dims and dims[label]!=dim:return None
+        dims[label]=dim
+    product=lambda labels:int(np.prod([dims[x] for x in labels],dtype=np.int64))
+    return (tuple(left.index(x) for x in lfree+contracted),
+            tuple(right.index(x) for x in contracted+rfree),
+            (product(lfree),product(contracted),product(rfree)),
+            tuple(dims[x] for x in lfree+rfree),tuple((lfree+rfree).index(x) for x in out))
+
+
+def _binary_mixed_product(equation, a, b):
+    from psi4 import core
+    lhs,out=equation.split('->');left,right=lhs.split(',')
+    if (left==right==out) or (not left and right==out) or (not right and left==out):
+        return _bilinear_product(np.multiply,a,b)
+    layout=_binary_layout(equation,(np.shape(a[0]),np.shape(b[0])))
+    if layout is None:
+        return _bilinear_product(lambda x,y:np.einsum(equation,x,y,optimize=True),a,b)
+    la,rb,(m,k,n),shape,axes=layout
+    pack=lambda x,order,rows,cols:np.ascontiguousarray(np.transpose(x,order)).reshape(rows,cols)
+    aa=[pack(x,la,m,k) for x in a];bb=[pack(x,rb,k,n) for x in b]
+    if hasattr(core,'dlpno_mixed_gemm') and all(x.dtype==np.float64 for x in (*aa,*bb)):
+        result=core.dlpno_mixed_gemm(aa,bb)
+    else:
+        # Source-only algebra tests can run without a compiled Psi4 extension.
+        result=_bilinear_product(np.matmul,aa,bb)
+    return MixedBlock(*(np.asarray(x).reshape(shape).transpose(axes) for x in result))
+
+
+@lru_cache(maxsize=1024)
+def _mixed_tree(subscripts, shapes):
+    path=_mixed_contraction_path(subscripts,shapes)
+    if '...' in subscripts or '->' not in subscripts:return None
+    lhs,output=subscripts.split('->');labels=lhs.split(',');steps=[]
+    for selected in path[1:]:
+        if len(selected)!=2:return None
+        i,j=selected
+        remaining=[x for k,x in enumerate(labels) if k not in selected]
+        needed=set(output+''.join(remaining))
+        combined=''.join(dict.fromkeys(labels[i]+labels[j]))
+        target=output if not remaining else ''.join(x for x in combined if x in needed)
+        steps.append((i,j,labels[i]+','+labels[j]+'->'+target))
+        for k in sorted(selected,reverse=True):labels.pop(k)
+        labels.append(target)
+    return tuple(steps)
+
+
 def mixed_product(subscripts, *blocks):
+    """Differentiate a contraction tree, reusing every internal mixed block.
+
+    The old expansion differentiated each entire n-operand contraction
+    separately. Binary product rules now share the internal value/u/v/uv
+    products, and eligible nodes execute in one native BLAS call boundary.
+    """
+    if len(blocks)==1:
+        return MixedBlock(*(np.einsum(subscripts,x,optimize=False) for x in blocks[0]))
+    shapes=tuple(np.shape(x[0]) for x in blocks)
+    steps=_mixed_tree(subscripts,shapes)
+    if steps is None:return _expanded_mixed_product(subscripts,*blocks)
+    work=list(blocks)
+    for i,j,equation in steps:
+        result=_binary_mixed_product(equation,work[i],work[j])
+        for k in sorted((i,j),reverse=True):work.pop(k)
+        work.append(result)
+    return work[0]
+
+
+def _expanded_mixed_product(subscripts, *blocks):
     """Differentiate a local multilinear contraction in two directions."""
     path=_mixed_contraction_path(subscripts,tuple(np.shape(block[0]) for block in blocks))
     def contraction(*parts):

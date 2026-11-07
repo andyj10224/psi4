@@ -40,9 +40,13 @@ no_reorient
     first_solves=int(w.variable('DLPNO HESSIAN CCSD FIRST RESPONSE SOLVES'))
     source_replays=int(w.variable('DLPNO HESSIAN CCSD SOURCE REPLAYS'))
     assert first_solves==9 and source_replays==9
+    triples_builds=int(w.variable('DLPNO HESSIAN TRIPLES FIRST BUILDS'))
+    triples_hits=int(w.variable('DLPNO HESSIAN TRIPLES FIRST CACHE HITS'))
+    assert triples_builds==9 and triples_hits==72
     parts=np.array([w.variable('DLPNO HESSIAN '+name.upper()).np for name in COMPONENTS])
     result=dict(passed=False,threads=args.threads,version=psi4.__version__,density_response_batches=densities.call_count,
         ccsd_first_response_solves=first_solves,ccsd_source_replays=source_replays,
+        triples_first_builds=triples_builds,triples_first_cache_hits=triples_hits,
         energy=w.energy(),coordinates_bohr=mol.geometry().np.tolist(),gradient=w.gradient().np.tolist(),
         hessian=h.np.tolist(),components=parts.tolist(),component_order=COMPONENTS)
     path=Path(args.output)

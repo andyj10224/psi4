@@ -397,3 +397,32 @@ ownership. Thread/BLAS settings require timings rather than assuming twelve
 threads is faster for small pair spaces. Independent energy-difference checks
 in `gradient_audit.py` remain the next accuracy test; passing a Hessian's own
 invariants is insufficient to validate the analytic gradient.
+
+
+## 2026-11-07 — Native triples overlap reuse and phase timings
+
+The user's `6ac570a` water frequency run now completes in 1177.93 s, with
+1051.1 s in Hessian columns (1.60x faster columns than `991427f`). Its Python
+orbital-gradient assembly costs only about 0.4--0.47 s, including 0.37--0.42 s
+for DF Fock panels. Thus the sixteen panel J/K calls previously identified
+are a lower priority than native derivative work and the measured mixed
+CCSD/triples stages. This revises the earlier optimization priority using
+measured evidence; no panel contraction rewrite is claimed.
+
+The native triples right/left iteration now shares reference overlap matrices
+and their transposes. The cache is populated serially before OpenMP reads and
+bounded by min(64 MiB, requested memory/64); uncached edges use the original
+construction. Each parallel row retains its own destinations; the existing
+PSIO synchronization and edge/permutation multiplicities are unchanged.
+Additional native wall timings report triples state/densities, CCSD Lambda,
+CCSD DF contraction, both PNO projectors, PNO truncation, LMP2, local-basis/DF
+refit and screened-pair/PAO work. No gradient equation or threshold changed.
+
+The accompanying Hessian optimization uses shared mixed contraction trees
+with a native BLAS kernel, columnwise contracted triples overlap curvature,
+and bounded first-direction reuse. Its 259 source/algebra/kernel checks pass
+with both serial and OpenMP isolated builds, including independent product
+rules, finite-difference scalar curvature and actual small coupled triples
+tangent solves. The full native Psi4 gradient/Hessian remains to be rebuilt
+and tested locally. `gradient_audit.py` and the existing cc-pVDZ cases remain
+unchanged; internal Hessian consistency is not independent gradient accuracy.

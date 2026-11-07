@@ -59,6 +59,7 @@
 #include "psi4/libpsio/psio.hpp"
 #include "psi4/libscf_solver/hf.h"
 #include "psi4/libqt/qt.h"
+#include "psi4/dlpno/response_bindings.h"
 
 #include "python_data_type.h"
 
@@ -1465,6 +1466,7 @@ PYBIND11_MODULE(core, core) {
     core.def("dct", py_psi_dct, "ref_wfn"_a, "Runs the density cumulant (functional) theory code.");
     core.def("dfmp2", py_psi_dfmp2, "ref_wfn"_a, "Runs the DF-MP2 code.");
     core.def("dlpno", py_psi_dlpno, "Runs the DLPNO codes.");
+    dlpno::export_response_kernels(core);
     core.def("dlpno_df_mixed_integrals", &dlpno::df_mixed_integrals, "wfn"_a, "aux_name"_a, "auxiliary"_a,
              "aos"_a, "u"_a, "v"_a, "Mixed bare Coulomb metric and three-center AO blocks on the requested indices.");
     core.def("dlpno_df_fock_response", &dlpno::df_fock_response, "three_center"_a, "fitted"_a, "density"_a,

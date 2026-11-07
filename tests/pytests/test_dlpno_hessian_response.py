@@ -108,6 +108,7 @@ def test_column_repeatability_rejects_shape_change():
 
 def test_reference_adjoints_are_shared_only_with_the_same_wavefunction(monkeypatch):
     from psi4.driver.procrouting.response import dlpno_screened_hessian as h
+    monkeypatch.setattr(inputs.core,'get_memory',lambda:1024**3,raising=False)
     counts=dict(gradient=0,adjoint=0,retained=0)
     w=SimpleNamespace(molecule=lambda:SimpleNamespace(natom=lambda:1),
                       reference_wavefunction=lambda:object(),variable=lambda key:0.)
@@ -125,7 +126,7 @@ def test_reference_adjoints_are_shared_only_with_the_same_wavefunction(monkeypat
     monkeypatch.setattr(h,'RetainedCCSDCurvature',retained)
     monkeypatch.setattr(h,'TriplesHessianColumn',lambda direction:object())
     monkeypatch.setattr(h.ScreenedHessianColumn,'_prepare',
-                        lambda self,k:{'triples':SimpleNamespace(first_direction=lambda order:None)})
+                        lambda self,k:{'triples':SimpleNamespace(first_direction=lambda order,coordinate=None:None)})
     ref=h.ScreenedHessianReference(w)
     columns=[h.ScreenedHessianColumn(w,k,None,np.zeros(3),reference=ref) for k in range(3)]
     assert counts==dict(gradient=1,adjoint=1,retained=1)
@@ -142,9 +143,15 @@ def test_ccsd_first_response_cache_reuses_directions_and_checks_residuals(monkey
     p=(0,0)
     w=SimpleNamespace(molecule=lambda:SimpleNamespace(natom=lambda:1))
     matrix=lambda x:SimpleNamespace(np=np.asarray(x))
-    monkeypatch.setattr(inputs.core,'dlpno_lmp2_blocks',lambda *a:{p:matrix([[0.]])},raising=False)
-    monkeypatch.setattr(inputs.core,'dlpno_ccsd_df_pair_state',
-                        lambda *a:([0],[matrix([0.])],None),raising=False)
+    exports=dict(doubles=0,singles=0)
+    def doubles(*args):
+        exports['doubles']+=1
+        return {p:matrix([[0.]])}
+    def singles(*args):
+        exports['singles']+=1
+        return [0],[matrix([0.])],None
+    monkeypatch.setattr(inputs.core,'dlpno_lmp2_blocks',doubles,raising=False)
+    monkeypatch.setattr(inputs.core,'dlpno_ccsd_df_pair_state',singles,raising=False)
     monkeypatch.setattr(cc,'ScreenedFitting',lambda *a:None)
     calls=dict(residual=0,solve=0)
     from psi4.driver.procrouting.response.dlpno_triples_curvature import mixed_product
@@ -174,7 +181,9 @@ def test_ccsd_first_response_cache_reuses_directions_and_checks_residuals(monkey
             **({} if cache is None else dict(first_cache=cache,coordinates=(u,v))))
     expected={(u,v):evaluate(u,v)['residual'] for v in range(3) for u in range(3)}
     assert calls==dict(residual=18,solve=18)
+    assert exports==dict(doubles=9,singles=9)
     calls.update(residual=0,solve=0)
+    exports.update(doubles=0,singles=0)
     cache=cc.CCSDFirstResponseCache(w)
     for v in range(3):
         for u in range(3):
@@ -186,7 +195,10 @@ def test_ccsd_first_response_cache_reuses_directions_and_checks_residuals(monkey
             np.testing.assert_allclose(result['residual'][0][0].uv,
                 .2*(u+v)-2*(u+1)*(v+1),atol=1e-12,rtol=0.)
     assert calls==dict(residual=12,solve=3)
+    assert exports==dict(doubles=1,singles=1)
     assert cache.solves==3 and cache.source_replays==3
+    assert not cache.base[0][0].flags.writeable
+    assert not cache.base[1][p].flags.writeable
     assert not cache.entries[0]['tangent'][0][0].flags.writeable
     # Same coordinates with a changed first chart must never reuse amplitudes.
     old=pnos.final_selection[p].frame
@@ -198,3 +210,79 @@ def test_ccsd_first_response_cache_reuses_directions_and_checks_residuals(monkey
     evaluate(0,0,wrong_cache)
     wrong_cache.entries[0]['tangent']=([np.array([7.])],{p:np.array([[0.]])})
     with pytest.raises(ValueError,match='value/first residual'):evaluate(0,0,wrong_cache)
+
+
+def test_fitting_reference_snapshot_preserves_native_domain_order(monkeypatch):
+    from psi4.driver.procrouting.response import dlpno_screened_ccsd as cc
+    # Deliberately nonsorted native domain lists must survive unchanged.
+    pairs=[(0,0),(0,1),(1,1)]
+    domains=dict(PAIRS=pairs,PAIR_OCC=[(1,0),(0,1),(1,)],PAIR_AUX=[(2,0),(1,0,2),(1,)],
+                 PAIR_PAO=[(2,0),(1,2,0),(1,)],PAO_PAIRS=[])
+    first=dict(PAIRS=pairs,PAIR_PAO=domains['PAIR_PAO']);parents={p:object() for p in pairs}
+    exports=[]
+    def domain_state(wfn):exports.append('domain');return domains
+    def pno_state(wfn):exports.append('pno');return first,parents
+    monkeypatch.setattr(inputs.core,'dlpno_response_domain_state',domain_state,raising=False)
+    monkeypatch.setattr(inputs.core,'dlpno_first_pno_state',pno_state,raising=False)
+    s=np.eye(3);lmo=np.eye(3)[:,:2]
+    block=lambda x:MixedBlock(x,*[np.zeros_like(x) for _ in range(3)])
+    w=SimpleNamespace(variable=lambda name:0. if 'TOL' in name else SimpleNamespace(np=lmo),
+        molecule=lambda:SimpleNamespace(natom=lambda:3),
+        get_basisset=lambda name:SimpleNamespace(nbf=lambda:3,function_to_center=lambda q:q),
+        reference_wavefunction=lambda:SimpleNamespace(S=lambda:SimpleNamespace(np=s)))
+    cache=cc.CCSDFirstResponseCache(w)
+    fits=[cc.ScreenedFitting(w,lambda name:block(lmo),block(s),None,lambda ids:None,cache)
+          for _ in range(3)]
+    assert exports==['domain','pno']
+    for fit in fits:
+        assert fit.domains is domains and fit.parents is parents
+        assert fit.pair_occ==dict(zip(pairs,domains['PAIR_OCC']))
+        assert fit.pair_aux==dict(zip(pairs,domains['PAIR_AUX']))
+    with pytest.raises(ValueError,match='different wavefunction'):
+        cc.ScreenedFitting(object(),None,None,None,lambda ids:None,cache)
+
+
+
+def test_triples_direction_cache_ownership_frames_and_budget(monkeypatch):
+    from psi4.driver.procrouting.response.dlpno_screened_triples import TriplesFirstResponseCache
+    from psi4.driver.procrouting.response.dlpno_triples_response import TriplesGradientDirection
+    w=SimpleNamespace(molecule=lambda:SimpleNamespace(natom=lambda:1))
+    builds=[];checks=[]
+    def build(component):
+        builds.append(component)
+        data={0:np.array([float(component)])}
+        return TriplesGradientDirection(w,data,data,data,data,data,data,data,data,{})
+    chart={'overlap':np.eye(2)}
+    provider=SimpleNamespace(fit=SimpleNamespace(wfn=w),first_chart=lambda component:chart,
+        _first_direction=build,check_first_frames=lambda direction,component:checks.append(component))
+    cache=TriplesFirstResponseCache(w,max_bytes=10000)
+    first=cache.get(provider,1,0)
+    assert cache.get(provider,2,0) is first
+    assert cache.builds==1 and cache.hits==1 and checks==[2]
+    assert not first.right_source[0].flags.writeable
+    # A failed chart check must not return an old direction.
+    chart['overlap'][0,0]+=1e-6
+    with pytest.raises(ValueError,match='chart changed'):cache.get(provider,1,0)
+    chart['overlap'][0,0]-=1e-6
+    # LRU eviction is based on tensor bytes and does not change responses.
+    limited=TriplesFirstResponseCache(w,max_bytes=cache.bytes)
+    limited.get(provider,1,0);limited.get(provider,2,1)
+    assert list(limited.entries)==[1] and limited.bytes<=limited.max_bytes
+    limited.get(provider,1,0)
+    assert limited.builds==3
+    tiny=TriplesFirstResponseCache(w,max_bytes=0)
+    tiny.get(provider,1,0)
+    assert not tiny.entries and tiny.bytes==0
+    provider.fit=SimpleNamespace(wfn=object())
+    with pytest.raises(ValueError,match='different wavefunction'):cache.get(provider,1,0)
+
+
+def test_triples_native_snapshot_exported_once(monkeypatch):
+    from psi4.driver.procrouting.response.dlpno_screened_triples import TriplesFirstResponseCache
+    calls=[]
+    def export(w):calls.append(w);return object()
+    monkeypatch.setattr(inputs.core,'dlpno_triples_response_state',export,raising=False)
+    monkeypatch.setattr(inputs.core,'dlpno_triples_basis_state',export,raising=False)
+    w=object();cache=TriplesFirstResponseCache(w,max_bytes=0)
+    first=cache.snapshot()
+    assert cache.snapshot() is first and calls==[w,w]
