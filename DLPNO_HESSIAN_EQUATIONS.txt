@@ -1466,3 +1466,95 @@ required. Absolute matrix, symmetry, translation and rotation acceptance
 is $2\times10^{-7}$ in the corresponding atomic units; net force and
 torque acceptance is $2\times10^{-8}$. Detailed results and the full matrices
 are recorded with the working memory checkpoint.
+
+22. Screened-domain validation and the production boundary
+\label{sec:screened-domain-audit}
+Screening of the retained pair graph and screening of the molecular fitting
+domains are distinct. The former removes amplitude blocks and response edges;
+the latter changes the functions being differentiated within a surviving block.
+A successful sparse-graph amplitude test does not validate nuclear derivatives
+of the screened fitting construction.
+
+22.1. Actual local refits and masked three-center factors
+For an auxiliary center $Q$, let $A_Q$ and $B_Q$ be the occupied and virtual AO
+transform domains, $I_Q$ the occupied labels and $U_Q$ the PAO labels. With
+$L$ the occupied coefficients, the native refit is
+\begin{equation}
+ S_{A_QA_Q}\widetilde L^Q=b^Q,\qquad
+ b^Q=S_{A_Q:}L_{:I_Q}.
+\end{equation}
+On a fixed domain branch its mixed response obeys
+\begin{equation}
+ S_{A_QA_Q}\widetilde L^Q_{uv}
+ =b^Q_{uv}-(S_{A_QA_Q})_{uv}\widetilde L^Q
+ -(S_{A_QA_Q})_u\widetilde L^Q_v
+ -(S_{A_QA_Q})_v\widetilde L^Q_u.
+\end{equation}
+All nuclear and occupied-coefficient terms in $b^Q_{uv}$ are included by the
+mixed product rule. Let $N$ denote normalized PAOs and let $q_{Q,AB}$ denote
+the raw AO three-center panel on the indicated AO domains. Before PNO
+projection, the screened factors have the structure
+\begin{align}
+ q^{oo}_{Q,ij}&=(\widetilde L^Q_i)^{\mathsf T}
+                    q_{Q,A_QA_Q}\widetilde L^Q_j,\\
+ q^{ov}_{Q,i\nu}&=(\widetilde L^Q_i)^{\mathsf T}
+                    q_{Q,A_QB_Q}N_{B_Q\nu},\\
+ q^{vv}_{Q,\nu\mu}&=M^Q_{\nu\mu}N_{B_Q\nu}^{\mathsf T}
+                    q_{Q,B_QB_Q}N_{B_Q\mu}.
+\end{align}
+Here $M^Q$ is the native retained PAO-pair mask. Missing occupied/PAO labels
+also give zero entries. These factors are embedded into the particular pair
+domains and multiplied by their PNO coefficient matrices. Although the AO
+PNO frame is $Y_p=N_{:P_p}X_p$, a full-AO contraction $Y_p^{\mathsf T}q_QY_p$
+does not in general reproduce the masked/refitted local forward factors.
+The auxiliary metric uses the native pair's ordered auxiliary list and the
+appropriate full inverse or rank-filtered transform already described above.
+
+The existing mixed local-fit algebra can differentiate a supplied panel;
+the molecular delivery must additionally retain these lists and masks,
+differentiate the actual local PAO parents and both PNO selections, and
+propagate the resulting frames into the CCSD and triples contractions.
+The full-domain water provider does not do this. Its explicit screened-domain
+rejection is retained. A new native read-only domain snapshot supplies the
+AO, PAO, occupied, pair and auxiliary lists for branch checks; it does not
+itself implement their mixed nuclear response. AO Schwarz decisions are not
+part of that snapshot and are disabled in the present audit.
+
+22.2. What the screened audit establishes
+The four-H$_2$/cc-pVDZ chain retains seven of ten unique pairs and includes
+two couplings with a missing partner pair. With full fitting domains, its
+CCSD residual and mixed amplitude replay agree with native code to
+$1.43\times10^{-14}$ and $6.12\times10^{-17}$, respectively. The local-domain
+case has 20--30 occupied-transform AOs, 30--40 virtual-transform AOs out of
+40, 10--20 PAOs per pair and 28--56 auxiliaries per pair out of 112.
+
+For two Cartesian directions the analytic gradient is compared to
+\begin{equation}
+ D_u(h)=\frac{E(R+h e_u)-E(R-h e_u)}{2h},\qquad
+ g_u^{\rm check}=\frac{4D_u(h/2)-D_u(h)}{3},\quad h=0.004\ a_0.
+\end{equation}
+Native domain lists, pair/triplet selections, PNO/TNO ranks and response
+edges are checked after occupied-label matching at every displaced point.
+Errors are $5.76\times10^{-11}$ and $2.18\times10^{-11}$ hartree/bohr,
+below the unchanged $2\times10^{-8}$ criterion. These are gradient tests,
+not screened nuclear Hessian tests. A separate synthetic PNO-operator
+finite-difference probe gives $1.30\times10^{-7}$ against its existing
+$10^{-8}$ threshold; its single-step numerical resolution is not resolved
+by the passing nuclear tests. Neither its tolerance nor the Hessian
+provider guards are changed to obtain a pass.
+
+The derivative target remains
+\begin{equation}
+ E_{\rm grad}=E_{\rm RHF}+E_{\rm retained\ CCSD}
+       +E_{\rm iterative\ (T)}+\Delta E_{\rm PNO}^{\rm first}
+       +\Delta E_{\rm PNO}^{\rm final}.
+\end{equation}
+The ordinary-energy control, with matching retained-pair/triples settings,
+differs here by a nonzero excluded-pair semicanonical-MP2 estimate,
+$-1.4123797074\times10^{-6}$ hartree. The gradient model deliberately omits
+that estimate. This distinction is an energy-definition boundary, not a
+missing term within $E_{\rm grad}$. Derivatives of the ordinary screened
+energy, with its other weak-pair/triplet choices, require separate work.
+The audit therefore records the screened Hessian as unsupported and leaves
+general analytic Hessian routing disabled. No Hessian symmetry, rigid-motion
+or vibrational claim is inferred from these selected gradient checks.

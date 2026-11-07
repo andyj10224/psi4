@@ -194,6 +194,7 @@ std::pair<SharedMatrix,SharedMatrix> df_mixed_integrals(SharedWavefunction,const
 std::pair<SharedMatrix,SharedMatrix> pair_metric_tangent(SharedMatrix,SharedMatrix);
 std::tuple<std::vector<int>,std::vector<SharedMatrix>,std::map<std::string,SharedMatrix>>
     ccsd_df_pair_state(SharedWavefunction,int,int);
+std::map<std::string,std::vector<std::vector<int>>> response_domain_state(SharedWavefunction);
 std::pair<std::vector<SharedMatrix>, PairBlocks> triples_ccsd_source(SharedWavefunction);
 std::pair<std::vector<SharedMatrix>, PairBlocks> gradient_ccsd_lambda(SharedWavefunction);
 std::pair<std::vector<SharedMatrix>, PairBlocks> ccsd_residual_at(SharedWavefunction,
@@ -1449,6 +1450,8 @@ PYBIND11_MODULE(core, core) {
              "Ordered native mixed J/K, gamma and delta blocks for the CCSD C/D contributions.");
     core.def("dlpno_ccsd_df_pair_state", &dlpno::ccsd_df_pair_state, "wfn"_a, "i"_a, "j"_a,
              "Local CCSD amplitudes and dressed DF intermediates for one unique retained pair.");
+    core.def("dlpno_response_domain_state", &dlpno::response_domain_state, "wfn"_a,
+             "Copy fixed atom/pair AO, PAO, occupied and auxiliary lists; excludes AO Schwarz masks.");
     core.def("dlpno_gradient_ccsd_lambda", &dlpno::gradient_ccsd_lambda, "wfn"_a,
              "Return converged CCSD plus ordinary (T) gradient-model multipliers on unique pairs.");
     core.def("dlpno_triples_ccsd_source", &dlpno::triples_ccsd_source, "wfn"_a,

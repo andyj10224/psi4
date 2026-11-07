@@ -76,6 +76,32 @@ DLPNOCCSD::DFPairState DLPNOCCSD::ccsd_df_pair_state(int i, int j) const {
                            {"VI", i_Qa_t1_.at(p)->clone()}, {"VJ", i_Qa_t1_.at(rev)->clone()}}};
 }
 
+std::map<std::string, SparseMap> DLPNOCCSD::response_domain_state() const {
+    if (!gradient_model_ || T_ia_.empty())
+        throw PSIEXCEPTION("Domain response state requires a converged RHF DLPNO gradient model.");
+    // Atom-indexed rows retain the exact forward ordering. The PAO-pair rows
+    // flatten ordered (u,v) labels, not the dense inverse lookup table.
+    std::map<std::string, SparseMap> result{
+        {"AO_OCC", riatom_to_bfs1_}, {"AO_VIR", riatom_to_bfs2_},
+        {"OCC", riatom_to_lmos_ext_}, {"PAO", riatom_to_paos_ext_}};
+    for (const auto& pairs : riatom_to_pao_pairs_) {
+        std::vector<int> row;
+        for (const auto& [u, v] : pairs) { row.push_back(u); row.push_back(v); }
+        result["PAO_PAIRS"].push_back(std::move(row));
+    }
+    for (int p = 0; p < ij_to_i_j_.size(); ++p) {
+        const auto [i, j] = ij_to_i_j_[p];
+        if (i > j) continue;
+        result["PAIRS"].push_back({i, j});
+        result["PAIR_OCC"].push_back(lmopair_to_lmos_[p]);
+        result["PAIR_PAO"].push_back(lmopair_to_paos_[p]);
+        result["PAIR_AUX"].push_back(lmopair_to_ribfs_[p]);
+    }
+    // AO shell Schwarz decisions are not included. Tests using these lists
+    // as a complete fitting-branch fingerprint must disable that screen.
+    return result;
+}
+
 std::vector<SharedMatrix> DLPNOCCSD::ccsd_mixed_state(int i, int j, int k) const {
     int no = T_ia_.size();
     if (!gradient_model_ || std::min({i,j,k}) < 0 || std::max({i,j,k}) >= no)

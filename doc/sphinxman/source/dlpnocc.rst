@@ -211,6 +211,33 @@ including dertype=0, raise a validation error. The analytic gradient
 assumes locally fixed domains and ranks and a consistent localization
 adjoint. Full-gradient linear scaling has yet to be established.
 
+RHF Hessian development
+-----------------------
+
+The standalone diagnostics in ``tests/dlpno-hessian-model`` validate complete
+analytic Cartesian Hessians for full AO/fitting-domain water models, including
+finite PNO spaces, frozen-core and all-electron references. This does not yet
+provide a general analytic ``psi4.hessian("dlpno-ccsd(t)")`` implementation.
+An explicit ``dertype=2`` request remains unavailable; a numerical Hessian
+obtained through driver fallback must not be described as analytic.
+
+``screened_domains.py`` audits an interacting four-H2 chain with actual local
+AO/refit, PAO, occupied and auxiliary lists. Its sparse CCSD residual and mixed
+amplitude checks, and selected screened analytic-gradient checks, pass. The
+mixed nuclear PNO/CCSD molecular providers still reject screened domains, so
+no screened nuclear Hessian has been validated. The audit also records a
+synthetic first-PNO operator probe above its existing tolerance. Run with
+``--require-production`` to obtain a nonzero exit status while these blockers
+remain. Domain fingerprints are available through
+``core.dlpno_response_domain_state(wfn)``; these copies exclude AO Schwarz
+decisions, and the audit explicitly disables that integral screen.
+
+The Hessian development target remains the same energy functional as the
+public gradient. In particular, passing a screened gradient-model test would
+not establish derivatives of the eliminated-pair and dipole estimates in the
+ordinary energy calculation. See ``DLPNO_HESSIAN_WORKING_MEMORY.md`` and
+``DLPNO_HESSIAN_EQUATIONS.txt`` for the validation ledger and working equations.
+
 Higher-Order DLPNO Methods
 --------------------------
 
