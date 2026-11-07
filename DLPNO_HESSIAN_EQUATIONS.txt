@@ -1400,3 +1400,69 @@ tests $c^{uv}=-Jt^{uv}$ component by component. This oracle uses the earlier
 first-response implementation, not the new mixed residual algebra. Its
 geometry spacing occurs only in the test. Native residual second differences
 remain a separate scalar-adjoint check and a reported roundoff diagnostic.
+
+21. Full Cartesian assembly and rigid-motion verification
+The full-domain molecular diagnostic now assembles all ordered Cartesian
+entries at one reference geometry. For $a=(A,\alpha)$ and $b=(B,\beta)$,
+\begin{equation}
+ H_{ab}=H^{\rm RHF}_{ab}+H^{\rm retained\ CCSD}_{ab}
+              +H^{(T)}_{ab}+H^{\rm PNO\ loss}_{ab}.
+\end{equation}
+The RHF contribution includes electronic and nuclear-repulsion curvature.
+Both PNO-loss stages are retained at finite cutoffs. Other screened-energy
+corrections must be zero on this diagnostic branch; they are checked at the
+reference and every displaced verification point. Their vanishing here is
+not an implementation of their nonzero Hessian contributions.
+
+First nuclear responses and triples columns are prepared once for each
+Cartesian coordinate. Each ordered pair $(a,b)$ then builds the analytic
+mixed molecular and PNO inputs and shares those panels among the CCSD
+residual, retained-energy and triples contractions. Values and both first
+components are checked against the independently prepared first responses.
+Every mixed electronic input comes from the reference-geometry provider;
+a request for a sampled input raises an error. Both $H_{ab}$ and $H_{ba}$
+are evaluated independently. Neither symmetry nor rigid-motion identities
+are used to fill, average or project the reported matrix.
+
+21.1. Translation and rotation away from a stationary geometry
+Write $R$ and $g=\nabla E$ as stacked atom-by-Cartesian vectors. A uniform
+translation along axis $\alpha$ has $(T_\alpha)_{A\beta}=\delta_{\alpha\beta}$.
+For an invariant differentiable energy on a fixed local branch,
+\begin{equation}
+ \sum_A g_A=0,\qquad HT_\alpha=0,\qquad H=H^{\mathsf T}.
+\end{equation}
+Let $\Omega_\alpha$ act on every atom as
+$\Omega_\alpha r=e_\alpha\mathbin{\times}r$. Rotational invariance and
+covariance of the Cartesian gradient give
+\begin{equation}
+ \sum_A R_A\mathbin{\times}g_A=0,\qquad
+ H(\Omega_\alpha R)=\Omega_\alpha g.
+\end{equation}
+The right-hand side is essential at the present nonstationary water
+geometry. In particular, rigid rotations need not be Cartesian Hessian
+null vectors there. Equivalently, along a finite rigid rotation,
+\begin{equation}
+ (\Omega_\alpha R)^{\mathsf T}H(\Omega_\alpha R)
+                +g^{\mathsf T}\Omega_\alpha^2 R=0.
+\end{equation}
+The diagnostic checks the unmodified matrix, the net gradient and torque.
+It does not infer equilibrium frequencies or six rigid-body zero modes
+from a nonstationary calculation.
+
+21.2. Independent full-matrix gradient differences
+For each Cartesian column use independently converged analytic gradients,
+\begin{equation}
+ D_b(h)=\frac{g(R+h e_b)-g(R-h e_b)}{2h},\qquad
+ H_b^{\rm check}=\frac{4D_b(h/2)-D_b(h)}{3}.
+\end{equation}
+The molecular geometry is not recentered or reoriented. Native occupied
+labels, pair/triplet graphs and both PNO/TNO ranks are checked on the same
+smooth branch. At finite PNO cutoffs, the comparison uses the analytic
+DLPNO gradient assembly employed by the public gradient driver, including
+the PNO losses. With complete pair/triples virtual spaces it instead uses
+canonical DF-CCSD(T) analytic gradients. No numerical symmetrization is
+applied to either matrix. Both frozen-core and all-electron cases are
+required. Absolute matrix, symmetry, translation and rotation acceptance
+is $2\times10^{-7}$ in the corresponding atomic units; net force and
+torque acceptance is $2\times10^{-8}$. Detailed results and the full matrices
+are recorded with the working memory checkpoint.

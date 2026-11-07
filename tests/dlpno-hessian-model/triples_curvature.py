@@ -213,8 +213,9 @@ def molecular_blocks(w,u,v,lower,lower_u,lower_v,lower_uv,trial_ccsd,pno_data=No
     return electronic,overlap,local_df
 
 
-def molecular_inputs(w,rows,u,v,lower,lower_u,lower_v,lower_uv,*,trial_ccsd=False,pno_data=None):
-    electronic,overlap,local_df = molecular_blocks(w,u,v,lower,lower_u,lower_v,lower_uv,trial_ccsd,pno_data)
+def molecular_inputs(w,rows,u,v,lower,lower_u,lower_v,lower_uv,*,trial_ccsd=False,pno_data=None,providers=None):
+    electronic,overlap,local_df = (molecular_blocks(w,u,v,lower,lower_u,lower_v,lower_uv,trial_ccsd,pno_data)
+                                  if providers is None else providers)
     lmo,fock = electronic('lmo'),electronic('fock')
     def ordered(a,b):
         t = electronic(('t2',tuple(sorted((a,b)))))
@@ -233,8 +234,9 @@ def molecular_inputs(w,rows,u,v,lower,lower_u,lower_v,lower_uv,*,trial_ccsd=Fals
     return occupied,mixed_row,edge
 
 
-def retained_inputs(w,u,v,base,lower_u,lower_v,lower_uv,affine,pno_data=None):
-    electronic,s,df = molecular_blocks(w,u,v,base,lower_u,lower_v,lower_uv,affine,pno_data)
+def retained_inputs(w,u,v,base,lower_u,lower_v,lower_uv,affine,pno_data=None,providers=None):
+    electronic,s,df = (molecular_blocks(w,u,v,base,lower_u,lower_v,lower_uv,affine,pno_data)
+                       if providers is None else providers)
     lmo = electronic('lmo')
     pairs = {k[1]:electronic(k) for k in base if isinstance(k,tuple) and k[0]=='pno'}
     singles = [electronic(('t1',i)) for i in range(lmo.value.shape[1])]

@@ -4,11 +4,11 @@
 
 Derive the analytic nuclear Hessian of the same closed-shell RHF ordinary iterative DLPNO-CCSD(T) functional selected by the public gradient driver. Start with Boys, then Mulliken PM; exercise both frozen-core and all-electron references. Work in a fixed Cartesian frame, in hartree/bohr², on a smooth local branch. Keep discrete selections fixed while differentiating the moving electronic subspaces. Require a test for each block before using it as a reference for the next block. Keep canonical comparisons, local finite-cutoff checks, and scaling measurements separate. [Working equations (.txt)](DLPNO_HESSIAN_EQUATIONS.txt) · [Typesetting source (.tex)](DLPNO_HESSIAN_EQUATIONS.tex)
 
-**Current checkpoint (7 November 2026).** The mixed nuclear transformed-CCSD residual now has an analytic replay at one reference geometry, with affine CCSD amplitudes and analytic moving final PNO frames. It supplies the retained-CCSD and iterative-triples stationary curvature contractions. Both PNO selections, their coupled-LMP2 parent response, and the separate PNO truncation-energy curvature are also analytic in the full-domain diagnostic. Geometry stencils remain independent checks only. Nonzero other screened-energy corrections, screened molecular assembly, full Cartesian invariance/vibrational validation and production scaling/delivery remain. See the final entry for validation and scope; historical “Next” statements below describe the state at that earlier checkpoint.
+**Current checkpoint (7 November 2026).** Four complete 9-by-9 Cartesian water/cc-pVDZ Hessians now pass: finite PNO spaces and complete virtual spaces, each with frozen-core and all-electron references. All 324 ordered entries were evaluated analytically and independently, without symmetrization or rigid-motion projection. Each matrix passes symmetry, translation, the correct nonstationary rotation identity, and full-matrix analytic-gradient differences. The full-domain stationary diagnostic includes RHF, retained CCSD, iterative (T), and both PNO-loss stages. Screened molecular assembly and nonzero other screened-energy corrections, equilibrium vibrational validation, assembled PM validation and production scaling/delivery remain. Historical “Next” statements below describe their earlier checkpoints.
 
 ## Complete Hessian milestone index across both chats
 
-This index reconciles the Hessian phase of **“Implement DLPNO Gradients”** with the continuation in this chat. It was checked against every commit from `0af1a1eb` through `05aea699`, all 22 preceding chronological entries below, and the recovered older-chat context. Each previous Hessian commit has a corresponding ledger entry and working-equation section. The analytic mixed nuclear CCSD residual is step 23. Earlier unsuccessful checks, numerical dependencies and their later resolutions are preserved in the chronological entries; they are not silently replaced by the latest passing result.
+This index reconciles the Hessian phase of **“Implement DLPNO Gradients”** with the continuation in this chat. It was checked against every commit from `0af1a1eb` through `f18cf39a`, all 23 preceding chronological entries below, and the recovered older-chat context. Each previous Hessian commit has a corresponding ledger entry and working-equation section. The complete Cartesian assembly and invariance checkpoint is step 24. Earlier unsuccessful checks, numerical dependencies and their later resolutions are preserved in the chronological entries; they are not silently replaced by the latest passing result.
 
 Equation-section numbers refer to both the `.txt` export and `.tex` source. The text export contains the entire equation body with mathematical notation preserved, not a shortened recap. Regenerate it with `python tests/dlpno-hessian-model/export_equations.py`; `--check` verifies synchronization. The exporter also checks that every displayed equation is preserved verbatim.
 
@@ -36,9 +36,10 @@ Equation-section numbers refer to both the `.txt` export and `.tex` source. The 
 | 20 | Remove forward localization precision floor; resolve failed all-electron assembled entry | `063eb109` | 19.2 |
 | 21 | Analytic mixed first PNOs; remove sampled molecular inputs from PNO-loss curvature | `1b9f1b23` | 7.1, 16 |
 | 22 | Native mixed coupled-LMP2 solve and final-PNO curvature; analytic frame integration | `05aea699` | 8.1, 9.1 |
-| 23 | Analytic mixed nuclear CCSD residual and stationary curvature integration | Current checkpoint | 20–20.4 |
+| 23 | Analytic mixed nuclear CCSD residual and stationary curvature integration | `f18cf39a` | 20–20.4 |
+| 24 | Four complete Cartesian Hessians; independent symmetry, rigid-motion and gradient checks | Current checkpoint | 21–21.2 |
 
-Step 19 was recovered locally as `e8a240b2` and published as `d79f434b`; the localization precision fix was locally `d222a3ab` and published as `063eb109`. These pairs refer to the same tested content at each checkpoint, not additional Hessian steps. The failed all-electron total error of -3.37e-7 at step 19 and its resolution at step 20 are both retained below. No completed full Cartesian molecular Hessian or vibrational result is implied by the milestone count.
+Step 19 was recovered locally as `e8a240b2` and published as `d79f434b`; the localization precision fix was locally `d222a3ab` and published as `063eb109`. These pairs refer to the same tested content at each checkpoint, not additional Hessian steps. The failed all-electron total error of -3.37e-7 at step 19 and its resolution at step 20 are both retained below. Full Cartesian validation is reported explicitly at step 24; a general production Hessian and equilibrium vibrational validation remain open.
 
 ## 2026-11-06 — First canonical Hessian column
 
@@ -552,3 +553,38 @@ The largest independent PNO-loss comparison was 6.63e-10. The native second-ampl
 **Regression and records.** The module installs successfully; `dfccsd-t-grad1`, `dlpno-grad-model`, `dlpnocc-1`, and `dlpnolocal-1` all passed (4/4). The existing Lean stationarity and mixed-product identities still compile; they do not prove the complete residual implementation. Equation Section 20 documents the analytic source, metric conventions, contribution map, stationary use and independent transported-tangent oracle. The full `.txt` export contains 1,402 lines and remains synchronized with the `.tex` source; the latter compiles to 23 pages without overfull boxes or warnings. All prior milestone entries remain intact, and this checkpoint is step 23 across both chats.
 
 **Scope and next step.** The reference-geometry full-domain stationary diagnostic now has analytic molecular inputs for the retained CCSD, iterative (T), and two-stage PNO-loss pieces, with no displaced-geometry input in their assembled values. This is not yet a general public analytic-Hessian driver. Next validate the full Cartesian matrix and invariances on this branch, then extend the screened molecular providers and account for nonzero other screened-energy corrections before production delivery and scaling claims. Assembled PM validation also remains open.
+
+
+## 2026-11-07 — Complete Cartesian Hessians and rigid-motion checks
+
+**Implemented.** `tests/dlpno-hessian-model/cartesian_hessian.py` assembles the full 9-by-9 water/cc-pVDZ matrix at the existing fixed-frame, nonstationary geometry. It prepares all nine analytic first-response directions once, then evaluates every ordered mixed entry independently. Analytic RHF electronic/nuclear curvature is added to retained CCSD, ordinary iterative triples, and both PNO truncation-loss contributions. Reverse entries are calculated separately; no matrix symmetrization, translation reconstruction or rigid-motion projection is used.
+
+The analytic PNO construction's molecular panels are shared among the mixed CCSD residual and both stationary energy contractions. The existing provider wrappers accept these shared panels, while retaining their original default behavior. Every value and first component is checked against the independently prepared first response (2e-8 absolute); both linear CCSD residual equations are checked (2e-9). Any request for a sampled mixed electronic input raises an error. The initial driver probe needed `SAVE_JK = true` for the native gradient assembly's CPHF solve; enabling the same retention used by the public gradient driver resolved that setup error. No residual formula or acceptance tolerance was changed.
+
+**Verification.** Both core choices were tested with finite first/final/TNO cutoffs 1e-5/1e-4/1e-5 and with all three cutoffs zero. All AO/fitting domains are complete. Screened weak-pair, SC-LMP2-pair and dipole corrections are explicitly checked zero at the reference and every displaced point; the full-space PNO-loss correction is also checked zero. At each displaced geometry, occupied labels, pair/triplet graphs and PNO/TNO ranks are checked on the same branch.
+
+The finite-space numerical reference differences the analytic DLPNO gradient assembly used by the public driver, including both PNO losses. The complete-space reference instead differences canonical DF-CCSD(T) analytic gradients. All nine Cartesian columns use ±0.004 and ±0.002 bohr with fourth-order Richardson extrapolation. Neither numerical reference is symmetrized. Matrix comparisons and analytic symmetry/translation/rotation checks retain the 2e-7 absolute acceptance; net force and torque retain 2e-8. All four complete runs passed.
+
+| Virtual spaces | Core | Max Hessian difference (hartree/bohr²) | Raw symmetry error | Translation residual | Rotation residual |
+|---|---|---:|---:|---:|---:|
+| Finite PNO | Frozen O 1s | 3.402e-08 | 7.448e-11 | 1.429e-10 | 7.513e-11 |
+| Finite PNO | All-electron | 2.453e-08 | 7.427e-11 | 1.425e-10 | 6.566e-11 |
+| Complete | Frozen O 1s | 1.739e-10 | 7.742e-11 | 1.479e-10 | 6.393e-11 |
+| Complete | All-electron | 1.702e-10 | 7.740e-11 | 1.483e-10 | 7.036e-11 |
+
+The identity residuals use the corresponding atomic units. The separate correlation component matrices also have maximum symmetry and translation errors below 1.62e-10. Thus the small total invariant residuals do not depend on cancellation between the retained-CCSD, triples and PNO-loss components.
+
+**Rotation convention.** At a nonstationary geometry, the correct identity is H (Omega R) = Omega g, with Omega the block-diagonal generator of a rigid rotation. The gradient norms here range from 0.0155 to 0.0183 hartree/bohr, so setting the right-hand side to zero would be incorrect. The net torque sum_A R_A cross g_A is checked separately. No equilibrium frequencies or six rigid-body zero modes are claimed. The new Lean theorem `rotational_curvature` verifies that this covariance condition and antisymmetry of Omega imply (Omega R)^T H (Omega R) + g^T Omega^2 R = 0; it is an algebraic identity, not a proof of the complete electronic implementation.
+
+**Reproducible records.** `cartesian_hessian_results.json` stores all four unmodified Hessians, their RHF and three correlation components, analytic reference gradients, independent numerical matrices, geometry, coordinate order, method/basis settings and error metrics. Its finite-space numerical-reference asymmetry is recorded as numerical error, not removed. Run each case in a built Psi4 environment:
+
+    python tests/dlpno-hessian-model/cartesian_hessian.py --core frozen --spaces finite --output finite-frozen.npz
+    python tests/dlpno-hessian-model/cartesian_hessian.py --core all --spaces finite --output finite-all.npz
+    python tests/dlpno-hessian-model/cartesian_hessian.py --core frozen --spaces full --output full-frozen.npz
+    python tests/dlpno-hessian-model/cartesian_hessian.py --core all --spaces full --output full-all.npz
+
+`--stage analytic` assembles and checks invariances without displaced geometries. `--stage verify` checks an existing complete matrix against gradients. Each completed entry is checkpointed to the NPZ file; successful gradient verification also writes a JSON record. The script is a water validation driver, not new public `hessian()` routing.
+
+**Checks and scope.** All four standalone matrix runs passed, Python syntax checks passed, the complete Lean file compiled, and equation Section 21 compiled without LaTeX warnings or overfull boxes (24 pages total). The complete `.txt` export is synchronized (1,468 lines). Native implementation and public derivative routing are unchanged in this checkpoint. All prior milestones and their unsuccessful exploratory checks remain documented; this is step 24 across both chats.
+
+**Next.** Extend the molecular response providers to actual screened domains and validate the remaining nonzero screened-energy corrections. Equilibrium vibrational checks, assembled Pipek–Mezey validation, public Hessian routing and scaling remain. The full Cartesian fixed-domain validation planned at step 23 is now complete for both finite-PNO and canonical-limit water cases.

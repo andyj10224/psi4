@@ -114,4 +114,20 @@ theorem mixed_four_factor_product {R : Type*} [Ring R]
     a*bu*c*dv + a*bv*c*du + a*b*cu*dv + a*b*cv*du := by
   noncomm_ring
 
+-- At a nonstationary geometry rotational covariance is H (Omega R)=Omega g.
+-- The acceleration of the rigid rotation supplies the gradient term; rigid
+-- rotations are not Hessian null vectors unless the relevant gradient vanishes.
+theorem rotational_curvature {I : Type*} [Fintype I]
+    (H omega : Matrix I I ℝ) (r g : I → ℝ)
+    (skew : omega.transpose = -omega)
+    (covariant : H *ᵥ (omega *ᵥ r) = omega *ᵥ g) :
+    (omega *ᵥ r) ⬝ᵥ (H *ᵥ (omega *ᵥ r)) +
+      g ⬝ᵥ (omega *ᵥ (omega *ᵥ r)) = 0 := by
+  have h : (omega *ᵥ r) ⬝ᵥ (omega *ᵥ g) =
+      (omega.transpose *ᵥ (omega *ᵥ r)) ⬝ᵥ g := by
+    rw [dotProduct_mulVec, mulVec_transpose]
+  rw [skew, neg_mulVec, neg_dotProduct] at h
+  rw [covariant, h, dotProduct_comm g (omega *ᵥ (omega *ᵥ r))]
+  exact neg_add_cancel _
+
 end DLPNOHessian
