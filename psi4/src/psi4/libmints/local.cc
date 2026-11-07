@@ -285,7 +285,10 @@ LocalizationJacobiStep localization_jacobi_step(const std::vector<std::shared_pt
         const double Hd = a - b;
         const double Ho = 2.0 * c;
         result.theta = 0.25 * std::atan2(Ho, Hd);
-        result.gain = 0.25 * (std::hypot(Hd, Ho) - Hd);
+        const double radius = std::hypot(Hd, Ho);
+        // Rationalize near a pair maximum: radius - Hd otherwise loses the
+        // O(gradient^2) gain while atan2 still resolves the O(gradient) step.
+        result.gain = Hd > 0.0 ? 0.25 * Ho * (Ho / (radius + Hd)) : 0.25 * (radius - Hd);
         return result;
     }
 
@@ -868,8 +871,14 @@ void Localizer::localize_matrix_objective(std::vector<std::shared_ptr<Matrix>> o
                     const int i = order[p];
                     const int j = order[q];
                     const auto step = localization_jacobi_step(operators, i, j, power);
-                    if (step.gain <=
-                        16.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, objective))
+                    // The quadratic step is an exact pair maximizer. An
+                    // objective-roundoff cutoff here imposes a sqrt(epsilon)
+                    // gradient floor, preventing tightly stationary frames
+                    // needed by orbital response and nuclear Hessians. The
+                    // fourth-power proposal still needs its objective test.
+                    const double minimum_gain = power == 2 ? 0.0 :
+                        16.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, objective);
+                    if (step.gain <= minimum_gain)
                         continue;
                     if (debug_ > 3)
                         outfile->Printf(

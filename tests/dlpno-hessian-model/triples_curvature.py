@@ -554,7 +554,7 @@ if __name__ == '__main__':
     psi4.set_options(dict(scf__diis=False,scf_initial_accelerator='NONE',basis='cc-pvdz',reference='rhf',scf_type='df',df_basis_cc='cc-pvdz-ri',
                           df_basis_scf='cc-pvdz-jkfit',e_convergence=1.e-13,d_convergence=1.e-13,
                           r_convergence=1.e-11,solver_convergence=1.e-12,dlpno_maxiter=600,
-                          local_convergence=1.e-14,local_gradient_convergence=1.e-8,
+                          local_convergence=1.e-14,local_gradient_convergence=1.e-12,
                           dlpno_keep_lmp2_response=True,dlpno_gradient_model=True,
                           dlpno_local_orbitals='BOYS',t_cut_pno_mp2=1.e-5,t_cut_pno=1.e-4,
                           t_cut_trace_mp2=0.,t_cut_energy_mp2=0.,t_cut_trace=0.,t_cut_energy=0.,

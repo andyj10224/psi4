@@ -37,9 +37,46 @@ C_occ = wfn_scf.Ca_subset("AO", "OCC")
 for scheme in ["BOYS", "PIPEK_MEZEY"]:
     localizer = psi4.core.Localizer.build(scheme, wfn_scf.basisset(), C_occ)
     localizer.localize()
-    compare_values(1, int(localizer.converged), 0, scheme + " localization convergence")  #TEST
+    compare_integers(1, int(localizer.converged), scheme + " localization convergence")  #TEST
     U = localizer.U.to_array()
     compare_arrays(np.eye(U.shape[0]), U.T @ U, 1.0e-10, scheme + " unitary rotation")       #TEST
+
+# Nuclear second derivatives require stationarity below the objective's
+# floating-point resolution. Check a near-maximum restart with and without AH,
+# using a freshly AO-projected gradient rather than the localizer's own flag.
+from scipy.linalg import expm
+mints = psi4.core.MintsHelper(wfn_scf)
+S = wfn_scf.S().np
+centers = np.array([wfn_scf.basisset().function_to_center(a) for a in range(len(S))])
+populations = [.5*((centers == a)[:, None]*S + S*(centers == a)[None, :])
+               for a in np.unique(centers)]
+psi4.set_options({"local_gradient_convergence": 1.0e-12, "local_maxiter": 100})
+for scheme in ["BOYS", "PIPEK_MEZEY"]:
+    operators = [x.np for x in mints.ao_dipole()] if scheme == "BOYS" else populations
+    for ah in [False, True]:
+        psi4.set_options({"local_use_augmented_hessian": ah})
+        localizer = psi4.core.Localizer.build(scheme, wfn_scf.basisset(), C_occ)
+        localizer.localize()
+        compare_integers(1, int(localizer.converged),
+                       scheme + " tight localization AH=" + str(ah))                       #TEST
+        L = localizer.L.np.copy()
+        K = np.zeros((L.shape[1], L.shape[1]))
+        K[0, 1], K[1, 0] = 1.0e-8, -1.0e-8
+        trial = L @ expm(K)
+        restart = psi4.core.Localizer.build(scheme, wfn_scf.basisset(),
+                                            psi4.core.Matrix.from_array(trial))
+        restart.localize()
+        compare_integers(1, int(restart.converged),
+                       scheme + " small-rotation restart AH=" + str(ah))                    #TEST
+        projected = [restart.L.np.T @ A @ restart.L.np for A in operators]
+        i, j = np.triu_indices(L.shape[1], 1)
+        gradient = sum(4*(A.diagonal()[i]-A.diagonal()[j])*A[i, j] for A in projected)
+        compare_arrays(np.zeros_like(gradient), gradient, 1.1e-12,
+                       scheme + " tight AO-projected stationarity AH=" + str(ah))           #TEST
+        compare_arrays(np.eye(L.shape[1]), restart.L.np.T @ S @ restart.L.np, 1.0e-12,
+                       scheme + " restart metric orthonormality AH=" + str(ah))             #TEST
+psi4.set_options({"local_gradient_convergence": 1.0e-8, "local_maxiter": 1000,
+                  "local_use_augmented_hessian": True})
 
 # The shared libmints IBO implementation constructs IAOs but delegates its
 # fourth-power generalized-PM optimization to the same AH/saddle-controlled
@@ -49,7 +86,7 @@ minao = psi4.core.BasisSet.build(h2o, "BASIS", "CC-PVTZ-MINAO")
 ibo = psi4.core.IBOLocalizer.build(wfn_scf.basisset(), minao, C_occ)
 ibo.set_ranges([0, 1, C_occ.np.shape[1]])
 ibo.localize()
-compare_values(1, int(ibo.converged), 0, "IBO localization convergence")                    #TEST
+compare_integers(1, int(ibo.converged), "IBO localization convergence")                    #TEST
 U_ibo = ibo.U.to_array()
 compare_arrays(np.eye(U_ibo.shape[0]), U_ibo.T @ U_ibo, 1.0e-10,
                "IBO unitary rotation")                                                       #TEST

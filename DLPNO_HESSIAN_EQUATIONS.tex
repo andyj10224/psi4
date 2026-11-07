@@ -1085,4 +1085,26 @@ translation identity are tested:
 The nuclear dipole is linear in nuclear coordinates and has zero mixed
 second derivative. Only the electronic dipole enters the Boys objective.
 
+\subsection{Forward stationarity below objective roundoff}
+The response equations require a stationary forward localized frame. For
+the quadratic Boys/PM Jacobi rotation of orbitals $i,j$, define
+\begin{equation}
+ d=\sum_\kappa\left[(A^\kappa_{ii}-A^\kappa_{jj})^2
+                         -4(A^\kappa_{ij})^2\right],\qquad
+ o=4\sum_\kappa(A^\kappa_{ii}-A^\kappa_{jj})A^\kappa_{ij}.
+\end{equation}
+The exact pair maximizer has
+\begin{equation}
+ \theta=\tfrac14\operatorname{atan2}(o,d),\qquad
+ \Delta\Phi=\tfrac14\left(\sqrt{d^2+o^2}-d\right)
+ =\frac{o^2}{4(\sqrt{d^2+o^2}+d)}\quad(d>0).
+\end{equation}
+The rationalized form resolves the gain near a maximum. Rejecting every
+gain below objective roundoff imposes an artificial square-root-of-machine-
+precision floor on the gradient $o$. The quadratic implementation instead
+accepts positive exact pair gains and uses the requested gradient criterion
+to stop. The fourth-power proposal retains its objective acceptance test.
+Independent AO-projected stationarity checks cover small-rotation restarts
+with augmented-Hessian steps both enabled and disabled.
+
 \end{document}
