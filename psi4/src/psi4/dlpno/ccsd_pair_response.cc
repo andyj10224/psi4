@@ -62,17 +62,30 @@ SharedMatrix zeros_like(const SharedMatrix& m) { return std::make_shared<Matrix>
 }  // namespace
 
 DLPNOCCSD::DFPairState DLPNOCCSD::ccsd_df_pair_state(int i, int j) const {
-    if (!gradient_model_ || i < 0 || j < i || j >= T_ia_.size() || i_j_to_ij_[i][j] < 0)
-        throw PSIEXCEPTION("Expected a unique retained RHF CCSD pair.");
+    if (!gradient_model_ || i < 0 || j < 0 || i >= T_ia_.size() || j >= T_ia_.size() || i_j_to_ij_[i][j] < 0)
+        throw PSIEXCEPTION("Expected a retained RHF CCSD pair.");
     const int p = i_j_to_ij_[i][j], rev = ij_to_ji_[p];
     const auto& dom = lmopair_to_lmos_[p];
     std::vector<SharedMatrix> singles;
     for (int m : dom) singles.push_back(T_ia_[m]->clone());
     auto aux = std::make_shared<Matrix>(lmopair_to_ribfs_[p].size(),1);
     for (int q = 0; q < aux->nrow(); ++q) (*aux)(q,0) = lmopair_to_ribfs_[p][q];
-    return {dom, singles, {{"AUX",aux}, {"TN", T_n_ij_.at(p)->clone()}, {"T2", T_iajb_.at(p)->clone()},
+    return {dom, singles, {{"AUX",aux}, {"TN", T_n_ij_.at(p)->clone()}, {"BETA", beta_.at(p)->clone()},
+                           {"GAMMA", gamma_.at(p)->clone()}, {"DELTA", delta_.at(p)->clone()}, {"T2", T_iajb_.at(p)->clone()},
                            {"OI", i_Qk_t1_.at(p)->clone()}, {"OJ", i_Qk_t1_.at(rev)->clone()},
                            {"VI", i_Qa_t1_.at(p)->clone()}, {"VJ", i_Qa_t1_.at(rev)->clone()}}};
+}
+
+std::vector<SharedMatrix> DLPNOCCSD::ccsd_mixed_state(int i, int j, int k) const {
+    int no = T_ia_.size();
+    if (!gradient_model_ || std::min({i,j,k}) < 0 || std::max({i,j,k}) >= no)
+        throw PSIEXCEPTION("Invalid occupied indices for a mixed CCSD intermediate.");
+    const int p = i_j_to_ij_[i][j];
+    if (p < 0 || lmopair_to_lmos_dense_[p][k] < 0)
+        throw PSIEXCEPTION("Requested orbital is outside the mixed CCSD pair domain.");
+    const int m = lmopair_to_lmos_dense_[p][k];
+    return {J_ikac_non_proj_[p][m]->clone(), K_iakc_non_proj_[p][m]->clone(),
+            gamma_.at(i_j_to_ij_[k][i])->clone(), delta_.at(i_j_to_ij_[i][k])->clone()};
 }
 
 // Partial derivative with respect to the projected bare Fock blocks. The CCSD

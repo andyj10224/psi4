@@ -99,3 +99,18 @@ The coarser estimates were less accurate, and the all-electron comparison levele
 | All-electron | 9.90e-9 | 9.54e-11 | 1.39e-9 | 1.61e-10 |
 
 **Scope.** This checkpoint supplies partial residual derivatives. Next differentiate the remaining two-electron singles, mixed-domain and beta/gamma/delta doubles contributions, and their explicit overlap occurrences. Then assemble the full source and solve the coupled singles/doubles tangent equations. The molecular verification uses full fitting domains; no end-to-end Hessian, screened-source scaling, or complete CCSD response is claimed. [Component check](tests/dlpno-grad-model/input.dat) · [Molecular verification](tests/dlpno-hessian-model/lmp2_tangent.py)
+
+## 2026-11-07 — Complete nuclear source for the transformed CCSD singles and doubles residual
+
+Added the fixed-amplitude source for the coupled right response. The assembly reuses native converged singles and doubles, ordered dressed DF factors, mixed-domain J/K, occupied maps, and the beta, gamma and delta intermediates retained for Lambda. Reconstructed the three intermediates against the native cached values before differentiating. The doubles residual now includes Jiang Eqs. 75–81, and the singles residual includes Eqs. 87–90 with its dressed Fock term. The molecular interface takes local fitted-factor and mixed-integral tangents in their native orders. [Source](psi4/driver/procrouting/response/dlpno_ccsd_response.py) · [Working equations](DLPNO_HESSIAN_EQUATIONS.tex)
+
+Checked an O–H stretch in water/cc-pVDZ, with Boys localization, full fitting domains and native truncated PNO ranks. Compared the reference residual reconstruction with the converged native solution, and the analytic source against centered, extrapolated displaced residuals at fixed CCSD components in aligned frames. The lower-order states were recalculated at the displacements. Maximum absolute differences across all singles and doubles components, in Hartree/bohr:
+
+| Core | Unique pairs | Singles | Doubles |
+| --- | ---: | ---: | ---: |
+| Frozen O 1s | 10 | 9.26e-11 | 4.47e-10 |
+| All-electron | 15 | 1.19e-10 | 1.96e-9 |
+
+Next implement the coupled Jacobian action, check its weighted transpose against the Lambda action and solve for the first-order amplitudes. The present water test verifies the residual source. Screened molecular integral delivery, its scaling, the triples response and the final Hessian comparison with differences of canonical DF-CCSD(T) gradients remain open. [Water check](tests/dlpno-hessian-model/lmp2_tangent.py)
+
+Native build and install passed. The water diagnostic and the three regressions dfccsd-t-grad1, dlpno-grad-model and dlpnocc-1 passed. The equation record compiled in two LaTeX passes.

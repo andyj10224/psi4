@@ -185,6 +185,7 @@ SharedWavefunction dlpno(SharedWavefunction, Options&);
 SharedMatrix orbital_response_action(SharedWavefunction,const std::string&,SharedMatrix);
 using PairBlocks = std::map<std::pair<int,int>, SharedMatrix>;
 PairBlocks lmp2_blocks(SharedWavefunction,const std::string&);
+std::vector<SharedMatrix> ccsd_mixed_state(SharedWavefunction,int,int,int);
 std::pair<SharedMatrix,SharedMatrix> pair_metric_tangent(SharedMatrix,SharedMatrix);
 std::tuple<std::vector<int>,std::vector<SharedMatrix>,std::map<std::string,SharedMatrix>>
     ccsd_df_pair_state(SharedWavefunction,int,int);
@@ -1430,6 +1431,8 @@ PYBIND11_MODULE(core, core) {
     core.def("dlpno", py_psi_dlpno, "Runs the DLPNO codes.");
     core.def("dlpno_pair_metric_tangent", &dlpno::pair_metric_tangent, "metric"_a, "direction"_a,
              "Local inverse square root of the CCSD fitting metric and its fixed-rank derivative.");
+    core.def("dlpno_ccsd_mixed_state", &dlpno::ccsd_mixed_state, "wfn"_a, "i"_a, "j"_a, "k"_a,
+             "Ordered native mixed J/K, gamma and delta blocks for the CCSD C/D contributions.");
     core.def("dlpno_ccsd_df_pair_state", &dlpno::ccsd_df_pair_state, "wfn"_a, "i"_a, "j"_a,
              "Local CCSD amplitudes and dressed DF intermediates for one unique retained pair.");
     core.def("dlpno_ccsd_fock_source", &dlpno::ccsd_fock_source, "wfn"_a, "oo"_a, "ov"_a, "vv"_a,

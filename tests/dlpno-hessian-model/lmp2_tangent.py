@@ -1,4 +1,5 @@
 """Water first-space LMP2 amplitude derivatives, checked against reconverged pair tensors."""
+from functools import lru_cache
 import numpy as np
 import psi4
 from scipy.optimize import linear_sum_assignment
@@ -6,6 +7,8 @@ from scipy.sparse.linalg import LinearOperator, gmres
 from psi4.driver.procrouting.response.dlpno_orbital import (
     boys_nuclear_tangent, first_pno_tangent, coupled_lmp2_tangent, pair_exchange_tangent, final_pno_tangent,
     ccsd_pair_frames, ccsd_projected_fock_source, ccsd_direct_df_source, ccsd_pair_df_factors, PairDFFactors)
+from psi4.driver.procrouting.response.dlpno_ccsd_response import (
+    ccsd_pair_intermediate_tangent, ccsd_beta_source, ccsd_mixed_doubles_source, ccsd_singles_source, ccsd_doubles_fock_source, ccsd_residual_source)
 from first_pno import raw, relax_fock
 from water_hvp import BASE, STRETCH, molecule
 
@@ -76,9 +79,49 @@ def check(frozen):
     blocks0,blocks1 = zip(projected(occ,docc,occ,docc),projected(occ,docc,z,dz),projected(z,dz,z,dz))
     b,db = ccsd_pair_df_factors(Js,dJs,PairDFFactors(*blocks0),PairDFFactors(*blocks1))
     df_direct = ccsd_direct_df_source(w,target,ccsd_frames,b,db)
+    doubles = blocks(w,'CCSD_DOUBLES')
+    def oriented(tensors,i,j):
+        key = tuple(sorted((i,j)))
+        return tensors[key] if i<=j else tensors[key].T
+    exchange_blocks = {ij:exchange(ij,ccsd_frames.frames[ij],ccsd_frames.tangents[ij]) for ij in frames}
+    def ordered_exchange(i,j):
+        k,dk = exchange_blocks[tuple(sorted((i,j)))]
+        return (k,dk) if i<=j else (k.T,dk.T)
+    @lru_cache(None)
+    def factors_for(i,j):
+        pair = i,j
+        dl,_,st = psi4.core.dlpno_ccsd_df_pair_state(w,*pair)
+        assert np.array_equal(st['AUX'].np[:,0],aux_idx)
+        lm,dm = L[:,dl], dL[:,dl]
+        y,dy = (tab[tuple(sorted(pair))] for tab in (ccsd_frames.frames,ccsd_frames.tangents))
+        vals,dirs = zip(projected(lm,dm,lm,dm),projected(lm,dm,y,dy),projected(y,dy,y,dy))
+        return ccsd_pair_df_factors(Js,dJs,PairDFFactors(*vals),PairDFFactors(*dirs))
+    @lru_cache(None)
+    def interm(i,j):
+        pair = i,j
+        fac,dfac = factors_for(*pair)
+        return ccsd_pair_intermediate_tangent(w,pair,ccsd_frames,fac,dfac,doubles,ordered_exchange)
+    def mixed_derivative(i,j,k):
+        yp,dyp = (tab[tuple(sorted((i,j)))] for tab in (ccsd_frames.frames,ccsd_frames.tangents))
+        yq,dyq = (tab[tuple(sorted((k,j)))] for tab in (ccsd_frames.frames,ccsd_frames.tangents))
+        occ = lambda m: (L[:,m:m+1], dL[:,m:m+1])
+        def packed(*args):
+            return [t.reshape(len(Js),-1) for t in projected(*args)]
+        _,dj = pair_exchange_tangent(Js,dJs,*packed(*occ(i),*occ(k)),*packed(yp,dyp,yq,dyq))
+        _,dk = pair_exchange_tangent(Js,dJs,*packed(*occ(i),yp,dyp),*packed(*occ(k),yq,dyq))
+        return dj.reshape(yp.shape[1],yq.shape[1]),dk
+    intermediates = interm(*target)
+    beta_source = ccsd_beta_source(w,target,ccsd_frames,intermediates.beta,doubles)
+    cd_source = ccsd_mixed_doubles_source(w,target,ccsd_frames,interm,doubles,mixed_derivative)
+    singles_source = ccsd_singles_source(w,ccsd_frames,factors_for,doubles,ordered_exchange,L,dL,F,df)
+    eg = ccsd_doubles_fock_source(w,ccsd_frames,factors_for,doubles,ordered_exchange,L,dL,F,df)
+    total1,total2 = ccsd_residual_source(w,ccsd_frames,factors_for,ordered_exchange,mixed_derivative,dL,df)
+    for got,expected in zip(total1,singles_source):
+        np.testing.assert_allclose(got,expected,atol=1.e-12,rtol=0)
+    np.testing.assert_allclose(total2[target],df_direct+beta_source+cd_source+eg[target],atol=1.e-12,rtol=0)
     analytic = np.concatenate([ccsd_frames.overlap_tangent(left_pair,right_pair).ravel()] +
                               [block.ravel() for block in b1] + [b2[ij].ravel() for ij in frames] +
-                              [df_direct.ravel()])
+                              [df_direct.ravel(),*(v.ravel() for v in intermediates),beta_source.ravel(),cd_source.ravel(),*singles_source,eg[target].ravel(),*(total2[ij].ravel() for ij in frames)])
     final_frames = blocks(w,'FINAL_FRAME')
     # Rotate each parent frame internally and compensate the amplitude derivative.
     shifted = type(out)({}, {})
@@ -189,6 +232,7 @@ def check(frozen):
         vals,U = np.linalg.eigh(metric[np.ix_(aux_idx,aux_idx)])
         W = (U/np.sqrt(vals)) @ U.T
         bq = (W @ q[aux_idx].reshape(len(vals),-1)).reshape(len(vals),q.shape[1],q.shape[2])
+        dom,ts,_ = psi4.core.dlpno_ccsd_df_pair_state(w,*target)
         lm, z = l[:,dom], aligned[target]
         oo, ovf, vvf = lm.T @ bq @ lm, lm.T @ bq @ z, z.T @ bq @ z
         tn = np.stack([(z.T @ scf.S().np @ aligned[m,m] @ s.np).ravel() for m,s in zip(dom,ts)])
@@ -197,9 +241,177 @@ def check(frozen):
             return ovf[:,n,:] - (oo[:,n,:]+ovf@tn[n]) @ tn + vvf @ tn[n]
         dressed = vvf - tn.T @ ovf
         direct = via(target[0]).T @ via(target[1]) + (dressed @ target_t @ dressed.transpose(0,2,1)).sum(axis=0)
+        def sij(p,q):
+            return aligned[tuple(sorted(p))].T @ scf.S().np @ aligned[tuple(sorted(q))]
+        @lru_cache(None)
+        def forward_intermediates(pair):
+            dom,ts,_ = psi4.core.dlpno_ccsd_df_pair_state(w,*pair)
+            lm,z = l[:,dom],aligned[tuple(sorted(pair))]
+            oo,ovf,vvf = lm.T @ bq @ lm,lm.T @ bq @ z,z.T @ bq @ z
+            tn = np.stack([(sij(pair,(m,m)) @ t.np).ravel() for m,t in zip(dom,ts)])
+            i,j = pair
+            ki, kj = dom.index(i),dom.index(j)
+            oi = oo[:,ki,:] + ovf @ tn[ki]
+            oj = oo[:,kj,:] + ovf @ tn[kj]
+            beta = oi.T @ oj + np.einsum('Qkc,cd,Qld->kl',ovf,oriented(doubles,i,j),ovf)
+            coul = np.einsum('Q,Qlc->lc',oo[:,ki,kj],ovf)
+            exch = oo[:,ki,:].T @ ovf[:,kj,:]
+            ivvv = np.einsum('Qb,Qac->bac',ovf[:,ki,:],vvf)
+            jvvv = np.einsum('Qb,Qac->bac',ovf[:,kj,:],vvf)
+            gamma = -tn.T @ coul + np.einsum('b,bac->ac',tn[kj],ivvv)
+            delta = -tn.T @ (2*exch-coul) + np.einsum('b,cab->ac',tn[ki],2*jvvv)-np.einsum('b,bca->ac',tn[ki],jvvv)
+            Sm = scf.S().np
+            def overlap(p,q):
+                return aligned[tuple(sorted(p))].T @ Sm @ aligned[tuple(sorted(q))]
+            def t1(m,p):
+                return (overlap(p,(m,m)) @ ts[dom.index(m)].np).ravel()
+            def pair_k(p):
+                m,n = p
+                yp = aligned[tuple(sorted(p))]
+                return (l[:,m] @ bq @ yp).T @ (l[:,n] @ bq @ yp)
+            beta_part = np.zeros_like(oriented(doubles,i,j))
+            for m in dom:
+                im,mj = (i,m),(m,j)
+                K = pair_k(im)
+                vec = overlap(pair,im) @ K.T @ t1(j,im)
+                gamma -= np.outer(tn[dom.index(m)],vec)
+                gamma -= .5*overlap(pair,mj) @ oriented(doubles,m,j) @ overlap(mj,im) @ K @ overlap(im,pair)
+                K = pair_k(mj)
+                ex = 2*K - K.T
+                vec = t1(i,mj) @ ex @ overlap(mj,pair)
+                delta -= np.outer(tn[dom.index(m)],vec)
+                t = oriented(doubles,i,m)
+                delta += .5*overlap(pair,im) @ (2*t-t.T) @ overlap(im,mj) @ ex @ overlap(mj,pair)
+                for n in dom:
+                    if tuple(sorted((m,n))) not in doubles:
+                        continue
+                    ovmn = overlap(pair,(m,n))
+                    beta_part += beta[dom.index(m),dom.index(n)] * (ovmn @ oriented(doubles,m,n) @ ovmn.T)
+            return beta,gamma,delta,beta_part
+        beta,gamma,delta,beta_part = forward_intermediates(target)
+        def cd_order(i,j):
+            dom,_,_ = psi4.core.dlpno_ccsd_df_pair_state(w,i,j)
+            pair = i,j
+            yp = aligned[tuple(sorted(pair))]
+            c = np.zeros((yp.shape[1],)*2)
+            d = np.zeros_like(c)
+            for k in dom:
+                kj,ki,ik,jk = (k,j),(k,i),(i,k),(j,k)
+                yq = aligned[tuple(sorted(kj))]
+                Jik = np.einsum('Q,Qac->ac',l[:,i] @ bq @ l[:,k],yp.T @ bq @ yq)
+                Kik = (l[:,i] @ bq @ yp).T @ (l[:,k] @ bq @ yq)
+                g = sij(pair,ki) @ forward_intermediates(ki)[1] @ sij(ki,kj)
+                c -= (Jik+g) @ oriented(doubles,*kj).T @ sij(kj,pair)
+                g = sij(pair,ik) @ forward_intermediates(ik)[2] @ sij(ik,jk)
+                t = oriented(doubles,*jk)
+                d += .5*(2*Kik-Jik+g) @ (2*t-t.T).T @ sij(jk,pair)
+            return .5*c+c.T+d
+        cd = cd_order(*target)+cd_order(*target[::-1]).T
+        # Independent forward singles residual. All amplitudes are held at the reference.
+        @lru_cache(None)
+        def inputs(i,k):
+            dom,singles,_ = psi4.core.dlpno_ccsd_df_pair_state(w,i,k)
+            y = aligned[tuple(sorted((i,k)))]
+            lm = l[:,dom]
+            oo,ov,vv = lm.T @ bq @ lm,lm.T @ bq @ y,y.T @ bq @ y
+            tn = np.stack([(sij((i,k),(m,m)) @ t.np).ravel() for m,t in zip(dom,singles)])
+            return dom,singles,oo,ov,vv,tn
+        @lru_cache(None)
+        def K(i,k):
+            y = aligned[tuple(sorted((i,k)))]
+            return (l[:,i] @ bq @ y).T @ (l[:,k] @ bq @ y)
+        fbar = f.copy()
+        orders = [p for i,k in frames for p in (((i,k),) if i==k else ((i,k),(k,i)))]
+        for i,k in orders:
+            dom,_,oo,ov,vv,tn = inputs(i,k)
+            a,b = dom.index(i),dom.index(k)
+            Jik = np.einsum('Q,Qlc->lc',oo[:,a,b],ov)
+            fbar[i,k] += np.sum(tn*(2*Jik - oo[:,b,:].T @ ov[:,a,:]))
+        residual = [np.zeros(aligned[i,i].shape[1]) for i in range(l.shape[1])]
+        for i,k in orders:
+            pair = i,k
+            dom,singles,oo,ov,vv,tn = inputs(*pair)
+            y = aligned[tuple(sorted(pair))]
+            a,b = dom.index(i),dom.index(k)
+            if i==k:
+                coeff = np.einsum('Qme,me->Q',ov,tn)
+                ai = l[:,i] @ scf.Fa().np @ y + 2*coeff @ ov[:,a,:] - np.einsum('Qae,me,Qm->a',vv,tn,oo[:,a,:])
+                ab = y.T @ scf.Fa().np @ y + np.einsum('Q,Qab->ab',2*coeff,vv) - np.einsum('Qae,me,Qmb->ab',vv,tn,ov)
+                mb = l[:,dom].T @ scf.Fa().np @ y + np.einsum('Q,Qmb->mb',2*coeff,ov) - np.einsum('Qme,le,Qlb->mb',ov,tn,ov)
+                ti = singles[a].np.ravel()
+                residual[i] += ai + ab @ ti - tn.T @ (mb @ ti + fbar[dom,i])
+            t = oriented(doubles,i,k)
+            u = 2*t-t.T
+            tmp = np.einsum('Qc,Qda,cd->a',ov[:,b,:],vv,u.T)
+            residual[i] += sij(pair,(i,i)).T @ tmp
+            fk = l[:,k] @ scf.Fa().np @ y
+            for m,t1 in zip(dom,singles):
+                km = k,m
+                s = sij(km,pair)
+                residual[i] -= np.sum((s @ u.T @ s.T)*K(*km))*(sij((i,i),(m,m)) @ t1.np).ravel()
+                fk += sij(pair,km) @ (2*K(*km)-K(*km).T) @ (sij(km,(m,m)) @ t1.np).ravel()
+            residual[i] += sij(pair,(i,i)).T @ u @ fk
+            B = (oo[:,a,:].T @ ov[:,b,:] + tn @ K(i,k)) @ u.T
+            for row,m in enumerate(dom):
+                residual[m] -= B[row] @ sij(pair,(m,m))
+        if np.array_equal(coords, BASE):
+            assert max(np.max(abs(r)) for r in residual) < 1.e-8
+        # E and G from the original doubly dressed Fock intermediates.
+        fkj = fbar.copy()
+        for i,j in orders:
+            dom0,ts0,_,hh,_,tn0 = inputs(j,j)
+            gq = np.einsum('Qme,me->Q',hh,tn0)
+            kk = dom0.index(i)
+            hbar = l[:,i] @ scf.Fa().np @ aligned[j,j] + 2*gq @ hh[:,kk,:]
+            hbar -= np.einsum('Qe,me,Qmc->c',hh[:,kk,:],tn0,hh)
+            fkj[i,j] += hbar @ ts0[dom0.index(j)].np.ravel()
+            for m in inputs(i,j)[0]:
+                sop = sij((m,i),(m,j))
+                t = oriented(doubles,m,j)
+                fkj[i,j] += np.sum(K(m,i)*(sop @ (2*t-t.T) @ sop.T))
+        def eg_value(pair):
+            i,j = pair
+            dom,ts,_,hh,vv,tn = inputs(*pair)
+            gq = np.einsum('Qme,me->Q',hh,tn)
+            y = aligned[pair]
+            ff = y.T @ scf.Fa().np @ y + np.einsum('Q,Qab->ab',2*gq,vv)
+            ff -= np.einsum('Qae,me,Qmb->ab',vv,tn,hh)
+            hhbar = l[:,dom].T @ scf.Fa().np @ y + np.einsum('Q,Qma->ma',2*gq,hh)
+            hhbar -= np.einsum('Qme,le,Qlb->mb',hh,tn,hh)
+            ff -= tn.T @ hhbar
+            for k in dom:
+                for m in dom:
+                    if tuple(sorted((k,m))) not in doubles:
+                        continue
+                    s = sij(pair,(k,m))
+                    t = oriented(doubles,k,m)
+                    ff -= s @ (2*t-t.T) @ K(k,m).T @ s.T
+            eg_forward = oriented(doubles,i,j) @ ff.T + ff @ oriented(doubles,i,j)
+            for perm,(i,j) in enumerate((pair,pair[::-1])):
+                for k in domains[i,i].astype(int).ravel():
+                    s = sij(pair,(i,k))
+                    term = fkj[k,j]*(s @ oriented(doubles,i,k) @ s.T)
+                    eg_forward -= term.T if perm else term
+            return eg_forward
+        eg_forward = eg_value(target)
+        complete = {}
+        for pair in frames:
+            i,j = pair
+            locdom,_,qo,qh,qv,proj_singles = inputs(i,j)
+            def dressed_virtual(m):
+                n = locdom.index(m)
+                return qh[:,n,:] - (qo[:,n,:]+qh @ proj_singles[n]) @ proj_singles + qv @ proj_singles[n]
+            vv_t = qv - proj_singles.T @ qh
+            t = doubles[pair]
+            driving = (dressed_virtual(i).T @ dressed_virtual(j) +
+                       (vv_t @ t @ vv_t.transpose(0,2,1)).sum(axis=0))
+            complete[pair] = (driving + forward_intermediates(pair)[3] +
+                              cd_order(*pair) + cd_order(*pair[::-1]).T + eg_value(pair))
+        if np.array_equal(coords, BASE):
+            assert max(np.max(abs(v)) for v in complete.values()) < 1.e-8
         samples = np.concatenate([(aligned[left_pair].T @ scf.S().np @ aligned[right_pair]).ravel()]
                                  + [m.np.ravel() for m in val1] + [val2[ij].np.ravel() for ij in frames]
-                                 + [direct.ravel()])
+                                 + [direct.ravel(),beta.ravel(),gamma.ravel(),delta.ravel(),beta_part.ravel(),cd.ravel(),*residual,eg_forward.ravel(),*(complete[ij].ravel() for ij in frames)])
         return physical, final_densities, samples
     at_origin, final_origin, _ = sample(BASE)
     for ij,y in frames.items():
@@ -216,8 +428,10 @@ def check(frozen):
     discrepancy = np.abs(analytic-(4*fock_estimates[-1]-fock_estimates[-2])/3)
     nedge = ccsd_frames.overlap_tangent(left_pair,right_pair).size
     nsingles = sum(x.size for x in b1)
-    print('projected CCSD errors',frozen, [part.max() for part in
-          np.split(discrepancy,[nedge,nedge+nsingles,analytic.size-df_direct.size])],flush=True)
+    sizes = [nedge, nsingles, sum(x.size for x in b2.values()), df_direct.size,
+             *(v.size for v in intermediates), beta_source.size, cd_source.size, nsingles, eg[target].size, sum(t.size for t in total2.values())]
+    print('projected CCSD errors',frozen,[part.max() for part in
+          np.split(discrepancy,np.cumsum(sizes[:-1]))],flush=True)
     np.testing.assert_allclose(discrepancy,0.,atol=3.e-8)
     final_errors = [np.max(abs(final[ij].retained_density_tangent -
                                (4*final_estimates[-1][ij]-final_estimates[-2][ij])/3)) for ij in frames]

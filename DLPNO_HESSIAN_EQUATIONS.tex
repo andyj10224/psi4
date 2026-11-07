@@ -3,7 +3,7 @@
 \usepackage[margin=1in]{geometry}
 \title{Working equations for the RHF DLPNO-CCSD(T) nuclear Hessian}
 \author{Quantum Chemistry Grand Battleplan}
-\date{6 November 2026}
+\date{7 November 2026}
 \begin{document}
 \maketitle
 
@@ -363,6 +363,69 @@ Jiang Eqs.~75 and 76 then contribute to the unique doubles block
  V_i^v V_j^{\mathsf T}+ V_i(V_j^v)^{\mathsf T}
  + D^v t_{ij}D^{\mathsf T}+D t_{ij}(D^v)^{\mathsf T}\big]_Q .
 \end{equation}
-Other two-electron, dressed-Fock and explicit-overlap contractions are needed
-before solving for the CCSD amplitude response.
+\subsection{Complete fixed-amplitude CCSD nuclear source}
+Let $D_v$ differentiate the molecular inputs, lower-order solutions and
+interpair transfers on the selected branch while keeping the components of
+$t_i$ and $t_{ij}$ fixed in their respective moving frames. For a multilinear
+contraction $C$ (including transposes and permutations), the implemented rule is
+\begin{equation}
+ D_v C(X_1,\ldots,X_n)=\sum_{k=1}^n
+ C(X_1,\ldots,D_v X_k,\ldots,X_n).
+\end{equation}
+For $p=ij$, put $s_{pq}=Y_p^{\mathsf T} S Y_q$, $n_m^p=s_{p,mm}t_m$,
+$u_p=2t_p-t_p^{\mathsf T}$, $L_p=2K_p-K_p^{\mathsf T}$ and
+$P_{pq}(X)=s_{pq}Xs_{qp}$.
+Then $D_v n_m^p=(D_v s_{p,mm})t_m$.
+The additional term $s_{p,mm}t_m^v$ belongs to the amplitude Jacobian action.
+
+For each target auxiliary row $Q$, let $h^Q$ be its occupied--virtual factor,
+and $O_i^Q$ the dressed occupied column defined above. Jiang Eq.~82 gives
+\begin{align}
+ \beta_{p}&=\sum_Q[O_i^Q(O_j^Q)^{\mathsf T}+h^Qt_p(h^Q)^{\mathsf T}],\\
+ b_{2,p}^{B}&=\sum_{kl}\big[(D_v\beta_{p,kl})P_{p,kl}(t_{kl})
+       +\beta_{p,kl}D_v P_{p,kl}(t_{kl})\big].
+\end{align}
+For Eqs.~83--84 the occupied sums below follow the native target domain.
+Write $J_{lc}=(ij|lc)$, $K_{lc}=(il|jc)$ and $V^i_{bac}=(ib|ac)$ in
+the target fit. In matrix notation $n$ stacks the rows $(n_l^p)^{\mathsf T}$:
+\begin{align}
+ \gamma_p={}&-n^{\mathsf T}J+\sum_b(n_j^p)_b V^i_{b::}
+ -\sum_l n_l^p(s_{p,il}K_{il}^{\mathsf T}n_j^{il})^{\mathsf T}
+ -\tfrac12\sum_l s_{p,lj}t_{lj}s_{lj,il}K_{il}s_{il,p},\\
+ (\delta_p)_{ac}={}&-[n^{\mathsf T}(2K-J)]_{ac}
+ +\sum_b(n_i^p)_b(2V^j_{cab}-V^j_{bca})\notag\\
+ &-\sum_l (n_l^p)_a[(n_i^{lj})^{\mathsf T}L_{lj}s_{lj,p}]_c
+ +\tfrac12\sum_l[s_{p,il}u_{il}s_{il,lj}L_{lj}s_{lj,p}]_{ac}.
+\end{align}
+The tangent uses $D_v$ on every nonconstant operand. Use $J^{ijk},K^{ijk}$
+for the native mixed integrals with their second virtual axis in $kj$
+($jk$ shares that frame). The ordered terms and their permutation are
+\begin{align}
+ C_{ij}&=-\sum_k(J^{ijk}+s_{p,ki}\gamma_{ki}s_{ki,kj})t_{kj}^{\mathsf T}s_{kj,p},\\
+ D_{ij}&=\tfrac12\sum_k(2K^{ijk}-J^{ijk}+s_{p,ik}\delta_{ik}s_{ik,jk})
+                 u_{jk}^{\mathsf T}s_{jk,p},\\
+ M_{ij}&=\tfrac12 C_{ij}+C_{ij}^{\mathsf T}+D_{ij},&
+ b_{2,p}^{C,D}&=D_v(M_{ij}+M_{ji}^{\mathsf T}).
+\end{align}
+With $F''$ the fully dressed and doubles-corrected Fock intermediate of the
+right equations (in its indicated frame), the last doubles terms are
+\begin{align}
+ E_p &=t_p(F''_p)^{\mathsf T}+F''_pt_p,&
+ G_{ij}&=-\sum_k F''_{kj}P_{p,ik}(t_{ik}),\\
+ b_{2,p}^{E,G}&=D_v(E_p+G_{ij}+G_{ji}^{\mathsf T}).
+\end{align}
+For singles let $A_i,B_i,C_i$ be the native ordered contractions in Jiang
+Eqs.~88--90 expressed in the diagonal frame $ii$. In the notation of Eq.~87,
+\begin{equation}
+ b_{1,i}=D_v(F^{\rm dressed}_{ai}+A_i+B_i+C_i),\qquad
+ b_{2,p}=b_{2,p}^{75,76}+b_{2,p}^{B}+b_{2,p}^{C,D}+b_{2,p}^{E,G}.
+\end{equation}
+Here $F^{\rm dressed}_{ai}$ denotes the vector over $a$. Its derivative
+includes the moving occupied and virtual legs and all projected singles in
+Eqs.~96 and 98--101. Each bare Fock term occurs once.
+For the coupled amplitude vector $t=(t_1,t_2)$, $R_t t^v=-b^v$.
+Equations~\eqref{eq:curvature} and \eqref{eq:column} explain why stationary
+curvature requires first-order electronic relaxation but no second-order
+amplitude derivatives; in the symmetric expression the reference multipliers
+suffice.
 \end{document}

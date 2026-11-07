@@ -777,6 +777,7 @@ class PSI_API DLPNOCCSD : public DLPNO {
     std::pair<std::vector<SharedMatrix>, PairBlocks> ccsd_fock_source(
         SharedMatrix oo, const PairBlocks& ov, const PairBlocks& vv);
     using DFPairState = std::tuple<std::vector<int>, std::vector<SharedMatrix>, std::map<std::string,SharedMatrix>>;
+    std::vector<SharedMatrix> ccsd_mixed_state(int i, int j, int k) const;
     DFPairState ccsd_df_pair_state(int i, int j) const;
     DLPNOCCSD(SharedWavefunction ref_wfn, Options& options);
     ~DLPNOCCSD() override;

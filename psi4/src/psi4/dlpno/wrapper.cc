@@ -67,6 +67,12 @@ DLPNOCCSD::DFPairState ccsd_df_pair_state(SharedWavefunction wfn, int i, int j) 
     return local->ccsd_df_pair_state(i,j);
 }
 
+std::vector<SharedMatrix> ccsd_mixed_state(SharedWavefunction wfn, int i, int j, int k) {
+    auto local = std::dynamic_pointer_cast<DLPNOCCSD_T>(wfn);
+    if (!local) throw PSIEXCEPTION("Mixed CCSD response requires an RHF DLPNO gradient model.");
+    return local->ccsd_mixed_state(i,j,k);
+}
+
 SharedWavefunction dlpno(SharedWavefunction ref_wfn, Options& options) {
 
     const auto reference = options.get_str("REFERENCE");
