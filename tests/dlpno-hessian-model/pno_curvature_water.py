@@ -56,6 +56,7 @@ def snapshot(w, reference, response=None):
                 data['amplitudes']=amp
             stages[stage][i,j]=data
     if response is not None:
+        response['frames']=frames
         response['foo']=lm.T@ref.Fa().np@lm
         response['foo']=(response['foo']+response['foo'].T)/2
         edges=blocks(reference,'RESPONSE_EDGES')

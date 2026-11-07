@@ -8,7 +8,7 @@ from psi4.driver.procrouting.response.dlpno_triples_curvature import MixedBlock,
 from psi4.driver.procrouting.response.dlpno_rhf_curvature import mixed_df_fock,rhf_mixed_density,mixed_occupied_partition
 
 
-def analytic_inputs(ref,u,v,Du=None,Dv=None,partition=False):
+def analytic_inputs(ref,u,v,Du=None,Dv=None,partition=False,block_output=None):
     mints=psi4.core.MintsHelper(ref)
     C=ref.Ca_subset('AO','OCC').np
     def tangent(k):
@@ -42,10 +42,13 @@ def analytic_inputs(ref,u,v,Du=None,Dv=None,partition=False):
         return (2*np.einsum('Qmn,Qrs,rs->mn',Q,fitted,D,optimize=True)
                 -np.einsum('Qmr,Qns,rs->mn',Q,fitted,D,optimize=True))
     np.testing.assert_allclose(g.value,action(density.value),atol=1.e-11,rtol=0)
-    response=rhf_mixed_density(ref,overlap,Du,Dv,h1(au,xu)+g.u,h1(av,xv)+g.v,h2+g.uv,action)
+    fu,fv=h1(au,xu)+g.u,h1(av,xv)+g.v
+    response=rhf_mixed_density(ref,overlap,Du,Dv,fu,fv,h2+g.uv,action)
+    fock=MixedBlock(ref.Fa().np,fu,fv,response.fock)
+    densities=density._replace(uv=response.density)
+    if block_output is not None:
+        block_output.update(overlap=overlap,fock=fock,density=densities)
     if partition:
-        fock=MixedBlock(ref.Fa().np,h1(au,xu)+g.u,h1(av,xv)+g.v,response.fock)
-        densities=density._replace(uv=response.density)
         frozen,active=mixed_occupied_partition(C,ref.Ca_subset('AO','FROZEN_OCC').np.shape[1],densities,overlap,fock)
         for sub in (frozen,active):
             identity=mixed_product('mi,ij,jn->mn',sub,overlap,sub).uv-sub.uv

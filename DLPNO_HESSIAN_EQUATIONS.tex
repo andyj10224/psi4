@@ -230,6 +230,50 @@ occupations $n_p,n_a$. In the transported frame,
 $A$ is the AO contravariant subspace density; $AS$ acts on AO coefficients.
 Differentiating $ASA=A$ supplies a metric diagnostic.
 
+\subsection{Mixed first-PNO response in the moving pivot span}
+The mixed kernel holds the same pivot rows and retained rank fixed. For
+the occupied refit, let $b=S_{l,:}L_i$; the additional equation is
+\begin{equation}
+ S_{ll}c^{uv}=b^{uv}-S_{ll}^{uv}c-S_{ll}^{u}c^v-S_{ll}^{v}c^u.
+\end{equation}
+Apply the full mixed product rule to $q_i=c^{\mathsf T}I_{lr}N_r$.
+The auxiliary-metric solve has the same form, followed by the mixed
+product $K=q_i^{\mathsf T}M^{-1}q_j$. Fixed screened panels can be
+supplied to these kernels; the present molecular diagnostic uses full
+AO and fitting domains and an unscreened inverse metric.
+
+Write $W=NX$, $G=W^{\mathsf T}SW$, $R=G^{-1/2}$ and $C=XR$.
+The forward transform ensures $G_0=I$. Thus
+\begin{align}
+ R^u&=-\tfrac12G^u,&R^v&=-\tfrac12G^v,\\
+ R^{uv}&=-\tfrac12G^{uv}+\tfrac38(G^uG^v+G^vG^u),&Y&=NC.
+\end{align}
+Construct $f=Y^{\mathsf T}FY$ and $k=C^{\mathsf T}KC$ through mixed
+order. At any orthonormal reference chart define
+$\mathcal B(x)=s x-fx-xf$. Its reference eigenbasis gives a Sylvester
+solve with denominators $s-\epsilon_a-\epsilon_b$, including when
+virtual energies are degenerate. The response equations are
+\begin{align}
+ \mathcal B(t^u)&=k^u-\mathcal B^u(t),\\
+ \mathcal B(t^v)&=k^v-\mathcal B^v(t),\\
+ \mathcal B(t^{uv})&=k^{uv}-\mathcal B^{uv}(t)
+                  -\mathcal B^u(t^v)-\mathcal B^v(t^u).
+\end{align}
+No individual semicanonical eigenvector response or difference of
+virtual eigenvalues is required. Differentiate
+$D=\eta(\tilde t t^{\mathsf T}+\tilde t^{\mathsf T}t)$ by the full
+mixed product rule and use the projector equations below for $P^{uv}$.
+For the actual forward retained frame $Y_{r,0}$, define
+\begin{equation}
+ B=YPY^{\mathsf T}S_0Y_{r,0},\qquad
+ Y_r=B(B^{\mathsf T}SB)^{-1/2}.
+\end{equation}
+This is the fixed-reference polar chart used by the native LMP2 tangent.
+The contraction is performed as rectangular panels without constructing
+an AO-square retained projector. Mixed metric orthonormality and
+$ASA=A$ are checked separately. Degeneracy within the retained or
+discarded cluster is permitted; an unresolved boundary is rejected.
+
 \section{Coupled first-space LMP2 amplitude response}
 For each retained pair $p=(ij)$ let $Y_p$ be its actual first-stage
 semicanonical AO frame, $Y_p^{\mathsf T} S Y_p=I$, and $P_p=Y_pY_p^{\mathsf T}$.
@@ -866,12 +910,16 @@ The Lean theorem \texttt{eliminate\_mixed\_lmp2} proves the displayed
 finite-dimensional elimination identity under the mixed constraint and
 adjoint hypotheses; it does not prove the numerical solvers or nuclear inputs.
 
-The current molecular provider still samples the remaining mixed local
-frames, occupied/virtual Fock blocks and fitted exchange blocks.
-Therefore this change removes one numerical mixed-amplitude dependency
-without making the whole Hessian analytic. The column diagnostic can
-now sum retained CCSD, iterative triples and stationary PNO-loss curvature.
-Other nonzero screened-energy corrections require separate treatment.
+The full-domain molecular provider now supplies mixed RHF density/Fock,
+Boys LMOs, the virtual parent, first-PNO frames and fitted exchange
+analytically. Native first-order LMP2 tangents complete these inputs.
+Consequently this isolated stationary PNO-loss curvature uses no nuclear
+displacements or mixed LMP2 amplitudes. The older displaced construction
+is retained only as a verification oracle. The column diagnostic sums
+this analytic correction with retained CCSD and iterative triples.
+Mixed final-PNO frames and the CCSD nuclear mixed residual in those
+other contributions remain sampled; nonzero remaining screened-energy
+corrections and local-domain assembly require separate treatment.
 
 
 \section{Mixed PAO and full-virtual parent from the occupied projector}

@@ -1,13 +1,126 @@
 """Two-stage RHF PNO truncation-energy curvature on a fixed selection branch.
 
-Inputs are total mixed derivatives in an orthonormal parent chart. The direct
-contraction accepts mixed LMP2 amplitudes; the stationary route replaces them
-with a native loss adjoint and a mixed residual source. Lower-order molecular
-response inputs are still supplied by the caller.
+Local fitting and first-PNO kernels propagate total mixed derivatives into
+orthonormal parent charts. The direct loss contraction accepts mixed LMP2
+amplitudes; the stationary route replaces them with a native loss adjoint and
+a mixed residual source. Lower-order molecular inputs are supplied by the caller.
 """
+from typing import NamedTuple
+
 import numpy as np
 
+from .dlpno_frame_curvature import mixed_metric_solve
 from .dlpno_triples_curvature import MixedBlock, _inverse, _mixed_projector, mixed_product
+
+
+def mixed_pair_three_center(overlap, lmo, pao, left, right, eri):
+    """Differentiate a fixed-domain occupied refit and its raw DF panel.
+
+    eri has indices (Q, left AO, right AO), with the forward shell mask held
+    fixed. pao contains AO columns for the pair domain. Auxiliary-center
+    callers may concatenate panels; this kernel does not select domains.
+    """
+    left, right = np.asarray(left), np.asarray(right)
+    n = overlap.value.shape[0]
+    for domain in (left, right):
+        if (domain.ndim != 1 or domain.dtype.kind not in 'iu' or
+                np.any(domain < 0) or np.any(domain >= n) or len(np.unique(domain)) != len(domain)):
+            raise ValueError("Expected unique AO indices for a fixed fitting domain.")
+    if any(x.shape[1:] != (len(left), len(right)) for x in eri):
+        raise ValueError("Three-center panel disagrees with its AO fitting domains.")
+    rhs = mixed_product('mn,n->m', overlap.slice((left, slice(None))), lmo)
+    fitted = mixed_metric_solve(overlap.slice(np.ix_(left, left)), rhs)
+    return mixed_product('m,Qmn,na->Qa', fitted, eri, pao.slice((right, slice(None))))
+
+
+def mixed_pair_exchange(metric, qi, qj):
+    """Mixed fitted exchange K = qi^T J^-1 qj, using a metric panel solve."""
+    return mixed_product('Qa,Qb->ab', qi, mixed_metric_solve(metric, qj))
+
+
+def _polar_normalization(gram):
+    """Mixed inverse square root about an identity reference Gram matrix."""
+    eye = np.eye(len(gram.value))
+    if not np.allclose(gram.value, eye, atol=2.e-8, rtol=0):
+        raise ValueError("PNO reference frame must be metric orthonormal.")
+    return MixedBlock(eye, -.5*gram.u, -.5*gram.v,
+                      -.5*gram.uv + .375*(gram.u@gram.v + gram.v@gram.u))
+
+
+class PNOSubspaceCurvature(NamedTuple):
+    frame: MixedBlock
+    projector: MixedBlock
+    occupations: np.ndarray
+    boundary_gap: float
+
+
+def mixed_pno_selection(parent, overlap, amplitudes, reference_frame, *, diagonal=False):
+    """Retained projector and fixed-reference polar frame in a moving parent.
+
+    The reference frame fixes the actual forward rank and chart. Only the
+    retained/discarded occupation gap is divided by; degeneracies within either
+    space are harmless. Projectors are stored in the small parent, not AO space.
+    """
+    n, rank = parent.value.shape[1], reference_frame.shape[1]
+    if (not 0 < rank <= n or reference_frame.shape[0] != parent.value.shape[0] or
+            any(x.shape != (n, n) for x in amplitudes)):
+        raise ValueError("Invalid moving PNO parent, amplitudes or retained frame.")
+    gram = mixed_product('ma,mn,nb->ab', parent, overlap, parent)
+    if (not np.allclose(gram.value, np.eye(n), atol=2.e-8, rtol=0) or
+            any(not np.allclose(x, 0., atol=2.e-8, rtol=0) for x in gram[1:])):
+        raise ValueError("PNO parent response is not metric orthonormal.")
+    spin = MixedBlock(*(2*x-x.T for x in amplitudes))
+    left = mixed_product('ac,bc->ab', spin, amplitudes)
+    right = mixed_product('ca,cb->ab', spin, amplitudes)
+    density = MixedBlock(*((a+b)/(1+diagonal) for a, b in zip(left, right)))
+    projector = _mixed_projector(density, rank)
+    occupations = np.linalg.eigvalsh(density.value)[::-1]
+    gap = occupations[rank-1]-occupations[rank] if rank < n else np.inf
+    # P_AO S0 Y0 using only rectangular AO/parent panels.
+    anchor = overlap.value @ reference_frame
+    projected = mixed_product('ma,ab,bc->mc', parent, projector,
+                              MixedBlock(*(x.T @ anchor for x in parent)))
+    if not np.allclose(projected.value, reference_frame, atol=2.e-8, rtol=0):
+        raise ValueError("Selected PNO space disagrees with the forward reference frame.")
+    norm = _polar_normalization(mixed_product('ma,mn,nb->ab', projected, overlap, projected))
+    frame = mixed_product('ma,ab->mb', projected, norm)
+    if any(not np.isfinite(x).all() for x in (*frame, *projector)):
+        raise ValueError("Nonfinite mixed PNO selection response.")
+    return PNOSubspaceCurvature(frame, projector, occupations, gap)
+
+
+class FirstPNOCurvature(NamedTuple):
+    parent: MixedBlock
+    exchange: MixedBlock
+    fock: MixedBlock
+    amplitudes: MixedBlock
+    selection: PNOSubspaceCurvature
+
+
+def first_pno_curvature(pao, overlap, fock, exchange, occupied_sum, parent,
+                        reference_frame, *, diagonal=False):
+    """Mixed first-PNO response on a fixed full-rank Cholesky-pivot branch.
+
+    parent is the forward PAO-to-orthonormal-parent transform, including its
+    selected pivot rows. Its coefficients are fixed while the PAOs move. Polar
+    normalization transports their span; a Sylvester solve differentiates MP2
+    without semicanonical eigenvector derivatives or within-parent energy gaps.
+    exchange is expressed in the normalized PAO domain, before this transform.
+    """
+    X = np.asarray(parent)
+    if X.ndim != 2 or X.shape[0] != pao.value.shape[1] or X.shape[1] == 0:
+        raise ValueError("Invalid first-PNO parent transform.")
+    if np.count_nonzero(np.any(X != 0., axis=1)) != X.shape[1]:
+        raise ValueError("First-PNO curvature requires a full-rank selected pivot span.")
+    moving = MixedBlock(*(x @ X for x in pao))
+    norm = _polar_normalization(mixed_product('ma,mn,nb->ab', moving, overlap, moving))
+    coefficients = MixedBlock(*(X @ x for x in norm))
+    moving = mixed_product('ma,ab->mb', pao, coefficients)
+    F = mixed_product('ma,mn,nb->ab', moving, fock, moving)
+    K = mixed_product('ma,mn,nb->ab', coefficients, exchange, coefficients)
+    t = semicanonical_mp2(K, F, occupied_sum)
+    selection = mixed_pno_selection(moving, overlap, t, reference_frame, diagonal=diagonal)
+    return FirstPNOCurvature(moving, K, F, t, selection)
 
 
 def semicanonical_mp2(exchange, fock, occupied_sum):

@@ -405,6 +405,7 @@ def benchmark(frozen, coordinates=range(9), *, complete_spaces=False, coarse_ste
     ccsd_adjoint = TriplesCCSDAdjoint(w)
     retained = RetainedCCSDCurvature(w,ccsd_adjoint)
     if include_pno:
+        from first_pno_mixed import analytic_pno_entry
         from pno_curvature_water import sampled_entry
         from psi4.driver.procrouting.response.dlpno_pno_curvature import PNOTruncationCurvature
         pno_adjoint = PNOTruncationCurvature(w)
@@ -507,11 +508,13 @@ def benchmark(frozen, coordinates=range(9), *, complete_spaces=False, coarse_ste
         np.testing.assert_allclose(cc,[cc_direct,cc_reference],atol=2.e-6,rtol=0.)
         output = (relax,estimated,numerical,cc,cc_reference)
         if include_pno:
+            pno = analytic_pno_entry(w,u,v,pno_adjoint)
+            # Displaced inputs are an independent oracle, never the assembled value.
             values = [sampled_entry(w,model_at,u,v,h,pno_adjoint) for h in (coarse_step,coarse_step/2)]
-            pno,pno_direct = (4*np.asarray(values[1])-np.asarray(values[0]))/3
-            np.testing.assert_allclose(pno,pno_direct,rtol=0,atol=3.e-7)
+            pno_sampled,pno_direct = (4*np.asarray(values[1])-np.asarray(values[0]))/3
+            np.testing.assert_allclose(pno,[pno_sampled,pno_direct],rtol=0,atol=3.e-7)
             print('assembled retained CCSD + triples + PNO curvature',frozen,u,cc+estimated+pno,
-                  'PNO',pno,'direct check',pno-pno_direct,flush=True)
+                  'analytic PNO',pno,'sampled/direct errors',pno-np.array([pno_sampled,pno_direct]),flush=True)
             output += (pno,)
         results.append(output)
     result = np.asarray(results)
