@@ -112,6 +112,21 @@ std::map<std::tuple<int,int,int>,DLPNOCCSD_T::TriplesRow> DLPNOCCSD_T::triples_r
     return state;
 }
 
+DLPNOCCSD_T::TriplesBasisState DLPNOCCSD_T::triples_basis_state() const {
+    if (!gradient_model_ || !options_.get_bool("DLPNO_KEEP_TRIPLES_RESPONSE") ||
+        response_tno_parents_.size() != n_tno_.size() || response_t3_.size() != n_tno_.size())
+        throw PSIEXCEPTION("Triples basis state requires a converged RHF gradient model with retained triples response.");
+    TriplesBasisState state;
+    for (size_t r = 0; r < n_tno_.size(); ++r) {
+        if (!n_tno_[r]) continue;
+        const auto& ids = lmotriplet_to_paos_[r];
+        auto paos = std::make_shared<Matrix>(ids.size(),1);
+        for (size_t a = 0; a < ids.size(); ++a) (*paos)(a,0) = ids[a];
+        state[ijk_to_i_j_k_[r]] = {{"PAOS",paos},{"PARENT",response_tno_parents_.at(r)->clone()}};
+    }
+    return state;
+}
+
 void DLPNOCCSD_T::compute_gradient_model_triples() {
     outfile->Printf("\n  ==> RHF DLPNO-CCSD(T) gradient model: single TNO space <==\n\n");
     ijk_to_i_j_k_.clear();

@@ -1,0 +1,1097 @@
+{
+  "parent_commit": "ba2f066e6fa8869efb56cd879c96c5ad08586ee8",
+  "scope": "Selected screened CCSD source and affine-CCSD TNO/triples molecular input blocks. Not a complete screened Hessian.",
+  "common_settings": {
+    "first_pno_cutoff": 1e-05,
+    "final_pno_cutoff": 0.001,
+    "tno_cutoff": 1e-05,
+    "t_cut_do_triples": 0.01,
+    "t_cut_mkn_triples": 0.001,
+    "dlpno_ao_ints_tol": 0.0,
+    "f_cut": 0.0,
+    "f_cut_t": 0.0,
+    "r_convergence": 1e-11,
+    "e_convergence": 1e-14,
+    "d_convergence": 1e-14,
+    "scf_ints_tolerance": 1e-14,
+    "solver_convergence": 1e-14,
+    "local_gradient_convergence": 1e-13
+  },
+  "fixtures": {
+    "chain": {
+      "geometry_angstrom": [
+        [
+          "H",
+          0,
+          0,
+          -0.37
+        ],
+        [
+          "H",
+          0,
+          0,
+          0.37
+        ],
+        [
+          "H",
+          3.5,
+          0,
+          -0.37
+        ],
+        [
+          "H",
+          3.5,
+          0,
+          0.37
+        ],
+        [
+          "H",
+          7,
+          0,
+          -0.37
+        ],
+        [
+          "H",
+          7,
+          0,
+          0.37
+        ],
+        [
+          "H",
+          10.5,
+          0,
+          -0.37
+        ],
+        [
+          "H",
+          10.5,
+          0,
+          0.37
+        ]
+      ],
+      "basis": "cc-pvdz",
+      "df_basis_scf": "cc-pvdz-jkfit",
+      "df_basis_cc": "cc-pvdz-ri",
+      "frozen_occupied": 0,
+      "active_pairs": 7,
+      "retained_triplets": 6
+    },
+    "lih": {
+      "geometry_angstrom": [
+        [
+          "Li",
+          0,
+          0,
+          0
+        ],
+        [
+          "H",
+          0,
+          0,
+          1.6
+        ],
+        [
+          "Li",
+          6,
+          0,
+          0
+        ],
+        [
+          "H",
+          6,
+          0,
+          1.6
+        ],
+        [
+          "Li",
+          12,
+          0,
+          0
+        ],
+        [
+          "H",
+          12,
+          0,
+          1.6
+        ]
+      ],
+      "basis": "def2-svp",
+      "df_basis_scf": "def2-universal-jkfit",
+      "df_basis_cc": "def2-svp-ri",
+      "frozen_occupied": 3,
+      "active_pairs": 3,
+      "retained_triplets": 0
+    }
+  },
+  "thresholds": {
+    "ccsd_mixed_source": 2e-07,
+    "ccsd_native_replay": 2e-10,
+    "mixed_JK_replay": 2e-10,
+    "first_ccsd_tangent": 2e-09,
+    "amplitude_curvature": 2e-11,
+    "ordered_ccsd": 2e-11,
+    "ordered_triples": 2e-10,
+    "tno_metric": 2e-08,
+    "triples_moment_replay": 2e-10,
+    "mixed_frame": 2e-06,
+    "mixed_virtual_fock": 2e-06,
+    "mixed_edge": 2e-06,
+    "mixed_W": 2e-07,
+    "mixed_V": 2e-07,
+    "mixed_occupied_fock": 2e-07
+  },
+  "runs": {
+    "screened-ccsd-chain": {
+      "command": "python tests/dlpno-hessian-model/screened_ccsd_mixed.py --screened-triplets",
+      "exit_code": 0,
+      "record": {
+        "system": "chain",
+        "localization": "BOYS",
+        "screened_triplets": true,
+        "full_tno": false,
+        "step_bohr": 0.004,
+        "checks": [
+          {
+            "coordinates": [
+              2,
+              2
+            ],
+            "residual_errors": [
+              6.474183168736491e-14,
+              3.786788591031431e-12,
+              3.786788591031431e-12
+            ],
+            "native_replay_error": 6.752291868000748e-14,
+            "mixed_integral_replay_error": 1.969069352014685e-11,
+            "triples_native_replay_error": 9.987263837121785e-15,
+            "tno_metric_error": 1.8207657603852567e-14,
+            "triplets": [
+              {
+                "labels": [
+                  0,
+                  0,
+                  2
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  0,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  2,
+                  2
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  3,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  1,
+                  1,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  1,
+                  3,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              }
+            ],
+            "ordered_swap_error": 0.0,
+            "triples_ordered_swap_error": 0.0,
+            "amplitude_algebra_error": 1.1830265228812004e-14,
+            "independent_first_2": 3.4094949086238557e-13,
+            "mixed_source_error": 7.99297659309639e-10
+          },
+          {
+            "coordinates": [
+              2,
+              18
+            ],
+            "residual_errors": [
+              6.474183168736491e-14,
+              3.786788591031431e-12,
+              3.5180513287703247e-13
+            ],
+            "native_replay_error": 6.752291868000748e-14,
+            "mixed_integral_replay_error": 1.969069352014685e-11,
+            "triples_native_replay_error": 9.987263837121785e-15,
+            "tno_metric_error": 5.329070518200751e-15,
+            "triplets": [
+              {
+                "labels": [
+                  0,
+                  0,
+                  2
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  0,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  2,
+                  2
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  3,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  1,
+                  1,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  1,
+                  3,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              }
+            ],
+            "ordered_swap_error": 2.103628865177747e-18,
+            "triples_ordered_swap_error": 3.179301639223166e-16,
+            "independent_first_2": 3.4094949086238557e-13,
+            "independent_first_18": 1.4834487804815666e-14,
+            "mixed_source_error": 1.920402714905048e-09
+          },
+          {
+            "coordinates": [
+              18,
+              18
+            ],
+            "residual_errors": [
+              6.474183168736491e-14,
+              3.5180513287703247e-13,
+              3.5180513287703247e-13
+            ],
+            "native_replay_error": 6.752291868000748e-14,
+            "mixed_integral_replay_error": 1.969069352014685e-11,
+            "triples_native_replay_error": 9.987263837121785e-15,
+            "tno_metric_error": 2.886579864025407e-15,
+            "triplets": [
+              {
+                "labels": [
+                  0,
+                  0,
+                  2
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  0,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  2,
+                  2
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  3,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  1,
+                  1,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  1,
+                  3,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              }
+            ],
+            "ordered_swap_error": 0.0,
+            "triples_ordered_swap_error": 0.0,
+            "independent_first_18": 1.4834487804815666e-14,
+            "mixed_source_error": 2.5487958328142843e-09
+          }
+        ],
+        "passed": true
+      }
+    },
+    "screened-ccsd-pm": {
+      "command": "python tests/dlpno-hessian-model/screened_ccsd_mixed.py --screened-triplets --localization PIPEK_MEZEY",
+      "exit_code": 0,
+      "record": {
+        "system": "chain",
+        "localization": "PIPEK_MEZEY",
+        "screened_triplets": true,
+        "full_tno": false,
+        "step_bohr": 0.004,
+        "checks": [
+          {
+            "coordinates": [
+              2,
+              2
+            ],
+            "residual_errors": [
+              7.770433602116711e-14,
+              3.772633247467461e-12,
+              3.772633247467461e-12
+            ],
+            "native_replay_error": 8.047891780077476e-14,
+            "mixed_integral_replay_error": 1.921363068646542e-11,
+            "triples_native_replay_error": 6.9371591804312516e-15,
+            "tno_metric_error": 1.865174681370263e-14,
+            "triplets": [
+              {
+                "labels": [
+                  0,
+                  0,
+                  2
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  0,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  2,
+                  2
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  3,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  1,
+                  1,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  1,
+                  3,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              }
+            ],
+            "ordered_swap_error": 0.0,
+            "triples_ordered_swap_error": 0.0,
+            "amplitude_algebra_error": 7.915068882431708e-15,
+            "independent_first_2": 3.2606556343850457e-13,
+            "mixed_source_error": 8.098488338270649e-10
+          },
+          {
+            "coordinates": [
+              2,
+              18
+            ],
+            "residual_errors": [
+              7.770433602116711e-14,
+              3.772633247467461e-12,
+              3.518989909038518e-13
+            ],
+            "native_replay_error": 8.047891780077476e-14,
+            "mixed_integral_replay_error": 1.921363068646542e-11,
+            "triples_native_replay_error": 6.9371591804312516e-15,
+            "tno_metric_error": 3.3306690738754696e-15,
+            "triplets": [
+              {
+                "labels": [
+                  0,
+                  0,
+                  2
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  0,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  2,
+                  2
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  3,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  1,
+                  1,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  1,
+                  3,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              }
+            ],
+            "ordered_swap_error": 7.243545350691121e-18,
+            "triples_ordered_swap_error": 5.292655724765342e-16,
+            "independent_first_2": 3.2606556343850457e-13,
+            "independent_first_18": 1.7860326661633258e-14,
+            "mixed_source_error": 1.9226324482113083e-09
+          },
+          {
+            "coordinates": [
+              18,
+              18
+            ],
+            "residual_errors": [
+              7.770433602116711e-14,
+              3.518989909038518e-13,
+              3.518989909038518e-13
+            ],
+            "native_replay_error": 8.047891780077476e-14,
+            "mixed_integral_replay_error": 1.921363068646542e-11,
+            "triples_native_replay_error": 6.9371591804312516e-15,
+            "tno_metric_error": 4.218847493575595e-15,
+            "triplets": [
+              {
+                "labels": [
+                  0,
+                  0,
+                  2
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  0,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  2,
+                  2
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  3,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  1,
+                  1,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  1,
+                  3,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 8,
+                "aux": 56
+              }
+            ],
+            "ordered_swap_error": 0.0,
+            "triples_ordered_swap_error": 0.0,
+            "independent_first_18": 1.7860326661633258e-14,
+            "mixed_source_error": 2.5482673929735705e-09
+          }
+        ],
+        "passed": true
+      }
+    },
+    "screened-ccsd-lih": {
+      "command": "python tests/dlpno-hessian-model/screened_ccsd_mixed.py --screened-triplets --system lih",
+      "exit_code": 0,
+      "record": {
+        "system": "lih",
+        "localization": "BOYS",
+        "screened_triplets": true,
+        "full_tno": false,
+        "step_bohr": 0.004,
+        "checks": [
+          {
+            "coordinates": [
+              5,
+              5
+            ],
+            "residual_errors": [
+              1.9796664307847323e-14,
+              1.7346626522349307e-12,
+              1.7346626522349307e-12
+            ],
+            "native_replay_error": 1.3523904218715188e-14,
+            "mixed_integral_replay_error": 3.9745984281580604e-14,
+            "triples_native_replay_error": 0.0,
+            "tno_metric_error": 0.0,
+            "triplets": [],
+            "ordered_swap_error": 0.0,
+            "triples_ordered_swap_error": 0.0,
+            "amplitude_algebra_error": 1.0916560624213423e-17,
+            "independent_first_5": 3.6545419468403395e-14,
+            "mixed_source_error": 9.790871464271378e-10
+          },
+          {
+            "coordinates": [
+              5,
+              12
+            ],
+            "residual_errors": [
+              1.9796664307847323e-14,
+              1.7347889617880252e-12,
+              2.5988109234043044e-13
+            ],
+            "native_replay_error": 1.3523904218715188e-14,
+            "mixed_integral_replay_error": 3.9745984281580604e-14,
+            "triples_native_replay_error": 0.0,
+            "tno_metric_error": 0.0,
+            "triplets": [],
+            "ordered_swap_error": 2.818248022104508e-17,
+            "triples_ordered_swap_error": 0.0,
+            "independent_first_5": 3.7050223999912646e-14,
+            "independent_first_12": 2.370933310791301e-14,
+            "mixed_source_error": 7.230678808195868e-10
+          },
+          {
+            "coordinates": [
+              12,
+              12
+            ],
+            "residual_errors": [
+              1.9796664307847323e-14,
+              2.5988109234043044e-13,
+              2.5988109234043044e-13
+            ],
+            "native_replay_error": 1.3523904218715188e-14,
+            "mixed_integral_replay_error": 3.9745984281580604e-14,
+            "triples_native_replay_error": 0.0,
+            "tno_metric_error": 0.0,
+            "triplets": [],
+            "ordered_swap_error": 0.0,
+            "triples_ordered_swap_error": 0.0,
+            "independent_first_12": 2.370933310791301e-14,
+            "mixed_source_error": 1.312596874480888e-09
+          }
+        ],
+        "passed": true
+      }
+    },
+    "screened-ccsd-full-tno": {
+      "command": "python tests/dlpno-hessian-model/screened_ccsd_mixed.py --screened-triplets --full-tno --stage replay",
+      "exit_code": 0,
+      "record": {
+        "system": "chain",
+        "localization": "BOYS",
+        "screened_triplets": true,
+        "full_tno": true,
+        "step_bohr": 0.004,
+        "checks": [
+          {
+            "coordinates": [
+              2,
+              18
+            ],
+            "residual_errors": [
+              6.474183168736491e-14,
+              3.786788591031431e-12,
+              3.5180513287703247e-13
+            ],
+            "native_replay_error": 6.752291868000748e-14,
+            "mixed_integral_replay_error": 1.969069352014685e-11,
+            "triples_native_replay_error": 3.881879626771445e-13,
+            "tno_metric_error": 5.329070518200751e-15,
+            "triplets": [
+              {
+                "labels": [
+                  0,
+                  0,
+                  2
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 20,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  0,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 20,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  2,
+                  2
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 20,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  0,
+                  3,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 20,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  1,
+                  1,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 20,
+                "aux": 56
+              },
+              {
+                "labels": [
+                  1,
+                  3,
+                  3
+                ],
+                "paos": 20,
+                "parent_rank": 20,
+                "tno_rank": 20,
+                "aux": 56
+              }
+            ],
+            "ordered_swap_error": 2.103628865177747e-18,
+            "triples_ordered_swap_error": 5.156513177944342e-16,
+            "amplitude_algebra_error": 1.1830265228812004e-14
+          }
+        ],
+        "passed": true
+      }
+    },
+    "screened-triples-chain": {
+      "command": "python tests/dlpno-hessian-model/screened_triples_mixed.py",
+      "exit_code": 0,
+      "record": {
+        "system": "chain",
+        "localization": "BOYS",
+        "step_bohr": 0.008,
+        "checks": [
+          {
+            "coordinates": [
+              2,
+              2
+            ],
+            "mixed_errors": {
+              "frame": 7.55356901332993e-07,
+              "W": 6.757413690969749e-10,
+              "V": 2.742851736233946e-09,
+              "F": 2.1905012048684114e-07,
+              "edge": 7.922067199572448e-07,
+              "occupied": 1.888674687477998e-08
+            },
+            "raw_half_step_errors": {
+              "frame": 0.00033039872559470496,
+              "W": 5.882549385528412e-08,
+              "V": 5.794954097918664e-08,
+              "F": 0.00032586019234459584,
+              "edge": 6.352084530131252e-05,
+              "occupied": 7.781897190528575e-08
+            },
+            "triplets": 6,
+            "edges": 10
+          },
+          {
+            "coordinates": [
+              2,
+              18
+            ],
+            "mixed_errors": {
+              "frame": 2.1931275219847745e-07,
+              "W": 1.2108387452493172e-10,
+              "V": 2.008937812827611e-10,
+              "F": 2.635553490325405e-08,
+              "edge": 1.9506002849164873e-07,
+              "occupied": 6.4820881245760535e-09
+            },
+            "raw_half_step_errors": {
+              "frame": 1.8020657683703173e-07,
+              "W": 8.748530615300307e-11,
+              "V": 1.5043974218796244e-10,
+              "F": 2.055780934435194e-08,
+              "edge": 1.4858964065756804e-07,
+              "occupied": 4.687655077978066e-09
+            },
+            "triplets": 6,
+            "edges": 10
+          },
+          {
+            "coordinates": [
+              18,
+              18
+            ],
+            "mixed_errors": {
+              "frame": 8.983431607278582e-07,
+              "W": 8.540102459166391e-10,
+              "V": 1.788024668059905e-09,
+              "F": 1.4044283386249745e-07,
+              "edge": 1.4739187455675706e-06,
+              "occupied": 1.6250955012231394e-08
+            },
+            "raw_half_step_errors": {
+              "frame": 4.07397700077361e-05,
+              "W": 1.8677017827716663e-08,
+              "V": 1.8287433831522867e-08,
+              "F": 1.7883191854362046e-05,
+              "edge": 2.1087134910002803e-05,
+              "occupied": 4.653685336947211e-07
+            },
+            "triplets": 6,
+            "edges": 10
+          }
+        ],
+        "passed": true
+      }
+    },
+    "screened-triples-pm": {
+      "command": "python tests/dlpno-hessian-model/screened_triples_mixed.py --localization PIPEK_MEZEY",
+      "exit_code": 0,
+      "record": {
+        "system": "chain",
+        "localization": "PIPEK_MEZEY",
+        "step_bohr": 0.008,
+        "checks": [
+          {
+            "coordinates": [
+              2,
+              2
+            ],
+            "mixed_errors": {
+              "frame": 8.185171701717911e-07,
+              "W": 4.844477768209567e-10,
+              "V": 5.866338280489762e-10,
+              "F": 2.2287107181995225e-07,
+              "edge": 4.3861309781401125e-07,
+              "occupied": 1.8875079110802773e-08
+            },
+            "raw_half_step_errors": {
+              "frame": 0.0003304873211389392,
+              "W": 5.8010186440062006e-08,
+              "V": 5.71294228891568e-08,
+              "F": 0.00032595256440348663,
+              "edge": 6.304013193036972e-05,
+              "occupied": 7.780427248305077e-08
+            },
+            "triplets": 6,
+            "edges": 10
+          },
+          {
+            "coordinates": [
+              2,
+              18
+            ],
+            "mixed_errors": {
+              "frame": 1.3423222006026672e-07,
+              "W": 1.2722888581055395e-10,
+              "V": 1.9239186039037384e-10,
+              "F": 2.4721379191069138e-08,
+              "edge": 1.8878809692451848e-07,
+              "occupied": 6.492228048699302e-09
+            },
+            "raw_half_step_errors": {
+              "frame": 1.8165916770753604e-07,
+              "W": 9.564422499786008e-11,
+              "V": 1.3568872098083113e-10,
+              "F": 1.9112297991560046e-08,
+              "edge": 1.4210942217007528e-07,
+              "occupied": 4.695521265346882e-09
+            },
+            "triplets": 6,
+            "edges": 10
+          },
+          {
+            "coordinates": [
+              18,
+              18
+            ],
+            "mixed_errors": {
+              "frame": 6.479112767665801e-07,
+              "W": 6.224856341779116e-10,
+              "V": 1.1977809876345712e-09,
+              "F": 1.099360345737933e-07,
+              "edge": 1.122445515415731e-06,
+              "occupied": 1.6264984040170738e-08
+            },
+            "raw_half_step_errors": {
+              "frame": 4.068944562130028e-05,
+              "W": 1.8952047653561684e-08,
+              "V": 1.8559503353219806e-08,
+              "F": 1.7894598234702297e-05,
+              "edge": 2.1338563812589584e-05,
+              "occupied": 4.6549837171006025e-07
+            },
+            "triplets": 6,
+            "edges": 10
+          }
+        ],
+        "passed": true
+      }
+    }
+  },
+  "regressions": {
+    "native_build": "single compiler job; build/install succeeded",
+    "ctests": {
+      "names": [
+        "dfccsd-t-grad1",
+        "dlpno-grad-model",
+        "dlpnocc-1",
+        "dlpnolocal-1"
+      ],
+      "passed": 4,
+      "seconds": 38.19
+    },
+    "snapshot_ctest": {
+      "name": "dlpno-grad-model",
+      "exit_code": 0,
+      "seconds": 30.88,
+      "checks": [
+        "no opt-in rejection",
+        "parent metric and native frame span",
+        "copied snapshot ownership"
+      ]
+    },
+    "full_domain_ccsd": {
+      "command": "python tests/dlpno-hessian-model/ccsd_mixed.py --core both --coordinates 1",
+      "exit_code": 0,
+      "max_independent_first_error": 1.609857538942272e-08,
+      "max_sixth_order_source_error": 8.60672875330204e-09,
+      "max_triples_adjoint_error": 3.1802160053604964e-12
+    },
+    "triples_algebra": {
+      "command": "python tests/dlpno-hessian-model/triples_mixed_moments.py",
+      "exit_code": 0,
+      "max_WV_error": 3.980278062698517e-08
+    },
+    "readiness_audit": {
+      "command": "python tests/dlpno-hessian-model/screened_domains.py --require-production",
+      "exit_code": 2,
+      "production_ready": false
+    }
+  },
+  "retained_failed_attempts": [
+    "Initial interchange/amplitude harness attempted to treat occupied-projector action as an array. Fixed action composition before acceptance.",
+    "Displaced triplet test hit old complete-triplet-domain assertion. Replaced assumption with exported native triplet lists/ranks/graphs and physical-span comparisons.",
+    "Trial oracle tuple-indexing and shadowed Fock variable errors fixed before acceptance.",
+    "One full-TNO launch aborted at OpenMP initialization with duplicate-runtime message. Same one-thread environment in fresh process passed; no duplicate-runtime override used."
+  ],
+  "limits": [
+    "No assembled screened energy Hessian, full matrix, or rigid-motion Hessian validation.",
+    "LiH has only diagonal retained pairs and no triples; it is not screened frozen-core triples coverage.",
+    "H2 molecular triples are repeated-index with equal retained ranks; distinct/rectangular cases are covered only in the separate moment algebra.",
+    "Full-TNO control is value/metric/ordered/algebra validation, not independent numerical full-rank mixed TNO curvature.",
+    "Finite differences occur only in oracles; raw half-step results retained; earlier PNO second-value precision limitations remain.",
+    "Requires AO Schwarz and occupied Fock screens off; no runtime/memory scaling claim for dense AO derivative delivery."
+  ]
+}

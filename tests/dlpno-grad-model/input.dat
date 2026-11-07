@@ -143,6 +143,12 @@ for loc in ('BOYS', 'PIPEK_MEZEY', 'IBO'):
     compare_values(e_df, e, 1.e-7, loc + ' zero-cutoff DF-CCSD(T) energy')                                               #TEST
     compare_values(-0.00304081137850, w.variable('(T) CORRECTION ENERGY'), 1.e-9, loc + ' canonical (T)')       #TEST
     check_stationarity(w)
+    try:
+        psi4.core.dlpno_triples_basis_state(w)
+    except RuntimeError as exc:
+        assert 'retained triples response' in str(exc)
+    else:
+        raise AssertionError('Triples parent snapshot was retained without opt-in.')
     # Phase-independent rotation of the frozen O 1s toward a virtual direction.
     ref = w.reference_wavefunction()
     Cv = ref.Ca_subset('AO','VIR').np
@@ -313,6 +319,7 @@ for group in ('INTEGRAL', 'FOCK', 'OVERLAP', 'PNO COEFFICIENT'):
 # A dipole estimate has the unique-pair factor four already. Summing both ij
 # and ji in the energy used to count it twice. Exercise nonzero corrections.
 set dlpno_keep_lmp2_response true
+set dlpno_keep_triples_response true
 set t_cut_pre 1.e-6
 set t_cut_do_ij 1.e-5
 _, screened_wfn = energy('dlpno-ccsd(t)', return_wfn=True)
@@ -345,3 +352,21 @@ assert abs(unique_energy) > 1.e-9
 compare_values(screened_wfn.variable('DLPNO SC-LMP2 PAIR ENERGY'),
                screened_wfn.variable('DLPNO SCREENED SC-MP2 RESPONSE ENERGY'), 1.e-12,
                'excluded SC-MP2 response retains both ordered orientations')                                #TEST
+
+# The optional snapshot includes native triplet PAO lists and complete pivot
+# parents, returns copies, and survives the diagnostic TNO probes above.
+basis_state = psi4.core.dlpno_triples_basis_state(screened_wfn)
+triples_state = psi4.core.dlpno_triples_response_state(screened_wfn)
+assert basis_state and basis_state.keys() == triples_state.keys()
+for triplet, fields in basis_state.items():
+    ids = fields['PAOS'].np[:,0].astype(int)
+    parent = N[:,ids] @ fields['PARENT'].np
+    frame = triples_state[triplet][2].np
+    compare_arrays(np.eye(parent.shape[1]), parent.T @ S @ parent, 2.e-8,
+                   'retained native TNO parent metric')                                                       #TEST
+    compare_arrays(frame, parent @ (parent.T @ S @ frame), 2.e-8,
+                   'retained native TNO frame lies in parent span')                                          #TEST
+    saved_parent = fields['PARENT'].np.copy()
+    fields['PARENT'].np[:] = 0.
+    compare_arrays(saved_parent, psi4.core.dlpno_triples_basis_state(screened_wfn)[triplet]['PARENT'].np,
+                   1.e-14, 'triples parent snapshot returns independent copies')                              #TEST

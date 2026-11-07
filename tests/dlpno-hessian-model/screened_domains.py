@@ -36,12 +36,10 @@ def constant(x):
 def canonical_branch(w, inverse_order=None):
     """Compare actual native selections after relabeling the occupied orbitals.
 
-    The AO Schwarz mask is deliberately off, and triplet AO/fitting domains
-    are complete. All local pair/refit lists and retained ranks are checked.
+    The AO Schwarz mask is deliberately off. Native pair/triplet lists,
+    parent ranks and retained ranks are checked, including screened triplets.
     """
     assert psi4.core.get_option('DLPNO', 'DLPNO_AO_INTS_TOL') == 0.
-    assert psi4.core.get_option('DLPNO', 'T_CUT_DO_TRIPLES') == 0.
-    assert psi4.core.get_option('DLPNO', 'T_CUT_MKN_TRIPLES') == 0.
     nocc = w.variable('DLPNO RESPONSE ACTIVE LMOS').np.shape[1]
     order = list(range(nocc)) if inverse_order is None else inverse_order
     relabel = lambda ids: tuple(sorted(int(order[i]) for i in ids))
@@ -60,11 +58,13 @@ def canonical_branch(w, inverse_order=None):
                                 for row in edges.astype(int)))
         for p, edges in blocks(w, 'RESPONSE_EDGES').items()}
     result['TRIPLES'] = {}
+    basis = psi4.core.dlpno_triples_basis_state(w)
     for r, row in psi4.core.dlpno_triples_response_state(w).items():
         # Repeated slots retain their multiplicity after relabeling.
         edges = tuple(sorted((int(order[l]), int(order[m]), relabel((a,b,c)))
                              for l,m,a,b,c,_ in row[5]))
-        result['TRIPLES'][relabel(r)] = relabel(row[0]), tuple(row[1]), row[2].np.shape[1], edges
+        result['TRIPLES'][relabel(r)] = (relabel(row[0]), tuple(row[1]), row[2].np.shape[1], edges,
+            tuple(basis[r]['PAOS'].np[:,0].astype(int)), basis[r]['PARENT'].np.shape[1])
     return result
 
 
@@ -233,8 +233,8 @@ def run(path):
         routing = str(exc)
     else:
         raise AssertionError('A new analytic driver must pass screened Hessian validation first.')
-    blockers = ['Screened mixed CCSD/TNO molecular delivery is incomplete.',
-                'No screened nuclear Hessian was assembled or compared to gradients.']
+    blockers = ['No complete screened nuclear Hessian was assembled or compared to gradients.',
+                'Screened full-matrix reciprocity and rigid-motion validation remain outstanding.']
     if local['debug_probes_above_1e_minus8']:
         blockers.append('A native synthetic PNO operator probe exceeds its old tolerance.')
     result = dict(graph_only=graph, local_domains=local, coordinates_bohr=mol.geometry().np.tolist(),
@@ -245,7 +245,9 @@ def run(path):
                   functional_scope='The gradient model now includes eliminated SC-MP2 and dipole estimates '
                                    'with analytic gradients. Their mixed correction kernels are tested in '
                                    'screened_corrections.py. Screened first PNOs, coupled LMP2, final PNOs and both '
-                                   'PNO-loss curvatures are tested separately in screened_final_pno.py; '
+                                   'PNO-loss curvatures are tested separately in screened_final_pno.py. '
+                                   'Screened CCSD residual and TNO/triples molecular inputs have selected block '
+                                   'validation in screened_ccsd_mixed.py and screened_triples_mixed.py; '
                                    'complete screened CCSD(T) Hessians remain unsupported.')
     Path(path).write_text(json.dumps(result, indent=2)+'\n')
     print(json.dumps({k: result[k] for k in ('screened_hessian_validated', 'production_ready', 'blockers')}, indent=2))

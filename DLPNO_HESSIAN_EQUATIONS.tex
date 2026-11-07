@@ -1992,4 +1992,163 @@ The working memory and JSON record specify geometry, cutoffs, convergence,
 spacings and individual errors; the prior raw second-value PNO precision
 limits are retained in milestone 27.
 
+\section{Screened CCSD residual and TNO/triples molecular propagation}
+This step uses the screened final-PNO response of Section 25 to deliver the
+mixed transformed-CCSD residual and the matching ordinary-triples inputs.
+All analytic inputs are evaluated at one geometry. Discrete domains, label
+masks, retained ranks and physical parent spans are fixed. The molecular
+providers currently require zero AO Schwarz screening and zero occupied
+Fock screens; native gradients have no new restriction. This is selected
+block validation, not complete screened Hessian assembly or public routing.
+
+\subsection{Native local OO, OV, VV factors and cross-pair vertices}
+For auxiliary function $Q$ on center $A$, let $I_A,V_A$ be the native
+occupied and virtual AO lists, $O_A,U_A$ the extended occupied and PAO labels,
+and $\chi^A_{ab}$ the symmetric native PAO-pair membership mask. Let $N_a$
+be a moving normalized PAO and $q_{Q\mu\nu}$ a raw three-center AO integral.
+The overlap-refitted occupied column is
+\begin{equation}
+ S_{I_AI_A}\ell_i^A=S_{I_A,:}L_i,\qquad
+ \ell_i^A=0\quad\hbox{if }i\notin O_A.
+\end{equation}
+With all sums restricted to the indicated native AO lists, define
+\begin{align}
+ q^{oo}_{Qij}&=\sum_{\mu,\nu\in I_A}
+       (\ell_i^A)_\mu q_{Q\mu\nu}(\ell_j^A)_\nu,\\
+ q^{ov}_{Qia}&=\mathbf1_{a\in U_A}\sum_{\mu\in I_A,\nu\in V_A}
+       (\ell_i^A)_\mu q_{Q\mu\nu}(N_a)_\nu,\\
+ q^{vv}_{Qab}&=\chi^A_{ab}\sum_{\mu,\nu\in V_A}
+       (N_a)_\mu q_{Q\mu\nu}(N_b)_\nu.
+\end{align}
+The VV mask acts before projection to PNOs or TNOs. Applying it to OV, or
+replacing these refits by unrestricted $L^{\mathsf T}qY$, changes the
+forward functional. Absent extended labels remain exactly zero.
+
+For a selected frame $Y_p$ in the native PAO parent span, recover its
+moving PAO coefficients using the stored reference pivot transform $X_p$:
+\begin{equation}
+ B_p=N_pX_p,\qquad
+ C_p=X_p(B_p^{\mathsf T}SB_p)^{-1}B_p^{\mathsf T}SY_p,
+ \qquad N_pC_p=Y_p.
+\end{equation}
+Differentiate this defining solve, including both metric legs, rather than
+holding the PAO coefficients fixed. The fitted OV and VV panels are
+$q^{ov}C_p$ and $C_p^{\mathsf T}q^{vv}C_p$. All auxiliary orders are those
+of the native target domain. With $G_p=M_p^{-1}$, the mixed-domain vertices
+for target pair $p=(i,j)$ and source pair $q=(k,j)$ are
+\begin{align}
+ J^{pq}_{ik,ab}&=\sum_{QR}q^{oo}_{Qik}(G_p)_{QR}
+                  (C_p^{\mathsf T}q^{vv}_RC_q)_{ab},\\
+ K^{pq}_{ik,ab}&=\sum_{QR}(q^{ov}_{Qi}C_p)_a(G_p)_{QR}
+                  (q^{ov}_{Rk}C_q)_b.
+\end{align}
+These vertices use the exact inverse on the target auxiliary domain.
+Products of native whitened factors instead use the fixed-branch filtered
+inverse $G_{f,p}$, as in the existing transformed residual and triples
+moment equations. The distinction is preserved in every derivative.
+For any metric solve $MX=B$,
+\begin{align}
+ MX^u&=B^u-M^uX,\\
+ MX^{uv}&=B^{uv}-M^{uv}X-M^uX^v-M^vX^u.
+\end{align}
+All other contractions use the complete mixed product rule, including
+both ordered placements of first derivatives on distinct factors.
+
+\subsection{Affine CCSD source and native first response}
+Let $x$ denote all molecular data, including the moving final-PNO frames,
+and $t=(t_1,t_2)$ the CCSD amplitudes in those frames. Reuse the complete
+Jiang 75--101 residual replay of Section 17 with the local factors above.
+At the converged reference, $R(t,x)=0$, $A=R_t$, and
+\begin{equation}
+ At^u=-R^u\big|_{t\,\mathrm{fixed}},\qquad
+ At^v=-R^v\big|_{t\,\mathrm{fixed}}.
+\end{equation}
+Native Jacobian actions and the existing coupled response solver provide
+both first tangents. Evaluate the mixed residual on the affine path
+$t=t_0+u t^u+v t^v$, explicitly rejecting supplied nonzero $t^{uv}$:
+\begin{align}
+ b^{uv}&=R^{uv}\big|_{t^{uv}=0},\\
+ 0&=At^{uv}+b^{uv}.
+\end{align}
+Here $b^{uv}$ includes the direct mixed molecular source, both
+amplitude--molecular cross terms and $R_{tt}[t^u,t^v]$. All pair transfers,
+rectangular overlaps, reversed pair orientations and T1 dressing are
+included. The complete replay checks $R,R^u,R^v$ before returning $b^{uv}$.
+The existing retained-CCSD and triples CCSD adjoints eliminate $t^{uv}$
+with their established weighted CCSD residual contractions. This does not
+change the separate unweighted unique-pair PNO-loss contraction in
+Eq.~\eqref{eq:screened-pno-loss-stationary}.
+
+\subsection{Matching TNO selection and triples inputs}
+The optional native triples snapshot now retains each actual triplet PAO
+list and full-rank pivot parent, including selections retaining the full
+parent. It is retained only with the existing triples-response opt-in.
+Probe transforms preserve the converged snapshot; returned matrices are
+copies. Use Section 24's stable moving-parent chart to form $B_r$.
+For triplet $r=(i,j,k)$, with repeated pair slots counted separately,
+\begin{align}
+ D_r&=\frac13\sum_{p\in[(i,j),(j,k),(i,k)]}
+             S_{pr}^{\mathsf T}D_pS_{pr},\qquad S_{pr}=Y_p^{\mathsf T}SB_r,\\
+ D_p&=\frac{(2t_p-t_p^{\mathsf T})t_p^{\mathsf T}
+                  +(2t_p-t_p^{\mathsf T})^{\mathsf T}t_p}{1+\delta_{p_1p_2}}.
+\end{align}
+Apply the retained-projector response and fixed-reference polar chart to
+$D_r$, using the native rank and reference TNO frame $Z_r$. The density
+uses the same affine CCSD amplitudes as $b^{uv}$: this is the trial TNO
+curvature required by stationary elimination, not the fully relaxed
+second derivative with a nonzero CCSD $t^{uv}$. Polar normalization solves
+the square-root Sylvester equations at the actual near-identity Gram matrix.
+
+Project the local OO/OV/VV factors above with the triplet's PAO coefficients,
+occupied domain and auxiliary list. The existing ordinary-triples moment
+algebra now returns all four components $(0,u,v,uv)$ of $W_r,V_r,F_r$;
+the previous mixed-row interface still selects their $uv$ components.
+The matching one-body and overlap blocks are
+\begin{equation}
+ F_r=Z_r^{\mathsf T}FZ_r,\qquad f_{ij}=L_i^{\mathsf T}FL_j,
+ \qquad S_{rs}=Z_r^{\mathsf T}SZ_s.
+\end{equation}
+Their mixed derivatives provide the existing iterative-triples Hessian
+contractions without changing the native right or transpose operators.
+Only the retained native edges are requested. Response caches belong to
+one provider instance and release their panels with that response state.
+
+\subsection{Independent verification and remaining scope}
+Screened H2 chains with Boys and Mulliken PM test $(2,2),(2,18),(18,18)$;
+frozen-core LiH tests $(5,5),(5,12),(12,12)$ in zero-based Cartesian order.
+Independent old first-PNO/final-PNO response kernels and native first LMP2
+and CCSD solves supply transported first tangents. Differentiating those
+tangents, including the derivative of their polar alignment, checks
+$b^{uv}=-At^{uv}$ with Richardson spacings $0.004/0.002$ bohr.
+The largest CCSD source error is $2.55\times10^{-9}$ against
+$2\times10^{-7}$ acceptance. Native residual and mixed J/K replays,
+random amplitude-only curvature, ordered mixed interchange and rejection
+of already-mixed amplitudes are checked separately.
+
+H2 retains six repeated-index triplets, each with 20 PAOs, a rank-20 parent,
+eight TNOs and 56 auxiliary functions, versus 40 AO and 112 auxiliary
+functions for the molecule. There are ten distinct ordered overlap blocks.
+Both triplet domain cutoffs are nonzero. LiH retains no triples and thus
+adds only diagonal frozen-core CCSD coverage. A full-TNO control also
+checks the rank-20 snapshot and differentiated metric orthonormality.
+
+For the independent triples oracle, reconverge native orbitals and final
+PNOs at displaced geometries, reconstruct TNOs from the affine reference
+CCSD path, and evaluate local moments from newly computed raw integrals.
+Retain the same domains, ranks, graphs and physical parent spans, with
+occupied matching and polar transport. Richardson spacings
+$0.008/0.004$ bohr give maximum TNO-frame, virtual-Fock and edge-overlap
+errors $8.99\times10^{-7}$, $2.23\times10^{-7}$ and $1.48\times10^{-6}$,
+respectively, against $2\times10^{-6}$ acceptance. W/V errors are below
+$2.75\times10^{-9}$ against $2\times10^{-7}$; occupied-Fock error is below
+$1.89\times10^{-8}$. Raw half-step errors are retained in the JSON record.
+These component thresholds are not total-energy Hessian tolerances.
+
+The remaining work includes complete screened energy-curvature assembly
+and comparison of full matrices with differences of analytic gradients.
+Raw reciprocity, rigid-motion identities and production scaling also
+require validation. The public
+analytic Hessian request continues to fail explicitly. No full screened
+Hessian or general frozen-core triples validation is claimed here.
+
 \end{document}

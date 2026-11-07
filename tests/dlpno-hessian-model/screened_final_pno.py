@@ -14,7 +14,7 @@ from screened_first_pno import fixture, independent_first, align_snapshot
 from screened_corrections import mixed_inputs
 from lmp2_tangent import blocks
 from final_pno_mixed import check_source_contract
-from psi4.driver.procrouting.response.dlpno_orbital import LMP2Tangent, final_pno_tangent
+from psi4.driver.procrouting.response.dlpno_orbital import LMP2Tangent, final_pno_tangent, ccsd_pair_frames
 from psi4.driver.procrouting.response.dlpno_screened_pno import screened_pno_response
 from psi4.driver.procrouting.response.dlpno_pno_curvature import pno_truncation_energy
 from psi4.driver.procrouting.response.dlpno_triples_curvature import mixed_product
@@ -25,7 +25,7 @@ def response(w,u,v):
     return screened_pno_response(w,S,F,L,occupied,df),S
 
 
-def independent_tangent(w,u):
+def independent_tangent(w,u,response=None):
     lower={}
     independent_first(w,u,lower)
     matrix=psi4.core.Matrix.from_array
@@ -35,6 +35,8 @@ def independent_tangent(w,u):
         *(matrix(lower[k]) for k in ('overlap_derivative','fock_derivative','occupied_fock_derivative')))
     dt={p:x.np.copy() for p,x in dt.items()}
     selected=final_pno_tangent(w,LMP2Tangent(lower['frame_derivatives'],dt))
+    if response is not None:
+        response['ccsd_frames']=ccsd_pair_frames(w,selected,lower['overlap_derivative'])
     tensors={}
     for p,t in blocks(w,'AMPLITUDE').items():
         y,dy=lower['frames'][p],lower['frame_derivatives'][p]

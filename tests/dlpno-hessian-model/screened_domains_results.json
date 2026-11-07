@@ -22162,8 +22162,8 @@
   "screened_hessian_validated": false,
   "production_ready": false,
   "blockers": [
-    "Screened mixed CCSD/TNO molecular delivery is incomplete.",
-    "No screened nuclear Hessian was assembled or compared to gradients."
+    "No complete screened nuclear Hessian was assembled or compared to gradients.",
+    "Screened full-matrix reciprocity and rigid-motion validation remain outstanding."
   ],
-  "functional_scope": "The gradient model now includes eliminated SC-MP2 and dipole estimates with analytic gradients. Their mixed correction kernels are tested in screened_corrections.py. Screened first PNOs, coupled LMP2, final PNOs and both PNO-loss curvatures are tested separately in screened_final_pno.py; complete screened CCSD(T) Hessians remain unsupported."
+  "functional_scope": "The gradient model now includes eliminated SC-MP2 and dipole estimates with analytic gradients. Their mixed correction kernels are tested in screened_corrections.py. Screened first PNOs, coupled LMP2, final PNOs and both PNO-loss curvatures are tested separately in screened_final_pno.py. Screened CCSD residual and TNO/triples molecular inputs have selected block validation in screened_ccsd_mixed.py and screened_triples_mixed.py; complete screened CCSD(T) Hessians remain unsupported."
 }

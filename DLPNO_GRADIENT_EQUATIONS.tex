@@ -568,4 +568,22 @@ Hessian equation Section 25 records the local exchange transformation,
 rectangular overlap derivatives, coupled right equations and final selection.
 These correction and subspace checks do not complete screened CCSD(T)
 Hessian assembly or change the public analytic gradient/Hessian routing.
+
+\subsection{Screened CCSD/TNO mixed-response follow-up}
+The separate Hessian providers now propagate local OO/OV/VV refits, extended
+label zeros and PAO-pair masks through the transformed CCSD mixed residual
+and matching TNO/triples inputs. They preserve the native exact-versus-filtered
+metric distinction and the actual pair/triplet domains. Native first CCSD
+response supplies $t^u,t^v$; mixed sources use $t^{uv}=0$ and retain the
+existing weighted CCSD-adjoint convention. Hessian Section 26 records the
+full local-factor and affine-source equations. A new optional copied
+triples-parent snapshot is retained only with the existing triples-response
+opt-in, including full-rank TNO selections; ordinary gradients need no snapshot.
+
+The gradient functional and analytic reverse contractions are unchanged.
+Selected screened CCSD source checks pass for Boys/PM H2 and frozen-core LiH;
+TNO/moment checks pass for H2, while LiH has no retained triples. This is
+input-block validation. Complete screened Hessian assembly, full-matrix
+checks and public analytic Hessian routing remain outstanding.
+
 \end{document}

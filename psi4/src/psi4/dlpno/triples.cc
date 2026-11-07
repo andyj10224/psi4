@@ -432,6 +432,11 @@ void DLPNOCCSD_T::tno_transform(double t_cut_tno, bool use_tuple_cutoffs, const 
     e_tno_.resize(n_lmo_triplets);
     n_tno_.resize(n_lmo_triplets);
     if (gradient_model_) tno_selection_.assign(n_lmo_triplets, {});
+    const bool keep_parent = gradient_model_ && options_.get_bool("DLPNO_KEEP_TRIPLES_RESPONSE") &&
+                             !fixed_ranks && !fixed_parent;
+    // Probe transforms use fixed ranks/parents and must not overwrite this snapshot.
+    if (!fixed_ranks && !fixed_parent) response_tno_parents_.clear();
+    if (keep_parent) response_tno_parents_.resize(n_lmo_triplets);
 
     if (n_lmo_triplets == 0) {
         outfile->Printf("    Number of (Unique) Local MO triplets: 0\n\n");
@@ -470,6 +475,7 @@ void DLPNOCCSD_T::tno_transform(double t_cut_tno, bool use_tuple_cutoffs, const 
             std::tie(X_pao_ijk, e_pao_ijk) = orthocanonicalizer(S_pao_ijk, F_pao_ijk);
         }
 
+        if (keep_parent) response_tno_parents_[ijk] = X_pao_ijk->clone();
         F_pao_ijk = linalg::triplet(X_pao_ijk, F_pao_ijk, X_pao_ijk, true, false, false);
 
         // number of PAOs in the domain after removing linear dependencies

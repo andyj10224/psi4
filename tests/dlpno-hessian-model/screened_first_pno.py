@@ -21,13 +21,15 @@ from psi4.driver.procrouting.response.dlpno_screened_pno import screened_first_p
 from psi4.driver.procrouting.response.dlpno_triples_curvature import mixed_product
 
 
-def fixture(system,localization,full_rank,*,final_cutoff=1.e-4,tight=False):
+def fixture(system,localization,full_rank,*,final_cutoff=1.e-4,tight=False,screened_triplets=False,tno_cutoff=1.e-5):
     configure()
     frozen = system == 'lih'
     psi4.set_options(dict(freeze_core=frozen,save_jk=True,t_cut_pairs_mp2=1.e-6,t_cut_pairs=1.e-6,
         t_cut_pre=1.e-6,t_cut_do_ij=1.e-5,t_cut_do=.01,t_cut_do_pre=.03,t_cut_mkn=.001,
         t_cut_clmo=.01,t_cut_cpao=.01,t_cut_do_uv=1.e-5,dlpno__debug=2,dlpno_local_orbitals=localization,
-        t_cut_pno_mp2=0. if full_rank else 1.e-5,t_cut_pno=0. if full_rank else final_cutoff,t_cut_tno=1.e-5))
+        t_cut_pno_mp2=0. if full_rank else 1.e-5,t_cut_pno=0. if full_rank else final_cutoff,t_cut_tno=tno_cutoff))
+    if screened_triplets:
+        psi4.set_options(dict(t_cut_do_triples=.01,t_cut_mkn_triples=.001))
     if frozen:
         psi4.set_options(dict(basis='def2-svp',df_basis_scf='def2-universal-jkfit',df_basis_cc='def2-svp-ri',
             t_cut_pairs_mp2=1.e-4,t_cut_pairs=1.e-4,t_cut_pre=1.e-5,t_cut_do_ij=1.e-3))

@@ -83,8 +83,8 @@ def _filtered_inverse(metric, full):
     return MixedBlock((rot*g)@rot.T,rot@(dd1*eu)@rot.T,rot@(dd1*ev)@rot.T,rot@mixed@rot.T)
 
 
-def mixed_triples_moments(triplet, domain, metric, oo, ov, vv, transfer, single, double, fov, virtual_fock):
-    """Contract the mixed W/V moments from their local inputs, with all product terms.
+def triples_moment_blocks(triplet, domain, metric, oo, ov, vv, transfer, single, double, fov, virtual_fock):
+    """Contract W/V/Fvv MixedBlocks from local inputs, with all product terms.
 
     All array inputs and callback results are MixedBlocks. OO/OV/VV are raw
     local three-center blocks in native domain order. transfer(i,j) gives
@@ -110,24 +110,30 @@ def mixed_triples_moments(triplet, domain, metric, oo, ov, vv, transfer, single,
         return mixed_product('Ql,QR,Rc->lc',oo.slice((slice(None),pos[b])),filtered,
                              ov.slice((slice(None),pos[c])))
 
-    w = np.zeros((n,n,n))
+    w = MixedBlock(*(np.zeros((n,n,n)) for _ in range(4)))
     for perm in permutations(range(3)):
         a,b,c = (triplet[k] for k in perm)
-        term = mixed_product('abd,cd->abc',ovvv(a),pair(c,b)).uv
+        term = mixed_product('abd,cd->abc',ovvv(a),pair(c,b))
         integral = ooov(b,c)
         for m,l in enumerate(domain):
-            term -= mixed_product('ab,c->abc',pair(a,l),integral.slice(m)).uv
-        w += term.transpose(np.argsort(perm))
-    v = w.copy()
+            extra = mixed_product('ab,c->abc',pair(a,l),integral.slice(m))
+            term = MixedBlock(*(x-y for x,y in zip(term,extra)))
+        for target,x in zip(w,term): target += x.transpose(np.argsort(perm))
+    v = MixedBlock(*(x.copy() for x in w))
     for slot,a in enumerate(triplet):
         b,c = (triplet[i] for i in range(3) if i != slot)
         projected_single = mixed_product('ia,i->a',transfer(a,a),single(a))
         exchange = mixed_product('Qb,QR,Rc->bc',ov.slice((slice(None),pos[b])),filtered,
                                  ov.slice((slice(None),pos[c])))
-        term = mixed_product('a,bc->abc',projected_single,exchange).uv
-        term += mixed_product('a,bc->abc',fov(a),pair(b,c)).uv
-        v += np.moveaxis(term,0,slot)
-    return TriplesMixedRow(w,v,virtual_fock.uv)
+        term = mixed_product('a,bc->abc',projected_single,exchange)
+        extra = mixed_product('a,bc->abc',fov(a),pair(b,c))
+        for target,x,y in zip(v,term,extra): target += np.moveaxis(x+y,0,slot)
+    return w,v,virtual_fock
+
+
+def mixed_triples_moments(*args, **kwargs):
+    """Mixed W/V/Fvv moments; preserves the Hessian-row interface."""
+    return TriplesMixedRow(*(x.uv for x in triples_moment_blocks(*args, **kwargs)))
 
 
 def project_mixed_triples_row(triplet, domain, metric, three_center, overlap, fock, lmos, tnos,
@@ -211,6 +217,6 @@ def mixed_tno_frame(triplet, parent, metric, pair_frames, doubles, reference_fra
     if (not np.allclose(gram.value,eye,atol=2.e-8,rtol=0.) or
             not np.allclose(unnormalized.value,reference_frame,atol=2.e-8,rtol=0.)):
         raise ValueError(f"Mixed TNO selection disagrees with the native frame for {triplet}.")
-    polar = MixedBlock(eye,-.5*gram.u,-.5*gram.v,
-                       -.5*gram.uv+.375*(gram.u@gram.v+gram.v@gram.u))
+    from .dlpno_pno_curvature import _polar_normalization
+    polar = _polar_normalization(gram)
     return mixed_product('ma,ab->mb',unnormalized,polar)

@@ -66,6 +66,14 @@ def assert_branch(w, ref):
         expected = seed@np.linalg.solve(seed.T@S@seed,seed.T)
         np.testing.assert_allclose(actual@actual.T,expected,atol=2.e-8,rtol=0.)
 
+    old_basis,new_basis=(psi4.core.dlpno_triples_basis_state(x) for x in (ref,w))
+    for r,fields in old_basis.items():
+        q=tuple(sorted(order[list(r)]));ids=fields['PAOS'].np[:,0].astype(int)
+        seed=N[:,ids]@fields['PARENT'].np
+        actual=N[:,ids]@new_basis[q]['PARENT'].np
+        expected=seed@np.linalg.solve(seed.T@S@seed,seed.T)
+        np.testing.assert_allclose(actual@actual.T,expected,atol=2.e-8,rtol=0.)
+
 
 def mixed_inputs(w,u,v):
     ref = w.reference_wavefunction()

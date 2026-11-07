@@ -99,6 +99,12 @@ std::pair<std::vector<SharedMatrix>, DLPNOCCSD::PairBlocks> ccsd_fock_source(
     return local->ccsd_fock_source(oo,ov,vv);
 }
 
+DLPNOCCSD_T::TriplesBasisState triples_basis_state(SharedWavefunction wfn) {
+    auto local = std::dynamic_pointer_cast<DLPNOCCSD_T>(wfn);
+    if (!local) throw PSIEXCEPTION("Triples basis state requires an RHF DLPNO gradient model.");
+    return local->triples_basis_state();
+}
+
 std::map<std::tuple<int,int,int>,DLPNOCCSD_T::TriplesRow> triples_response_state(SharedWavefunction wfn) {
     auto local = std::dynamic_pointer_cast<DLPNOCCSD_T>(wfn);
     if (!local) throw PSIEXCEPTION("Expected an RHF DLPNO triples response wavefunction.");

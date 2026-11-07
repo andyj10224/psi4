@@ -185,6 +185,7 @@ SharedWavefunction dlpno(SharedWavefunction, Options&);
 SharedMatrix orbital_response_action(SharedWavefunction,const std::string&,SharedMatrix);
 using TriplesRow = std::tuple<std::vector<int>,std::vector<int>,SharedMatrix,SharedMatrix,SharedMatrix,std::vector<std::array<int,6>>,SharedMatrix,SharedMatrix>;
 std::map<std::tuple<int,int,int>,TriplesRow> triples_response_state(SharedWavefunction);
+std::map<std::tuple<int,int,int>,std::map<std::string,SharedMatrix>> triples_basis_state(SharedWavefunction);
 using PairBlocks = std::map<std::pair<int,int>, SharedMatrix>;
 PairBlocks lmp2_blocks(SharedWavefunction,const std::string&);
 PairBlocks pno_truncation_lmp2_response(SharedWavefunction,bool);
@@ -1468,6 +1469,8 @@ PYBIND11_MODULE(core, core) {
              "Evaluate the transformed CCSD residual at supplied amplitudes in the native pair frames.");
     core.def("dlpno_ccsd_amplitude_action", &dlpno::ccsd_amplitude_action, "wfn"_a, "singles"_a, "doubles"_a,
              "transpose"_a = false, "Apply the local RHF CCSD amplitude Jacobian or its weighted adjoint.");
+    core.def("dlpno_triples_basis_state", &dlpno::triples_basis_state, "wfn"_a,
+             "Copy retained triples PAO lists and native full-rank pivot parents.");
     core.def("dlpno_triples_response_state", &dlpno::triples_response_state, "wfn"_a,
              "Return the retained RHF iterative triples amplitudes, moments, frames and screened coupling rows.");
     core.def("dlpno_ccsd_fock_source", &dlpno::ccsd_fock_source, "wfn"_a, "oo"_a, "ov"_a, "vv"_a,

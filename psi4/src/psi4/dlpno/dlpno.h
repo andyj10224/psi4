@@ -978,6 +978,7 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
         SharedVector occupations;
     };
     std::vector<TNOSelection> tno_selection_;
+    std::vector<SharedMatrix> response_tno_parents_;  ///< Optional fixed native pivot spans for mixed response
     std::vector<SharedMatrix> triples_pair_bar_;
     SparseResponseRows triples_foo_bar_, triples_fov_bar_, triples_fvv_bar_, triples_overlap_bar_;
     void reverse_pair_triplet_overlap(int p, int r, const SharedMatrix& triplet_basis, const SharedMatrix& bar);
@@ -1078,6 +1079,8 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     using TriplesRow = std::tuple<std::vector<int>, std::vector<int>, SharedMatrix, SharedMatrix, SharedMatrix,
                                   std::vector<std::array<int,6>>, SharedMatrix, SharedMatrix>;
     std::map<std::tuple<int,int,int>,TriplesRow> triples_response_state() const;
+    using TriplesBasisState = std::map<std::tuple<int,int,int>,std::map<std::string,SharedMatrix>>;
+    TriplesBasisState triples_basis_state() const;
 
     DLPNOCCSD_T(SharedWavefunction ref_wfn, Options& options);
     ~DLPNOCCSD_T() override;

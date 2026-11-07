@@ -25,7 +25,7 @@ def _stack(rows):
     return MixedBlock(*(np.stack(parts) for parts in zip(*rows)))
 
 
-def mixed_ccsd_residual(wfn, electronic, overlap, local_df):
+def mixed_ccsd_residual(wfn, electronic, overlap, local_df, *, fitted=None):
     """Return full R1/R2 MixedBlocks on the affine t1/t2 path.
 
     electronic supplies lmo, fock, ('pno',pair), ('t1',i), ('t2',pair).
@@ -33,11 +33,12 @@ def mixed_ccsd_residual(wfn, electronic, overlap, local_df):
     in exactly that auxiliary order. AO projections here use full occupied/AO
     domains, as in the Hessian model; screened-domain refits need a separate
     molecular provider. Fail closed if the model uses screened orbital domains.
-    Native state is read only for fixed graph/domain metadata, never derivatives.
+    A supplied fitted provider replaces projected OO/OV/VV and cross-pair J/K
+    with the native-domain local fit. Native state supplies fixed metadata.
     """
     from psi4 import core
-    for option in ('T_CUT_DO','T_CUT_DO_PRE','T_CUT_DO_IJ','T_CUT_DO_UV',
-                   'T_CUT_MKN','T_CUT_PRE','T_CUT_CLMO','T_CUT_CPAO','DLPNO_AO_INTS_TOL'):
+    for option in (() if fitted is not None else ('T_CUT_DO','T_CUT_DO_PRE','T_CUT_DO_IJ','T_CUT_DO_UV',
+                   'T_CUT_MKN','T_CUT_PRE','T_CUT_CLMO','T_CUT_CPAO','DLPNO_AO_INTS_TOL')):
         if core.get_option('DLPNO', option) != 0.:
             raise ValueError('Mixed CCSD molecular replay currently requires full orbital/AO domains.')
     C = mixed_product
@@ -66,6 +67,7 @@ def mixed_ccsd_residual(wfn, electronic, overlap, local_df):
     @lru_cache(None)
     def projected(p):
         p = key(p)
+        if fitted is not None: return fitted.projected(p)
         metric, raw = local_df(auxiliaries[p])
         g = _inverse(metric)
         gf = _filtered_inverse(metric,g)
@@ -195,6 +197,7 @@ def mixed_ccsd_residual(wfn, electronic, overlap, local_df):
             fij[i][j] = _sum(fij[i][j],C('cd,ca,ab,db->',exchange(l,i),s,spin(amp((l,j))),s))
     @lru_cache(None)
     def mixed_integrals(i,j,k):
+        if fitted is not None: return fitted.mixed_integrals(i,j,k)
         p = (i,j)
         _,_,_,g,_,raw = projected(p)
         li,lk = (lmo.slice((slice(None),m)) for m in (i,k))
