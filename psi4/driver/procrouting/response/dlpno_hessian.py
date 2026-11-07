@@ -1,4 +1,4 @@
-"""Opt-in analytic DLPNO Hessian delivery with explicit model/resource guards."""
+"""Analytic DLPNO Hessian delivery with explicit model/resource guards."""
 import gc
 import numpy as np
 from psi4 import core

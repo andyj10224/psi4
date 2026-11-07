@@ -1,6 +1,6 @@
 # DLPNO Hessian Working Memory Bank
 
-> **Public routing delivered for local validation:** the user requested pushing the recovered implementation with the cc-pVDZ tests restored. The experimental `DLPNO_HESSIAN_MODEL` route is included, with complete Cython packaging and local test instructions. Source-level checks pass; fresh native numerical validation remains pending. See [recovery record](DLPNO_HESSIAN_M33_RECOVERY.md) and [local test commands](tests/dlpno-hessian-model/README.md). Milestone 32 remains the last fully validated molecular checkpoint.
+> **Public routing delivered for local validation:** the user requested pushing the recovered implementation with the cc-pVDZ tests restored. The experimental `DLPNO_HESSIAN_MODEL` route now defaults to `true`, with complete Cython packaging and local test instructions. Source-level checks pass; fresh native numerical validation remains pending. See [recovery record](DLPNO_HESSIAN_M33_RECOVERY.md) and [local test commands](tests/dlpno-hessian-model/README.md). Milestone 32 remains the last fully validated molecular checkpoint.
 
 
 ## Scope and verification policy
@@ -974,3 +974,24 @@ Python compilation, complete equation export synchronization and whitespace
 checks pass. This is source-level validation, not a native build or molecular
 run. The previous H2/native results and interrupted public molecular runs remain
 historical evidence; fresh native tests are left for the user's local build.
+
+## 2026-11-07 — Default analytic routing and completion message
+
+At the user's request, `DLPNO_HESSIAN_MODEL` now defaults to `true`. Supported
+settings, memory checks and rejection of numerical fallback remain in force.
+The cc-pVDZ driver regression checks the default route before explicitly
+disabling/re-enabling it; the screened-domain audit now tests explicit disabling
+and restores the original option values and changed flags.
+
+The shared DLPNO-CCSD(T) completion message adds "The harvest is plentiful, but
+the laborers are few" after the existing line. Standalone Hessians print the
+message after successful delivery. Frequency calculations defer it until
+vibrational analysis and postcallbacks finish, so the nested Hessian does not
+print it twice. Existing gradient/optimization completion sites use the same
+helper. Failed Hessian or vibrational analysis does not print success messages.
+
+All 105 source-level routing cases pass with the new default and mocked native
+calls. Mocked public-wrapper checks cover completion order, duplicate
+suppression, both failure paths and an unrelated method. Python compilation,
+equation-export consistency and whitespace checks pass. Native numerical
+validation status is unchanged; no electronic-structure equation changed.

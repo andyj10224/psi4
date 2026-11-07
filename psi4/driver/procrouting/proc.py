@@ -4814,7 +4814,7 @@ def run_dlpno_gradient(name, **kwargs):
 
 
 def select_dlpno_hessian(name, **kwargs):
-    """Advertise the guarded analytic path only after an explicit opt-in."""
+    """Advertise the enabled analytic path when its settings are supported."""
     from .response.dlpno_hessian import validate_settings
     if not core.get_option("DLPNO", "DLPNO_HESSIAN_MODEL"):
         raise ManagedMethodError(["select_dlpno_hessian", name, "DLPNO_HESSIAN_MODEL", "FALSE",

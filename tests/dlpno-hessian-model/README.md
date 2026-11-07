@@ -4,6 +4,8 @@ Build and install the current `dlpno_gradients` branch first, including the
 native `DLPNO_HESSIAN_MODEL` option. Use that installation's Python environment
 and Psi4 executable. Reconfigure CMake so it discovers `dlpno-hessian-driver`.
 The response modules are installed for both ordinary Python and Cython builds.
+`DLPNO_HESSIAN_MODEL` defaults to `true`; the existing supported-setting and
+memory checks still apply. Set it to `false` to disable the analytic route.
 
 All numerical cases below use **cc-pVDZ**, with cc-pVDZ-JKFIT and cc-pVDZ-RI.
 The LANL2DZ input inside the driver regression is only an ECP-rejection check.
@@ -24,8 +26,9 @@ ctest --test-dir build --output-on-failure -R '^(dfccsd-t-grad1|dlpno-grad-model
 python -m pytest tests/pytests/test_dertype.py
 ```
 
-`dlpno-hessian-driver` uses H2 and 1 GiB. It checks explicit/automatic analytic
-selection, matrix and wavefunction returns, a gradient-difference column,
+`dlpno-hessian-driver` uses H2 and 1 GiB. It checks default analytic routing,
+explicit disabling and re-enabling, explicit/automatic derivative selection,
+matrix and wavefunction returns, a gradient-difference column,
 same-reference energy/gradient/Hessian publication, option restoration after
 an injected failure, unsupported settings, and memory refusal. It forbids
 finite-difference execution inside the analytic driver. H2 has no triples.

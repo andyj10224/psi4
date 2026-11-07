@@ -226,20 +226,23 @@ def run(path):
     assert abs(corrections['DLPNO SC-LMP2 PAIR ENERGY']) > 1.e-7
     np.testing.assert_allclose(list(model_corrections.values()), list(corrections.values()), atol=1.e-12, rtol=0.)
     np.testing.assert_allclose(ordinary, energy, atol=1.e-10, rtol=0.)
-    # Confirm that an explicit analytic request cannot silently become an FD Hessian.
+    # Confirm that explicitly disabling the analytic route cannot silently
+    # satisfy a dertype=2 request with finite differences.
+    routing_options = psi4.driver.p4util.OptionsState(
+        ['DLPNO', 'DLPNO_HESSIAN_MODEL'], ['DLPNO', 'T_CUT_DO_UV'])
     try:
-        psi4.hessian('dlpno-ccsd(t)', molecule=mol, dertype=2, return_plan=True)
-    except MissingMethodError as exc:
-        routing = str(exc)
-    else:
-        raise AssertionError('The guarded analytic driver must require explicit opt-in.')
-    old_screen = psi4.core.get_option('DLPNO', 'T_CUT_DO_UV')
-    psi4.set_options(dict(dlpno_hessian_model=True, t_cut_do_uv=0.))
-    try:
+        psi4.set_options(dict(dlpno_hessian_model=False))
+        try:
+            psi4.hessian('dlpno-ccsd(t)', molecule=mol, dertype=2, return_plan=True)
+        except MissingMethodError as exc:
+            routing = str(exc)
+        else:
+            raise AssertionError('The explicitly disabled analytic driver was selected.')
+        psi4.set_options(dict(dlpno_hessian_model=True, t_cut_do_uv=0.))
         from psi4.driver.task_base import AtomicComputer
         assert isinstance(psi4.hessian('dlpno-ccsd(t)', molecule=mol, dertype=2, return_plan=True), AtomicComputer)
     finally:
-        psi4.set_options(dict(dlpno_hessian_model=False, t_cut_do_uv=old_screen))
+        routing_options.restore()
     blockers = ['Full screened matrices cover selected fragment and nonplanar molecular fixtures, including distinct-index '
                 'triplets, unequal TNO ranks and frozen-core off-diagonal pairs; arbitrary molecule/threshold robustness '
                 'and behavior near discrete parent-selection boundaries remain unvalidated.',

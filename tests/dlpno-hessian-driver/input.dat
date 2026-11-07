@@ -52,10 +52,12 @@ def expect_error(operation,kind,phrase):
     else:
         raise AssertionError('Unsupported operation was accepted: '+phrase)
 
-expect_error(lambda:hessian('dlpno-ccsd(t)',dertype=2,return_plan=True),MissingMethodError,'DLPNO_HESSIAN_MODEL=FALSE')
-set dlpno_hessian_model true
+assert core.get_option('DLPNO','DLPNO_HESSIAN_MODEL') is True
 assert isinstance(hessian('dlpno-ccsd(t)',dertype=2,return_plan=True),AtomicComputer)
 assert isinstance(hessian('dlpno-ccsd(t)',return_plan=True),AtomicComputer)
+set dlpno_hessian_model false
+expect_error(lambda:hessian('dlpno-ccsd(t)',dertype=2,return_plan=True),MissingMethodError,'DLPNO_HESSIAN_MODEL=FALSE')
+set dlpno_hessian_model true
 for derivative in (0,1):
     expect_error(lambda:hessian('dlpno-ccsd(t)',dertype=derivative,return_plan=True),ValidationError,'numerical fallback')
 with patch.object(p4util,'libint2_configuration',return_value={'eri':[5,4,None]}):

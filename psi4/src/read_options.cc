@@ -2717,12 +2717,12 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
             iterative triples, PNO projector response, both PNO truncation corrections,
             LMP2 relaxation, and excluded dipole/semicanonical-MP2 pairs. !expert -*/
         options.add_bool("DLPNO_GRADIENT_MODEL", false);
-        /*- Opt in to the guarded analytic RHF DLPNO-CCSD(T) Hessian driver.
+        /*- Enable the guarded analytic RHF DLPNO-CCSD(T) Hessian driver.
             Uses the all-strong, ordinary single-TNO gradient model and dense
             AO derivative inputs. Requires AO Schwarz, occupied-Fock and
             individual PAO-pair screens to be explicitly zero. Local memory
             scaling and general production coverage are not established. !expert -*/
-        options.add_bool("DLPNO_HESSIAN_MODEL", false);
+        options.add_bool("DLPNO_HESSIAN_MODEL", true);
         /*- Retain excluded-pair domains/parents, first-PNO domains/panels/parents and selections,
             converged first-space pair amplitudes, their screened graph and the
             isolated PNO-loss source for experimental nuclear LMP2 tangent and

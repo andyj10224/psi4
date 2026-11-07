@@ -1,6 +1,6 @@
 # Working Memory Bank™
 
-> **Public Hessian routing delivered for local validation:** the user requested pushing the recovered opt-in route with the cc-pVDZ tests restored. Source-level checks pass, and Cython response packaging is complete; fresh native numerical tests remain pending. See [recovery record](DLPNO_HESSIAN_M33_RECOVERY.md) and [local test commands](tests/dlpno-hessian-model/README.md). The gradient functional is unchanged.
+> **Public Hessian routing delivered for local validation:** the user requested pushing the recovered route with the cc-pVDZ tests restored, then making `DLPNO_HESSIAN_MODEL=true` the default. Source-level checks pass, and Cython response packaging is complete; fresh native numerical tests remain pending. See [recovery record](DLPNO_HESSIAN_M33_RECOVERY.md) and [local test commands](tests/dlpno-hessian-model/README.md). The gradient functional is unchanged.
 
 
 ## RHF DLPNO-CCSD(T) analytic nuclear gradients

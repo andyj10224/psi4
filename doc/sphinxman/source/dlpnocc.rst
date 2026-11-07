@@ -226,8 +226,9 @@ Guarded RHF analytic Hessians
 ----------------------------
 
 An experimental public analytic ``psi4.hessian("dlpno-ccsd(t)")`` and
-``psi4.frequency("dlpno-ccsd(t)")`` route is available with explicit
-``DLPNO_HESSIAN_MODEL=True`` opt-in. The cc-pVDZ driver and molecular
+``psi4.frequency("dlpno-ccsd(t)")`` route is enabled by default through
+``DLPNO_HESSIAN_MODEL=True``. Setting this option to ``False`` disables the
+analytic route. The cc-pVDZ driver and molecular
 regressions are included for local validation; instructions are in
 ``tests/dlpno-hessian-model/README.md``. The recovered implementation has
 passed source-level routing checks, but its native numerical tests have
@@ -243,7 +244,6 @@ For example, after defining a supported molecule::
         "reference": "rhf",
         "scf_type": "df",
         "dlpno_local_orbitals": "boys",
-        "dlpno_hessian_model": True,
         "dlpno_ao_ints_tol": 0.0,
         "f_cut": 0.0,
         "f_cut_t": 0.0,
@@ -273,7 +273,7 @@ prefix ``DLPNO HESSIAN`` and suffixes ``RHF``, ``RETAINED_CCSD``,
 ``SCREENED_SCMP2`` and ``DIPOLE_PAIRS`` sum to that result.
 ``CURRENT GRADIENT`` retains the same native gradient.
 
-The opt-in forbids numerical fallback. Temporary convergence/retention
+The enabled analytic model forbids numerical fallback. Temporary convergence/retention
 settings restore on failure. The mixed-input provider remains dense, with a
 conservative preflight scratch refusal criterion; this is not local scaling.
 Standard downstream frequency mass weighting/projection leaves the raw

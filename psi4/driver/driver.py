@@ -584,6 +584,7 @@ def energy(name, **kwargs):
 def _print_dlpno_completion(name):
     if isinstance(name, str) and name.lower().split("/", 1)[0] == "dlpno-ccsd(t)":
         core.print_out("\n  Today is where your book begins! The rest is still unwritten :) —Natasha Bedingfield\n")
+        core.print_out("  The harvest is plentiful, but the laborers are few\n")
 
 
 def gradient(name, **kwargs):
@@ -1440,6 +1441,7 @@ def hessian(name, **kwargs):
     kwargs = p4util.kwargs_lower(kwargs)
     basisstash = p4util.OptionsState(['BASIS'])
     return_wfn = kwargs.pop('return_wfn', False)
+    frequency_step = kwargs.pop('_frequency_step', False)
 
     # Make sure the molecule the user provided is the active one
     molecule = kwargs.pop('molecule', core.get_active_molecule())
@@ -1552,6 +1554,8 @@ def hessian(name, **kwargs):
         core.set_variable('CURRENT ENERGY', wfn.energy())
         core.set_variable("CURRENT GRADIENT", G0)
         driver_findif.hessian_write(wfn)
+        if not frequency_step:
+            _print_dlpno_completion(lowername)
 
         if return_wfn:
             return (wfn.hessian(), wfn)
@@ -1657,7 +1661,7 @@ def frequency(name, **kwargs):
     molecule.update_geometry()
 
     # Compute the hessian
-    H, wfn = hessian(name, return_wfn=True, molecule=molecule, **kwargs)
+    H, wfn = hessian(name, return_wfn=True, molecule=molecule, _frequency_step=True, **kwargs)
 
     # Project final frequencies?
     if wfn.gradient():  # available for analytic and any findif including totally symmetric space
@@ -1676,6 +1680,7 @@ def frequency(name, **kwargs):
     for postcallback in hooks['frequency']['post']:
         postcallback(lowername, wfn=wfn, **kwargs)
 
+    _print_dlpno_completion(name)
     if return_wfn:
         return (core.variable('CURRENT ENERGY'), wfn)
     else:
