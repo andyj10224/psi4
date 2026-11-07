@@ -144,7 +144,15 @@ def molecular_blocks(w,u,v,lower,lower_u,lower_v,lower_uv,trial_ccsd):
                          mints.ao_oei_deriv1('OVERLAP',av)[xv].np,
                          mints.ao_oei_deriv2('OVERLAP',au,av)[3*xu+xv].np)
     @lru_cache(None)
+    def rhf_second():
+        from rhf_mixed import analytic_inputs
+        return analytic_inputs(ref,u,v,lower_u['occupied_density'],lower_v['occupied_density'])
+    @lru_cache(None)
     def electronic(key):
+        if key in ('occupied_density','fock'):
+            result = rhf_second()
+            mixed = result.density if key=='occupied_density' else result.fock
+            return MixedBlock(lower[key],lower_u[key],lower_v[key],mixed)
         if key == 'parent':
             from psi4.driver.procrouting.response.dlpno_frame_curvature import mixed_virtual_parent
             density = electronic('occupied_density')

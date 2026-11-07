@@ -927,4 +927,90 @@ The full-domain water diagnostic materializes $D$; the general coefficient
 panel action avoids that materialization. Dense metric solves and global
 occupied actions do not establish end-to-end linear scaling.
 
+
+\section{Analytic mixed RHF occupied density and Fock response}
+The one-spin RHF density satisfies
+\begin{equation}
+ D S D=D,\qquad F D S-S D F=0,\qquad F=h+\mathcal G[D],
+ \quad\mathcal G[D]=2J[D]-K[D].
+\end{equation}
+All derivatives below refer to AO coefficient matrices in a fixed Cartesian
+frame. The total occupied density includes frozen core. Assume a full-rank
+AO metric and a complete reference MO matrix $C=(C_o,C_v)$.
+For known first responses, collect the mixed idempotency terms excluding
+those linear in $D^{uv}$:
+\begin{align}
+ B_{uv}={}&D^u S D^v+D^v S D^u+D^u S^v D+D^v S^u D\nonumber\\
+          &+D S^u D^v+D S^v D^u+D S^{uv}D.
+\end{align}
+Then $D^{uv}=D^{uv}SD+DSD^{uv}+B_{uv}$. In the fixed reference
+orthonormal chart $\overline B=C^{\mathsf T}S B_{uv}S C$, the diagonal
+blocks of $\overline {D^{uv}}$ are
+\begin{equation}
+ \overline {D^{uv}}_{oo}=-\overline B_{oo},\qquad
+ \overline {D^{uv}}_{vv}=+\overline B_{vv}.
+\end{equation}
+Define the corresponding AO seed $D_{\rm seed}^{uv}$ with zero cross
+blocks. Parameterize the remaining response by an occupied-by-virtual
+matrix $X$:
+\begin{equation}
+ D^{uv}=D_{\rm seed}^{uv}+C_o X C_v^{\mathsf T}+C_v X^{\mathsf T}C_o^{\mathsf T}.
+\end{equation}
+The mixed Fock source independent of this unknown density is
+\begin{equation}
+ F_{\rm known}^{uv}=h^{uv}+\mathcal G^{uv}[D]
+                       +\mathcal G^u[D^v]+\mathcal G^v[D^u],\qquad
+ F^{uv}=F_{\rm known}^{uv}+\mathcal G[D^{uv}].
+\end{equation}
+Evaluate the mixed stationarity residual $R_{\rm seed}^{uv}$ of
+$FDS-SDF$ using the seed density and
+$F_{\rm known}^{uv}+\mathcal G[D_{\rm seed}^{uv}]$.
+Psi4's native RHF CPHF action has the negative orbital-gap and Fock-response
+convention, so the implemented solve is
+\begin{equation}
+ H_{\rm CPHF}[X]=(C_v^{\mathsf T}R_{\rm seed}^{uv}C_o)^{\mathsf T}.
+\end{equation}
+The code checks the native CPHF residual and the full AO mixed idempotency
+and stationarity residuals after constructing $D^{uv}$ and $F^{uv}$.
+A temporary JK object is created only if needed and the reference handle
+is restored. Density and Fock reference matrices are preserved.
+
+For the full-domain DF verification provider, let $Q_{P,\mu\nu}$ be raw
+three-center integrals and $J_{PQ}$ the auxiliary metric. Solve
+$J B=Q$ on flattened AO-pair panels using the earlier mixed metric-solve
+rule. Contract
+\begin{equation}
+ \mathcal G[D]_{\mu\nu}
+ =2\sum_{P\rho\sigma} Q_{P,\mu\nu}B_{P,\rho\sigma}D_{\rho\sigma}
+  -\sum_{P\rho\sigma} Q_{P,\mu\rho}B_{P,\nu\sigma}D_{\rho\sigma}.
+\end{equation}
+Applying the mixed product rule includes both differentiated fit legs and
+the metric response without a four-index ERI tensor. The provider uses
+analytic one-electron and native two-/three-center mixed integral
+engines, with no nuclear displacement in the response construction.
+It assumes full-rank inverse-metric DF. This dense verification provider
+has storage $O(n_{\rm aux}n_{\rm AO}^2)$ and is not a local-scaling proof.
+
+For the frozen/active occupied partition, form an orthonormal occupied
+parent
+\begin{equation}
+ O=Y(Y^{\mathsf T}S Y)^{-1/2},\qquad Y=D S_0 C_{o,0}.
+\end{equation}
+If $P_c$ is the spectral projector onto the lowest $n_c$ eigenvalues of
+$O^{\mathsf T}F O$, then
+\begin{equation}
+ D_c=O P_c O^{\mathsf T},\qquad D_a=D-D_c.
+\end{equation}
+The mixed spectral projector machinery supplies the derivatives, requiring
+an open frozen/active eigenvalue gap. For $n_c=0$ the frozen response is
+identically zero. This computes subspace densities, not individual
+canonical eigenvector or localized-orbital mixed derivatives.
+
+The retained-CCSD/triples mixed molecular provider now uses these analytic
+$D^{uv}$ and $F^{uv}$ and reconstructs its virtual parent from them.
+Mixed localized orbitals, first/final PNO frames and the CCSD nuclear mixed
+residual remain sampled. The separate PNO-loss diagnostic still samples
+its projected lower-order inputs. Thus the molecular Hessian remains
+semi-analytic despite this analytic RHF block.
+
 \end{document}

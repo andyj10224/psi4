@@ -82,4 +82,14 @@ theorem mixed_metric_panel {R : Type*} [Ring R]
   rw [solve]
   abel
 
+-- In the fixed orthonormal reference chart the known mixed metric terms
+-- are b and the unknown mixed density is x. Occupied and virtual blocks
+-- follow from idempotency; only the cross block needs the CPHF solve.
+theorem rhf_mixed_density_blocks {R : Type*} [Ring R] (p q x b : R)
+    (hp : p*p = p) (hqp : q*p = 0) (hpq : p*q = 0)
+    (mixed : x = p*x + x*p + b) :
+    (p*x*p + p*b*p = 0) ∧ (q*x*q = q*b*q) := by
+  exact ⟨retained_projector_block p x b hp mixed,
+         discarded_projector_block p q x b hqp hpq mixed⟩
+
 end DLPNOHessian
