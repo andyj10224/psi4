@@ -17,6 +17,7 @@ from time import perf_counter
 from .dlpno_screened_triples import ScreenedTriplesInputs,TriplesFirstResponseCache
 from .dlpno_screened_curvature import screened_pair_curvature
 from .dlpno_triples_response import TriplesHessianColumn
+from .dlpno_native import NativeHessianWorkspace, NativeTriplesInputs, NativeTriplesColumn, ccsd_response as native_ccsd_response
 
 
 COMPONENTS=('rhf','retained_ccsd','iterative_triples','initial_pno_loss',
@@ -38,6 +39,7 @@ def retained_inputs(response):
 
 
 def triples_first_energy(direction):
+    if hasattr(direction,'native'):return direction.native.energy_tangent
     return sum(np.vdot(direction.energy_seed_tangents[r],direction.amplitudes[r])+
                np.vdot(direction.adjoints[r],direction.right_source[r]) for r in direction.edges)
 
@@ -87,7 +89,8 @@ class ScreenedHessianReference:
         from psi4 import core
         self.wfn = wfn
         self.ccsd_first = CCSDFirstResponseCache(wfn)
-        self.triples_first = TriplesFirstResponseCache(wfn)
+        self.native = NativeHessianWorkspace(wfn) if hasattr(core,'DLPNOResponseWorkspace') else None
+        self.triples_first = self.native.first if self.native is not None else TriplesFirstResponseCache(wfn)
         self.rhf_gradient = core.scfgrad(wfn.reference_wavefunction()).np.ravel().copy()
         self.adjoint = TriplesCCSDAdjoint(wfn)
         self.retained = RetainedCCSDCurvature(wfn, self.adjoint)
@@ -119,10 +122,11 @@ class ScreenedHessianColumn:
         self.retained=reference.retained
         self.ccsd_first=reference.ccsd_first
         self.triples_first=reference.triples_first
+        self.native=getattr(reference,'native',None)
         self.timings={}
         self.reference=self._prepare(column)
         direction=self._timed('triples first directions',self.reference['triples'].first_direction,2,column)
-        self.column=self._timed('triples tangent solve',TriplesHessianColumn,direction)
+        self.column=self._timed('triples tangent solve',NativeTriplesColumn if self.native is not None else TriplesHessianColumn,direction)
 
     def _timed(self,name,operation,*args,**kwargs):
         start=perf_counter()
@@ -131,16 +135,32 @@ class ScreenedHessianColumn:
 
     def _prepare(self,u):
         S,F,L,D,dip,df=self._timed('molecular inputs',self.inputs,u,self.coordinate)
-        pno=self._timed('PNO/LMP2 response',screened_pno_response,self.wfn,S,F,L,D,df)
-        response=self._timed('CCSD mixed response',screened_ccsd_response,self.wfn,pno,S,F,L,D,df,
-                             first_cache=self.ccsd_first,coordinates=(u,self.coordinate))
-        triples=ScreenedTriplesInputs(self.wfn,response['fitting'],self.triples_first)
-        corrections=self._timed('screened pair curvature',screened_pair_curvature,self.wfn,S,F,L,D,dip,df)
-        initial=pno_truncation_energy(pno.initial,{})
-        final=pno_truncation_energy({},pno.final)
+        if self.native is not None:
+            entry=self._timed('native input delivery',self.native.entry,u,self.coordinate,S,F,L,D,df)
+            pno=self._timed('PNO/LMP2 response',self.native.pno,entry)
+            response=self._timed('CCSD mixed response',native_ccsd_response,self.native,entry,pno,S,F,L,D,df,
+                                 first_cache=self.ccsd_first,coordinates=(u,self.coordinate))
+            triples=NativeTriplesInputs(self.native,response)
+        else:
+            pno=self._timed('PNO/LMP2 response',screened_pno_response,self.wfn,S,F,L,D,df)
+            response=self._timed('CCSD mixed response',screened_ccsd_response,self.wfn,pno,S,F,L,D,df,
+                                 first_cache=self.ccsd_first,coordinates=(u,self.coordinate))
+            triples=ScreenedTriplesInputs(self.wfn,response['fitting'],self.triples_first)
+        if self.native is not None:
+            correction=self._timed('screened pair curvature',entry.screened,dip)
+            from .dlpno_triples_curvature import MixedBlock
+            corrections=dict(zip(('SCMP2','DIPOLE'),(MixedBlock(*x) for x in correction)))
+        else:
+            corrections=self._timed('screened pair curvature',screened_pair_curvature,self.wfn,S,F,L,D,dip,df)
+        initial=pno.initial_loss if self.native is not None else pno_truncation_energy(pno.initial,{})
+        final=pno.final_loss if self.native is not None else pno_truncation_energy({},pno.final)
         np.testing.assert_allclose(initial.uv+final.uv,pno.stationary_loss,atol=2.e-10,rtol=0.)
-        args=retained_inputs(response)
-        retained=self._timed('retained energy replay',project_retained_ccsd_energy,*args)
+        if self.native is not None:
+            args=()
+            retained=MixedBlock(*self._timed('retained energy replay',entry.retained,*response['native_amplitudes']))
+        else:
+            args=retained_inputs(response)
+            retained=self._timed('retained energy replay',project_retained_ccsd_energy,*args)
         values=[retained.value,initial.value,final.value,corrections['SCMP2'].value,corrections['DIPOLE'].value]
         names=['DLPNO RETAINED CCSD CORRELATION ENERGY','DLPNO INITIAL PNO TRUNCATION ENERGY',
                'DLPNO FINAL PNO TRUNCATION ENERGY','DLPNO SC-LMP2 PAIR ENERGY','DLPNO DIPOLE ENERGY']
@@ -161,7 +181,15 @@ class ScreenedHessianColumn:
         row=(self.column.direction if u==self.coordinate else
              self._timed('triples first directions',triples.first_direction,1,u))
         residual=([x.uv for x in response['residual'][0]],{p:x.uv for p,x in response['residual'][1].items()})
-        retained=self._timed('retained CCSD curvature',self.retained.element,*data['args'],residual)
+        if self.native is not None:
+            from .dlpno_ccsd_response import ccsd_weighted_dot
+            trial=data['retained']
+            if not np.isclose(trial.value,self.retained.reference_energy,rtol=1.e-9,atol=1.e-11):
+                raise ValueError('Native retained CCSD reference energy disagrees.')
+            retained=trial.uv+self._timed('retained CCSD curvature',ccsd_weighted_dot,
+                                        self.retained.singles,self.retained.doubles,*residual)
+        else:
+            retained=self._timed('retained CCSD curvature',self.retained.element,*data['args'],residual)
         triple=self._timed('triples mixed curvature',self.column.ccsd_stationary_element,
             row,lambda i,j:triples.occupied(i,j).uv,
             triples.mixed_row,lambda r,q:triples.edge(r,q).uv,self.adjoint,residual)

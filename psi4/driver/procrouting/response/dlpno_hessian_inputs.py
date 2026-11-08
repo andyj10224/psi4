@@ -171,4 +171,7 @@ def molecular_inputs(w,u,v,*,Du=None,Dv=None,integrals=None):
     def df(aux):
         ids=list(aux)
         return jm.slice(np.ix_(ids,ids)),qm.slice(ids)
-    return S,F,L,lambda panel:mixed_product('mn,na->ma',D,panel),dip,df
+    occupied_action=lambda panel:mixed_product('mn,na->ma',D,panel)
+    occupied_action.density=D
+    df.full=(jm,qm)
+    return S,F,L,occupied_action,dip,df

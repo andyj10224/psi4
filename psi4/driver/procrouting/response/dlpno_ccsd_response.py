@@ -443,6 +443,9 @@ def ccsd_weighted_dot(one, two, other_one, other_two):
     if (len(one) != len(other_one) or two.keys() != other_two.keys()
             or any(np.shape(two[p]) != np.shape(other_two[p]) for p in two)):
         raise ValueError("Incompatible singles or doubles blocks in a CCSD contraction.")
+    from psi4 import core
+    if hasattr(core,'dlpno_response_weighted_dot') and not any(np.iscomplexobj(x) for x in (*one,*other_one,*two.values(),*other_two.values())):
+        return core.dlpno_response_weighted_dot(one,two,other_one,other_two)
     return (sum(np.vdot(x,y) for x,y in zip(one,other_one))
             + sum((.5 if i == j else 1.) * np.vdot(x,other_two[i,j]) for (i,j),x in two.items()))
 

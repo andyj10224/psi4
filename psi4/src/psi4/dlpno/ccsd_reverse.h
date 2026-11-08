@@ -30,6 +30,7 @@
 
 #include "dlpno.h"
 #include "psi4/libmints/matrix.h"
+#include <algorithm>
 
 namespace psi {
 namespace dlpno {
@@ -62,6 +63,13 @@ struct DLPNOCCSD::CCAdjoints {
     const std::vector<SharedMatrix>& z2;
     std::vector<SharedMatrix> t1, t2, u, tn, qa, qk, beta, gamma, delta, fab, fkc, fkc_bar;
     std::vector<double> fkj, fij_bar;
+
+    void zero() {
+        for (auto* blocks : {&t1, &t2, &u, &tn, &qa, &qk, &beta, &gamma, &delta, &fab, &fkc, &fkc_bar})
+            for (auto& block : *blocks) if (block) block->zero();
+        std::fill(fkj.begin(), fkj.end(), 0.);
+        std::fill(fij_bar.begin(), fij_bar.end(), 0.);
+    }
 
     CCAdjoints(const DLPNOCCSD& w, const std::vector<SharedMatrix>& z1, const std::vector<SharedMatrix>& z2)
         : z1(z1),

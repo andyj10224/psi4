@@ -78,7 +78,7 @@ void DLPNOCCSD::estimate_gradient_lambda_memory() {
         scratch = std::max(scratch,
                            n * n * n + 8 * n * n + (write_qia_pno_ ? q * m * n : 0) + (write_qab_pno_ ? q * n * n : 0));
     }
-    words += (10 + 2 * options_.get_int("DIIS_MAX_VECS")) * amp + scratch;
+    words += (11 + 2 * options_.get_int("DIIS_MAX_VECS")) * amp + scratch;
     ccsd_response_words_ = words + response + df_scratch;
     outfile->Printf("    CCSD response memory estimate before sparse overlaps: %.3f GiB\n",
                     ccsd_response_words_ * 8.0 / (1ULL << 30));
@@ -90,10 +90,18 @@ void DLPNOCCSD::estimate_gradient_lambda_memory() {
 }
 
 void DLPNOCCSD::gradient_lambda_residual(const std::vector<SharedMatrix>& z1, const std::vector<SharedMatrix>& z2,
-                                         std::vector<SharedMatrix>& l1, std::vector<SharedMatrix>& l2, bool include_source) {
+                                         std::vector<SharedMatrix>& l1, std::vector<SharedMatrix>& l2, bool include_source,
+                                         CCAdjoints* workspace) {
     // Differentiate E_CC + lambda1 . R1 + 1/2 sum_ij lambda2_ij . R2_ij.
     // Reverse the right-hand contractions in their original pair domains.
-    CCAdjoints g(*this, z1, z2);
+    std::unique_ptr<CCAdjoints> owned;
+    if (!workspace) owned = std::make_unique<CCAdjoints>(*this, z1, z2);
+    auto& g = workspace ? *workspace : *owned;
+    if (workspace) {
+        if (&g.z1 != &z1 || &g.z2 != &z2)
+            throw PSIEXCEPTION("Lambda transpose workspace belongs to different amplitude vectors.");
+        g.zero();
+    }
     if (include_source) {
         for (int i = 0; i < g.t1.size(); ++i) {
             const int ii = i_j_to_ij_[i][i];
@@ -339,17 +347,25 @@ void DLPNOCCSD::reverse_R2(CCAdjoints& g) {
             }
             g.qa[p]->add(linalg::doublet(i_Qa_t1_[rev], z, false, true));
             g.qa[rev]->add(linalg::doublet(i_Qa_t1_[p], z));
-            auto qma = QIA_PNO(p), qab = QAB_PNO(p);
+            auto qma = QIA_PNO(p);
+            std::vector<SharedMatrix> qab;
+            if (!gradient_lambda_fixed_ || gradient_lambda_fixed_->q[p].empty()) qab = QAB_PNO(p);
             for (int q = 0; q < qma.size(); ++q) {
-                auto Q = qab[q]->clone();
-                Q->subtract(linalg::doublet(T_n_ij_[p], qma[q], true, false));
+                SharedMatrix Q;
+                if (gradient_lambda_fixed_ && !gradient_lambda_fixed_->q[p].empty()) {
+                    Q = gradient_lambda_fixed_->q[p][q];
+                } else {
+                    Q = qab[q]->clone();
+                    Q->subtract(linalg::doublet(T_n_ij_[p], qma[q], true, false));
+                }
                 g.t2[p]->add(linalg::triplet(Q, z, Q, true, false, false));
                 auto dq = linalg::triplet(z, Q, T_iajb_[p], false, false, true);
                 dq->add(linalg::triplet(z, Q, T_iajb_[p], true, false, false));
                 g.tn[p]->subtract(linalg::doublet(qma[q], dq, false, true));
             }
 
-            auto F = Fab_[p]->clone();
+            const bool cached_f = gradient_lambda_fixed_ && gradient_lambda_fixed_->f[p];
+            auto F = cached_f ? gradient_lambda_fixed_->f[p] : Fab_[p]->clone();
             auto dF = linalg::doublet(z, T_iajb_[p], true, false);
             dF->add(linalg::doublet(z, T_iajb_[p], false, true));
             g.fab[p]->add(dF);
@@ -363,8 +379,10 @@ void DLPNOCCSD::reverse_R2(CCAdjoints& g) {
                     (*g.beta[p])(k, l) += zp->vector_dot(T_iajb_[kl]);
                     auto dp = linalg::triplet(S, dF, S, false, false, true);
                     g.u[kl]->subtract(linalg::doublet(dp, K_iajb_[kl]));
-                    auto uk = linalg::doublet(Tt_iajb_[kl], K_iajb_[kl], false, true);
-                    F->subtract(linalg::triplet(S, uk, S, true, false, false));
+                    if (!cached_f) {
+                        auto uk = linalg::doublet(Tt_iajb_[kl], K_iajb_[kl], false, true);
+                        F->subtract(linalg::triplet(S, uk, S, true, false, false));
+                    }
                 }
             g.t2[p]->add(linalg::doublet(z, F));
             g.t2[p]->add(linalg::doublet(F, z, true, false));
@@ -539,6 +557,51 @@ void DLPNOCCSD::reverse_t1_transform(CCAdjoints& g) {
     }
 }
 
+void DLPNOCCSD::build_gradient_lambda_fixed() {
+    timer_on("DLPNO Lambda fixed intermediates");
+    auto fixed = std::make_unique<GradientLambdaFixed>();
+    fixed->q.resize(T_iajb_.size());
+    fixed->f.resize(T_iajb_.size());
+    const size_t peak = ccsd_response_words_ * sizeof(double);
+    const size_t headroom = 0.9 * memory_ > peak ? size_t(0.9 * memory_) - peak : 0;
+    const size_t budget = std::min({size_t(64) * 1024 * 1024, size_t(memory_ / 32), headroom});
+    size_t used = 0, cached_q = 0, cached_f = 0;
+    for (size_t p = 0; p < T_iajb_.size(); ++p) {
+        const auto [i, j] = ij_to_i_j_[p];
+        if (i > j) continue;
+        const size_t n = n_pno_[p], words = n * n;
+        if (words * sizeof(double) <= budget - used) {
+            auto F = Fab_[p]->clone();
+            const auto& domain = lmopair_to_lmos_[p];
+            for (int k : domain) for (int l : domain) {
+                const int kl = i_j_to_ij_[k][l];
+                if (kl < 0 || !n_pno_[kl]) continue;
+                auto S = S_PNO(kl, p);
+                auto uk = linalg::doublet(Tt_iajb_[kl], K_iajb_[kl], false, true);
+                F->subtract(linalg::triplet(S, uk, S, true, false, false));
+            }
+            fixed->f[p] = F;
+            used += words * sizeof(double);
+            ++cached_f;
+        }
+        const size_t qwords = lmopair_to_ribfs_[p].size() * words;
+        if (qwords * sizeof(double) <= budget - used) {
+            auto qma = QIA_PNO(p), qab = QAB_PNO(p);
+            for (size_t q = 0; q < qab.size(); ++q) {
+                auto Q = qab[q]->clone();
+                Q->subtract(linalg::doublet(T_n_ij_[p], qma[q], true, false));
+                fixed->q[p].push_back(Q);
+            }
+            used += qwords * sizeof(double);
+            ++cached_q;
+        }
+    }
+    gradient_lambda_fixed_ = std::move(fixed);
+    outfile->Printf("    Lambda fixed intermediates: %zu Q pairs, %zu F pairs, %.1f MiB\n",
+                    cached_q, cached_f, used / 1048576.);
+    timer_off("DLPNO Lambda fixed intermediates");
+}
+
 void DLPNOCCSD::solve_gradient_lambda() {
     reset_lambda_state();
     estimate_gradient_lambda_memory();
@@ -550,6 +613,16 @@ void DLPNOCCSD::solve_gradient_lambda() {
     lambda_ia_ = zero_blocks(T_ia_);
     lambda_iajb_ = zero_blocks(T_iajb_);
     std::vector<SharedMatrix> l1(T_ia_.size()), l2(T_iajb_.size());
+    build_gradient_lambda_fixed();
+    // Clear on both normal exit and exceptions, before any debug amplitude
+    // perturbation. Cached matrices are read-only throughout this scope.
+    struct FixedGuard {
+        std::unique_ptr<GradientLambdaFixed>& fixed;
+        ~FixedGuard() { fixed.reset(); }
+    } fixed_guard{gradient_lambda_fixed_};
+    std::vector<SharedMatrix> source1(T_ia_.size()), source2(T_iajb_.size());
+    gradient_lambda_residual(lambda_ia_, lambda_iajb_, source1, source2, true);
+    auto transpose_workspace = std::make_unique<CCAdjoints>(*this, lambda_ia_, lambda_iajb_);
 
     const double rtol = options_.get_double("R_CONVERGENCE"), etol = options_.get_double("E_CONVERGENCE");
     const double step = 1. - options_.get_double("DLPNO_LAMBDA_DAMPING");
@@ -559,7 +632,9 @@ void DLPNOCCSD::solve_gradient_lambda() {
     outfile->Printf("      Iter    pseudoenergy      delta E      max L1 RMS   max L2 RMS\n");
     double last_energy = 0.0;
     for (int iter = 0;; ++iter) {
-        gradient_lambda_residual(lambda_ia_, lambda_iajb_, l1, l2);
+        gradient_lambda_residual(lambda_ia_, lambda_iajb_, l1, l2, false, transpose_workspace.get());
+        for (size_t i = 0; i < l1.size(); ++i) l1[i]->add(source1[i]);
+        for (size_t p = 0; p < l2.size(); ++p) l2[p]->add(source2[p]);
         auto max_rms = [](const auto& blocks) {
             double r = 0.;
             for (const auto& b : blocks) {
@@ -625,6 +700,10 @@ void DLPNOCCSD::solve_gradient_lambda() {
     set_scalar_variable("DLPNO CCSD(T) LAMBDA2 T2 CONTRACTION", l2t2);
     set_scalar_variable("DLPNO (T) T1 SCALE DERIVATIVE", eta1);
     set_scalar_variable("DLPNO (T) T2 SCALE DERIVATIVE", eta2);
+    gradient_lambda_fixed_.reset();
+    transpose_workspace.reset();
+    source1.clear();
+    source2.clear();
     form_ccsd_pair_response();
     backtransform_ccsd_one_body();
     if (debug_) {

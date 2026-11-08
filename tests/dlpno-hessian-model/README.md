@@ -13,12 +13,80 @@ the reported failure; it does not replace any cc-pVDZ tests.
 The LANL2DZ input inside the driver regression is only an ECP-rejection check.
 No smaller orbital basis replaces the derivative tests.
 
-The user's water/cc-pVTZ run at `6ac570a` completed all 81 ordered Hessian
-entries and printed frequencies of 1669.3180, 3840.8971 and 3945.3762 cm^-1.
-Its native residual, gradient-replay and rigid-motion guards passed. This is
-execution evidence for that revision, not an independent finite-difference
-validation. The new native contraction changes below still need a molecular
-rerun. Source-level routing checks do not establish numerical Hessian accuracy.
+The user's water/cc-pVTZ run at `c87867a` completed all 81 ordered Hessian
+entries and printed frequencies of 1669.3180, 3840.8971 and 3945.3762 cm^-1,
+unchanged from `6ac570a`. Its residual, gradient-replay and rigid-motion guards
+passed. The full optimization/frequency job took 666.14 s; the nine Hessian
+columns totaled 531.8 s, versus 1051.1 s previously. This is execution evidence
+for those revisions, not independent finite-difference validation or timing
+of the new complete native response stages described below.
+
+## Complete native response stages
+
+The production Hessian now owns one `DLPNOResponseWorkspace` across all columns.
+The numerical implementation is in `psi4/src/psi4/dlpno/native_*.cc`; the original
+Python equations remain independent algebraic oracles. The native stages cover:
+
+- Local occupied refits, PAOs, masked OO/OV/VV fitting factors, metric solves,
+  mixed PNO/TNO selection, and the actual fixed native local domain ordering.
+- Both PNO selections and their losses, coupled LMP2 residuals, the full
+  transformed CCSD residual, retained CCSD energy, and excluded pair corrections.
+- Triples frames, W/V moments, first right/left sources, coupled amplitude
+  operator applications, and complete stationary triples curvature.
+
+Python supplies SCF/localization/molecular integral derivatives, invokes whole
+native LMP2 solves, and drives SciPy GMRES. No Python callback runs inside a
+native pair/triplet task. Dense integral delivery remains a limitation of the
+experimental Hessian; this change does not establish local memory scaling.
+
+First LMP2 amplitudes are solved once per nuclear coordinate and retained on
+that reference. Nine-coordinate water should report **9 first LMP2 solves and
+153 hits**, replacing 162 first solves. Each entry constructs its affine moving
+residual once, reuses that mixed source for the solve and stationary PNO loss,
+and checks the completed mixed residual once. The 2e-9 residual tolerance and
+2e-10 direct/stationary loss comparison are unchanged.
+
+Reference and first derivative intermediates share a native LRU cache across
+stages and Hessian entries, bounded by the smaller of 512 MiB and one sixteenth
+of requested memory. Large individual panels can stream; graph metadata is
+also bounded. Mixed derivatives are ephemeral. Changed inputs invalidate cached
+descendants, and first-response chart/residual checks remain active. Fixed local
+LU factors are reused without changing domain-dependent metric/subspace math.
+
+Independent first-PNO pairs and triples moment tasks use OpenMP, private fitting
+workspaces, immutable shared tensors, and synchronized cache access. Exceptions
+are rethrown on the calling thread. Scatter contributions in the CCSD reverse
+and triples transpose/curvature paths retain ordered accumulation; no shared
+matrix additions were placed in an unsafe OpenMP loop. BLAS handles dense
+contractions. MKL workers use a thread-local single-thread setting inside outer
+OpenMP tasks. With pthread OpenBLAS, use `OPENBLAS_NUM_THREADS=1` to avoid nesting
+BLAS threads inside those tasks, and set the desired Psi4 thread count normally.
+
+For the gradient, Lambda now retains its fixed dressed Q/F intermediates within
+a separate 64 MiB / memory-headroom bound, builds the inhomogeneous source once,
+and reuses the transpose scratch matrices across iterations. Those caches are
+released before pair-density assembly, debug amplitude perturbations, and on
+exceptions. The existing memory estimate includes the additional source vector.
+
+Section timings remain, with native input delivery, fixed Lambda setup, and
+cache/solve counters added. A triples first-direction build now also prepares
+its mixed moment blocks, so compare total column time as well as individual
+labels when comparing logs from different implementations.
+
+**Rebuild the native extension and install the Python modules together.** Run
+`tests/pytests/test_dlpno_native_response.py` for native/Python algebra checks,
+then the existing cc-pVDZ derivative tests and the same water/cc-pVTZ input on
+one and multiple threads. The native sources/bindings were compiled in an
+isolated harness with real BLAS/LAPACK; complete PNO/LMP2, CCSD, and triples
+results are checked against the independent equations, including unequal ranks,
+local masks, reversed coordinate order, cache eviction, and transpose actions.
+All 109 native algebra checks passed in serial builds and in OpenMP builds
+with one and four threads. Another 259 existing algebra, kernel, and routing
+checks passed in the isolated harness. The new native sources and changed
+gradient/Lambda sources also passed C++ syntax checks against the real Psi4
+headers. These counts include mocked driver boundaries, not molecular runs.
+This does not replace a full Psi4 build, molecular finite differences, or the
+user's energy-relative runtime targets, which remain to be measured.
 
 ## Response reuse and timing
 
@@ -32,7 +100,7 @@ The gradient's Python orbital assembly takes about 0.4--0.47 s; its DF Fock
 panels take 0.37--0.42 s, so combining those 16 native J/K calls is a lower
 priority than the measured response costs.
 
-The new pass makes these changes:
+The preceding `c87867a` pass made these changes:
 
 - Differentiate one shared binary contraction tree rather than repeatedly
   evaluating the full multi-operand contraction for every product-rule term.

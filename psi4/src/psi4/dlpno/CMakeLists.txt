@@ -10,6 +10,12 @@ list(APPEND sources
   pno_truncation_response.cc
   screened_pair_response.cc
   lmp2_response.cc
+  native_tensor.cc
+  native_screened.cc
+  native_subspace.cc
+  native_fitting.cc
+  native_ccsd.cc
+  native_triples.cc
   response_kernels.cc
   local_basis_response.cc
   occupied_projection.cc

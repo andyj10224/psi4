@@ -52,11 +52,13 @@ def preflight(molecule, kwargs):
     # forward work. Native allocation guards still apply independently.
     pairs=no*(no+1)//2
     estimate=128*1024**2+8*(64*((a+b)*n*n+a*a+b*b)+64*triplets*nv**3+128*size*n*n
-                          +size*(pairs*(n*nv+nv*nv)+no*nv))
+                          +size*(pairs*(n*nv+2*nv*nv)+no*nv))
     # The bounded triples-direction cache reserves at most one eighth of
     # requested memory. Column-local overlap covectors remain in the bound above.
-    minimum_memory=8*estimate/3
-    estimate+=core.get_memory()//8
+    # The native intermediate workspace reserves another sixteenth (capped
+    # at 512 MiB). Input snapshots and first LMP2 vectors are included above.
+    minimum_memory=16*estimate/5
+    estimate+=core.get_memory()//8+min(core.get_memory()//16,512*1024**2)
     if estimate>core.get_memory()//2:
         raise ValidationError(f'Dense analytic DLPNO Hessian estimate {estimate/1024**2:.1f} MiB exceeds half '
                               f'the requested memory; request at least {minimum_memory/1024**3:.2f} GiB. '
@@ -100,6 +102,12 @@ def assemble_hessian(wfn):
             core.print_out(f'      {stage:28s}: {seconds:9.2f} s\n')
         core.print_out(f'      Cumulative CCSD first solves: {reference.ccsd_first.solves}; '
                        f'source replays: {reference.ccsd_first.source_replays}.\n')
+        if reference.native is not None:
+            solved,hits=reference.native.native.lmp2_counts
+            used,limit,reuses,builds=reference.native.native.statistics
+            core.print_out(f'      LMP2 first solves: {solved}; cache hits: {hits}.\n'
+                           f'      Native intermediates: {used/1024**2:.1f}/{limit/1024**2:.1f} MiB; '
+                           f'reuses: {reuses}; evaluations: {builds}.\n')
         core.print_out(f'      Triples first builds: {reference.triples_first.builds}; '
                        f'cache hits: {reference.triples_first.hits}; '
                        f'cached: {reference.triples_first.bytes/1024**2:.1f} MiB.\n')
@@ -124,6 +132,10 @@ def assemble_hessian(wfn):
         wfn.set_variable('DLPNO HESSIAN '+name.upper().replace('_',' ')+' ERROR',value)
     wfn.set_variable('DLPNO HESSIAN GRADIENT REPLAY ERROR',replay)
     wfn.set_variable('DLPNO HESSIAN COMPONENT GRADIENT SPREAD',spread)
+    if reference.native is not None:
+        solved,hits=reference.native.native.lmp2_counts
+        wfn.set_variable('DLPNO HESSIAN LMP2 FIRST RESPONSE SOLVES',solved)
+        wfn.set_variable('DLPNO HESSIAN LMP2 FIRST CACHE HITS',hits)
     wfn.set_variable('DLPNO HESSIAN CCSD FIRST RESPONSE SOLVES',reference.ccsd_first.solves)
     wfn.set_variable('DLPNO HESSIAN CCSD SOURCE REPLAYS',reference.ccsd_first.source_replays)
     wfn.set_variable('DLPNO HESSIAN TRIPLES FIRST BUILDS',reference.triples_first.builds)

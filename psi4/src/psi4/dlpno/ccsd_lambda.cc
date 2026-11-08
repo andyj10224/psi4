@@ -1545,6 +1545,7 @@ void DLPNOCCSD::compute_L_iajb(std::vector<SharedMatrix>& L_iajb, std::vector<Sh
 }
 
 void DLPNOCCSD::reset_lambda_state() {
+    gradient_lambda_fixed_.reset();
     lambda_solved_ = false;
 
     lambda_ia_.clear();

@@ -37,6 +37,7 @@ install(FILES
         dlpno_screened_ccsd.py
         dlpno_screened_curvature.py
         dlpno_screened_hessian.py
+        dlpno_native.py
         dlpno_screened_pno.py
         dlpno_screened_triples.py
         dlpno_triples_curvature.py

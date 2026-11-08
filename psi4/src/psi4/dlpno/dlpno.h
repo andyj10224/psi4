@@ -760,9 +760,18 @@ class PSI_API DLPNOCCSD : public DLPNO {
     void check_ccsd_pair_response();
     struct CCAdjoints;
     void estimate_gradient_lambda_memory();
+    // Immutable only during one Lambda solve; released before amplitude probes
+    // or rebuilding the right-hand residual can change its reference inputs.
+    struct GradientLambdaFixed {
+        std::vector<std::vector<SharedMatrix>> q;
+        std::vector<SharedMatrix> f;
+    };
+    std::unique_ptr<GradientLambdaFixed> gradient_lambda_fixed_;
+    void build_gradient_lambda_fixed();
     void solve_gradient_lambda();
     void gradient_lambda_residual(const std::vector<SharedMatrix>& z1, const std::vector<SharedMatrix>& z2,
-                                  std::vector<SharedMatrix>& l1, std::vector<SharedMatrix>& l2, bool include_source = true);
+                                  std::vector<SharedMatrix>& l1, std::vector<SharedMatrix>& l2, bool include_source = true,
+                                  CCAdjoints* workspace = nullptr);
     void reverse_R1(CCAdjoints& g);
     void reverse_R2(CCAdjoints& g);
     void reverse_pair_intermediates(CCAdjoints& g);
