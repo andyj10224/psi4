@@ -554,3 +554,19 @@ def test_native_ccsd_mixed_vertices_keep_target_fit_and_source_pao_order(budget,
         assert all(name in sizes for name in ('qij','qia','qab','PNO factors','mixed J/K vertices'))
         assert all(len(v)==4 and min(v)>0 for v in sizes.values())
         assert sum(sum(sizes[name]) for name in ('qij','qia','qab'))<=e.panel_statistics[6]
+
+
+def test_overlap_reservation_survives_fitting_panel_pressure():
+    """Small overlaps still have storage when optional fitting panels run out."""
+    x=fitting_fixture(cache=128*1024)
+    a=x.entry.ccsd(x.one,x.two,'affine')
+    before=np.asarray(x.entry.panel_statistics)
+    sizes=x.entry.integral_storage
+    assert 'PNO overlaps' in sizes
+    assert 0<sum(sizes['PNO overlaps'])<=128*1024//64
+    b=x.entry.ccsd(x.one,x.two,'affine')
+    after=np.asarray(x.entry.panel_statistics)
+    assert after[4]==before[4] and after[5]>before[5]
+    # Three pair spaces need at most six stored overlap orientations.
+    assert before[4]<=6
+    for p in a[1]:assert_blocks(a[1][p],b[1][p])

@@ -43,6 +43,8 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <numeric>
+#include <chrono>
 
 namespace psi {
 namespace dlpno {
@@ -212,8 +214,99 @@ void DLPNOCCSD_T::compute_gradient_model_triples() {
     outfile->Printf("    RHF DLPNO-CCSD(T) gradient-model total energy: %20.12f\n", total);
 }
 
-void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only, const SharedMatrix& screen) {
+
+double DLPNOCCSD_T::accumulate_triples_gradient_stage(const std::string& label, double weight, bool semicanonical,
+                                                      const std::vector<bool>& active) {
+    const auto started = std::chrono::steady_clock::now();
+    if (write_amplitudes_ || write_intermediates_)
+        throw PSIEXCEPTION("The production-triples gradient currently requires in-core triples stages.");
+    // Snapshots are shared-pointer owners, not tensor copies. Each response stage
+    // creates new covectors before adding its signed contribution to these totals.
+    auto source1 = std::move(triples_source1_), source2 = std::move(triples_source2_);
+    auto pair = std::move(triples_pair_bar_), fitted = std::move(fitted_coefficient_bar_);
+    auto foo = std::move(triples_foo_bar_), fov = std::move(triples_fov_bar_);
+    auto fvv = std::move(triples_fvv_bar_), overlap = std::move(triples_overlap_bar_);
+    auto pao = std::move(df_pao_coefficient_bar_);
+    fitted_coefficient_bar_.assign(molecule_->natom(), {});
+    df_pao_coefficient_bar_.assign(C_pao_->nrow(), {});
+    const auto energies = e_ijk_;
+    const double saved_energy = E_T_;
+    // Capture every discrete selection used by this stage for finite-difference audits.
+    std::vector<double> branch{double(n_tno_.size())};
+    for (size_t r = 0; r < n_tno_.size(); ++r) {
+        const auto [i,j,k] = ijk_to_i_j_k_[r];
+        branch.insert(branch.end(), {double(i), double(j), double(k), double(n_tno_[r]),
+                                    double(active.empty() || active[r])});
+        for (const auto* ids : {&lmotriplet_to_lmos_[r], &lmotriplet_to_paos_[r], &lmotriplet_to_ribfs_[r]}) {
+            branch.push_back(ids->size());
+            branch.insert(branch.end(), ids->begin(), ids->end());
+        }
+    }
+    auto snapshot = std::make_shared<Matrix>(1, branch.size());
+    std::copy(branch.begin(), branch.end(), snapshot->get_pointer());
+    set_array_variable("DLPNO GRADIENT " + label + " BRANCH", snapshot);
+    triples_stage_metadata_words_ += branch.size();
+    const std::array<std::string, 2> names{"DLPNO (T) AUXILIARY METRIC GRADIENT", "DLPNO (T) THREE-CENTER GRADIENT"};
+    std::array<SharedMatrix, 2> gradients;
+    for (int k = 0; k < 2; ++k) gradients[k] = array_variable(names[k]);
+    outfile->Printf("\n    Production triples gradient stage: %s (weight %+.0f)\n", label.c_str(), weight);
+    const std::array<std::string, 4> scalar_names{"DLPNO (T) ADJOINT ENERGY", "DLPNO (T) OCCUPIED FOCK SHIFT DERIVATIVE",
+        "DLPNO (T) VIRTUAL FOCK SHIFT DERIVATIVE", "DLPNO (T) AUXILIARY METRIC SCALE DERIVATIVE"};
+    std::array<double, 4> scalar_totals{};
+    for (size_t k = 0; k < scalar_names.size(); ++k) scalar_totals[k] = scalar_variable(scalar_names[k]);
+    solve_gradient_model_triples(false, F_lmo_, semicanonical, active);
+    for (size_t k = 0; k < scalar_names.size(); ++k)
+        set_scalar_variable(scalar_names[k], scalar_totals[k] + weight * scalar_variable(scalar_names[k]));
+    const double energy = E_T_;
+    auto merge_blocks = [&](auto& current, auto& previous) {
+        if (previous.empty()) previous.resize(current.size());
+        if (previous.size() != current.size()) throw PSIEXCEPTION("Triples gradient stage dimensions changed.");
+        for (size_t k = 0; k < current.size(); ++k) {
+            if (!current[k]) continue;
+            if (previous[k]) previous[k]->axpy(weight, current[k]);
+            else { previous[k] = current[k]; previous[k]->scale(weight); }
+        }
+        current = std::move(previous);
+    };
+    auto merge_rows = [&](auto& current, auto& previous) {
+        if (previous.empty()) previous.resize(current.size());
+        if (previous.size() != current.size()) throw PSIEXCEPTION("Triples gradient stage row dimensions changed.");
+        for (size_t r = 0; r < current.size(); ++r)
+            for (const auto& [c, value] : current[r]) previous[r][c] += weight * value;
+        current = std::move(previous);
+    };
+    merge_blocks(triples_source1_, source1); merge_blocks(triples_source2_, source2);
+    merge_blocks(triples_pair_bar_, pair); merge_blocks(fitted_coefficient_bar_, fitted);
+    merge_rows(triples_foo_bar_, foo); merge_rows(triples_fov_bar_, fov);
+    merge_rows(triples_fvv_bar_, fvv); merge_rows(triples_overlap_bar_, overlap);
+    merge_rows(df_pao_coefficient_bar_, pao);
+    for (int k = 0; k < 2; ++k) {
+        gradients[k]->axpy(weight, array_variable(names[k]));
+        set_array_variable(names[k], gradients[k]);
+    }
+    e_ijk_ = energies;  // Preserve the production screening/sorting decisions.
+    E_T_ = saved_energy;
+    set_scalar_variable("DLPNO GRADIENT " + label + " ENERGY", energy);
+    outfile->Printf("    Production triples gradient %-20s: %9.3f s; energy % .12f\n", label.c_str(),
+                    std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count(), energy);
+    // The retained stage sum, not merely the final stage, belongs in the memory estimate.
+    triples_local_response_words_ = triples_stage_metadata_words_;
+    for (const auto& b : triples_pair_bar_) if (b) triples_local_response_words_ += b->size();
+    for (const auto& b : fitted_coefficient_bar_) if (b) triples_local_response_words_ += b->size();
+    for (const auto* rows : {&triples_foo_bar_, &triples_fov_bar_, &triples_fvv_bar_, &triples_overlap_bar_, &df_pao_coefficient_bar_})
+        for (const auto& row : *rows) triples_local_response_words_ += 4 * row.size();
+    return energy;
+}
+
+void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only, const SharedMatrix& screen,
+                                                bool semicanonical, const std::vector<bool>& active) {
     const int count = n_tno_.size(), naocc = nalpha_ - nfrzc();
+    const bool production = options_.get_bool("DLPNO_GRADIENT_FULL_TRIPLES");
+    if (!active.empty() && active.size() != size_t(count)) throw PSIEXCEPTION("Invalid triples stage mask.");
+    if (!semicanonical && !active.empty()) throw PSIEXCEPTION("An iterative triples stage must retain its entire graph.");
+    auto included = [&](int r) { return n_tno_[r] && (active.empty() || active[r]); };
+    std::vector<int> occupied(naocc);
+    std::iota(occupied.begin(), occupied.end(), 0);
     const double f_cut = options_.get_double("F_CUT_T");
     const int maxiter = options_.get_int("DLPNO_MAXITER");
     const double tol = options_.get_double("R_CONVERGENCE");
@@ -231,13 +324,15 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only, const SharedMatr
 
     std::vector<std::vector<TriplesEdge>> forward(count), transpose(count);
     for (int r = 0; r < count; ++r) {
-        if (!n_tno_[r]) continue;
+        if (!included(r)) continue;
+        if (semicanonical) continue;
         auto [i, j, k] = ijk_to_i_j_k_[r];
         const std::array<int, 3> occ{i, j, k};
         for (int slot = 0; slot < 3; ++slot) {
             const int pair = i_j_to_ij_[occ[(slot + 1) % 3]][occ[(slot + 2) % 3]];
-            // This pair domain contains every occupied l that can form the new triplet.
-            for (int l : lmopair_to_lmos_[pair]) {
+            // Preserve the single-space model graph. The production energy instead
+            // searches every occupied l before looking up the stored replacement triplet.
+            for (int l : (production ? occupied : lmopair_to_lmos_[pair])) {
                 const int m = occ[slot];
                 if (l == m || std::abs((*screen)(l, m)) < f_cut) continue;
                 auto ordered = occ;
@@ -290,7 +385,7 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only, const SharedMatr
         };
         double right = 0.0, left = 0.0;
         for (int r = 0; r < count; ++r) {
-            if (!n_tno_[r]) continue;
+            if (!included(r)) continue;
             auto x = probe(r, 2), y = probe(r, 5);
             for (const auto& e : forward[r])
                 right -= (*F_lmo_)(e.l, e.m) * y->vector_dot(projected(e, probe(e.source, 2), false));
@@ -318,11 +413,15 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only, const SharedMatr
 
     auto moments_disk = write_intermediates_ ? psio_ : nullptr;
     auto amps_disk = write_amplitudes_ ? psio_ : nullptr;
-    TriplesBlocks W(n_tno_, "W", moments_disk, std::move(W_iajbkc_));
-    TriplesBlocks V(n_tno_, "V", moments_disk, std::move(V_iajbkc_));
-    TriplesBlocks T(n_tno_, "T", amps_disk, std::move(T_iajbkc_));
+    TriplesBlocks W(n_tno_, "W", moments_disk, production ? W_iajbkc_ : std::move(W_iajbkc_));
+    TriplesBlocks V(n_tno_, "V", moments_disk, production ? V_iajbkc_ : std::move(V_iajbkc_));
+    TriplesBlocks T(n_tno_, "T", amps_disk, production ? T_iajbkc_ : std::move(T_iajbkc_));
     TriplesBlocks Z(n_tno_, "Z", amps_disk);
 
+    TriplesBlocks energy_seeds(n_tno_, "PV", moments_disk);
+    if (!right_only)
+        for (int r = 0; r < count; ++r)
+            if (included(r)) energy_seeds.write(r, energy_moment(r, V.read(r), false));
     auto solve = [&](TriplesBlocks& amplitudes, bool left) {
         TriplesBlocks next(n_tno_, left ? "Z next" : "T next", amps_disk);
         const auto& rows = left ? transpose : forward;
@@ -333,8 +432,8 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only, const SharedMatr
 #pragma omp parallel for schedule(dynamic, 1) reduction(max : residual)
             for (int r = 0; r < count; ++r) {
                 const int n = n_tno_[r];
-                if (!n) continue;
-                auto rhs = left ? energy_moment(r, V.read(r), false) : W.read(r)->clone();
+                if (!included(r)) continue;
+                auto rhs = left ? energy_seeds.read(r)->clone() : W.read(r)->clone();
                 for (const auto& edge : rows[r]) {
                     const auto x = amplitudes.read(left ? edge.target : edge.source);
                     rhs->axpy(-(*F_lmo_)(edge.l, edge.m), projected(edge, x, left));
@@ -370,13 +469,13 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only, const SharedMatr
     if (right_only) {
         E_T_ = 0.;
         for (int r = 0; r < count; ++r)
-            if (n_tno_[r]) E_T_ += energy_moment(r, V.read(r), false)->vector_dot(T.read(r));
+            if (included(r)) E_T_ += energy_moment(r, V.read(r), false)->vector_dot(T.read(r));
         return;
     }
     set_scalar_variable("DLPNO (T) RIGHT RESIDUAL", right_residual);
     for (int r = 0; r < count; ++r) {
         int n = n_tno_[r];
-        if (n) Z.write(r, std::make_shared<Matrix>(n, n * n));
+        if (included(r)) Z.write(r, std::make_shared<Matrix>(n, n * n));
     }
     set_scalar_variable("DLPNO (T) ADJOINT RESIDUAL", solve(Z, true));
 
@@ -387,7 +486,7 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only, const SharedMatr
         response_v3_.resize(count);
         response_t3_edges_.assign(count, {});
         for (int r = 0; r < count; ++r) {
-            if (!n_tno_[r]) continue;
+            if (!included(r)) continue;
             response_t3_[r] = T.read(r);
             response_z3_[r] = Z.read(r);
             response_w3_[r] = W.read(r);
@@ -405,7 +504,7 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only, const SharedMatr
     E_T_ = 0.0;
     double dual_energy = 0.0;
     for (int r = 0; r < count; ++r) {
-        if (!n_tno_[r]) continue;
+        if (!included(r)) continue;
         auto t = T.read(r);
         e_ijk_[r] = energy_moment(r, V.read(r), false)->vector_dot(t);
         E_T_ += e_ijk_[r];
@@ -427,7 +526,7 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only, const SharedMatr
     triples_overlap_bar_.assign(S_pao_->nrow(), {});
     std::vector<SharedMatrix> x_bar(count);
     for (int r = 0; r < count; ++r) {
-        if (!n_tno_[r]) continue;
+        if (!included(r)) continue;
         auto t = T.read(r), z = Z.read(r);
         auto f_bar = linalg::doublet(z, t, false, true);
         // All three virtual Fock legs. Retaining off-diagonal variations here
@@ -472,7 +571,7 @@ void DLPNOCCSD_T::solve_gradient_model_triples(bool right_only, const SharedMatr
     double tno_direction = 0.;
     double metric_scale = 0.0;
     for (int r = 0; r < count; ++r) {
-        if (!n_tno_[r]) continue;
+        if (!included(r)) continue;
         auto v_bar = energy_moment(r, T.read(r), true);
         auto w_bar = Z.read(r)->clone();
         w_bar->add(v_bar);  // V = W + the singles and F_ov terms.

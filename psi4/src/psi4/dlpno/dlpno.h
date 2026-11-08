@@ -992,7 +992,11 @@ class PSI_API DLPNOCCSD_T : public DLPNOCCSD {
     enum class TripletStage { Prescreen, Refine, SingleSpace };
     void triples_sparsity(TripletStage stage);
     void compute_gradient_model_triples();
-    void solve_gradient_model_triples(bool right_only, const SharedMatrix& screen);
+    void solve_gradient_model_triples(bool right_only, const SharedMatrix& screen, bool semicanonical = false,
+                                       const std::vector<bool>& active = {});
+    size_t triples_stage_metadata_words_ = 0;
+    double accumulate_triples_gradient_stage(const std::string& label, double weight, bool semicanonical,
+                                             const std::vector<bool>& active = {});
     struct TNOSelection {
         SharedMatrix natural, canonical;  ///< all natural orbitals (PAO coefficients), then kept-to-canonical rotation
         SharedVector occupations;

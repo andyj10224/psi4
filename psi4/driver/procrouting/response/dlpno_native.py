@@ -2,7 +2,7 @@
 
 The independent Python equations remain numerical oracles. Production pair and
 triplet traversal, fitting, packing, subspace response and contractions execute
-in dlpno/native_*.cc. This adapter only snapshots metadata and marshals stage I/O.
+in the DLPNO C++ module (CCSD/triples stages live beside their energy routines). This adapter only snapshots metadata and marshals stage I/O.
 """
 from collections import OrderedDict
 from types import SimpleNamespace

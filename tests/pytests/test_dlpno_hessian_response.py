@@ -327,3 +327,12 @@ def test_persistent_first_integral_panels_have_no_eviction_and_print_storage(mon
     fresh=inputs._MolecularIntegrals(ref)
     fresh.prepare_first()
     assert fresh.ao_3center_deriv1(0,'DF_BASIS_SCF') is not saved
+
+
+def test_production_triples_state_cannot_enter_single_space_hessian(monkeypatch):
+    from psi4.driver.procrouting.response.dlpno_hessian import validate_settings
+    from psi4.driver.p4util.exceptions import ValidationError
+    monkeypatch.setattr(inputs.core,'get_option',lambda module,key:key in (
+        'DLPNO_HESSIAN_MODEL','DLPNO_GRADIENT_FULL_TRIPLES'))
+    with pytest.raises(ValidationError,match='multi-space'):
+        validate_settings()

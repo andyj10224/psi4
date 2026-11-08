@@ -4,7 +4,6 @@ list(APPEND sources
   mp2.cc
   ccsd.cc
   ccsd_lambda.cc
-  ccsd_gradient_lambda.cc
   ccsd_pair_response.cc
   ccsd_df_response.cc
   pno_truncation_response.cc
@@ -14,8 +13,6 @@ list(APPEND sources
   native_screened.cc
   native_subspace.cc
   native_fitting.cc
-  native_ccsd.cc
-  native_triples.cc
   response_kernels.cc
   local_basis_response.cc
   occupied_projection.cc

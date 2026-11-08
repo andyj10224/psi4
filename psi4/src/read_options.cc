@@ -2717,6 +2717,14 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
             iterative triples, PNO projector response, both PNO truncation corrections,
             LMP2 relaxation, and excluded dipole/semicanonical-MP2 pairs. !expert -*/
         options.add_bool("DLPNO_GRADIENT_MODEL", false);
+        /*- Differentiate the production ordinary triples correction on the RHF gradient-model
+            CCSD reference: screened prescreen (T0), tight retained (T0), and loose
+            iterative (T) minus loose (T0). Uses the original triplet selection, fitting,
+            TNO transforms and moments. Requires T_CUT_ITER=0 and in-core triples.
+            Experimental gradient only; the single-space analytic Hessian cannot consume
+            this multi-space state. Does not remove the gradient model's all-strong pair
+            restriction. Disabled by default to preserve the single-space model. !expert -*/
+        options.add_bool("DLPNO_GRADIENT_FULL_TRIPLES", false);
         /*- Enable the guarded analytic RHF DLPNO-CCSD(T) Hessian driver.
             Uses the all-strong, ordinary single-TNO gradient model and dense
             AO derivative inputs. Requires AO Schwarz, occupied-Fock and

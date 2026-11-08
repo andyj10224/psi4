@@ -107,7 +107,8 @@ Build it with `pdflatex` twice to obtain the accompanying ten-page report.
 ## Complete native response stages
 
 The production Hessian now owns one `DLPNOResponseWorkspace` across all columns.
-The numerical implementation is in `psi4/src/psi4/dlpno/native_*.cc`; the original
+The numerical implementation is in `psi4/src/psi4/dlpno` (CCSD and triples
+response stages reside beside their energy routines); the original
 Python equations remain independent algebraic oracles. The native stages cover:
 
 - Local occupied refits, PAOs, masked OO/OV/VV fitting factors, metric solves,
@@ -441,3 +442,13 @@ Equation export consistency can be checked without a native Psi4 build:
 ```bash
 python tests/dlpno-hessian-model/export_equations.py --record all --check
 ```
+
+
+### Production triples and the November 8 cost audit
+
+See [PRODUCTION_TRIPLES_AND_COST_AUDIT.md](PRODUCTION_TRIPLES_AND_COST_AUDIT.md)
+for the water timing comparison, local contraction costs, shared-code changes,
+and the opt-in `DLPNO_GRADIENT_FULL_TRIPLES` route. The new route differentiates
+screened/tight/loose/iterative triples on the existing all-strong CCSD reference;
+its analytic multi-space Hessian is not implemented. Molecular validation is
+provided by `production_triples_gradient.py` (cc-pVDZ by default).

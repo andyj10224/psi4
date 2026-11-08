@@ -27,6 +27,7 @@
  */
 
 #include "dlpno.h"
+#include "triples_contractions.h"
 #include "sparse.h"
 
 #include "psi4/lib3index/3index.h"
@@ -148,29 +149,7 @@ void DLPNOCCSD_T::print_header(DLPNOCCSDPhase phase) {
 }
 
 SharedMatrix DLPNOCCSD_T::matmul_3d(SharedMatrix A, SharedMatrix X, int dim_old, int dim_new) {
-    /*
-    Performs the operation A'[i,j,k] = A[I,J,K] * X[i,I] * X[j,J] * X[k,K] for cube 3d tensors
-    */
-
-    SharedMatrix A_new = linalg::doublet(X, A, false, false);
-    A_new->reshape(dim_new * dim_old, dim_old);
-    A_new = linalg::doublet(A_new, X, false, true);
-
-    SharedMatrix A_T = std::make_shared<Matrix>(dim_new * dim_new, dim_old);
-    for (int ind = 0; ind < dim_new * dim_new * dim_old; ++ind) {
-        int a = ind / (dim_new * dim_old), b = (ind / dim_old) % dim_new, c = ind % dim_old;
-        (*A_T)(a *dim_new + b, c) = (*A_new)(a * dim_old + c, b);
-    }
-    A_T = linalg::doublet(A_T, X, false, true);
-
-    A_new = std::make_shared<Matrix>(dim_new, dim_new * dim_new);
-
-    for (int ind = 0; ind < dim_new * dim_new * dim_new; ++ind) {
-        int a = ind / (dim_new * dim_new), b = (ind / dim_new) % dim_new, c = ind % dim_new;
-        (*A_new)(a, b *dim_new + c) = (*A_T)(a * dim_new + c, b);
-    }
-
-    return A_new;
+    return triples_detail::transform_triples(std::move(A), std::move(X), dim_old, dim_new);
 }
 
 void DLPNOCCSD_T::triples_sparsity(TripletStage stage) {
@@ -607,8 +586,9 @@ void DLPNOCCSD_T::estimate_triples_memory() {
     double W3_memory = tno_total_memory;
     double V3_memory = tno_total_memory;
     double L3_memory = lambda_requested_ ? tno_total_memory : 0.0;
-    // The response solve holds T3, Z3 and the next Jacobi generation.
-    double T3_memory = (gradient_model_ ? 3.0 : 1.0) * tno_total_memory;
+    // Response holds T3, Z3, the next generation and the fixed P V source.
+    // Production stage hooks also retain the input T0 owner through the solve.
+    double T3_memory = (gradient_model_ ? (options_.get_bool("DLPNO_GRADIENT_FULL_TRIPLES") ? 5.0 : 4.0) : 1.0) * tno_total_memory;
 
     // Write W and V intermediates to disk (this is more efficient than writing amplitudes)
     write_intermediates_ = options_.get_bool("WRITE_TRIPLES_INTERMEDIATES");
@@ -623,6 +603,7 @@ void DLPNOCCSD_T::estimate_triples_memory() {
         // Retain the CCSD state. Each participating auxiliary function can also
         // carry an oo, ov and vv block on its own fitted domain.
         resident = std::max(resident, ccsd_baseline_memory_doubles_);
+        if (options_.get_bool("DLPNO_GRADIENT_FULL_TRIPLES")) resident += triples_local_response_words_;
         size_t shell_work = 0;
         for (int atom = 0; atom < molecule_->natom(); ++atom) {
             const size_t no = riatom_to_lmos_ext_[atom].size(), nv = riatom_to_paos_ext_[atom].size();
@@ -703,6 +684,10 @@ void DLPNOCCSD_T::estimate_triples_memory() {
         outfile->Printf("  Total Required Memory is (still) more than 90%% of Available Memory!\n");
         throw PSIEXCEPTION("   Too little memory given for DLPNO-(T) Algorithm!");
     }
+
+    if (gradient_model_ && options_.get_bool("DLPNO_GRADIENT_FULL_TRIPLES") &&
+        (write_amplitudes_ || write_intermediates_))
+        throw PSIEXCEPTION("Production-triples gradients require enough memory for in-core triples stages.");
 
     if (memory_changed) {
         outfile->Printf("\n  ==> (Updated) DLPNO-(T) Memory Requirements <== \n\n");
@@ -1731,6 +1716,26 @@ std::pair<double, double> DLPNOCCSD_T::lccsd_t_iterations() {
 }
 
 void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
+    const bool full_gradient = gradient_model_ && options_.get_bool("DLPNO_GRADIENT_FULL_TRIPLES");
+    if (full_gradient) {
+        outfile->Printf("\n  ==> Production triples gradient on the all-strong CCSD gradient reference <==\n"
+                        "      Screened T0 + tight T0 - loose T0 + iterative T; fixed selection branches.\n");
+        triples_stage_metadata_words_ = 0;
+        if (lambda_requested_ || algorithm_ != DLPNOMethod::CCSD_T || options_.get_bool("T0_APPROXIMATION"))
+            throw PSIEXCEPTION("Production triples gradients currently support ordinary RHF DLPNO-CCSD(T) only.");
+        if (options_.get_double("T_CUT_ITER") != 0.)
+            throw PSIEXCEPTION("Production triples gradients require T_CUT_ITER=0: every amplitude equation must converge.");
+        if (options_.get_bool("DLPNO_KEEP_TRIPLES_RESPONSE"))
+            throw PSIEXCEPTION("The single-space Hessian cannot consume a production multi-space triples gradient.");
+        for (const auto& name : {"DLPNO (T) AUXILIARY METRIC GRADIENT", "DLPNO (T) THREE-CENTER GRADIENT"})
+            set_array_variable(name, std::make_shared<Matrix>(molecule_->natom(), 3));
+        for (const auto& name : {"DLPNO (T) ADJOINT ENERGY", "DLPNO (T) OCCUPIED FOCK SHIFT DERIVATIVE",
+                                "DLPNO (T) VIRTUAL FOCK SHIFT DERIVATIVE", "DLPNO (T) AUXILIARY METRIC SCALE DERIVATIVE"})
+            set_scalar_variable(name, 0.);
+        triples_source1_.clear(); triples_source2_.clear(); triples_pair_bar_.clear();
+        triples_foo_bar_.clear(); triples_fov_bar_.clear(); triples_fvv_bar_.clear(); triples_overlap_bar_.clear();
+    }
+
     require_converged_brueckner_reference(3, "CCSD(T)");
     timer_on("DLPNO-CCSD(T)");
 
@@ -1773,7 +1778,7 @@ void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
     }
 
     // Clear CCSD integrals if CCSD(T) is last step
-    if (algorithm_ == DLPNOMethod::CCSD_T) {
+    if (algorithm_ == DLPNOMethod::CCSD_T && !full_gradient) {
         K_mibj_.clear();
         J_ijmb_.clear();
         L_mibj_.clear();
@@ -1834,7 +1839,16 @@ void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
 
     triples_sparsity(TripletStage::Prescreen);
     tno_transform(t_cut_tno_pre);
-    compute_lccsd_t0();
+    if (full_gradient) estimate_triples_memory();
+    compute_lccsd_t0(full_gradient);
+    if (full_gradient) {
+        std::vector<bool> screened(e_ijk_right_.size());
+        const double cutoff = options_.get_double("T_CUT_TRIPLES_WEAK");
+        for (size_t r = 0; r < screened.size(); ++r)
+            screened[r] = std::abs(e_ijk_right_[r]) < cutoff && std::abs(e_ijk_[r]) < cutoff;
+        accumulate_triples_gradient_stage("SCREENED T0", 1., true, screened);
+        W_iajbkc_.clear(); V_iajbkc_.clear(); T_iajbkc_.clear();
+    }
 
     // Step 2: Compute DLPNO-CCSD(T0) with the surviving triplets.
     outfile->Printf("\n   Continuing computation with surviving triplets...\n");
@@ -1852,7 +1866,12 @@ void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
     outfile->Printf("     T_CUT_MKN (re)set to %6.3e \n\n", options_.get_double("T_CUT_MKN_TRIPLES"));
 
     tno_transform(t_cut_tno);
-    auto [E_T0, E_T_L0] = compute_lccsd_t0();
+    if (full_gradient) estimate_triples_memory();
+    auto [E_T0, E_T_L0] = compute_lccsd_t0(full_gradient);
+    if (full_gradient) {
+        accumulate_triples_gradient_stage("TIGHT T0", 1., true);
+        W_iajbkc_.clear(); V_iajbkc_.clear(); T_iajbkc_.clear();
+    }
     e_lccsd_t_ = e_lccsd_ + E_T0 + de_lccsd_t_screened_;
     if (lambda_requested_) e_lccsd_t_l_ = e_lccsd_ + E_T_L0 + de_lccsd_t_l_screened_;
 
@@ -1896,7 +1915,10 @@ void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
         estimate_triples_memory();
 
         auto [E_T0_crude, E_T_L0_crude] = compute_lccsd_t0(true);
-        auto [E_T, E_T_L] = lccsd_t_iterations();
+        if (full_gradient) accumulate_triples_gradient_stage("LOOSE T0", -1., true);
+        auto [E_T, E_T_L] = full_gradient
+            ? std::make_pair(accumulate_triples_gradient_stage("ITERATIVE T", 1., false), 0.)
+            : lccsd_t_iterations();
         E_T_ = E_T;
         E_T_L_ = E_T_L;
 
@@ -2009,6 +2031,17 @@ void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
         set_scalar_variable("CURRENT ENERGY", right_total);
     }
 
+    if (full_gradient) {
+        set_scalar_variable("DLPNO GRADIENT MODEL TOTAL ENERGY", right_total);
+        set_scalar_variable("DLPNO GRADIENT FULL TRIPLES", 1.);
+        const double replay = scalar_variable("DLPNO GRADIENT SCREENED T0 ENERGY") +
+                              scalar_variable("DLPNO GRADIENT TIGHT T0 ENERGY") -
+                              scalar_variable("DLPNO GRADIENT LOOSE T0 ENERGY") +
+                              scalar_variable("DLPNO GRADIENT ITERATIVE T ENERGY");
+        if (std::abs(replay - right_correction) > 1.e-10 + 1.e-8 * std::abs(right_correction))
+            throw PSIEXCEPTION("Production triples gradient stage energies do not reconstruct the correction.");
+        tno_selection_.clear();
+    }
     print_results(phase);
     psio_->close(PSIF_DLPNO_TRIPLES, 0);
     timer_off("DLPNO-CCSD(T)");
@@ -2030,7 +2063,15 @@ void DLPNOCCSD_T::post_ccsd_correction(DLPNOCCSDPhase phase) {
             fitted_coefficient_bar_.assign(molecule_->natom(), {});
             df_pao_coefficient_bar_.assign(C_pao_->nrow(), {});
             df_coefficient_error_ = df_replay_error_ = 0.;
-            timed("triples state and densities", [&]() { compute_gradient_model_triples(); });
+            timed("triples state and densities", [&]() {
+                if (options_.get_bool("DLPNO_GRADIENT_FULL_TRIPLES")) {
+                    try { compute_triples_correction(phase); }
+                    catch (...) {
+                        if (psio_->open_check(PSIF_DLPNO_TRIPLES)) psio_->close(PSIF_DLPNO_TRIPLES, 0);
+                        throw;
+                    }
+                } else compute_gradient_model_triples();
+            });
             timed("CCSD Lambda and pair response", [&]() { solve_gradient_lambda(); });
             timed("CCSD DF density contraction", [&]() { contract_ccsd_df_response(); });
             timed("CCSD PNO projector", [&]() { form_pno_projector_response(ccsd_pno_coefficient_response_); });
@@ -4512,3 +4553,441 @@ void DLPNOCCSDT::print_results() {
 
 }  // namespace dlpno
 }  // namespace psi
+
+// BEGIN Triples mixed response
+#include "native_response.h"
+#include "triples_contractions.h"
+#include <cmath>
+#include <numeric>
+#include <limits>
+#include <exception>
+#include "psi4/libpsi4util/process.h"
+#ifdef USING_LAPACK_MKL
+#include <mkl.h>
+#endif
+
+namespace psi {
+namespace dlpno {
+namespace response {
+namespace {
+std::vector<int> inverse(const std::vector<int>& axes) {
+    std::vector<int> out(axes.size());
+    for (size_t i = 0; i < axes.size(); ++i) out[axes[i]] = i;
+    return out;
+}
+std::vector<int> ranks(const Triplet& r) {
+    auto order = range(3);
+    std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return r[a] < r[b]; });
+    return inverse(order);
+}
+Triplet sorted(Triplet r) {
+    std::sort(r.begin(), r.end());
+    return r;
+}
+Tensor energy_moment(const Triplet& r, const Tensor& v) {
+    auto [i, j, k] = r;
+    auto out = 8. * v;
+    for (auto term : std::vector<std::pair<Triplet, double>>{
+             {{k, j, i}, -4.}, {{i, k, j}, -4.}, {{j, i, k}, -4.}, {{j, k, i}, 2.}, {{k, i, j}, 2.}})
+        out = out + term.second * v.permute(ranks(term.first));
+    return (1. / (i == k ? 6 : i == j || j == k ? 2 : 1)) * out;
+}
+Tensor transform_axis(const Tensor& tensor, const Tensor& matrix, int axis) {
+    std::vector<int> axes{axis};
+    for (int k = 0; k < 3; ++k)
+        if (k != axis) axes.push_back(k);
+    auto input = tensor.permute(axes);
+    const int old = input.shape[0], width = input.shape[1] * input.shape[2];
+    auto result = doublet(matrix, input.reshape({old, width}));
+    auto shape = input.shape;
+    shape[0] = matrix.shape[0];
+    return result.reshape(shape).permute(inverse(axes));
+}
+Tensor action(const Tensor& f, const Tensor& t, double occ) {
+    return transform_axis(t, f, 0) + transform_axis(t, f, 1) + transform_axis(t, f, 2) - occ * t;
+}
+std::vector<int> transfer_order(const Tensor& t, const std::array<Tensor, 3>& matrices) {
+    std::vector<int> order{0, 1, 2}, best = order;
+    double minimum = std::numeric_limits<double>::infinity();
+    do {
+        auto shape = t.shape;
+        double cost = 0.;
+        for (int axis : order) {
+            double size = 1.;
+            for (int n : shape) size *= n;
+            cost += size * matrices[axis].shape[0];
+            shape[axis] = matrices[axis].shape[0];
+        }
+        if (cost < minimum) {
+            minimum = cost;
+            best = order;
+        }
+    } while (std::next_permutation(order.begin(), order.end()));
+    return best;
+}
+Tensor transfer(const Tensor& t, const Tensor& s) {
+    const int old = t.shape[0], n = s.shape[0];
+    if (t.shape != std::vector<int>{old, old, old} || s.shape != std::vector<int>{n, old})
+        throw std::invalid_argument("Noncubic triples transfer.");
+    // Use the exact three-GEMM contraction from the production (T) code.
+    // Its two explicit shuffles avoid the generic permutation on every leg.
+    Tensor result;
+    result.shape = {n, n, n};
+    result.data = triples_detail::transform_triples(t.data, s.data, old, n);
+    return result;
+}
+
+std::pair<Tensor, Tensor> transfer_tangent(const Tensor& t, const Tensor& s, const Tensor& ds) {
+    auto value = t;
+    Tensor tangent(t.shape);
+    bool first = true;
+    for (int axis : transfer_order(t, {s, s, s})) {
+        auto next = transform_axis(value, ds, axis);
+        if (!first) next = next + transform_axis(tangent, s, axis);
+        tangent = std::move(next);
+        value = transform_axis(value, s, axis);
+        first = false;
+    }
+    return {value, tangent};
+}
+Tensor overlap_covector(const Tensor& adjoint, const Tensor& source, const Tensor& b, const Tensor& c) {
+    // Leave the first virtual leg open, transform the other two, then GEMM.
+    const double first_b =
+        double(source.size()) * b.shape[0] + double(source.shape[0]) * b.shape[0] * source.shape[2] * c.shape[0];
+    const double first_c =
+        double(source.size()) * c.shape[0] + double(source.shape[0]) * source.shape[1] * c.shape[0] * b.shape[0];
+    auto moved = first_b <= first_c ? transform_axis(transform_axis(source, b, 1), c, 2)
+                                    : transform_axis(transform_axis(source, c, 2), b, 1);
+    const int width = adjoint.shape[1] * adjoint.shape[2];
+    return doublet(adjoint.reshape({adjoint.shape[0], width}), moved.reshape({source.shape[0], width}), false, true);
+}
+void check(const Tensor& x, double tolerance, const std::string& message) {
+    close(x, Tensor(x.shape), tolerance, message);
+}
+}  // namespace
+std::array<Mixed, 3> triples_moments(const Triplet& r, const std::vector<int>& domain, const Mixed& metric,
+                                     const Mixed& oo, const Mixed& ov, const Mixed& vv,
+                                     const std::function<Mixed(int, int)>& transfer,
+                                     const std::function<Mixed(int)>& single,
+                                     const std::function<Mixed(int, int)>& doubles,
+                                     const std::function<Mixed(int)>& fov, const Mixed& vf) {
+    auto g = symmetric_inverse(metric), gf = filtered_inverse(metric, g);
+    const int nq = vv[0].shape[0], nv = vv[0].shape[1];
+    std::map<Pair, Mixed> pairs, ooovs;
+    std::map<int, Mixed> ovvvs, full_ov, filtered_ov;
+    auto fitted_ov = [&](int a, bool full) {
+        auto& saved = full ? full_ov : filtered_ov;
+        auto found = saved.find(a);
+        if (found != saved.end()) return found->second;
+        return saved.emplace(a, doublet(full ? g : gf, auxrow(ov, pos(domain, a)))).first->second;
+    };
+    auto pair = [&](int a, int b) {
+        const Pair p{a, b};
+        auto found = pairs.find(p);
+        if (found != pairs.end()) return found->second;
+        auto overlap = transfer(a, b);
+        return pairs.emplace(p, congruence(overlap, doubles(a, b), overlap)).first->second;
+    };
+    auto ovvv = [&](int a) {
+        auto found = ovvvs.find(a);
+        if (found != ovvvs.end()) return found->second;
+        // Match triples.cc: full inverse on the small q_iv, raw q_vv.
+        return ovvvs.emplace(a, doublet(fitted_ov(a, true), vv.reshape({nq, nv * nv}), true).reshape({nv, nv, nv}))
+            .first->second;
+    };
+    auto ooov = [&](int b, int c) {
+        const Pair p{b, c};
+        auto found = ooovs.find(p);
+        if (found != ooovs.end()) return found->second;
+        // H^T H is the filtered inverse used by the energy's two half fits.
+        return ooovs.emplace(p, doublet(auxrow(oo, pos(domain, b)), fitted_ov(c, false), true)).first->second;
+    };
+    int n = vv[0].shape[2];
+    auto w = metric.context->constant("triples_zero", Tensor({n, n, n}));
+    auto perm = range(3);
+    do {
+        int a = r[perm[0]], b = r[perm[1]], c = r[perm[2]];
+        auto term = doublet(ovvv(a).reshape({n * n, n}), pair(c, b), false, true).reshape({n, n, n});
+        auto integral = ooov(b, c);
+        for (size_t m = 0; m < domain.size(); ++m)
+            term = term -
+                   doublet(pair(a, domain[m]).reshape({n * n, 1}), row(integral, m).reshape({1, n})).reshape({n, n, n});
+        w = w + term.permute(inverse(perm));
+    } while (std::next_permutation(perm.begin(), perm.end()));
+    auto v = w;
+    for (int slot = 0; slot < 3; ++slot) {
+        int a = r[slot];
+        std::vector<int> other;
+        for (int k = 0; k < 3; ++k)
+            if (k != slot) other.push_back(r[k]);
+        int b = other[0], c = other[1];
+        auto s = doublet(transfer(a, a), single(a).reshape({int(single(a)[0].size()), 1}), true);
+        auto exchange = doublet(auxrow(ov, pos(domain, b)), fitted_ov(c, false), true);
+        auto term =
+            (doublet(s, exchange.reshape({1, n * n})) + doublet(fov(a).reshape({n, 1}), pair(b, c).reshape({1, n * n})))
+                .reshape({n, n, n});
+        std::vector<int> axes{1, 2};
+        axes.insert(axes.begin() + slot, 0);
+        v = v + term.permute(axes);
+    }
+    return {w, v, vf};
+}
+Triples::Triples(std::shared_ptr<Fitting> f, std::vector<Mixed> s, PairMixed d)
+    : fit(std::move(f)), singles(std::move(s)), doubles(std::move(d)) {
+    for (const auto& t : singles)
+        for (double value : t[3])
+            if (value != 0.) throw std::invalid_argument("Triples mixed inputs require affine CCSD amplitudes.");
+    for (const auto& item : doubles)
+        for (double value : item.second[3])
+            if (value != 0.) throw std::invalid_argument("Triples mixed inputs require affine CCSD amplitudes.");
+    foo = congruence(fit->molecular.l, fit->molecular.f, fit->molecular.l);
+}
+void Triples::build_all() {
+    fit->prepare_raw();
+    std::vector<Triplet> pending;
+    for (auto& [r, data] : fit->workspace.triplets)
+        if (!moments.count(r)) pending.push_back(r);
+    struct Result {
+        Mixed parent, frame;
+        std::array<Mixed, 3> moments;
+    };
+    std::vector<Result> rows(pending.size());
+    // Each row owns fitting caches and all temporary tensors. Reference
+    // intermediates use the synchronized, reference-owned numerical cache.
+    parallel_rows(pending.size(), [&](size_t k) {
+        auto local_fit = std::make_shared<Fitting>(*fit);
+        Triples task(local_fit, singles, doubles);
+        const auto r = pending[k];
+        rows[k].moments = task.blocks(r);
+        rows[k].parent = task.parents.at(r);
+        rows[k].frame = task.frames.at(r);
+        // Retain results only. Fitting panels must be released at task exit,
+        // so their peak storage scales with workers, not the triplet count.
+    });
+    for (size_t k = 0; k < pending.size(); ++k) {
+        const auto r = pending[k];
+        parents[r] = std::move(rows[k].parent);
+        frames[r] = std::move(rows[k].frame);
+        moments[r] = std::move(rows[k].moments);
+    }
+}
+Mixed Triples::frame(const Triplet& r) {
+    auto it = frames.find(r);
+    if (it != frames.end()) return it->second;
+    const auto& data = fit->workspace.triplets.at(r);
+    auto parent = moving_parent(fit->pao(data.paos), fit->molecular.s, data.parent).first;
+    parents[r] = parent;
+    return frames.emplace(r, tno_frame(r, parent, fit->molecular.s, fit->frames, doubles, data.frame)).first->second;
+}
+std::array<Mixed, 3> Triples::blocks(const Triplet& r) {
+    auto it = moments.find(r);
+    if (it != moments.end()) return it->second;
+    const auto& data = fit->workspace.triplets.at(r);
+    const auto& m = fit->molecular;
+    auto y = frame(r), X = fit->coefficients(data.paos, data.parent, y);
+    const int nq = data.auxiliary.size(), no = data.occupied.size(), np = data.paos.size(), nv = X[0].shape[1];
+    auto oo = fit->raw("oo", data.auxiliary, data.occupied, data.occupied);
+    auto ov = doublet(fit->raw("ov", data.auxiliary, data.occupied, data.paos).reshape({nq * no, np}), X)
+                  .reshape({nq, no, nv});
+    auto vv = virtual_transform(fit->raw("vv", data.auxiliary, data.paos, data.paos), X, X);
+    auto transfer = [&](int i, int j) { return congruence(fit->frames.at(key({i, j})), m.s, y); };
+    auto amp = [&](int i, int j) {
+        auto t = doubles.at(key({i, j}));
+        return i <= j ? t : t.transpose();
+    };
+    auto fov = [&](int i) { return congruence(col(m.l, i).reshape({m.l[0].shape[0], 1}), m.f, y).reshape({nv}); };
+    return moments
+        .emplace(r, triples_moments(
+                        r, data.occupied, fit->metric(data.auxiliary), oo, ov, vv, transfer,
+                        [&](int i) { return singles.at(i); }, amp, fov, congruence(y, m.f, y)))
+        .first->second;
+}
+Mixed Triples::edge(const Triplet& r, const Triplet& q) {
+    auto key = std::make_pair(r, q);
+    auto it = overlaps.find(key);
+    if (it != overlaps.end()) return it->second;
+    return overlaps.emplace(key, congruence(frame(r), fit->molecular.s, frame(q))).first->second;
+}
+std::shared_ptr<TripleDirection> Triples::direction(int component, double threshold, double reference_energy) {
+    if (component != 1 && component != 2) throw std::invalid_argument("Expected a first triples component.");
+    build_all();
+    auto out = std::make_shared<TripleDirection>();
+    std::map<Triplet, Tensor> left_residual;
+    double energy = 0.;
+    for (auto& [r, data] : fit->workspace.triplets) {
+        auto block = blocks(r);
+        auto w = block[0], v = block[1], f = block[2];
+        int n = f[0].shape[0];
+        close(w[0], data.w, 2.e-10, "Native triples W replay", 1.e-8);
+        close(v[0], data.v, 2.e-10, "Native triples V replay", 1.e-8);
+        Tensor diag({n, n});
+        for (int i = 0; i < n; ++i) diag.mutable_ptr()[i * n + i] = f[0].ptr()[i * n + i];
+        close(f[0], diag, 1.e-8, "Semicanonical TNO Fock");
+        out->frames[r] = frame(r)[component];
+        out->t[r] = data.t;
+        out->z[r] = data.z;
+        out->seeds[r] = energy_moment(r, v[0]);
+        out->dseeds[r] = energy_moment(r, v[component]);
+        double occ = 0., docc = 0.;
+        for (int a : r) {
+            occ += foo[0].ptr()[a * foo[0].shape[0] + a];
+            docc += foo[component].ptr()[a * foo[0].shape[0] + a];
+        }
+        Tensor gap({n, n, n});
+        for (int a = 0; a < n; ++a)
+            for (int b = 0; b < n; ++b)
+                for (int c = 0; c < n; ++c)
+                    gap.mutable_ptr()[(a * n + b) * n + c] =
+                        f[0].ptr()[a * n + a] + f[0].ptr()[b * n + b] + f[0].ptr()[c * n + c] - occ;
+        out->gaps[r] = gap;
+        out->right[r] = w[component] + action(f[component], data.t, docc);
+        out->left[r] = out->dseeds[r] + action(f[component], data.z, docc);
+        left_residual[r] = out->seeds[r] + contract("abc,abc->abc", {gap, data.z});
+        energy += dot(out->seeds[r], data.t);
+        out->edges[r] = {};
+    }
+    for (auto& [r, data] : fit->workspace.triplets) {
+        auto residual = data.w + contract("abc,abc->abc", {out->gaps.at(r), data.t});
+        for (auto e : data.edges) {
+            Triplet order{e[2], e[3], e[4]}, q = sorted(order);
+            auto axes = ranks(order);
+            auto s = edge(r, q);
+            auto f = at(foo, e[0], e[1]);
+            auto tq = out->t.at(q).permute(axes);
+            auto [moved, dmoved] = transfer_tangent(tq, s[0], s[component]);
+            residual = residual - f[0].scalar() * moved;
+            out->right.at(r) = out->right.at(r) - f[component].scalar() * moved - f[0].scalar() * dmoved;
+            auto back = inverse(axes);
+            auto st = tr(s[0]), dst = tr(s[component]);
+            auto [zraw, dzraw] = transfer_tangent(data.z, st, dst);
+            auto zq = zraw.permute(back);
+            left_residual.at(q) = left_residual.at(q) - f[0].scalar() * zq;
+            out->left.at(q) = out->left.at(q) - f[component].scalar() * zq - f[0].scalar() * dzraw.permute(back);
+            out->edges.at(r).push_back(
+                {q, axes, {e[0], e[1]}, f[0].scalar(), f[component].scalar(), s[0], s[component]});
+        }
+        check(residual, threshold, "Native iterative triples residual");
+    }
+    for (auto& [r, x] : left_residual) check(x, threshold, "Native triples adjoint residual");
+    if (std::abs(energy - reference_energy) > 1.e-11 + 1.e-9 * std::abs(reference_energy))
+        throw std::runtime_error("Native triples energy replay mismatch.");
+    return out;
+}
+Tensor TripleDirection::pack(const std::map<Triplet, Tensor>& x) const {
+    size_t n = 0;
+    for (auto& [r, t] : this->t) n += t.size();
+    if (n > size_t(std::numeric_limits<int>::max())) throw std::invalid_argument("Triples vector too large.");
+    Tensor flat({int(n)});
+    size_t p = 0;
+    for (auto& [r, t] : this->t) {
+        auto& v = x.at(r);
+        if (v.shape != t.shape) throw std::invalid_argument("Triples packed tensor dimensions disagree.");
+        std::copy_n(v.ptr(), v.size(), flat.mutable_ptr() + p);
+        p += v.size();
+    }
+    return flat;
+}
+std::map<Triplet, Tensor> TripleDirection::unpack(const Tensor& flat) const {
+    std::map<Triplet, Tensor> x;
+    size_t p = 0;
+    for (auto& [r, t] : t) {
+        if (p + t.size() > flat.size()) throw std::invalid_argument("Short triples response vector.");
+        x[r] = Tensor(t.shape, flat.ptr() + p);
+        p += t.size();
+    }
+    if (p != flat.size()) throw std::invalid_argument("Long triples response vector.");
+    return x;
+}
+Tensor TripleDirection::apply(const Tensor& flat, bool left) const {
+    const auto x = unpack(flat);
+    // Gather transpose edges by destination. Each worker owns one output;
+    // no atomic adds or unordered intertriplet scatter is needed.
+    std::map<Triplet, std::vector<std::pair<Triplet, const TripleEdge*>>> incoming;
+    if (left)
+        for (const auto& [r, es] : edges)
+            for (const auto& e : es) incoming[e.source].emplace_back(r, &e);
+    std::vector<Triplet> rows;
+    std::vector<size_t> offsets;
+    size_t size = 0;
+    for (const auto& [r, t] : this->t) {
+        rows.push_back(r);
+        offsets.push_back(size);
+        size += t.size();
+    }
+    if (size > size_t(std::numeric_limits<int>::max())) throw std::invalid_argument("Triples vector too large.");
+    Tensor result({int(size)});
+    const auto& gathered = incoming;
+    parallel_rows(rows.size(), [&](size_t index) {
+        const auto r = rows[index];
+        auto value = contract("abc,abc->abc", {gaps.at(r), x.at(r)});
+        if (left) {
+            auto it = gathered.find(r);
+            if (it != gathered.end())
+                for (const auto& [source, edge] : it->second) {
+                    const auto& e = *edge;
+                    value = value - e.fock * transfer(x.at(source), tr(e.overlap)).permute(inverse(e.axes));
+                }
+        } else {
+            for (const auto& e : edges.at(r))
+                value = value - e.fock * transfer(x.at(e.source).permute(e.axes), e.overlap);
+        }
+        std::copy_n(value.ptr(), value.size(), result.mutable_ptr() + offsets[index]);
+    });
+    return result;
+}
+
+double TripleDirection::energy_tangent() const {
+    double e = 0.;
+    for (auto& [r, t] : t) e += dot(dseeds.at(r), t) + dot(z.at(r), right.at(r));
+    return e;
+}
+double TripleColumn::element(const TripleDirection& row, Triples& inputs) {
+    inputs.build_all();
+    double result = 0.;
+    for (auto& [r, t] : row.t) {
+        auto z = row.z.at(r);
+        result += dot(row.left.at(r), dt.at(r)) + dot(dz.at(r), row.right.at(r));
+        auto block = inputs.blocks(r);
+        auto w = block[0][3], v = block[1][3], f = block[2][3];
+        double occ = 0.;
+        for (int a : r) occ += at(inputs.foo, a, a)[3].scalar();
+        result += dot(energy_moment(r, v), t) + dot(z, w + action(f, t, occ));
+        const auto &es = row.edges.at(r), &cs = direction->edges.at(r);
+        if (es.size() != cs.size()) throw std::runtime_error("Triples edge lists disagree.");
+        for (size_t index = 0; index < es.size(); ++index) {
+            const auto& eu = es[index];
+            const auto& ev = cs[index];
+            if (eu.source != ev.source || eu.axes != ev.axes || eu.occupied != ev.occupied)
+                throw std::runtime_error("Triples ordered edge metadata disagree.");
+            auto key = std::make_pair(r, int(index));
+            auto found = covectors.find(key);
+            if (found == covectors.end()) {
+                auto tq = direction->t.at(ev.source).permute(ev.axes), zz = direction->z.at(r);
+                Tensor bar(ev.overlap.shape), column_bar(ev.overlap.shape);
+                double value = 0.;
+                int leg = 0;
+                for (std::vector<int> axes : std::vector<std::vector<int>>{{0, 1, 2}, {1, 0, 2}, {2, 1, 0}}) {
+                    auto a = zz.permute(axes), b = tq.permute(axes);
+                    auto cov = overlap_covector(a, b, ev.overlap, ev.overlap);
+                    if (leg++ == 0) value = dot(ev.overlap, cov);
+                    bar = bar + cov;
+                    column_bar = column_bar + overlap_covector(a, b, ev.doverlap, ev.overlap) +
+                                 overlap_covector(a, b, ev.overlap, ev.doverlap);
+                }
+                found = covectors.emplace(key, Covector{bar, column_bar, value, dot(bar, ev.doverlap)}).first;
+            }
+            const auto& cov = found->second;
+            auto suv = inputs.edge(r, eu.source)[3];
+            double fuv = at(inputs.foo, eu.occupied.first, eu.occupied.second)[3].scalar();
+            result -= fuv * cov.value + eu.dfock * cov.column + ev.dfock * dot(cov.bar, eu.doverlap) +
+                      eu.fock * (dot(cov.bar, suv) + dot(cov.column_bar, eu.doverlap));
+        }
+    }
+    if (!std::isfinite(result)) throw std::runtime_error("Nonfinite native triples curvature.");
+    return result;
+}
+}  // namespace response
+}  // namespace dlpno
+}  // namespace psi
+
+// END Triples mixed response

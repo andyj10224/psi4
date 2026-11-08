@@ -12,6 +12,10 @@ def validate_settings():
     """Cheap checks also used by derivative negotiation, before any SCF work."""
     if not core.get_option('DLPNO', 'DLPNO_HESSIAN_MODEL'):
         raise ValidationError('Analytic DLPNO Hessians require DLPNO_HESSIAN_MODEL=true.')
+    if core.get_option('DLPNO', 'DLPNO_GRADIENT_FULL_TRIPLES'):
+        raise ValidationError('The analytic Hessian currently supports single-space triples only; '
+                              'production multi-space triples require frequency(..., dertype=1) for a Hessian '
+                              'from finite differences of the new analytic gradients.')
     if core.get_option('SCF', 'REFERENCE') != 'RHF':
         raise ValidationError('Analytic DLPNO Hessians require RHF.')
     if core.has_global_option_changed('SCF_TYPE') and core.get_global_option('SCF_TYPE') not in ('DF','MEM_DF','DISK_DF'):

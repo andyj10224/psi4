@@ -91,6 +91,7 @@ class Cache {
     std::list<std::pair<size_t, int>> order_;
     mutable std::mutex mutex_;
     size_t bytes_ = 0, limit_ = 0, hits_ = 0, evaluations_ = 0, next_node_ = 0;
+    size_t overlap_bytes_ = 0;
     size_t persistent_bytes_ = 0, evictions_ = 0, invalidations_ = 0, graph_resets_ = 0;
 
    public:
@@ -98,7 +99,7 @@ class Cache {
     size_t node(const std::string& key);
     Tensor evaluate(size_t node, int coordinate, const std::function<Tensor()>& build);
     void check_input(size_t node, int coordinate, const Tensor& value);
-    void retain(size_t node, int coordinate, const Tensor& value);
+    void retain(size_t node, int coordinate, const Tensor& value, bool overlap = false);
     std::array<size_t, 4> statistics() const;
     std::array<size_t, 5> storage_statistics() const;
     size_t limit() const { return limit_; }
@@ -116,7 +117,7 @@ struct Context {
     Mixed input(const std::string&, const std::array<Tensor, 4>&) const;
     Mixed constant(const std::string&, const Tensor&) const;
     Mixed evaluate(const std::string&, const std::vector<size_t>&, const std::function<Tensor(int)>&) const;
-    void retain(const Mixed&) const;
+    void retain(const Mixed&, bool overlap = false) const;
 };
 struct Mixed {
     std::array<Tensor, 4> x;
@@ -262,7 +263,7 @@ class Fitting {
     mutable std::map<RawKey, Mixed> raw_panels;
     mutable std::map<std::pair<int, std::vector<int>>, Mixed> refit_panels;
     mutable std::map<std::pair<Pair, Pair>, Mixed> overlap_panels;
-    mutable size_t panel_bytes = 0;
+    mutable size_t panel_bytes = 0, overlap_bytes = 0;
     mutable std::array<size_t, 6> panel_counts{};  // raw/refit/overlap builds,hits
     mutable std::map<std::string, double> ccsd_seconds;
     bool keep_panel(const Mixed&) const;

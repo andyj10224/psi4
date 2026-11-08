@@ -35,14 +35,16 @@ namespace dlpno {
 namespace response {
 bool Fitting::keep_panel(const Mixed& x) const {
     const size_t bytes = 4 * sizeof(double) * x[0].size();
-    const size_t limit = workspace.cache->limit() / 4;
-    if (panel_bytes > limit || bytes > limit - panel_bytes) return false;
+    const size_t limit = workspace.cache->limit() / 4 - workspace.cache->limit() / 64;
+    if (panel_bytes - overlap_bytes > limit || bytes > limit - (panel_bytes - overlap_bytes)) return false;
     panel_bytes += bytes;
     return true;
 }
 Mixed Fitting::overlap(Pair p, Pair q) const {
     p = key(p);
     q = key(q);
+    // S_pq = S_qp^T also for every derivative component. Store one orientation.
+    if (q < p) return overlap(q, p).transpose();
     const auto id = std::make_pair(p, q);
     auto found = overlap_panels.find(id);
     if (found != overlap_panels.end()) {
@@ -51,8 +53,13 @@ Mixed Fitting::overlap(Pair p, Pair q) const {
     }
     ++panel_counts[4];
     auto s = congruence(frames.at(p), molecular.s, frames.at(q));
-    s.context->retain(s);
-    if (keep_panel(s)) overlap_panels.emplace(id, s);
+    s.context->retain(s, true);
+    const size_t bytes = 4 * sizeof(double) * s[0].size(), limit = workspace.cache->limit() / 64;
+    if (overlap_bytes <= limit && bytes <= limit - overlap_bytes) {
+        overlap_panels.emplace(id, s);
+        overlap_bytes += bytes;
+        panel_bytes += bytes;
+    }
     return s;
 }
 Mixed Fitting::pao(const std::vector<int>& ids) const {
@@ -104,8 +111,8 @@ void Fitting::prepare_raw(const std::vector<std::string>& kinds) const {
                 right = workspace.domains.at(kind == "oo" ? "OCC" : "PAO").at(atom);
             }
             const size_t bytes = 4 * sizeof(double) * aux.size() * left.size() * right.size();
-            const size_t limit = workspace.cache->limit() / 4;
-            if (panel_bytes > limit || bytes > limit - panel_bytes) continue;
+            const size_t limit = workspace.cache->limit() / 4 - workspace.cache->limit() / 64;
+            if (panel_bytes - overlap_bytes > limit || bytes > limit - (panel_bytes - overlap_bytes)) continue;
             // Reserve the panel before local refits consume their allowance.
             panel_bytes += bytes;
             auto block = raw_direct(kind, aux, left, right);

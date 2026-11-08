@@ -564,7 +564,7 @@ size_t Cache::node(const std::string& key) {
         input_hashes_.clear();
         values_.clear();
         persistent_.clear();
-        persistent_bytes_ = 0;
+        persistent_bytes_ = overlap_bytes_ = 0;
         order_.clear();
         bytes_ = 0;
     }
@@ -634,7 +634,7 @@ void Cache::check_input(size_t node, int coordinate, const Tensor& value) {
         ++invalidations_;
         values_.clear();
         persistent_.clear();
-        persistent_bytes_ = 0;
+        persistent_bytes_ = overlap_bytes_ = 0;
         order_.clear();
         bytes_ = 0;
     }
@@ -644,7 +644,7 @@ std::array<size_t, 4> Cache::statistics() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return {bytes_ + persistent_bytes_, limit_, hits_, evaluations_};
 }
-void Cache::retain(size_t node, int coordinate, const Tensor& value) {
+void Cache::retain(size_t node, int coordinate, const Tensor& value, bool overlap) {
     if (coordinate < 0 || !limit_) return;
     std::lock_guard<std::mutex> lock(mutex_);
     const auto key = std::make_pair(node, coordinate);
@@ -652,7 +652,9 @@ void Cache::retain(size_t node, int coordinate, const Tensor& value) {
     const size_t bytes = value.size() * sizeof(double);
     // Reserve half for explicitly retained fitting/overlap panels. Admission
     // is bounded; admitted panels are never evicted by transient contractions.
-    if (bytes > limit_ / 2 - persistent_bytes_) return;
+    const size_t allowance = overlap ? limit_ / 32 : limit_ / 2 - limit_ / 32;
+    const size_t occupied = overlap ? overlap_bytes_ : persistent_bytes_ - overlap_bytes_;
+    if (occupied > allowance || bytes > allowance - occupied) return;
     auto old = values_.find(key);
     if (old != values_.end()) {
         bytes_ -= old->second.tensor.size() * sizeof(double);
@@ -668,15 +670,16 @@ void Cache::retain(size_t node, int coordinate, const Tensor& value) {
     }
     persistent_.emplace(key, value);
     persistent_bytes_ += bytes;
+    if (overlap) overlap_bytes_ += bytes;
 }
 std::array<size_t, 5> Cache::storage_statistics() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return {persistent_bytes_, limit_ / 2, evictions_, invalidations_, graph_resets_};
 }
-void Context::retain(const Mixed& x) const {
-    cache->retain(x.id, 0, x[0]);
-    cache->retain(x.id, u + 1, x[1]);
-    cache->retain(x.id, v + 1, x[2]);
+void Context::retain(const Mixed& x, bool overlap) const {
+    cache->retain(x.id, 0, x[0], overlap);
+    cache->retain(x.id, u + 1, x[1], overlap);
+    cache->retain(x.id, v + 1, x[2], overlap);
 }
 Mixed Context::evaluate(const std::string& operation, const std::vector<size_t>& inputs,
                         const std::function<Tensor(int)>& build) const {

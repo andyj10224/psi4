@@ -252,6 +252,7 @@ inline void export_native_response(py::module_& module) {
                     for (int k = 0; k < 3; ++k) count("PNO factors", panels[k]);
                     for (int k = 3; k < 5; ++k) count("local inverse metrics", panels[k]);
                 }
+                for (const auto& item : e.fitting->overlap_panels) count("PNO overlaps", item.second);
                 for (const auto& item : e.fitting->weighted_panels) count("metric-weighted factors", item.second);
                 for (const auto& [key, pair] : e.fitting->mixed_vertices) {
                     count("mixed J/K vertices", pair.first);

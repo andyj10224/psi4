@@ -4770,6 +4770,11 @@ def run_dlpno_gradient(name, **kwargs):
         raise ValidationError("DLPNO-CCSD(T) gradients require an RHF reference.")
     if core.get_option("DLPNO", "DLPNO_LOCAL_ORBITALS") not in ("BOYS", "PIPEK_MEZEY"):
         raise ValidationError("DLPNO-CCSD(T) gradients require Boys or Mulliken Pipek-Mezey localization.")
+    if core.get_option("DLPNO", "DLPNO_GRADIENT_FULL_TRIPLES"):
+        if core.get_option("DLPNO", "T_CUT_ITER") != 0.:
+            raise ValidationError("Production-triples gradients require T_CUT_ITER=0.")
+        if core.get_option("DLPNO", "DLPNO_KEEP_TRIPLES_RESPONSE"):
+            raise ValidationError("The single-space retained triples state cannot represent a production-triples gradient.")
     state = p4util.OptionsState(["DLPNO", "DLPNO_GRADIENT_MODEL"], ["SCF", "SAVE_JK"], ["SCF_TYPE"])
     try:
         if not core.has_global_option_changed("SCF_TYPE"):
