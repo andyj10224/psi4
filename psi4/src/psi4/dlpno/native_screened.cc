@@ -36,7 +36,7 @@ namespace response {
 namespace {
 std::vector<int> labels(const Tensor& a) {
     std::vector<int> ids;
-    for (double v : *a.data) {
+    for (double v : a) {
         if (v < 0. || v != std::floor(v)) throw std::invalid_argument("Invalid native domain label.");
         ids.push_back(int(v));
     }

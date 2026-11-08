@@ -217,7 +217,8 @@ def test_native_triples_complete_sources_operator_and_curvature(monkeypatch,cach
 
 
 @pytest.mark.parametrize('budget',[0,32*1024**2])
-def test_native_pno_pipeline_and_first_solve_reuse(budget):
+@pytest.mark.parametrize('different_first_domains',[False,True])
+def test_native_pno_pipeline_and_first_solve_reuse(budget,different_first_domains):
     from psi4.driver.procrouting.response.dlpno_pno_curvature import (
         first_pno_curvature,mixed_pair_exchange,lmp2_residual,pno_truncation_energy,mixed_pno_selection)
     x=fitting_fixture(cache=budget);C=algebra.mixed_product
@@ -282,7 +283,12 @@ def test_native_pno_pipeline_and_first_solve_reuse(budget):
         fixed_final={p:{k:(a if k=='amplitudes' else constant(a.value) if isinstance(a,B) else a) for k,a in z.items()} for p,z in trial.items()}
         gradient.append(pno_truncation_energy(fixed_initial,fixed_final).u)
     adjoint=unpack(np.linalg.solve(matrix.T,-np.array(gradient)),dual=True)
-    workspace=core.DLPNOResponseWorkspace(x.domains,x.domains,metadata,{},x.centers,adjoint,float(energy),budget)
+    final_domains=dict(x.domains)
+    if different_first_domains:
+        # First-PNO fitting must use its own captured AO rows even when
+        # the subsequent CCSD domains admit a shared atom-local OV panel.
+        final_domains['AO_OCC']=[list(range(5)),list(range(1,6))]
+    workspace=core.DLPNOResponseWorkspace(final_domains,x.domains,metadata,{},x.centers,adjoint,float(energy),budget)
     calls=[]
     def first_solve(dy,dk,ds,df,dfoo):
         calls.append('first')
@@ -450,12 +456,88 @@ def test_native_stage_panel_lifetime_and_bounds(budget):
     if budget:
         # No raw/refit/overlap rebuild is needed in the second residual replay.
         np.testing.assert_equal(after[[0,2,4]],counts[[0,2,4]])
-        assert after[1]>counts[1] and after[5]>counts[5]
+        assert after[1]>=counts[1] and after[5]>counts[5]
         assert 0<after[6]<=budget//4
     else:
-        assert after[0]>counts[0] and after[6]==0
+        # J/K vertices are retained independently of optional panel admission;
+        # with no panel allowance it is overlaps that must be rebuilt.
+        assert after[4]>counts[4] and after[6]==0
     used,limit,*_=x.workspace.statistics
     pinned,pin_limit,*_=x.workspace.storage_statistics
     assert 0<=pinned<=pin_limit==budget//2
     assert pinned<=used<=limit==budget
     assert set(x.entry.ccsd_profile)=={'preparation','singles residual','occupied Fock','doubles residual'}
+
+
+@pytest.mark.parametrize('transpose',range(4))
+def test_native_shared_matrix_doublet(transpose):
+    rng=np.random.default_rng(991)
+    ta,tb=bool(transpose&1),bool(transpose&2)
+    a=block(rng,rng.normal(size=(3,4) if ta else (4,3)))
+    b=block(rng,rng.normal(size=(2,3) if tb else (3,2)))
+    eq=('ki' if ta else 'ik')+','+('jk' if tb else 'kj')+'->ij'
+    out=core.dlpno_native_response_test('doublet',[a,b],transpose)
+    assert_blocks(out,algebra._expanded_mixed_product(eq,a,b))
+    # The ndarray capsule must keep its SharedMatrix alive after the C++
+    # tensors/context have been destroyed, and expose read-only storage.
+    import gc
+    gc.collect()
+    assert out[0].shape==(4,2) and not out[0].flags.writeable
+    assert np.isfinite(out[3]).all()
+
+
+@pytest.mark.parametrize('shape,ranks',[((3,4,5),(2,3)),((3,4,5),(5,1))])
+def test_native_binary_virtual_transform_both_orders(shape,ranks):
+    rng=np.random.default_rng(665)
+    q=block(rng,rng.normal(size=shape))
+    left=block(rng,rng.normal(size=(shape[1],ranks[0])))
+    right=block(rng,rng.normal(size=(shape[2],ranks[1])))
+    assert_blocks(core.dlpno_native_response_test('virtual_transform',[q,left,right]),
+                  algebra._expanded_mixed_product('ma,Qmn,nb->Qab',left,q,right))
+    matrix=block(rng,rng.normal(size=shape[1:]))
+    assert_blocks(core.dlpno_native_response_test('congruence',[left,matrix,right]),
+                  algebra._expanded_mixed_product('ma,mn,nb->ab',left,matrix,right))
+
+
+@pytest.mark.parametrize('budget',[0,4096,64*1024**2])
+@pytest.mark.parametrize('filtered',[False,True])
+@pytest.mark.parametrize('small_rank',[False,True])
+def test_native_ccsd_mixed_vertices_keep_target_fit_and_source_pao_order(budget,filtered,small_rank):
+    x=fitting_fixture(seed=902,cache=0)
+    rng=np.random.default_rng(903)
+    pairs=list(x.frames)
+    lists=[(5,2,4),(4,5,3,2),(3,2)]
+    for p,ids in zip(pairs,lists):
+        rank=1 if small_rank else x.frames[p].value.shape[1]
+        # Rank one favors virtual-first mixed J; the original ranks favor
+        # auxiliary-first, exercising both complete contraction paths.
+        x.two[p]=x.two[p].slice((slice(0,rank),slice(0,rank)))
+        if p[0]==p[1]:x.one[p[0]]=x.one[p[0]].slice(slice(0,rank))
+        frame=block(rng,np.eye(6)[:,ids[:rank]])
+        x.frames[p]=frame
+        x.metadata[p].update(paos=ids,parent=np.eye(len(ids)),first_frame=np.eye(6)[:,ids],
+            final_frame=frame.value,first_amplitude=np.zeros((len(ids),len(ids))),
+            lmp2_amplitude=np.zeros((len(ids),len(ids))),qi=np.zeros((len(x.metadata[p]['auxiliary']),len(ids))),
+            qj=np.zeros((len(x.metadata[p]['auxiliary']),len(ids))),occupations=np.zeros(len(ids)))
+        x.fit.pair_paos[p]=ids
+        x.fit.parents[p]={'PARENT':SimpleNamespace(np=np.eye(len(ids)))}
+    x.domains['PAIR_PAO']=lists
+    if filtered:
+        # A stable discarded eigenspace exercises the H^T H convention; the
+        # full inverse on nonprojected vertices must remain distinct.
+        x.inputs[4].value[:]=np.diag([-.3,.7,1.2,1.7,2.1])
+    w=core.DLPNOResponseWorkspace(x.domains,x.domains,x.metadata,{},x.centers,{},0.,budget)
+    e=w.entry(0,1,x.inputs);e.set_frames(x.frames)
+    expected=mixed_ccsd_residual(None,x.fit.electronic,x.fit.S,x.fit.df,fitted=x.fit)
+    actual=e.ccsd(x.one,x.two,'affine')
+    for a,b in zip(actual[0],expected[0]):assert_blocks(a,b)
+    for p,b in expected[1].items():assert_blocks(actual[1][p],b)
+    for i,j in [(0,0),(0,1),(1,0),(1,1)]:
+        for k in (0,1):
+            for a,b in zip(e.mixed_integrals(i,j,k),x.fit.mixed_integrals(i,j,k)):
+                assert_blocks(a,b)
+    if budget>=64*1024**2:
+        sizes=e.integral_storage
+        assert all(name in sizes for name in ('qij','qia','qab','PNO factors','mixed J/K vertices'))
+        assert all(len(v)==4 and min(v)>0 for v in sizes.values())
+        assert sum(sum(sizes[name]) for name in ('qij','qia','qab'))<=e.panel_statistics[6]

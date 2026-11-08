@@ -28,6 +28,8 @@
 
 #pragma once
 
+#include "psi4/libmints/matrix.h"
+
 #include <array>
 #include <functional>
 #include <map>
@@ -40,6 +42,7 @@
 #include <algorithm>
 #include <stdexcept>
 #include <tuple>
+#include <set>
 
 namespace psi {
 namespace dlpno {
@@ -49,13 +52,17 @@ namespace response {
 // share storage; packing, slicing and contractions are performed natively.
 struct Tensor {
     std::vector<int> shape;
-    std::shared_ptr<std::vector<double>> data;
+    SharedMatrix data;
     Tensor();
     explicit Tensor(std::vector<int> dimensions, double value = 0.);
     Tensor(std::vector<int> dimensions, const double* values);
     size_t size() const;
-    const double* ptr() const { return data->data(); }
-    double* mutable_ptr() { return data->data(); }
+    const double* ptr() const { return data->pointer()[0]; }
+    double* mutable_ptr() { return data->pointer()[0]; }
+    const double* begin() const { return ptr(); }
+    const double* end() const { return ptr() + size(); }
+    double* begin() { return mutable_ptr(); }
+    double* end() { return mutable_ptr() + size(); }
     double scalar() const;
     Tensor reshape(std::vector<int> dimensions) const;
     Tensor permute(const std::vector<int>& axes) const;
@@ -64,6 +71,7 @@ struct Tensor {
 Tensor add(const Tensor&, const Tensor&, double factor = 1.);
 Tensor scale(const Tensor&, double);
 Tensor contract(const std::string&, const std::vector<Tensor>&);
+Tensor doublet(const Tensor&, const Tensor&, bool trans_a = false, bool trans_b = false);
 Tensor solve(const Tensor&, const Tensor&);
 std::pair<Tensor, Tensor> eigh(const Tensor&);
 Tensor eye(int n);
@@ -123,6 +131,12 @@ struct Mixed {
 Mixed sum(const std::vector<Mixed>&);
 Mixed scaled(const Mixed&, double);
 Mixed product(const std::string&, const std::vector<Mixed>&);
+Mixed doublet(const Mixed&, const Mixed&, bool trans_a = false, bool trans_b = false);
+// Explicit two-operand matrix stages, matching the energy-code layouts.
+Mixed auxiliary_transform(const Mixed& metric, const Mixed& factors);
+Mixed virtual_transform(const Mixed& factors, const Mixed& left, const Mixed& right);
+Mixed congruence(const Mixed& left, const Mixed& matrix, const Mixed& right);
+Mixed inner(const Mixed&, const Mixed&);
 Mixed stack(const std::vector<Mixed>&);
 inline Mixed operator+(const Mixed& a, const Mixed& b) { return sum({a, b}); }
 inline Mixed operator-(const Mixed& a, const Mixed& b) { return sum({a, scaled(b, -1.)}); }
@@ -132,10 +146,10 @@ inline Tensor operator+(const Tensor& a, const Tensor& b) { return add(a, b); }
 inline Tensor operator-(const Tensor& a, const Tensor& b) { return add(a, b, -1.); }
 inline Tensor operator-(const Tensor& a) { return scale(a, -1.); }
 inline Tensor operator*(double a, const Tensor& b) { return scale(b, a); }
-inline Tensor mat(const Tensor& a, const Tensor& b) { return contract("ij,jk->ik", {a, b}); }
+inline Tensor mat(const Tensor& a, const Tensor& b) { return doublet(a, b); }
 inline Tensor tr(const Tensor& a) { return a.permute({1, 0}); }
 inline Tensor sym(const Tensor& a) { return .5 * (a + tr(a)); }
-inline Mixed mat(const Mixed& a, const Mixed& b) { return product("ij,jk->ik", {a, b}); }
+inline Mixed mat(const Mixed& a, const Mixed& b) { return doublet(a, b); }
 inline Mixed spin(const Mixed& a) { return 2. * a - a.transpose(); }
 Mixed metric_solve(const Mixed&, const Mixed&);
 Mixed symmetric_inverse(const Mixed&);
@@ -216,7 +230,7 @@ class Workspace {
     // reserve these in the dense Hessian memory preflight.
     std::map<int, PairTensor> lmp2_first;
     Workspace(size_t bytes) : cache(std::make_shared<Cache>(bytes)) {}
-    PNOResult pno(const Molecular&, const FirstSolver&, const MixedSolver&);
+    PNOResult pno(const Molecular&, const FirstSolver&, const MixedSolver&, const Fitting* common = nullptr);
 };
 
 class Fitting {
@@ -228,6 +242,19 @@ class Fitting {
     mutable std::map<std::vector<int>, Mixed> pao_cache;
     mutable std::map<Pair, std::array<Mixed, 5>> projected_cache;
     mutable std::map<Pair, Mixed> coefficient_cache;
+    struct RawPanel {
+        Mixed values;
+        std::vector<int> auxiliary, left, right;
+    };
+    // Atom-local qij/qia/qab jets, prepared before pair/triplet work. Their
+    // AO row lists and screens are the captured forward domains, never unions
+    // of independently fitted PNO spaces.
+    mutable std::map<std::pair<std::string, int>, RawPanel> atomic_panels;
+    mutable std::set<std::string> prepared_raw;
+    mutable std::array<size_t, 3> atomic_bytes{};
+    mutable std::map<std::tuple<Pair, int, bool>, Mixed> weighted_panels;
+    mutable size_t weighted_bytes = 0;
+    mutable std::map<std::tuple<int, int, int>, std::pair<Mixed, Mixed>> mixed_vertices;
     // These are stage-owned panels, including the mixed component. They do
     // not compete with transient DAG nodes in the cross-entry LRU. The fixed
     // per-workspace allowance also bounds task-private copies in triples.
@@ -245,9 +272,13 @@ class Fitting {
     Mixed refit(int atom, const std::vector<int>&) const;
     Mixed coefficients(const std::vector<int>&, const Tensor&, const Mixed&) const;
     Mixed raw(const std::string&, const std::vector<int>&, const std::vector<int>&, const std::vector<int>&) const;
+    Mixed raw_direct(const std::string&, const std::vector<int>&, const std::vector<int>&,
+                     const std::vector<int>&) const;
+    void prepare_raw(const std::vector<std::string>& kinds = {"oo", "ov", "vv"}) const;
     Mixed metric(const std::vector<int>&) const;
     Mixed overlap(Pair, Pair) const;
     const std::array<Mixed, 5>& projected(Pair) const;
+    Mixed weighted(Pair, int panel, bool filtered = true) const;
     std::pair<Mixed, Mixed> mixed_integrals(int, int, int) const;
 };
 Mixed retained_energy(const Fitting&, const std::vector<Mixed>&, const PairMixed&);

@@ -62,9 +62,11 @@ def preflight(molecule, kwargs):
     # counting each allowance independently is a conservative peak bound.
     workers=max(1,core.get_num_threads())
     cap=512*1024**2
-    minimum_memory=(8/3)*(estimate+cap+(workers+2)*(cap//4))
+    # First AO derivative panels have separate, non-evicting ownership.
+    ao_cap=512*1024**2
+    minimum_memory=(8/3)*(estimate+cap+(workers+2)*(cap//4)+ao_cap)
     native=min(core.get_memory()//16,cap)
-    estimate+=core.get_memory()//8+native+(workers+2)*(native//4)
+    estimate+=core.get_memory()//8+native+(workers+2)*(native//4)+min(core.get_memory()//32,ao_cap)
     if estimate>core.get_memory()//2:
         raise ValidationError(f'Dense analytic DLPNO Hessian estimate {estimate/1024**2:.1f} MiB exceeds half '
                               f'the requested memory; request at least {minimum_memory/1024**3:.2f} GiB. '
@@ -121,6 +123,9 @@ def assemble_hessian(wfn):
                            f'      Cumulative CCSD raw/refit/overlap builds: {counts[0]}/{counts[2]}/{counts[4]}; '
                            f'reuses: {counts[1]}/{counts[3]}/{counts[5]}; '
                            f'peak stage panels: {reference.native.panel_peak/1024**2:.1f} MiB.\n')
+            core.print_out('      Peak local integral storage [MiB: value / row / column / mixed]:\n')
+            for name,bytes in reference.native.integral_peak.items():
+                core.print_out(f'        {name:25s}: '+' / '.join(f'{b/1024**2:.2f}' for b in bytes)+'\n')
         core.print_out(f'      Triples first builds: {reference.triples_first.builds}; '
                        f'cache hits: {reference.triples_first.hits}; '
                        f'cached: {reference.triples_first.bytes/1024**2:.1f} MiB.\n')

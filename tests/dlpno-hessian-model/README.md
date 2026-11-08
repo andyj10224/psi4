@@ -20,7 +20,34 @@ passed. The full optimization/frequency job took 666.14 s; the nine Hessian
 columns totaled 531.8 s, versus 1051.1 s previously. This is execution evidence
 for those revisions, not independent finite-difference validation.
 
-## Persistent response work and the CCSD regression
+## Energy-style matrix contractions and shared derivative panels
+
+The follow-up to `67020eb` audits every equation in Sections 6 and 7 of the
+performance report against the original RHF `ccsd.cc` implementation, plus
+the mixed J/K vertices and `triples.cc`. See the equation-by-equation mapping
+in [`CCSD_CONTRACTION_AUDIT.md`](CCSD_CONTRACTION_AUDIT.md).
+
+- CCSD and triples dense contractions now use explicit binary GEMM stages
+  and `SharedMatrix` storage. Mixed product-rule terms accumulate into one
+  output per component; logical reshapes share storage.
+- W/singles and W/doubles contributions contract amplitudes into DF factors
+  before forming a three-virtual tensor. Mixed J/K vertices are batched over
+  each target pair's occupied domain and retained across residual replays.
+- The full inverse and filtered inverse remain distinct. W keeps the target
+  pair fit; nonprojected J/K keeps the target auxiliary domain and the actual
+  source-pair virtual frame. No extra overlap projector is introduced.
+- Atom-local `qij/qia/qab` derivative panels serve pair and triplet requests.
+  Admitted first AO derivative panels persist across the whole Hessian with
+  a separate allowance of `min(memory/32, 512 MiB)`, included in preflight.
+  Native output reports storage by value/row/column/mixed component. Dense
+  mixed AO delivery remains temporary and is still a scaling limitation.
+
+The same synthetic rank-48 benchmark described below improved again,
+from 5.05 to 4.05 s cold and 2.61–2.85 to 1.30–1.34 s
+for repeated evaluations of the same mixed entry. These are implementation
+benchmarks, not measured water Hessian times. Existing phase timers remain.
+
+## Persistent response work at `67020eb` and the CCSD regression
 
 The subsequent water run at `50b6a5d` took 636.51 s overall and 511.9 s for
 the nine Hessian columns. PNO/LMP2 and triples mixed response improved, but
@@ -133,8 +160,8 @@ one and multiple threads. The native sources/bindings were compiled in an
 isolated harness with real BLAS/LAPACK; complete PNO/LMP2, CCSD, and triples
 results are checked against the independent equations, including unequal ranks,
 local masks, reversed coordinate order, cache eviction, and transpose actions.
-All 111 native algebra/reuse checks passed in serial builds and in OpenMP builds
-with one and four threads. Another 259 existing algebra, kernel, and routing
+All 131 native algebra/reuse checks passed in serial builds and in OpenMP builds
+with one and four threads. Another 261 existing algebra, kernel, and routing
 checks passed in the isolated harness. The new native sources and changed
 gradient/Lambda sources also passed C++ syntax checks against the real Psi4
 headers. These counts include mocked driver boundaries, not molecular runs.

@@ -62,15 +62,68 @@ Tensor energy_moment(const Triplet& r, const Tensor& v) {
         out = out + term.second * v.permute(ranks(term.first));
     return (1. / (i == k ? 6 : i == j || j == k ? 2 : 1)) * out;
 }
+Tensor transform_axis(const Tensor& tensor, const Tensor& matrix, int axis) {
+    std::vector<int> axes{axis};
+    for (int k = 0; k < 3; ++k)
+        if (k != axis) axes.push_back(k);
+    auto input = tensor.permute(axes);
+    const int old = input.shape[0], width = input.shape[1] * input.shape[2];
+    auto result = doublet(matrix, input.reshape({old, width}));
+    auto shape = input.shape;
+    shape[0] = matrix.shape[0];
+    return result.reshape(shape).permute(inverse(axes));
+}
 Tensor action(const Tensor& f, const Tensor& t, double occ) {
-    return contract("ad,dbc->abc", {f, t}) + contract("bd,adc->abc", {f, t}) + contract("cd,abd->abc", {f, t}) -
-           occ * t;
+    return transform_axis(t, f, 0) + transform_axis(t, f, 1) + transform_axis(t, f, 2) - occ * t;
+}
+std::vector<int> transfer_order(const Tensor& t, const std::array<Tensor, 3>& matrices) {
+    std::vector<int> order{0, 1, 2}, best = order;
+    double minimum = std::numeric_limits<double>::infinity();
+    do {
+        auto shape = t.shape;
+        double cost = 0.;
+        for (int axis : order) {
+            double size = 1.;
+            for (int n : shape) size *= n;
+            cost += size * matrices[axis].shape[0];
+            shape[axis] = matrices[axis].shape[0];
+        }
+        if (cost < minimum) {
+            minimum = cost;
+            best = order;
+        }
+    } while (std::next_permutation(order.begin(), order.end()));
+    return best;
 }
 Tensor transfer(const Tensor& t, const Tensor& a, const Tensor& b, const Tensor& c) {
-    return contract("ia,jb,kc,abc->ijk", {a, b, c, t});
+    const std::array<Tensor, 3> matrices{a, b, c};
+    auto out = t;
+    for (int axis : transfer_order(t, matrices)) out = transform_axis(out, matrices[axis], axis);
+    return out;
 }
-Tensor tangent_transfer(const Tensor& t, const Tensor& s, const Tensor& ds) {
-    return transfer(t, ds, s, s) + transfer(t, s, ds, s) + transfer(t, s, s, ds);
+std::pair<Tensor, Tensor> transfer_tangent(const Tensor& t, const Tensor& s, const Tensor& ds) {
+    auto value = t;
+    Tensor tangent(t.shape);
+    bool first = true;
+    for (int axis : transfer_order(t, {s, s, s})) {
+        auto next = transform_axis(value, ds, axis);
+        if (!first) next = next + transform_axis(tangent, s, axis);
+        tangent = std::move(next);
+        value = transform_axis(value, s, axis);
+        first = false;
+    }
+    return {value, tangent};
+}
+Tensor overlap_covector(const Tensor& adjoint, const Tensor& source, const Tensor& b, const Tensor& c) {
+    // Leave the first virtual leg open, transform the other two, then GEMM.
+    const double first_b =
+        double(source.size()) * b.shape[0] + double(source.shape[0]) * b.shape[0] * source.shape[2] * c.shape[0];
+    const double first_c =
+        double(source.size()) * c.shape[0] + double(source.shape[0]) * source.shape[1] * c.shape[0] * b.shape[0];
+    auto moved = first_b <= first_c ? transform_axis(transform_axis(source, b, 1), c, 2)
+                                    : transform_axis(transform_axis(source, c, 2), b, 1);
+    const int width = adjoint.shape[1] * adjoint.shape[2];
+    return doublet(adjoint.reshape({adjoint.shape[0], width}), moved.reshape({source.shape[0], width}), false, true);
 }
 void check(const Tensor& x, double tolerance, const std::string& message) {
     close(x, Tensor(x.shape), tolerance, message);
@@ -83,35 +136,46 @@ std::array<Mixed, 3> triples_moments(const Triplet& r, const std::vector<int>& d
                                      const std::function<Mixed(int, int)>& doubles,
                                      const std::function<Mixed(int)>& fov, const Mixed& vf) {
     auto g = symmetric_inverse(metric), gf = filtered_inverse(metric, g);
+    const int nq = vv[0].shape[0], nv = vv[0].shape[1];
     std::map<Pair, Mixed> pairs, ooovs;
-    std::map<int, Mixed> ovvvs;
+    std::map<int, Mixed> ovvvs, full_ov, filtered_ov;
+    auto fitted_ov = [&](int a, bool full) {
+        auto& saved = full ? full_ov : filtered_ov;
+        auto found = saved.find(a);
+        if (found != saved.end()) return found->second;
+        return saved.emplace(a, doublet(full ? g : gf, auxrow(ov, pos(domain, a)))).first->second;
+    };
     auto pair = [&](int a, int b) {
-        Pair p{a, b};
-        auto it = pairs.find(p);
-        if (it != pairs.end()) return it->second;
-        auto s = transfer(a, b);
-        return pairs.emplace(p, product("ia,ij,jb->ab", {s, doubles(a, b), s})).first->second;
+        const Pair p{a, b};
+        auto found = pairs.find(p);
+        if (found != pairs.end()) return found->second;
+        auto overlap = transfer(a, b);
+        return pairs.emplace(p, congruence(overlap, doubles(a, b), overlap)).first->second;
     };
     auto ovvv = [&](int a) {
-        auto it = ovvvs.find(a);
-        if (it != ovvvs.end()) return it->second;
-        return ovvvs.emplace(a, product("Qa,QR,Rbd->abd", {auxrow(ov, pos(domain, a)), g, vv})).first->second;
+        auto found = ovvvs.find(a);
+        if (found != ovvvs.end()) return found->second;
+        // Match triples.cc: full inverse on the small q_iv, raw q_vv.
+        return ovvvs.emplace(a, doublet(fitted_ov(a, true), vv.reshape({nq, nv * nv}), true).reshape({nv, nv, nv}))
+            .first->second;
     };
     auto ooov = [&](int b, int c) {
-        Pair p{b, c};
-        auto it = ooovs.find(p);
-        if (it != ooovs.end()) return it->second;
-        return ooovs.emplace(p, product("Ql,QR,Rc->lc", {auxrow(oo, pos(domain, b)), gf, auxrow(ov, pos(domain, c))}))
-            .first->second;
+        const Pair p{b, c};
+        auto found = ooovs.find(p);
+        if (found != ooovs.end()) return found->second;
+        // H^T H is the filtered inverse used by the energy's two half fits.
+        return ooovs.emplace(p, doublet(auxrow(oo, pos(domain, b)), fitted_ov(c, false), true)).first->second;
     };
     int n = vv[0].shape[2];
     auto w = metric.context->constant("triples_zero", Tensor({n, n, n}));
     auto perm = range(3);
     do {
         int a = r[perm[0]], b = r[perm[1]], c = r[perm[2]];
-        auto term = product("abd,cd->abc", {ovvv(a), pair(c, b)}), integral = ooov(b, c);
+        auto term = doublet(ovvv(a).reshape({n * n, n}), pair(c, b), false, true).reshape({n, n, n});
+        auto integral = ooov(b, c);
         for (size_t m = 0; m < domain.size(); ++m)
-            term = term - product("ab,c->abc", {pair(a, domain[m]), row(integral, m)});
+            term = term -
+                   doublet(pair(a, domain[m]).reshape({n * n, 1}), row(integral, m).reshape({1, n})).reshape({n, n, n});
         w = w + term.permute(inverse(perm));
     } while (std::next_permutation(perm.begin(), perm.end()));
     auto v = w;
@@ -121,9 +185,11 @@ std::array<Mixed, 3> triples_moments(const Triplet& r, const std::vector<int>& d
         for (int k = 0; k < 3; ++k)
             if (k != slot) other.push_back(r[k]);
         int b = other[0], c = other[1];
-        auto s = product("ia,i->a", {transfer(a, a), single(a)}),
-             exchange = product("Qb,QR,Rc->bc", {auxrow(ov, pos(domain, b)), gf, auxrow(ov, pos(domain, c))});
-        auto term = product("a,bc->abc", {s, exchange}) + product("a,bc->abc", {fov(a), pair(b, c)});
+        auto s = doublet(transfer(a, a), single(a).reshape({int(single(a)[0].size()), 1}), true);
+        auto exchange = doublet(auxrow(ov, pos(domain, b)), fitted_ov(c, false), true);
+        auto term =
+            (doublet(s, exchange.reshape({1, n * n})) + doublet(fov(a).reshape({n, 1}), pair(b, c).reshape({1, n * n})))
+                .reshape({n, n, n});
         std::vector<int> axes{1, 2};
         axes.insert(axes.begin() + slot, 0);
         v = v + term.permute(axes);
@@ -133,14 +199,15 @@ std::array<Mixed, 3> triples_moments(const Triplet& r, const std::vector<int>& d
 Triples::Triples(std::shared_ptr<Fitting> f, std::vector<Mixed> s, PairMixed d)
     : fit(std::move(f)), singles(std::move(s)), doubles(std::move(d)) {
     for (const auto& t : singles)
-        for (double value : *t[3].data)
+        for (double value : t[3])
             if (value != 0.) throw std::invalid_argument("Triples mixed inputs require affine CCSD amplitudes.");
     for (const auto& item : doubles)
-        for (double value : *item.second[3].data)
+        for (double value : item.second[3])
             if (value != 0.) throw std::invalid_argument("Triples mixed inputs require affine CCSD amplitudes.");
-    foo = product("mi,mn,nj->ij", {fit->molecular.l, fit->molecular.f, fit->molecular.l});
+    foo = congruence(fit->molecular.l, fit->molecular.f, fit->molecular.l);
 }
 void Triples::build_all() {
+    fit->prepare_raw();
     std::vector<Triplet> pending;
     for (auto& [r, data] : fit->workspace.triplets)
         if (!moments.count(r)) pending.push_back(r);
@@ -182,26 +249,28 @@ std::array<Mixed, 3> Triples::blocks(const Triplet& r) {
     const auto& data = fit->workspace.triplets.at(r);
     const auto& m = fit->molecular;
     auto y = frame(r), X = fit->coefficients(data.paos, data.parent, y);
-    auto oo = fit->raw("oo", data.auxiliary, data.occupied, data.occupied),
-         ov = product("Qma,ab->Qmb", {fit->raw("ov", data.auxiliary, data.occupied, data.paos), X}),
-         vv = product("ma,Qmn,nb->Qab", {X, fit->raw("vv", data.auxiliary, data.paos, data.paos), X});
-    auto transfer = [&](int i, int j) { return product("ma,mn,nb->ab", {fit->frames.at(key({i, j})), m.s, y}); };
+    const int nq = data.auxiliary.size(), no = data.occupied.size(), np = data.paos.size(), nv = X[0].shape[1];
+    auto oo = fit->raw("oo", data.auxiliary, data.occupied, data.occupied);
+    auto ov = doublet(fit->raw("ov", data.auxiliary, data.occupied, data.paos).reshape({nq * no, np}), X)
+                  .reshape({nq, no, nv});
+    auto vv = virtual_transform(fit->raw("vv", data.auxiliary, data.paos, data.paos), X, X);
+    auto transfer = [&](int i, int j) { return congruence(fit->frames.at(key({i, j})), m.s, y); };
     auto amp = [&](int i, int j) {
         auto t = doubles.at(key({i, j}));
         return i <= j ? t : t.transpose();
     };
-    auto fov = [&](int i) { return product("m,mn,nb->b", {col(m.l, i), m.f, y}); };
+    auto fov = [&](int i) { return congruence(col(m.l, i).reshape({m.l[0].shape[0], 1}), m.f, y).reshape({nv}); };
     return moments
         .emplace(r, triples_moments(
                         r, data.occupied, fit->metric(data.auxiliary), oo, ov, vv, transfer,
-                        [&](int i) { return singles.at(i); }, amp, fov, product("ma,mn,nb->ab", {y, m.f, y})))
+                        [&](int i) { return singles.at(i); }, amp, fov, congruence(y, m.f, y)))
         .first->second;
 }
 Mixed Triples::edge(const Triplet& r, const Triplet& q) {
     auto key = std::make_pair(r, q);
     auto it = overlaps.find(key);
     if (it != overlaps.end()) return it->second;
-    return overlaps.emplace(key, product("ma,mn,nb->ab", {frame(r), fit->molecular.s, frame(q)})).first->second;
+    return overlaps.emplace(key, congruence(frame(r), fit->molecular.s, frame(q))).first->second;
 }
 std::shared_ptr<TripleDirection> Triples::direction(int component, double threshold, double reference_energy) {
     if (component != 1 && component != 2) throw std::invalid_argument("Expected a first triples component.");
@@ -248,16 +317,16 @@ std::shared_ptr<TripleDirection> Triples::direction(int component, double thresh
             auto axes = ranks(order);
             auto s = edge(r, q);
             auto f = at(foo, e[0], e[1]);
-            auto tq = out->t.at(q).permute(axes), moved = transfer(tq, s[0], s[0], s[0]);
+            auto tq = out->t.at(q).permute(axes);
+            auto [moved, dmoved] = transfer_tangent(tq, s[0], s[component]);
             residual = residual - f[0].scalar() * moved;
-            out->right.at(r) = out->right.at(r) - f[component].scalar() * moved -
-                               f[0].scalar() * tangent_transfer(tq, s[0], s[component]);
+            out->right.at(r) = out->right.at(r) - f[component].scalar() * moved - f[0].scalar() * dmoved;
             auto back = inverse(axes);
             auto st = tr(s[0]), dst = tr(s[component]);
-            auto zq = transfer(data.z, st, st, st).permute(back);
+            auto [zraw, dzraw] = transfer_tangent(data.z, st, dst);
+            auto zq = zraw.permute(back);
             left_residual.at(q) = left_residual.at(q) - f[0].scalar() * zq;
-            out->left.at(q) = out->left.at(q) - f[component].scalar() * zq -
-                              f[0].scalar() * tangent_transfer(data.z, st, dst).permute(back);
+            out->left.at(q) = out->left.at(q) - f[component].scalar() * zq - f[0].scalar() * dzraw.permute(back);
             out->edges.at(r).push_back(
                 {q, axes, {e[0], e[1]}, f[0].scalar(), f[component].scalar(), s[0], s[component]});
         }
@@ -343,11 +412,11 @@ double TripleColumn::element(const TripleDirection& row, Triples& inputs) {
                 int leg = 0;
                 for (std::vector<int> axes : std::vector<std::vector<int>>{{0, 1, 2}, {1, 0, 2}, {2, 1, 0}}) {
                     auto a = zz.permute(axes), b = tq.permute(axes);
-                    auto cov = contract("ijk,abc,jb,kc->ia", {a, b, ev.overlap, ev.overlap});
+                    auto cov = overlap_covector(a, b, ev.overlap, ev.overlap);
                     if (leg++ == 0) value = dot(ev.overlap, cov);
                     bar = bar + cov;
-                    column_bar = column_bar + contract("ijk,abc,jb,kc->ia", {a, b, ev.doverlap, ev.overlap}) +
-                                 contract("ijk,abc,jb,kc->ia", {a, b, ev.overlap, ev.doverlap});
+                    column_bar = column_bar + overlap_covector(a, b, ev.doverlap, ev.overlap) +
+                                 overlap_covector(a, b, ev.overlap, ev.doverlap);
                 }
                 found = covectors.emplace(key, Covector{bar, column_bar, value, dot(bar, ev.doverlap)}).first;
             }

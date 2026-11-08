@@ -47,8 +47,8 @@ inline Tensor from_array(const Array& a) {
     return Tensor(shape, a.data());
 }
 inline py::array to_array(const Tensor& a) {
-    auto* owner = new std::shared_ptr<std::vector<double>>(a.data);
-    py::capsule capsule(owner, [](void* p) { delete static_cast<std::shared_ptr<std::vector<double>>*>(p); });
+    auto* owner = new SharedMatrix(a.data);
+    py::capsule capsule(owner, [](void* p) { delete static_cast<SharedMatrix*>(p); });
     std::vector<py::ssize_t> shape(a.shape.begin(), a.shape.end());
     py::array out(py::dtype::of<double>(), shape, a.ptr(), capsule);
     out.attr("setflags")(false);
@@ -235,6 +235,30 @@ inline void export_native_response(py::module_& module) {
                                    return std::array<size_t, 7>{
                                        c[0], c[1], c[2], c[3], c[4], c[5], e.fitting->panel_bytes};
                                })
+        .def_property_readonly(
+            "integral_storage",
+            [](const Entry& e) {
+                if (!e.fitting) throw std::runtime_error("Missing native fitting state.");
+                std::map<std::string, std::array<size_t, 4>> bytes;
+                std::map<std::string, std::array<std::set<const Matrix*>, 4>> seen;
+                auto count = [&](const std::string& name, const Mixed& x) {
+                    for (int k = 0; k < 4; ++k)
+                        if (seen[name][k].insert(x[k].data.get()).second)
+                            bytes[name][k] += sizeof(double) * x[k].size();
+                };
+                for (const auto& [key, panel] : e.fitting->atomic_panels)
+                    count(key.first == "oo" ? "qij" : key.first == "ov" ? "qia" : "qab", panel.values);
+                for (const auto& [p, panels] : e.fitting->projected_cache) {
+                    for (int k = 0; k < 3; ++k) count("PNO factors", panels[k]);
+                    for (int k = 3; k < 5; ++k) count("local inverse metrics", panels[k]);
+                }
+                for (const auto& item : e.fitting->weighted_panels) count("metric-weighted factors", item.second);
+                for (const auto& [key, pair] : e.fitting->mixed_vertices) {
+                    count("mixed J/K vertices", pair.first);
+                    count("mixed J/K vertices", pair.second);
+                }
+                return bytes;
+            })
         .def("pno",
              [](Entry& e, py::function first, py::function mixed) {
                  PNOResult r;
@@ -250,11 +274,12 @@ inline void export_native_response(py::module_& module) {
                  };
                  {
                      py::gil_scoped_release release;
-                     r = e.workspace->pno(e.molecular, first_solver, mixed_solver);
+                     e.fitting = std::make_shared<Fitting>(*e.workspace, e.molecular, PairMixed{});
+                     e.fitting->owner = e.context;
+                     r = e.workspace->pno(e.molecular, first_solver, mixed_solver, e.fitting.get());
                      PairMixed frames;
                      for (auto& [p, x] : r.selection) frames[p] = x.frame;
-                     e.fitting = std::make_shared<Fitting>(*e.workspace, e.molecular, frames);
-                     e.fitting->owner = e.context;
+                     e.fitting->frames = std::move(frames);
                  }
                  return pno_result(r);
              })
@@ -297,6 +322,16 @@ inline void export_native_response(py::module_& module) {
                      value = screened_energy(*e.workspace, e.molecular, ops);
                  }
                  return py::make_tuple(to_blocks(value.first), to_blocks(value.second));
+             })
+        .def("mixed_integrals",
+             [](Entry& e, int i, int j, int k) {
+                 if (!e.fitting) throw std::runtime_error("Missing native fitting state.");
+                 std::pair<Mixed, Mixed> blocks;
+                 {
+                     py::gil_scoped_release release;
+                     blocks = e.fitting->mixed_integrals(i, j, k);
+                 }
+                 return py::make_tuple(to_blocks(blocks.first), to_blocks(blocks.second));
              })
         .def("projected",
              [](Entry& e, Pair p) {
@@ -453,6 +488,12 @@ inline void export_native_response(py::module_& module) {
                     out = projector(x.at(0), rank);
                 else if (op == "polar")
                     out = polar(x.at(0));
+                else if (op == "doublet")
+                    out = doublet(x.at(0), x.at(1), rank & 1, rank & 2);
+                else if (op == "virtual_transform")
+                    out = virtual_transform(x.at(0), x.at(1), x.at(2));
+                else if (op == "congruence")
+                    out = congruence(x.at(0), x.at(1), x.at(2));
                 else
                     out = product(op, x);
             }

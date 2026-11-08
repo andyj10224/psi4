@@ -69,7 +69,7 @@ std::string numbers(const std::vector<int>& x) {
     return s;
 }
 void finite(const Tensor& x) {
-    for (double v : *x.data)
+    for (double v : x)
         if (!std::isfinite(v)) throw std::invalid_argument("Nonfinite native response tensor.");
 }
 std::vector<std::string> split(const std::string& s, char separator) {
@@ -112,8 +112,8 @@ Tensor binary(const std::string& a, const std::string& b, const std::string& out
         for (size_t i = 0; i < count; ++i) result.mutable_ptr()[i] = x.ptr()[i % nx] * y.ptr()[i % ny];
         return result;
     }
-    if (std::all_of(x.data->begin(), x.data->end(), [](double v) { return v == 0.; }) ||
-        std::all_of(y.data->begin(), y.data->end(), [](double v) { return v == 0.; }))
+    if (std::all_of(x.begin(), x.end(), [](double v) { return v == 0.; }) ||
+        std::all_of(y.begin(), y.end(), [](double v) { return v == 0.; }))
         return Tensor(shape);
     std::string left, right, inner;
     bool gemm =
@@ -277,8 +277,14 @@ std::vector<int> range(int n) {
     return out;
 }
 Tensor::Tensor() : Tensor(std::vector<int>{}) {}
-Tensor::Tensor(std::vector<int> s, double value)
-    : shape(std::move(s)), data(std::make_shared<std::vector<double>>(extent(shape), value)) {}
+Tensor::Tensor(std::vector<int> s, double value) : shape(std::move(s)) {
+    const size_t count = extent(shape);
+    const int rows = !count || shape.empty() ? 1 : shape[0];
+    if (count / rows > size_t(std::numeric_limits<int>::max()))
+        throw std::invalid_argument("Native response matrix dimension overflow.");
+    data = std::make_shared<Matrix>(rows, count ? int(count / rows) : 1);
+    if (count) std::fill_n(mutable_ptr(), count, value);
+}
 Tensor::Tensor(std::vector<int> s, const double* p) : Tensor(std::move(s)) {
     if (size()) std::copy_n(p, size(), mutable_ptr());
     finite(*this);
@@ -404,6 +410,77 @@ Tensor scale(const Tensor& a, double factor) {
 #pragma omp parallel for schedule(static) if (n >= 131072)
     for (size_t i = 0; i < n; ++i) out.mutable_ptr()[i] = factor * a.ptr()[i];
     return out;
+}
+namespace {
+std::array<int, 3> matrix_dimensions(const Tensor& a, const Tensor& b, bool ta, bool tb) {
+    if (a.shape.size() != 2 || b.shape.size() != 2 || a.shape[ta ? 0 : 1] != b.shape[tb ? 1 : 0])
+        throw std::invalid_argument("Native doublet dimensions disagree.");
+    return {a.shape[ta ? 1 : 0], b.shape[tb ? 0 : 1], a.shape[ta ? 0 : 1]};
+}
+void gemm_add(Tensor& out, const Tensor& a, const Tensor& b, bool ta, bool tb) {
+    const auto [m, n, k] = matrix_dimensions(a, b, ta, tb);
+    if (!m || !n || !k || std::all_of(a.begin(), a.end(), [](double x) { return x == 0.; }) ||
+        std::all_of(b.begin(), b.end(), [](double x) { return x == 0.; }))
+        return;
+    if (a.data->nrow() == a.shape[0] && a.data->ncol() == a.shape[1] && b.data->nrow() == b.shape[0] &&
+        b.data->ncol() == b.shape[1]) {
+        out.data->gemm(ta, tb, 1., a.data, b.data, 1.);
+    } else {
+        // A reshape shares its SharedMatrix storage without mutating another
+        // tensor's dimensions. Use the same Psi4 BLAS wrapper on that view.
+        C_DGEMM(ta ? 'T' : 'N', tb ? 'T' : 'N', m, n, k, 1., const_cast<double*>(a.ptr()), a.shape[1],
+                const_cast<double*>(b.ptr()), b.shape[1], 1., out.mutable_ptr(), n);
+    }
+}
+}  // namespace
+Tensor doublet(const Tensor& a, const Tensor& b, bool ta, bool tb) {
+    const auto [m, n, k] = matrix_dimensions(a, b, ta, tb);
+    Tensor out({m, n});
+    gemm_add(out, a, b, ta, tb);
+    return out;
+}
+Mixed doublet(const Mixed& a, const Mixed& b, bool ta, bool tb) {
+    const auto [m, n, k] = matrix_dimensions(a[0], b[0], ta, tb);
+    return a.context->evaluate("doublet:" + std::to_string(ta) + ":" + std::to_string(tb), {a.id, b.id}, [&](int mask) {
+        Tensor out({m, n});
+        for (int part = 0; part < 4; ++part)
+            if ((part & mask) == part) gemm_add(out, a[part], b[mask ^ part], ta, tb);
+        return out;
+    });
+}
+Mixed auxiliary_transform(const Mixed& metric, const Mixed& factors) {
+    auto shape = factors[0].shape;
+    if (shape.empty()) throw std::invalid_argument("Missing auxiliary dimension.");
+    const int q = shape[0], width = q ? factors[0].size() / q : 0;
+    return doublet(metric, factors.reshape({q, width})).reshape(shape);
+}
+Mixed virtual_transform(const Mixed& factors, const Mixed& left, const Mixed& right) {
+    const auto& shape = factors[0].shape;
+    if (shape.size() != 3 || left[0].shape.size() != 2 || right[0].shape.size() != 2 || left[0].shape[0] != shape[1] ||
+        right[0].shape[0] != shape[2])
+        throw std::invalid_argument("Three-index virtual transformation dimensions disagree.");
+    const int q = shape[0], a = shape[1], b = shape[2], x = left[0].shape[1], y = right[0].shape[1];
+    if (double(b) * y * a + double(a) * x * y <= double(a) * x * b + double(b) * x * y) {
+        auto tmp = doublet(factors.reshape({q * a, b}), right).reshape({q, a, y});
+        return doublet(left, tmp.permute({1, 0, 2}).reshape({a, q * y}), true).reshape({x, q, y}).permute({1, 0, 2});
+    }
+    auto tmp =
+        doublet(left, factors.permute({1, 0, 2}).reshape({a, q * b}), true).reshape({x, q, b}).permute({1, 0, 2});
+    return doublet(tmp.reshape({q * x, b}), right).reshape({q, x, y});
+}
+Mixed congruence(const Mixed& left, const Mixed& matrix, const Mixed& right) {
+    const auto& s = matrix[0].shape;
+    if (s.size() != 2 || left[0].shape.size() != 2 || right[0].shape.size() != 2)
+        throw std::invalid_argument("Expected matrices in native congruence.");
+    const int x = left[0].shape[1], y = right[0].shape[1];
+    if (double(s[0]) * s[1] * y + double(x) * s[0] * y <= double(x) * s[0] * s[1] + double(x) * s[1] * y)
+        return doublet(left, doublet(matrix, right), true);
+    return doublet(doublet(left, matrix, true), right);
+}
+Mixed inner(const Mixed& a, const Mixed& b) {
+    if (a[0].shape != b[0].shape) throw std::invalid_argument("Native inner-product shapes disagree.");
+    const int size = a[0].size();
+    return doublet(a.reshape({1, size}), b.reshape({1, size}), false, true).reshape({});
 }
 Tensor contract(const std::string& equation, const std::vector<Tensor>& input) {
     if (input.empty()) throw std::invalid_argument("Empty native contraction.");
@@ -546,7 +623,7 @@ void Cache::check_input(size_t node, int coordinate, const Tensor& value) {
     // acceptance checks, not permission to substitute a different input.
     uint64_t hash = 1469598103934665603ULL;
     for (int n : value.shape) hash = (hash ^ uint64_t(n)) * 1099511628211ULL;
-    for (double x : *value.data) {
+    for (double x : value) {
         uint64_t bits;
         std::memcpy(&bits, &x, sizeof(bits));
         hash = (hash ^ bits) * 1099511628211ULL;

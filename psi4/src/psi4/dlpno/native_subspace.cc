@@ -120,7 +120,7 @@ Mixed polar(const Mixed& g) {
     close(g[0], eye(g[0].shape[0]), 2.e-8, "Polar reference metric");
     auto root = derived("polar_root", {g}, [&]() {
         auto [eig, u] = eigh(g[0]);
-        for (double& e : *eig.data) {
+        for (double& e : eig) {
             if (e <= 0.) throw std::runtime_error("Nonpositive polar metric.");
             e = std::sqrt(e);
         }
@@ -143,7 +143,7 @@ Mixed projector(const Mixed& d, int kept) {
         if (kept <= 0 || kept > n) throw std::invalid_argument("Invalid natural-orbital selection rank.");
         if (kept == n) return std::array<Tensor, 4>{eye(n), Tensor({n, n}), Tensor({n, n}), Tensor({n, n})};
         double scale = 0.;
-        for (double x : *e.data) scale = std::max(scale, std::abs(x));
+        for (double x : e) scale = std::max(scale, std::abs(x));
         if (e.ptr()[cut] - e.ptr()[cut - 1] <= 64 * std::numeric_limits<double>::epsilon() * scale)
             throw std::runtime_error("Unresolved retained/discarded natural-orbital boundary.");
         auto first = [&](const Tensor& x) {
@@ -205,7 +205,7 @@ std::pair<Mixed, Mixed> moving_parent(const Mixed& pao, const Mixed& s, const Te
     auto b0 = mat(pao[0], transform), metric = mat(tr(b0), mat(s[0], b0));
     close(metric, eye(metric.shape[0]), 2.e-8, "First-PNO reference parent");
     auto [e, u] = eigh(metric);
-    for (double& v : *e.data) v = std::pow(v, -.5);
+    for (double& v : e) v = std::pow(v, -.5);
     auto X = mat(transform, back(u, diagonal(e)));
     auto b = mat(pao[0], X), bu = mat(pao[1], X), bv = mat(pao[2], X), buv = mat(pao[3], X);
     metric = mat(tr(b), mat(s[0], b));
@@ -251,7 +251,7 @@ Selection pno_selection(const Mixed& parent, const Mixed& s, const Mixed& t, con
     auto d = (1. / (1 + diagonal_pair)) * (product("ac,bc->ab", {spin(t), t}) + product("ca,cb->ab", {spin(t), t}));
     auto p = projector(d, rank);
     auto [e, u] = eigh(d[0]);
-    std::reverse(e.data->begin(), e.data->end());
+    std::reverse(e.begin(), e.end());
     double gap = rank < n ? e.ptr()[rank - 1] - e.ptr()[rank] : std::numeric_limits<double>::infinity();
     auto anchor = s.context->constant("PNO_anchor", mat(s[0], reference));
     auto projected = product("ma,ab,bc->mc", {parent, p, mat(parent.transpose(), anchor)});
@@ -283,7 +283,7 @@ Mixed pno_loss(const PairEnergy& in, bool diagonal_pair) {
         auto singles = [&](const Mixed& f, const Mixed& v) {
             auto gap = product(",ab->ab", {in.occupied, f.context->constant("identity", eye(f[0].shape[0]))}) - f;
             auto eig = eigh(gap[0]).first;
-            for (double x : *eig.data)
+            for (double x : eig)
                 if (std::abs(x) <= 1.e-12)
                     throw std::runtime_error("Screened singles denominator requires spectral-mask response.");
             return product("a,ab,b->",

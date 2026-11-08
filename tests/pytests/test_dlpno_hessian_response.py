@@ -21,7 +21,7 @@ def test_density_cache_is_shared_across_rows_and_columns(monkeypatch):
         return tuple(np.full((2,2),k+len(calls)*1.e-8) for k in range(3))
     contexts=[]
     def context(reference):
-        value=object();contexts.append(value);return value
+        value=SimpleNamespace(prepare_first=lambda:None);contexts.append(value);return value
     monkeypatch.setattr(inputs,'_occupied_density_tangents',tangents)
     monkeypatch.setattr(inputs,'_MolecularIntegrals',context)
     monkeypatch.setattr(inputs,'molecular_inputs',lambda w,u,v,*,Du,Dv,integrals:(Du,Dv,integrals))
@@ -286,3 +286,44 @@ def test_triples_native_snapshot_exported_once(monkeypatch):
     w=object();cache=TriplesFirstResponseCache(w,max_bytes=0)
     first=cache.snapshot()
     assert cache.snapshot() is first and calls==[w,w]
+
+
+@pytest.mark.parametrize('memory',[0,1024**3])
+def test_persistent_first_integral_panels_have_no_eviction_and_print_storage(monkeypatch,memory):
+    calls=[];printed=[]
+    class Mints:
+        def __init__(self,ref,print):pass
+        def __getattr__(self,name):
+            def build(*args):
+                calls.append((name,args))
+                n=2;aux=3 if args[-1]=='DF_BASIS_SCF' else 4
+                shape=(aux,n*n) if name=='ao_3center_deriv1' else (aux,aux) if name=='ao_metric_deriv1' else (n,n)
+                return [SimpleNamespace(np=np.full(shape,axis+len(calls)*.001)) for axis in range(3)]
+            return build
+    ref=SimpleNamespace(basisset=lambda:SimpleNamespace(nbf=lambda:2),
+        molecule=lambda:SimpleNamespace(natom=lambda:3),
+        get_basisset=lambda name:SimpleNamespace(nbf=lambda:3 if name=='DF_BASIS_SCF' else 4))
+    monkeypatch.setattr(inputs.core,'MintsHelper',Mints,raising=False)
+    monkeypatch.setattr(inputs.core,'get_memory',lambda:memory,raising=False)
+    monkeypatch.setattr(inputs.core,'print_out',printed.append,raising=False)
+    monkeypatch.setattr(inputs,'_raw',lambda ref,aux,mints:(np.eye(aux.nbf()),np.ones((aux.nbf(),2,2))))
+    provider=inputs._MolecularIntegrals(ref)
+    provider.prepare_first()
+    before=len(calls)
+    provider.prepare_first()
+    assert len(calls)==before
+    saved=provider.ao_3center_deriv1(0,'DF_BASIS_SCF')
+    for basis in ('DF_BASIS_SCF','DF_BASIS_CC'):
+        for atom in range(3):provider.ao_3center_deriv1(atom,basis)
+    if memory:
+        assert provider.ao_3center_deriv1(0,'DF_BASIS_SCF') is saved
+        assert len(calls)==before
+    else:
+        assert provider.ao_3center_deriv1(0,'DF_BASIS_SCF') is not saved
+    stats=provider.first_storage
+    assert 0<=stats['used']<=stats['limit']<=memory//32
+    assert stats['used']==sum(stats['retained'].values())
+    assert 'Persistent first AO panels' in ''.join(printed)
+    fresh=inputs._MolecularIntegrals(ref)
+    fresh.prepare_first()
+    assert fresh.ao_3center_deriv1(0,'DF_BASIS_SCF') is not saved

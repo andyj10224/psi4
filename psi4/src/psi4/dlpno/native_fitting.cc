@@ -50,7 +50,7 @@ Mixed Fitting::overlap(Pair p, Pair q) const {
         return found->second;
     }
     ++panel_counts[4];
-    auto s = product("ma,mn,nb->ab", {frames.at(p), molecular.s, frames.at(q)});
+    auto s = congruence(frames.at(p), molecular.s, frames.at(q));
     s.context->retain(s);
     if (keep_panel(s)) overlap_panels.emplace(id, s);
     return s;
@@ -83,8 +83,37 @@ Mixed Fitting::refit(int atom, const std::vector<int>& occ) const {
 }
 Mixed Fitting::coefficients(const std::vector<int>& ids, const Tensor& parent, const Mixed& frame) const {
     auto X = frame.context->constant("parent", parent), B = mat(pao(ids), X);
-    return mat(X, metric_solve(product("ma,mn,nb->ab", {B, molecular.s, B}),
-                               product("ma,mn,nb->ab", {B, molecular.s, frame})));
+    return mat(X, metric_solve(congruence(B, molecular.s, B), congruence(B, molecular.s, frame)));
+}
+void Fitting::prepare_raw(const std::vector<std::string>& kinds) const {
+    for (const auto& kind : kinds) {
+        if (!prepared_raw.insert(kind).second) continue;
+        const int category = kind == "oo" ? 0 : kind == "ov" ? 1 : 2;
+        for (size_t atom = 0; atom < workspace.domains.at("OCC").size(); ++atom) {
+            std::vector<int> aux, left, right;
+            for (size_t q = 0; q < workspace.auxiliary_centers.size(); ++q)
+                if (workspace.auxiliary_centers[q] == int(atom)) aux.push_back(q);
+            if (aux.empty()) continue;
+            if (kind == "vv") {
+                const auto& labels = workspace.domains.at("PAO_PAIRS").at(atom);
+                std::set<int> unique(labels.begin(), labels.end());
+                left.assign(unique.begin(), unique.end());
+                right = left;
+            } else {
+                left = workspace.domains.at("OCC").at(atom);
+                right = workspace.domains.at(kind == "oo" ? "OCC" : "PAO").at(atom);
+            }
+            const size_t bytes = 4 * sizeof(double) * aux.size() * left.size() * right.size();
+            const size_t limit = workspace.cache->limit() / 4;
+            if (panel_bytes > limit || bytes > limit - panel_bytes) continue;
+            // Reserve the panel before local refits consume their allowance.
+            panel_bytes += bytes;
+            auto block = raw_direct(kind, aux, left, right);
+            block.context->retain(block);
+            atomic_panels.emplace(std::make_pair(kind, int(atom)), RawPanel{block, aux, left, right});
+            atomic_bytes[category] += bytes;
+        }
+    }
 }
 Mixed Fitting::raw(const std::string& kind, const std::vector<int>& aux, const std::vector<int>& left,
                    const std::vector<int>& right) const {
@@ -95,6 +124,13 @@ Mixed Fitting::raw(const std::string& kind, const std::vector<int>& aux, const s
         return found->second;
     }
     ++panel_counts[0];
+    auto out = raw_direct(kind, aux, left, right);
+    out.context->retain(out);
+    if (keep_panel(out)) raw_panels.emplace(id, out);
+    return out;
+}
+Mixed Fitting::raw_direct(const std::string& kind, const std::vector<int>& aux, const std::vector<int>& left,
+                          const std::vector<int>& right) const {
     const auto& c = *molecular.s.context;
     std::set<int> atoms;
     for (int q : aux) atoms.insert(workspace.auxiliary_centers.at(q));
@@ -107,24 +143,54 @@ Mixed Fitting::raw(const std::string& kind, const std::vector<int>& aux, const s
                 rows.push_back(q);
                 actual.push_back(aux[q]);
             }
+        auto resident = atomic_panels.find({kind, atom});
+        if (resident != atomic_panels.end()) {
+            const auto& panel = resident->second;
+            auto indices = [](const auto& all, const auto& requested) {
+                std::vector<int> ids;
+                for (int x : requested) {
+                    auto found = std::find(all.begin(), all.end(), x);
+                    ids.push_back(found == all.end() ? -1 : int(found - all.begin()));
+                }
+                return ids;
+            };
+            const auto qs = indices(panel.auxiliary, actual), ls = indices(panel.left, left),
+                       rs = indices(panel.right, right);
+            std::string label = "raw_slice:" + kind;
+            for (const auto& ids : {qs, ls, rs}) {
+                label += "/";
+                for (int i : ids) label += std::to_string(i) + ",";
+            }
+            blocks.push_back(c.evaluate(label, {panel.values.id}, [&](int component) {
+                Tensor out({int(qs.size()), int(ls.size()), int(rs.size())});
+                const size_t nl = panel.left.size(), nr = panel.right.size();
+                for (size_t q = 0; q < qs.size(); ++q)
+                    for (size_t a = 0; a < ls.size(); ++a)
+                        for (size_t b = 0; b < rs.size(); ++b)
+                            if (qs[q] >= 0 && ls[a] >= 0 && rs[b] >= 0)
+                                out.mutable_ptr()[(q * ls.size() + a) * rs.size() + b] =
+                                    panel.values[component].ptr()[(qs[q] * nl + ls[a]) * nr + rs[b]];
+                return out;
+            }));
+            destinations.push_back(rows);
+            continue;
+        }
         const auto &A = workspace.domains.at("AO_OCC").at(atom), &B = workspace.domains.at("AO_VIR").at(atom);
         Mixed block;
         Tensor mask({int(left.size()), int(right.size())}, 1.);
         if (kind == "oo")
-            block =
-                product("ma,Qmn,nb->Qab", {refit(atom, left), molecular.q.select({actual, A, A}), refit(atom, right)});
+            block = virtual_transform(molecular.q.select({actual, A, A}), refit(atom, left), refit(atom, right));
         else if (kind == "ov") {
-            block = product("ma,Qmn,nb->Qab", {refit(atom, left), molecular.q.select({actual, A, B}),
-                                               pao(right).select({B, range(right.size())})});
+            block = virtual_transform(molecular.q.select({actual, A, B}), refit(atom, left),
+                                      pao(right).select({B, range(right.size())}));
             const auto& allowed = workspace.domains.at("PAO").at(atom);
             for (size_t a = 0; a < left.size(); ++a)
                 for (size_t b = 0; b < right.size(); ++b)
                     mask.mutable_ptr()[a * right.size() + b] =
                         std::find(allowed.begin(), allowed.end(), right[b]) != allowed.end();
         } else if (kind == "vv") {
-            block = product("ma,Qmn,nb->Qab",
-                            {pao(left).select({B, range(left.size())}), molecular.q.select({actual, B, B}),
-                             pao(right).select({B, range(right.size())})});
+            block = virtual_transform(molecular.q.select({actual, B, B}), pao(left).select({B, range(left.size())}),
+                                      pao(right).select({B, range(right.size())}));
             std::set<Pair> allowed;
             const auto& labels = workspace.domains.at("PAO_PAIRS").at(atom);
             if (labels.size() % 2) throw std::invalid_argument("Invalid PAO-pair mask.");
@@ -156,11 +222,24 @@ Mixed Fitting::raw(const std::string& kind, const std::vector<int>& aux, const s
                 std::copy_n(blocks[a][k].ptr() + q * width, width, result.mutable_ptr() + destinations[a][q] * width);
         return result;
     });
-    out.context->retain(out);
-    if (keep_panel(out)) raw_panels.emplace(id, out);
     return out;
 }
 Mixed Fitting::metric(const std::vector<int>& ids) const { return molecular.j.select({ids, ids}); }
+Mixed Fitting::weighted(Pair p, int panel, bool filtered) const {
+    p = key(p);
+    if (panel < 0 || panel > 2) throw std::invalid_argument("Invalid local DF panel.");
+    const auto id = std::make_tuple(p, panel, filtered);
+    auto found = weighted_panels.find(id);
+    if (found != weighted_panels.end()) return found->second;
+    const auto& blocks = projected(p);
+    auto out = auxiliary_transform(blocks[filtered ? 4 : 3], blocks[panel]);
+    out.context->retain(out);
+    if (keep_panel(out)) {
+        weighted_panels.emplace(id, out);
+        weighted_bytes += 4 * sizeof(double) * out[0].size();
+    }
+    return out;
+}
 const std::array<Mixed, 5>& Fitting::projected(Pair p) const {
     p = key(p);
     auto it = projected_cache.find(p);
@@ -169,31 +248,80 @@ const std::array<Mixed, 5>& Fitting::projected(Pair p) const {
     auto X = coefficients(data.paos, data.first_parent, frames.at(p));
     coefficient_cache[p] = X;
     auto oo = raw("oo", data.auxiliary, data.occupied, data.occupied);
-    auto ov = product("Qma,ab->Qmb", {raw("ov", data.auxiliary, data.occupied, data.paos), X});
-    auto vv = product("ma,Qmn,nb->Qab", {X, raw("vv", data.auxiliary, data.paos, data.paos), X});
+    const int nq = data.auxiliary.size(), no = data.occupied.size(), nv = data.paos.size(), np = X[0].shape[1];
+    auto ov =
+        doublet(raw("ov", data.auxiliary, data.occupied, data.paos).reshape({nq * no, nv}), X).reshape({nq, no, np});
+    auto vv = virtual_transform(raw("vv", data.auxiliary, data.paos, data.paos), X, X);
     auto m = metric(data.auxiliary), g = symmetric_inverse(m);
     auto filtered = filtered_inverse(m, g);
     for (const auto& block : {X, oo, ov, vv, g, filtered}) block.context->retain(block);
     return projected_cache.emplace(p, std::array<Mixed, 5>{oo, ov, vv, g, filtered}).first->second;
 }
 std::pair<Mixed, Mixed> Fitting::mixed_integrals(int i, int j, int k) const {
-    Pair p = key({i, j}), q = key({k, j});
-    projected(p);
-    projected(q);
-    const auto& a = workspace.pairs.at(p);
-    const auto& b = workspace.pairs.at(q);
-    auto X = coefficient_cache.at(p), Y = coefficient_cache.at(q);
-    auto oo = auxat(raw("oo", a.auxiliary, {i}, {k}), 0, 0);
-    // Contract the occupied/auxiliary leg before projecting the two virtual
-    // legs. Materializing Qab here repeated two O(Q*v^3) transformations for
-    // every ordered mixed vertex, although J only needs an ab matrix.
-    auto vv = raw("vv", a.auxiliary, a.paos, b.paos);
-    auto ov = mat(auxrow(raw("ov", a.auxiliary, {i}, a.paos), 0), X),
-         other = mat(auxrow(raw("ov", a.auxiliary, {k}, b.paos), 0), Y), g = projected(p)[3];
-    auto weight = product("Q,QR->R", {oo, g});
-    auto contracted = product("R,Rmn->mn", {weight, vv});
-    return {product("ma,mn,nb->ab", {X, contracted, Y}), product("Qa,QR,Rb->ab", {ov, g, other})};
+    const auto request = std::make_tuple(i, j, k);
+    auto found = mixed_vertices.find(request);
+    if (found != mixed_vertices.end()) return found->second;
+    const Pair p = key({i, j});
+    const auto& data = workspace.pairs.at(p);
+    const auto& panels = projected(p);
+    const auto X = coefficient_cache.at(p);
+    const int nq = data.auxiliary.size(), no = data.occupied.size(), na = data.paos.size(), np = X[0].shape[1];
+    std::set<int> union_paos;
+    for (int l : data.occupied) {
+        const auto& ids = workspace.pairs.at(key({l, j})).paos;
+        union_paos.insert(ids.begin(), ids.end());
+    }
+    const std::vector<int> extended(union_paos.begin(), union_paos.end());
+    const int ne = extended.size();
+    // Match compute_pno_integrals(): one target auxiliary fit, an extended
+    // PAO domain, and only the actual final source-pair transformation. No
+    // S_pq S_qr replacement of either nonprojected vertex is permitted.
+    auto q_io = auxrow(panels[0], pos(data.occupied, i));
+    auto q_iv = auxrow(panels[1], pos(data.occupied, i));
+    auto fitted_io = doublet(panels[3], q_io);
+    auto fitted_iv = doublet(panels[3], q_iv);
+    auto q_vv = raw("vv", data.auxiliary, data.paos, extended);
+    // Count multiplications for both exact orders, including each actual
+    // source PAO list/rank and the cheaper order of its final two GEMMs.
+    double aux_cost = double(nq) * no * na * ne;
+    double virtual_cost = double(nq) * na * np * ne + double(nq) * no * np * ne;
+    for (int l : data.occupied) {
+        const Pair q = key({l, j});
+        const int nb = workspace.pairs.at(q).paos.size(), nc = frames.at(q)[0].shape[1];
+        aux_cost += std::min(double(na) * np * nb + double(np) * nb * nc, double(na) * nb * nc + double(na) * np * nc);
+        virtual_cost += double(np) * nb * nc;
+    }
+    const bool auxiliary_first = aux_cost <= virtual_cost;
+    Mixed coulomb;
+    if (auxiliary_first) {
+        coulomb = doublet(fitted_io, q_vv.reshape({nq, na * ne}), true);
+    } else {
+        auto partial =
+            doublet(X, q_vv.permute({1, 0, 2}).reshape({na, nq * ne}), true).reshape({np, nq, ne}).permute({1, 0, 2});
+        coulomb = doublet(fitted_io, partial.reshape({nq, np * ne}), true);
+    }
+    auto q_ov = raw("ov", data.auxiliary, data.occupied, extended);
+    auto exchange = doublet(fitted_iv, q_ov.reshape({nq, no * ne}), true).reshape({np, no, ne});
+    for (int l : data.occupied) {
+        const Pair q = key({l, j});
+        projected(q);
+        const auto& ids = workspace.pairs.at(q).paos;
+        std::vector<int> columns;
+        for (int label : ids) columns.push_back(pos(extended, label));
+        const int index = pos(data.occupied, l);
+        auto J = row(coulomb, index).reshape({auxiliary_first ? na : np, ne});
+        J = J.select({range(J[0].shape[0]), columns});
+        const auto& Y = coefficient_cache.at(q);
+        J = auxiliary_first ? congruence(X, J, Y) : doublet(J, Y);
+        auto K = exchange.select({range(np), {index}, columns}, {1});
+        K = doublet(K, Y);
+        J.context->retain(J);
+        K.context->retain(K);
+        mixed_vertices.emplace(std::make_tuple(i, j, l), std::make_pair(J, K));
+    }
+    return mixed_vertices.at(request);
 }
+
 namespace {
 PairMixed residual(const PNOResult& state, const Mixed& foo, const Mixed& s, const std::map<Pair, PairData>& pairs) {
     PairMixed result;
@@ -215,14 +343,15 @@ PairMixed residual(const PNOResult& state, const Mixed& foo, const Mixed& s, con
 }
 double maximum(const Tensor& x) {
     double e = 0.;
-    for (double a : *x.data) {
+    for (double a : x) {
         if (!std::isfinite(a)) throw std::runtime_error("Nonfinite LMP2 residual.");
         e = std::max(e, std::abs(a));
     }
     return e;
 }
 }  // namespace
-PNOResult Workspace::pno(const Molecular& m, const FirstSolver& first_solver, const MixedSolver& mixed_solver) {
+PNOResult Workspace::pno(const Molecular& m, const FirstSolver& first_solver, const MixedSolver& mixed_solver,
+                         const Fitting* common) {
     PNOResult result;
     auto foo = product("mi,mn,nj->ij", {m.l, m.f, m.l});
     // The first OV fit uses its own captured domain lists, rather than assuming
@@ -230,6 +359,13 @@ PNOResult Workspace::pno(const Molecular& m, const FirstSolver& first_solver, co
     Workspace first_fit(0);
     first_fit.domains = first_domains;
     first_fit.auxiliary_centers = auxiliary_centers;
+    first_fit.cache = cache;
+    Fitting own_first(first_fit, m, {});
+    bool same_domains = common != nullptr;
+    for (const auto& name : {"AO_OCC", "AO_VIR", "OCC", "PAO", "PAO_PAIRS"})
+        same_domains &= first_domains.at(name) == domains.at(name);
+    const Fitting& first = same_domains ? *common : own_first;
+    first.prepare_raw({"ov"});
     std::vector<Pair> keys;
     for (auto& [p, data] : pairs) keys.push_back(p);
     std::vector<PNOResult> rows(keys.size());
@@ -237,7 +373,7 @@ PNOResult Workspace::pno(const Molecular& m, const FirstSolver& first_solver, co
         const auto p = keys[index];
         const auto& data = pairs.at(p);
         auto& result = rows[index];
-        Fitting fit(first_fit, m, {});
+        Fitting fit(first);
         auto N = fit.pao(data.paos);
         result.normalized[p] = N;
         auto qi = auxrow(fit.raw("ov", data.first_auxiliary, {p.first}, data.paos), 0),

@@ -27,29 +27,212 @@
  */
 
 #include "native_response.h"
-#include <tuple>
 #include <chrono>
 
 namespace psi {
 namespace dlpno {
 namespace response {
+namespace {
+Mixed vector_product(const Mixed& a, const Mixed& b, bool transpose = false) {
+    return doublet(a, b.reshape({int(b[0].size()), 1}), transpose).reshape({a[0].shape[transpose ? 1 : 0]});
+}
+Mixed outer(const Mixed& a, const Mixed& b) {
+    return doublet(a.reshape({int(a[0].size()), 1}), b.reshape({int(b[0].size()), 1}), false, true);
+}
+Mixed project(const Mixed& s, const Mixed& amplitude) { return doublet(doublet(s, amplitude), s, false, true); }
+Mixed chain(const Mixed& a, const Mixed& b, const Mixed& c) {
+    const auto& x = a[0].shape;
+    const auto& y = b[0].shape;
+    const int n = c[0].shape[1];
+    if (double(x[0]) * x[1] * y[1] + double(x[0]) * y[1] * n <= double(x[1]) * y[1] * n + double(x[0]) * x[1] * n)
+        return doublet(doublet(a, b), c);
+    return doublet(a, doublet(b, c));
+}
+// Sum_Q A_Q T B_Q^T, as two binary GEMMs. SharedMatrix reshapes
+// retain the same allocation; no four-virtual-index ERI is formed.
+Mixed ladder(const Mixed& a, const Mixed& t, const Mixed& b) {
+    const int q = a[0].shape[0], n = a[0].shape[1], k = a[0].shape[2], m = b[0].shape[1];
+    const int d = t[0].shape[1];
+    auto left = doublet(a.reshape({q * n, k}), t).reshape({q, n, d}).permute({1, 0, 2});
+    return doublet(left.reshape({n, q * d}), b.permute({1, 0, 2}).reshape({m, q * d}), false, true);
+}
+struct Dressed {
+    Mixed occupied, virtuals, fitted_occupied, fitted_virtuals;
+};
+struct FockBlocks {
+    Mixed gram, fitted_gram, vv, ov;
+};
+// These maps are owned by one residual evaluation. Only amplitude-independent
+// factors live in Fitting across the fixed/affine replays and Hessian stages.
+class CCSDIntermediates {
+   public:
+    const Fitting& fit;
+    const std::vector<Mixed>& singles;
+    const PairMixed& doubles;
+    std::map<Pair, Mixed> amplitudes, spin_amplitudes, exchanges, spin_exchanges, rows;
+    std::map<std::pair<Pair, int>, Mixed> projected_singles;
+    std::map<std::pair<Pair, Pair>, Mixed> overlaps;
+    std::map<std::pair<Pair, int>, Dressed> dressed_blocks;
+    std::map<Pair, FockBlocks> fock_blocks;
+    std::map<Pair, std::array<Mixed, 3>> intermediates;
+    std::map<Pair, std::array<Mixed, 3>> fitted;
+    CCSDIntermediates(const Fitting& f, const std::vector<Mixed>& s, const PairMixed& d)
+        : fit(f), singles(s), doubles(d) {}
+    const std::vector<int>& domain(Pair p) const { return fit.workspace.pairs.at(key(p)).occupied; }
+    Mixed frame(Pair p) const { return fit.frames.at(key(p)); }
+    Mixed amp(Pair p) {
+        auto found = amplitudes.find(p);
+        if (found != amplitudes.end()) return found->second;
+        const auto& t = doubles.at(key(p));
+        return amplitudes.emplace(p, p.first <= p.second ? t : t.transpose()).first->second;
+    }
+    Mixed u(Pair p) {
+        auto found = spin_amplitudes.find(p);
+        if (found != spin_amplitudes.end()) return found->second;
+        return spin_amplitudes.emplace(p, spin(amp(p))).first->second;
+    }
+    Mixed overlap(Pair p, Pair q) {
+        const auto id = std::make_pair(key(p), key(q));
+        auto found = overlaps.find(id);
+        if (found != overlaps.end()) return found->second;
+        return overlaps.emplace(id, fit.overlap(p, q)).first->second;
+    }
+    Mixed single(Pair p, int i) {
+        const auto id = std::make_pair(key(p), i);
+        auto found = projected_singles.find(id);
+        if (found != projected_singles.end()) return found->second;
+        return projected_singles.emplace(id, vector_product(overlap(p, {i, i}), singles.at(i))).first->second;
+    }
+    Mixed tn(Pair p) {
+        p = key(p);
+        auto found = rows.find(p);
+        if (found != rows.end()) return found->second;
+        std::vector<Mixed> values;
+        for (int i : domain(p)) values.push_back(single(p, i));
+        return rows.emplace(p, stack(values)).first->second;
+    }
+    const std::array<Mixed, 3>& weighted(Pair p) {
+        p = key(p);
+        auto found = fitted.find(p);
+        if (found != fitted.end()) return found->second;
+        return fitted.emplace(p, std::array<Mixed, 3>{fit.weighted(p, 0), fit.weighted(p, 1), fit.weighted(p, 2)})
+            .first->second;
+    }
+    Mixed exchange(Pair p) {
+        const bool reverse = p.first > p.second;
+        const auto canonical = key(p);
+        auto found = exchanges.find(canonical);
+        if (found == exchanges.end()) {
+            const auto& a = fit.projected(canonical);
+            const auto& dom = domain(p);
+            auto qi = auxrow(a[1], pos(dom, canonical.first));
+            auto qj = auxrow(a[1], pos(dom, canonical.second));
+            // K_iajb uses the full inverse, as in the forward MP2/CCSD fit.
+            found = exchanges.emplace(canonical, doublet(qi, doublet(a[3], qj), true)).first;
+        }
+        return reverse ? found->second.transpose() : found->second;
+    }
+    Mixed L(Pair p) {
+        auto found = spin_exchanges.find(p);
+        if (found != spin_exchanges.end()) return found->second;
+        return spin_exchanges.emplace(p, spin(exchange(p))).first->second;
+    }
+    const Dressed& dressed(Pair p, int i) {
+        const auto id = std::make_pair(key(p), i);
+        auto found = dressed_blocks.find(id);
+        if (found != dressed_blocks.end()) return found->second;
+        const auto& a = fit.projected(p);
+        const auto& w = weighted(p);
+        const int qi = a[1][0].shape[0], nv = a[1][0].shape[2], r = pos(domain(p), i), no = domain(p).size();
+        const auto t = tn(p), ti = row(t, r).reshape({nv, 1});
+        auto build = [&](const Mixed& oo, const Mixed& ov, const Mixed& vv) {
+            auto o = auxrow(oo, r) + doublet(ov.reshape({qi * no, nv}), ti).reshape({qi, no});
+            auto v = auxrow(ov, r) - doublet(o, t) + doublet(vv.reshape({qi * nv, nv}), ti).reshape({qi, nv});
+            return std::make_pair(o, v);
+        };
+        const auto raw = build(a[0], a[1], a[2]), fitted = build(w[0], w[1], w[2]);
+        return dressed_blocks.emplace(id, Dressed{raw.first, raw.second, fitted.first, fitted.second}).first->second;
+    }
+    const FockBlocks& partial_fock(Pair p) {
+        p = key(p);
+        auto found = fock_blocks.find(p);
+        if (found != fock_blocks.end()) return found->second;
+        const auto& a = fit.projected(p);
+        const auto& w = weighted(p);
+        const auto t = tn(p);
+        const int nq = a[1][0].shape[0], no = domain(p).size(), nv = t[0].shape[1];
+        auto gram = doublet(a[1].reshape({nq, no * nv}), t.reshape({no * nv, 1}));
+        auto fitted_gram = doublet(a[4], gram);
+        // First contract the occupied index. This is the energy code's
+        // exchange Fock construction, without a Qrme intermediate.
+        auto ht = doublet(w[1].permute({0, 2, 1}).reshape({nq * nv, no}), t)
+                      .reshape({nq, nv, nv})
+                      .permute({1, 0, 2})
+                      .reshape({nv, nq * nv});
+        auto bar = [&](const Mixed& block, const Mixed& left) {
+            const int nr = block[0].shape[1];
+            auto coulomb = doublet(fitted_gram, block.reshape({nq, nr * nv}), true).reshape({nr, nv});
+            auto exchange = doublet(block.permute({1, 0, 2}).reshape({nr, nq * nv}), ht, false, true);
+            return congruence(left, fit.molecular.f, frame(p)) + 2. * coulomb - exchange;
+        };
+        auto left = fit.molecular.l.select({range(fit.molecular.l[0].shape[0]), domain(p)});
+        return fock_blocks.emplace(p, FockBlocks{gram, fitted_gram, bar(a[2], frame(p)), bar(a[1], left)})
+            .first->second;
+    }
+    const std::array<Mixed, 3>& pair_intermediates(Pair p) {
+        auto found = intermediates.find(p);
+        if (found != intermediates.end()) return found->second;
+        const auto [i, j] = p;
+        const auto& dom = domain(p);
+        const auto& a = fit.projected(p);
+        const auto& w = weighted(p);
+        const int nq = a[1][0].shape[0], nv = a[1][0].shape[2], no = dom.size();
+        const auto t = tn(p), f = a[2], wi = auxrow(w[1], pos(dom, i)), wj = auxrow(w[1], pos(dom, j));
+        const auto& di = dressed(p, i);
+        const auto& dj = dressed(p, j);
+        // Jiang 82: dressed OO dot, followed by sum_Q h_Q T h_Q^T.
+        auto beta = doublet(di.occupied, dj.fitted_occupied, true) + ladder(a[1], amp(p), w[1]);
+        auto ooij = auxat(a[0], pos(dom, i), pos(dom, j)).reshape({nq, 1});
+        auto coulomb = doublet(ooij, w[1].reshape({nq, no * nv}), true).reshape({no, nv});
+        auto exchange = doublet(auxrow(a[0], pos(dom, i)), wj, true);
+        // Jiang 83b/84b: contract t into the same local W factors before
+        // building a three-virtual tensor. This inserts no PNO projector.
+        auto gamma_w =
+            doublet(doublet(wi, single(p, j).reshape({nv, 1})), f.reshape({nq, nv * nv}), true).reshape({nv, nv});
+        auto ft = doublet(f.reshape({nq * nv, nv}), single(p, i).reshape({nv, 1})).reshape({nq, nv});
+        auto delta_w = 2. * doublet(ft, wj, true) -
+                       doublet(doublet(wj, single(p, i).reshape({nv, 1})), f.reshape({nq, nv * nv}), true)
+                           .reshape({nv, nv})
+                           .transpose();
+        auto gamma = -doublet(t, coulomb, true) + gamma_w;
+        auto delta = -doublet(t, 2. * exchange - coulomb, true) + delta_w;
+        for (int l : dom) {
+            const Pair il{i, l}, lj{l, j};
+            auto kil = this->exchange(il), llj = L(lj);
+            auto column = vector_product(overlap(p, il), vector_product(kil, single(il, j), true));
+            gamma = gamma - outer(single(p, l), column);
+            auto middle = chain(amp(lj), overlap(lj, il), kil);
+            gamma = gamma - .5 * chain(overlap(p, lj), middle, overlap(il, p));
+            column = vector_product(overlap(lj, p), vector_product(llj, single(lj, i), true), true);
+            delta = delta - outer(single(p, l), column);
+            middle = chain(u(il), overlap(il, lj), llj);
+            delta = delta + .5 * chain(overlap(p, il), middle, overlap(lj, p));
+        }
+        return intermediates.emplace(p, std::array<Mixed, 3>{beta, gamma, delta}).first->second;
+    }
+};
+}  // namespace
 Mixed retained_energy(const Fitting& fit, const std::vector<Mixed>& singles, const PairMixed& doubles) {
     const auto& m = fit.molecular;
+    CCSDIntermediates state(fit, singles, doubles);
     std::vector<Mixed> terms;
-    for (size_t i = 0; i < singles.size(); ++i)
-        terms.push_back(
-            2. * product("a,a->", {product("m,mn,na->a", {col(m.l, i), m.f, fit.frames.at({i, i})}), singles[i]}));
-    for (auto& [p, t] : doubles) {
-        auto Y = fit.frames.at(p);
-        auto transfer = [&](int i) { return product("ma,mn,nb->ab", {Y, m.s, fit.frames.at({i, i})}); };
-        auto ti = product("ab,b->a", {transfer(p.first), singles.at(p.first)}),
-             tj = product("ab,b->a", {transfer(p.second), singles.at(p.second)});
-        auto tau = t + product("a,b->ab", {ti, tj});
-        const auto& panels = fit.projected(p);
-        auto& dom = fit.workspace.pairs.at(p).occupied;
-        auto K = product("Qa,QR,Rb->ab",
-                         {auxrow(panels[1], pos(dom, p.first)), panels[3], auxrow(panels[1], pos(dom, p.second))});
-        terms.push_back((p.first == p.second ? 1. : 2.) * product("ab,ab->", {tau, spin(K)}));
+    for (size_t i = 0; i < singles.size(); ++i) {
+        auto f = congruence(col(m.l, i).reshape({m.l[0].shape[0], 1}), m.f, fit.frames.at({i, i}));
+        terms.push_back(2. * inner(f.reshape(singles[i][0].shape), singles[i]));
+    }
+    for (const auto& [p, t] : doubles) {
+        auto tau = t + outer(state.single(p, p.first), state.single(p, p.second));
+        terms.push_back((p.first == p.second ? 1. : 2.) * inner(tau, state.L(p)));
     }
     return terms.empty() ? m.s.context->constant("zero_energy", Tensor({}, 0.)) : sum(terms);
 }
@@ -61,236 +244,135 @@ CCSDResult ccsd_residual(const Fitting& fit, const std::vector<Mixed>& singles, 
         checkpoint = now;
     };
     const auto& m = fit.molecular;
-    int no = m.l[0].shape[1];
+    const int no = m.l[0].shape[1];
     if (singles.size() != size_t(no)) throw std::invalid_argument("CCSD singles graph mismatch.");
-    for (auto& t : singles)
-        for (double x : *t[3].data)
+    for (const auto& t : singles)
+        for (double x : t[3])
             if (x != 0.) throw std::invalid_argument("CCSD mixed source requires affine amplitudes.");
-    for (auto& [p, t] : doubles)
-        for (double x : *t[3].data)
+    for (const auto& [p, t] : doubles)
+        for (double x : t[3])
             if (x != 0.) throw std::invalid_argument("CCSD mixed source requires affine amplitudes.");
-    auto C = [](const std::string& eq, std::initializer_list<Mixed> x) { return product(eq, x); };
-    auto domain = [&](Pair p) -> const std::vector<int>& { return fit.workspace.pairs.at(key(p)).occupied; };
-    auto frame = [&](Pair p) { return fit.frames.at(key(p)); };
-    auto amp = [&](Pair p) {
-        auto t = doubles.at(key(p));
-        return p.first <= p.second ? t : t.transpose();
-    };
-    std::map<std::pair<Pair, Pair>, Mixed> overlaps;
-    auto ov = [&](Pair p, Pair q) {
-        auto id = std::make_pair(key(p), key(q));
-        auto found = overlaps.find(id);
-        if (found != overlaps.end()) return found->second;
-        return overlaps.emplace(id, fit.overlap(p, q)).first->second;
-    };
-    std::map<std::pair<Pair, int>, Mixed> projected_singles;
-    auto sing = [&](Pair p, int i) {
-        auto id = std::make_pair(p, i);
-        auto it = projected_singles.find(id);
-        if (it != projected_singles.end()) return it->second;
-        return projected_singles.emplace(id, C("ab,b->a", {ov(p, {i, i}), singles.at(i)})).first->second;
-    };
-    std::map<Pair, Mixed> rows;
-    auto tn = [&](Pair p) {
-        auto it = rows.find(p);
-        if (it != rows.end()) return it->second;
-        std::vector<Mixed> x;
-        for (int i : domain(p)) x.push_back(sing(p, i));
-        return rows.emplace(p, stack(x)).first->second;
-    };
-    auto df = [&](Pair p, std::string eq, std::vector<Mixed> args) {
-        auto arrow = eq.find("->");
-        int seen = 0;
-        for (size_t i = 0; i < arrow; ++i)
-            if (eq[i] == 'Q') {
-                if (++seen == 2) eq[i] = 'R';
-            }
-        if (seen != 2) throw std::invalid_argument("Expected two fitted factors.");
-        eq.insert(arrow, ",QR");
-        args.push_back(fit.projected(p)[4]);
-        return product(eq, args);
-    };
-    std::map<Pair, Mixed> exchanges;
-    auto exchange = [&](int i, int j) {
-        Pair p{i, j};
-        auto it = exchanges.find(p);
-        if (it != exchanges.end()) return it->second;
-        auto& a = fit.projected(p);
-        auto& dom = domain(p);
-        return exchanges.emplace(p, C("Qa,QR,Rb->ab", {auxrow(a[1], pos(dom, i)), a[3], auxrow(a[1], pos(dom, j))}))
-            .first->second;
-    };
-    std::map<std::pair<Pair, int>, std::pair<Mixed, Mixed>> dressed_cache;
-    auto dressed = [&](Pair p, int i) {
-        auto id = std::make_pair(p, i);
-        auto it = dressed_cache.find(id);
-        if (it != dressed_cache.end()) return it->second;
-        auto a = fit.projected(p);
-        int r = pos(domain(p), i);
-        auto t = tn(p);
-        auto o = auxrow(a[0], r) + C("Qkc,c->Qk", {a[1], row(t, r)});
-        auto v = auxrow(a[1], r) - C("Qk,ka->Qa", {o, t}) + C("Qac,c->Qa", {a[2], row(t, r)});
-        return dressed_cache.emplace(id, std::make_pair(o, v)).first->second;
-    };
-    std::map<Pair, std::array<Mixed, 3>> intermediates;
-    auto intermediate = [&](int i, int j) {
-        Pair p{i, j};
-        auto it = intermediates.find(p);
-        if (it != intermediates.end()) return it->second;
-        const auto& dom = domain(p);
-        int a = pos(dom, i), b = pos(dom, j);
-        auto proj = fit.projected(p);
-        auto oo = proj[0], h = proj[1], f = proj[2], t = tn(p);
-        auto [oi, vi] = dressed(p, i);
-        auto [oj, vj] = dressed(p, j);
-        auto beta = df(p, "Qk,Ql->kl", {oi, oj}) + df(p, "Qkc,cd,Qld->kl", {h, amp(p), h});
-        auto coul = df(p, "Q,Qlc->lc", {auxat(oo, a, b), h}), exch = df(p, "Ql,Qc->lc", {auxrow(oo, a), auxrow(h, b)});
-        auto ivvv = df(p, "Qb,Qac->bac", {auxrow(h, a), f}), jvvv = df(p, "Qb,Qac->bac", {auxrow(h, b), f});
-        auto gamma = -C("la,lc->ac", {t, coul}) + C("b,bac->ac", {sing(p, j), ivvv});
-        auto delta = C("la,lc->ac", {t, coul}) - 2. * C("la,lc->ac", {t, exch}) +
-                     2. * C("b,cab->ac", {sing(p, i), jvvv}) - C("b,bca->ac", {sing(p, i), jvvv});
-        for (int l : dom) {
-            Pair il{i, l}, lj{l, j};
-            auto kil = exchange(i, l), llj = spin(exchange(l, j));
-            auto column = C("ca,ba,b->c", {ov(p, il), kil, sing(il, j)});
-            auto middle = C("ad,de,ec->ac", {amp(lj), ov(lj, il), kil});
-            gamma = gamma - C("a,c->ac", {sing(p, l), column}) - .5 * C("xa,ac,cy->xy", {ov(p, lj), middle, ov(il, p)});
-            column = C("b,ba,ac->c", {sing(lj, i), llj, ov(lj, p)});
-            middle = C("ad,de,ec->ac", {spin(amp(il)), ov(il, lj), llj});
-            delta = delta - C("a,c->ac", {sing(p, l), column}) + .5 * C("xa,ac,cy->xy", {ov(p, il), middle, ov(lj, p)});
-        }
-        return intermediates.emplace(p, std::array<Mixed, 3>{beta, gamma, delta}).first->second;
-    };
-    std::map<Pair, std::array<Mixed, 3>> partial;
-    auto partial_fock = [&](Pair p) {
-        auto it = partial.find(p);
-        if (it != partial.end()) return it->second;
-        auto a = fit.projected(p);
-        auto h = a[1], f = a[2], t = tn(p), gram = C("Qmc,mc->Q", {h, t});
-        auto bar = [&](const Mixed& block, const Mixed& left) {
-            return C("mr,mn,nc->rc", {left, m.f, frame(p)}) + 2. * df(p, "Q,Qrc->rc", {gram, block}) -
-                   df(p, "Qre,me,Qmc->rc", {block, t, h});
-        };
-        return partial
-            .emplace(p, std::array<Mixed, 3>{gram, bar(f, frame(p)),
-                                             bar(h, m.l.select({range(m.l[0].shape[0]), domain(p)}))})
-            .first->second;
-    };
-    auto foo = C("mi,mn,nj->ij", {m.l, m.f, m.l});
+    fit.prepare_raw();
+    CCSDIntermediates s(fit, singles, doubles);
+    auto foo = congruence(m.l, m.f, m.l);
     std::vector<std::vector<Mixed>> fij(no, std::vector<Mixed>(no));
     for (int i = 0; i < no; ++i)
         for (int j = 0; j < no; ++j) fij[i][j] = at(foo, i, j);
     std::vector<Pair> orders;
-    for (auto& [p, t] : doubles) {
+    for (const auto& [p, t] : doubles) {
         orders.push_back(p);
         if (p.first != p.second) orders.push_back({p.second, p.first});
     }
     for (Pair p : orders) {
-        auto [i, j] = p;
-        auto a = fit.projected(p);
-        auto oo = a[0], h = a[1];
-        int x = pos(domain(p), i), y = pos(domain(p), j);
-        auto coul = df(p, "Q,Qlc->lc", {auxat(oo, x, y), h}), ex = df(p, "Ql,Qc->lc", {auxrow(oo, y), auxrow(h, x)});
-        fij[i][j] = fij[i][j] + C("lc,lc->", {tn(p), 2. * coul - ex});
+        const auto [i, j] = p;
+        const auto& a = fit.projected(p);
+        const auto& w = s.weighted(p);
+        const int x = pos(s.domain(p), i), y = pos(s.domain(p), j), nq = a[0][0].shape[0];
+        auto coulomb = inner(auxat(a[0], x, y), s.partial_fock(p).fitted_gram.reshape({nq}));
+        auto exchange = doublet(auxrow(a[0], y), auxrow(w[1], x), true);
+        fij[i][j] = fij[i][j] + 2. * coulomb - inner(s.tn(p), exchange);
     }
     std::vector<Mixed> one;
-    for (auto& t : singles) one.push_back(0. * t);
+    for (const auto& t : singles) one.push_back(0. * t);
     PairMixed two;
     phase("preparation");
-    // Jiang 87--90. Scatter destinations are accumulated in a fixed order;
-    // they must not be written by an OpenMP loop over source pairs.
+    // Jiang 87--90: A/C updates and the B scatter use the same pair spaces
+    // as compute_R_ia(). Scatter destinations are reduced in fixed order.
     for (Pair p : orders) {
-        auto [i, k] = p;
-        const auto& dom = domain(p);
-        int mi = pos(dom, i), mk = pos(dom, k);
-        auto a = fit.projected(p);
-        auto oo = a[0], h = a[1], f = a[2], t = tn(p), u = spin(amp(p));
+        const auto [i, k] = p;
+        const auto& dom = s.domain(p);
+        const auto& a = fit.projected(p);
+        const auto& w = s.weighted(p);
+        const int mi = pos(dom, i), mk = pos(dom, k), nq = a[1][0].shape[0], nv = a[1][0].shape[2];
+        const auto t = s.tn(p), u = s.u(p), f = a[2];
         if (i == k) {
-            auto part = partial_fock(p);
-            auto gram = part[0], fvv = part[1], fov = part[2], ti = singles[i];
+            const auto& part = s.partial_fock(p);
             std::vector<Mixed> fi;
             for (int l : dom) fi.push_back(fij[l][i]);
-            auto ai = C("m,mn,na->a", {col(m.l, i), m.f, frame(p)}) + 2. * df(p, "Q,Qa->a", {gram, auxrow(h, mi)}) -
-                      df(p, "Qae,me,Qm->a", {f, t, auxrow(oo, mi)}) + C("ab,b->a", {fvv, ti}) -
-                      C("ma,mb,b->a", {t, fov, ti}) - C("ma,m->a", {t, stack(fi)});
-            one[i] = one[i] + ai;
+            auto bare = congruence(col(m.l, i).reshape({m.l[0].shape[0], 1}), m.f, s.frame(p)).reshape({nv});
+            auto tmp = doublet(auxrow(w[0], mi), t);
+            auto exchange = vector_product(f.permute({1, 0, 2}).reshape({nv, nq * nv}), tmp.reshape({nq * nv}));
+            one[i] = one[i] + bare + 2. * vector_product(auxrow(a[1], mi), part.fitted_gram.reshape({nq}), true) -
+                     exchange + vector_product(part.vv, singles[i]) -
+                     vector_product(t, vector_product(part.ov, singles[i]), true) - vector_product(t, stack(fi), true);
         }
-        auto ovvv = df(p, "Qc,Qda->cda", {auxrow(h, mk), f}), dest = ov(p, {i, i});
-        one[i] = one[i] + C("ax,cda,cd->x", {dest, ovvv, u.transpose()});
-        auto fk = C("m,mn,na->a", {col(m.l, k), m.f, frame(p)});
+        // A: sum_Qcd h_k(Q,c) U(d,c) f(Q,d,a); never build W(c,d,a).
+        auto tmp = doublet(auxrow(w[1], mk), u, false, true);
+        auto av = doublet(tmp.reshape({1, nq * nv}), f.reshape({nq * nv, nv})).reshape({nv});
+        one[i] = one[i] + vector_product(s.overlap(p, {i, i}), av, true);
+        auto fk = congruence(col(m.l, k).reshape({m.l[0].shape[0], 1}), m.f, s.frame(p)).reshape({nv});
         for (int l : dom) {
-            Pair kl{k, l};
-            auto K = exchange(k, l), s = ov(kl, p);
-            auto coefficient = C("ac,cd,bd,ab->", {s, u.transpose(), s, K});
-            one[i] = one[i] - C(",a->a", {coefficient, sing({i, i}, l)});
-            fk = fk + C("ac,cb,b->a", {ov(p, kl), spin(K), sing(kl, l)});
+            const Pair kl{k, l};
+            auto coefficient = inner(project(s.overlap(kl, p), u.transpose()), s.exchange(kl));
+            one[i] = one[i] - product(",a->a", {coefficient, s.single({i, i}, l)});
+            fk = fk + vector_product(s.overlap(p, kl), vector_product(s.L(kl), s.single(kl, l)));
         }
-        one[i] = one[i] + C("ax,ac,c->x", {dest, u, fk});
-        auto M = df(p, "Ql,Qc->lc", {auxrow(oo, mi), auxrow(h, mk)});
-        auto rr = C("lb,cb->lc", {M + C("lb,bc->lc", {t, exchange(i, k)}), u});
+        one[i] = one[i] + vector_product(s.overlap(p, {i, i}), vector_product(u, fk), true);
+        auto M = doublet(auxrow(a[0], mi), auxrow(w[1], mk), true) + doublet(t, s.exchange(p));
+        auto B = doublet(M, u, false, true);
         for (size_t l = 0; l < dom.size(); ++l)
-            one[dom[l]] = one[dom[l]] - C("a,ax->x", {row(rr, l), ov(p, {dom[l], dom[l]})});
+            one[dom[l]] = one[dom[l]] - vector_product(s.overlap(p, {dom[l], dom[l]}), row(B, l), true);
     }
     phase("singles residual");
     for (int j = 0; j < no; ++j) {
-        Pair p{j, j};
-        auto corr = C("ma,a->m", {partial_fock(p)[2], singles[j]});
-        const auto& dom = domain(p);
-        for (size_t k = 0; k < dom.size(); ++k) fij[dom[k]][j] = fij[dom[k]][j] + row(corr, k);
+        const Pair p{j, j};
+        auto correction = vector_product(s.partial_fock(p).ov, singles[j]);
+        const auto& dom = s.domain(p);
+        for (size_t k = 0; k < dom.size(); ++k) fij[dom[k]][j] = fij[dom[k]][j] + row(correction, k);
     }
     for (auto [i, j] : orders)
-        for (int l : domain({i, j})) {
-            auto s = ov({l, i}, {l, j});
-            fij[i][j] = fij[i][j] + C("cd,ca,ab,db->", {exchange(l, i), s, spin(amp({l, j})), s});
-        }
+        for (int l : s.domain({i, j}))
+            fij[i][j] = fij[i][j] + inner(s.exchange({l, i}), project(s.overlap({l, i}, {l, j}), s.u({l, j})));
     phase("occupied Fock");
-    std::map<std::tuple<int, int, int>, std::pair<Mixed, Mixed>> integrals;
-    auto mixed_integrals = [&](int i, int j, int k) {
-        auto key = std::make_tuple(i, j, k);
-        auto it = integrals.find(key);
-        if (it != integrals.end()) return it->second;
-        return integrals.emplace(key, fit.mixed_integrals(i, j, k)).first->second;
-    };
+    std::map<Pair, Mixed> ordered_mixed;
     auto ordered_cd = [&](int i, int j) {
-        Pair p{i, j};
-        auto c = 0. * amp(p), d = c;
-        for (int k : domain(p)) {
-            Pair ki{k, i}, kj{k, j}, ik{i, k}, jk{j, k};
-            auto [J, K] = mixed_integrals(i, j, k);
-            auto g = C("xa,ac,cy->xy", {ov(p, ki), intermediate(k, i)[1], ov(ki, kj)});
-            c = c - C("ac,bc,by->ay", {J + g, amp(kj), ov(kj, p)});
-            g = C("xa,ac,cy->xy", {ov(p, ik), intermediate(i, k)[2], ov(ik, jk)});
-            d = d + .5 * C("ac,bc,by->ay", {2. * K - J + g, spin(amp(jk)), ov(jk, p)});
+        const Pair p{i, j};
+        auto found = ordered_mixed.find(p);
+        if (found != ordered_mixed.end()) return found->second;
+        auto c = 0. * s.amp(p), d = c;
+        for (int k : s.domain(p)) {
+            const Pair ki{k, i}, kj{k, j}, ik{i, k}, jk{j, k};
+            const auto [J, K] = fit.mixed_integrals(i, j, k);
+            auto gamma = chain(s.overlap(p, ki), s.pair_intermediates(ki)[1], s.overlap(ki, kj));
+            c = c - doublet(doublet(J + gamma, s.amp(kj), false, true), s.overlap(kj, p));
+            auto delta = chain(s.overlap(p, ik), s.pair_intermediates(ik)[2], s.overlap(ik, jk));
+            d = d + .5 * doublet(doublet(2. * K - J + delta, s.u(jk), false, true), s.overlap(jk, p));
         }
-        return .5 * c + c.transpose() + d;
+        return ordered_mixed.emplace(p, .5 * c + c.transpose() + d).first->second;
     };
-    for (auto& [p, t] : doubles) {
-        auto [i, j] = p;
-        const auto& dom = domain(p);
-        auto a = fit.projected(p);
-        auto h = a[1], f = a[2], vv = f - C("ka,Qkc->Qac", {tn(p), h});
-        auto result =
-            df(p, "Qa,Qb->ab", {dressed(p, i).second, dressed(p, j).second}) + df(p, "Qac,cd,Qbd->ab", {vv, t, vv});
-        auto part = partial_fock(p);
-        auto virt = part[1] - C("ma,mb->ab", {tn(p), part[2]}), beta = intermediate(i, j)[0];
-        for (size_t a = 0; a < dom.size(); ++a)
-            for (size_t b = 0; b < dom.size(); ++b) {
-                Pair q{dom[a], dom[b]};
+    // Jiang 75--86. The only cross-pair projections below are those in the
+    // energy equations. Rectangular J/K vertices retain their own local fits.
+    for (const auto& [p, t] : doubles) {
+        const auto [i, j] = p;
+        const auto& dom = s.domain(p);
+        const auto& a = fit.projected(p);
+        const auto& w = s.weighted(p);
+        const int nq = a[1][0].shape[0], nv = a[1][0].shape[2], nl = dom.size();
+        auto dress_vv = [&](const Mixed& h, const Mixed& f) {
+            return f - doublet(s.tn(p), h.permute({1, 0, 2}).reshape({nl, nq * nv}), true)
+                           .reshape({nv, nq, nv})
+                           .permute({1, 0, 2});
+        };
+        auto D = dress_vv(a[1], a[2]), fitted_D = dress_vv(w[1], w[2]);
+        auto result = doublet(s.dressed(p, i).virtuals, s.dressed(p, j).fitted_virtuals, true) + ladder(D, t, fitted_D);
+        const auto& part = s.partial_fock(p);
+        auto virt = part.vv - doublet(s.tn(p), part.ov, true);
+        const auto beta = s.pair_intermediates(p)[0];
+        for (size_t k = 0; k < dom.size(); ++k)
+            for (size_t l = 0; l < dom.size(); ++l) {
+                const Pair q{dom[k], dom[l]};
                 if (!doubles.count(key(q))) continue;
-                auto s = ov(p, q);
-                result = result + C(",ac,cd,bd->ab", {at(beta, a, b), s, amp(q), s});
-                s = ov(q, p);
-                virt = virt - C("bx,bd,cd,cy->xy", {s, spin(amp(q)), exchange(q.first, q.second), s});
+                result = result + product(",ab->ab", {at(beta, k, l), project(s.overlap(p, q), s.amp(q))});
+                const auto ov = s.overlap(q, p);
+                virt = virt - congruence(ov, doublet(s.u(q), s.exchange(q), false, true), ov);
             }
-        result = result + C("ac,bc->ab", {t, virt}) + C("ac,cb->ab", {virt, t}) + ordered_cd(i, j) +
-                 ordered_cd(j, i).transpose();
+        result =
+            result + doublet(t, virt, false, true) + doublet(virt, t) + ordered_cd(i, j) + ordered_cd(j, i).transpose();
         for (int perm = 0; perm < 2; ++perm) {
-            int a = perm ? j : i, b = perm ? i : j;
+            const int a = perm ? j : i, b = perm ? i : j;
             auto g = 0. * t;
-            for (int k : domain({a, a})) {
-                auto s = ov(p, {a, k});
-                g = g - C(",uc,cd,vd->uv", {fij[k][b], s, amp({a, k}), s});
-            }
+            for (int k : s.domain({a, a}))
+                g = g - product(",ab->ab", {fij[k][b], project(s.overlap(p, {a, k}), s.amp({a, k}))});
             result = result + (perm ? g.transpose() : g);
         }
         two[p] = result;

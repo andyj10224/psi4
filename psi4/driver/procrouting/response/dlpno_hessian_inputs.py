@@ -14,21 +14,79 @@ from .dlpno_localization_curvature import quadratic_localization_mixed, mulliken
 
 
 class _MolecularIntegrals:
-    """Quiet, bounded integral reuse for one fixed molecular reference."""
+    """Reference-owned integral panels, with bounded streaming fallbacks."""
     def __init__(self, ref):
         self.ref = ref
         self.mints = core.MintsHelper(ref, 0)
+        self._first_owned = {}
+        self._raw_owned = {}
+        self.prepared = False
         # Wrap bound methods on the instance: no global cache can retain a
         # wavefunction or serve integrals from an earlier geometry.
         for name, size in (('ao_kinetic', 1), ('ao_potential', 1), ('ao_dipole', 1),
                            ('ao_oei_deriv1', 6), ('ao_oei_deriv2', 3),
                            ('ao_metric_deriv1', 4), ('ao_3center_deriv1', 4),
                            ('ao_elec_dip_deriv1', 2), ('ao_elec_dip_deriv2', 1)):
-            setattr(self, name, lru_cache(maxsize=size)(getattr(self.mints, name)))
-        self.raw = lru_cache(maxsize=2)(self._raw)
+            fallback = lru_cache(maxsize=size)(getattr(self.mints, name))
+            def get(*args, _name=name, _fallback=fallback):
+                key = (_name, *args)
+                if key in self._first_owned:
+                    return self._first_owned[key]
+                return _fallback(*args)
+            get.cache_info = fallback.cache_info
+            setattr(self, name, get)
 
-    def _raw(self, name):
-        return _raw(self.ref, self.ref.get_basisset(name), self.mints)
+    def raw(self, name):
+        if name not in self._raw_owned:
+            self._raw_owned[name] = _raw(self.ref, self.ref.get_basisset(name), self.mints)
+        return self._raw_owned[name]
+
+    def prepare_first(self):
+        """Construct admitted first AO panels once, before any Hessian entry.
+
+        Pair/triplet loops consume the native atom-local qij/qia/qab jets.
+        Mixed AO panels are still delivered once per ordered nuclear pair;
+        retaining all 9N^2 dense mixed panels is deliberately not required.
+        """
+        if self.prepared:
+            return
+        self.prepared = True
+        limit = min(core.get_memory() // 32, 512 * 1024**2)
+        used = 0
+        counts = dict(metric=0, three_center=0, one_electron=0)
+        required = dict(counts)
+        n = self.ref.basisset().nbf()
+        atoms = self.ref.molecule().natom()
+        def retain(category, name, args, bytes):
+            nonlocal used
+            required[category] += bytes
+            if bytes > limit - used:
+                return
+            value = getattr(self.mints, name)(*args)
+            actual = sum(x.np.nbytes for x in value)
+            if actual != bytes:
+                raise RuntimeError('Unexpected AO derivative panel dimensions.')
+            self._first_owned[(name, *args)] = value
+            used += actual
+            counts[category] += actual
+        for kind in ('OVERLAP', 'KINETIC', 'POTENTIAL'):
+            for atom in range(atoms):
+                retain('one_electron', 'ao_oei_deriv1', (kind, atom), 3 * n * n * 8)
+        for name in ('DF_BASIS_SCF', 'DF_BASIS_CC'):
+            self.raw(name)
+            nq = self.ref.get_basisset(name).nbf()
+            for atom in range(atoms):
+                retain('metric', 'ao_metric_deriv1', (atom, name), 3 * nq * nq * 8)
+                retain('three_center', 'ao_3center_deriv1', (atom, name), 3 * nq * n * n * 8)
+        self.first_storage = dict(used=used, limit=limit, retained=counts, requested=required)
+        metric = sum(x[0].nbytes for x in self._raw_owned.values())
+        three = sum(x[1].nbytes for x in self._raw_owned.values())
+        core.print_out(f'\n    Hessian reference AO DF panels: metric {metric/1024**2:.2f} MiB; '
+                       f'three-center {three/1024**2:.2f} MiB.\n'
+                       f'    Persistent first AO panels: {used/1024**2:.2f}/{limit/1024**2:.2f} MiB.\n')
+        for name in counts:
+            core.print_out(f'      {name}: retained {counts[name]/1024**2:.2f} / '
+                           f'requested {required[name]/1024**2:.2f} MiB.\n')
 
 
 def _raw(ref, aux, mints=None):
@@ -61,12 +119,13 @@ def molecular_input_provider(w):
     """Own bounded integral caches and 3N densities for one fixed Hessian.
 
     Never reuse this provider after changing the reference geometry/orbitals.
-    Mixed three-center panels are temporary; first panels cache only two atoms
-    per auxiliary basis. Every entry uses the same native first-density batch.
+    Admitted first panels persist for the full assembly. Mixed three-center
+    panels are temporary. Every entry uses the same first-density batch.
     """
     ref=w.reference_wavefunction()
     size=3*ref.molecule().natom()
     integrals=_MolecularIntegrals(ref)
+    integrals.prepare_first()
     densities=None
     def inputs(u,v):
         nonlocal densities
