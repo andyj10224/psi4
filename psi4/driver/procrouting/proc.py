@@ -4771,16 +4771,20 @@ def run_dlpno_gradient(name, **kwargs):
     if core.get_option("DLPNO", "DLPNO_LOCAL_ORBITALS") not in ("BOYS", "PIPEK_MEZEY"):
         raise ValidationError("DLPNO-CCSD(T) gradients require Boys or Mulliken Pipek-Mezey localization.")
     if core.get_option("DLPNO", "DLPNO_GRADIENT_FULL_TRIPLES"):
-        if core.get_option("DLPNO", "T_CUT_ITER") != 0.:
-            raise ValidationError("Production-triples gradients require T_CUT_ITER=0.")
         if core.get_option("DLPNO", "DLPNO_KEEP_TRIPLES_RESPONSE"):
             raise ValidationError("The single-space retained triples state cannot represent a production-triples gradient.")
-    state = p4util.OptionsState(["DLPNO", "DLPNO_GRADIENT_MODEL"], ["SCF", "SAVE_JK"], ["SCF_TYPE"])
+    state = p4util.OptionsState(["DLPNO", "DLPNO_GRADIENT_MODEL"], ["DLPNO", "T_CUT_ITER"],
+                                ["SCF", "SAVE_JK"], ["SCF_TYPE"])
     try:
         if not core.has_global_option_changed("SCF_TYPE"):
             core.set_global_option("SCF_TYPE", "DF")
         if core.get_global_option("SCF_TYPE") not in ("DF", "MEM_DF", "DISK_DF"):
             raise ValidationError("DLPNO-CCSD(T) gradients require density-fitted SCF.")
+        # A stationary gradient needs every triples equation to converge.
+        # Restore the user's energy-only stopping policy even if the solve fails.
+        if core.get_option("DLPNO", "T_CUT_ITER") != 0.:
+            core.print_out("    DLPNO gradient: disabling early triplet stopping (T_CUT_ITER=0).\n")
+        core.set_local_option("DLPNO", "T_CUT_ITER", 0.)
         core.set_local_option("DLPNO", "DLPNO_GRADIENT_MODEL", True)
         core.set_local_option("SCF", "SAVE_JK", True)
         ref = kwargs.get("ref_wfn")

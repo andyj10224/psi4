@@ -1,5 +1,9 @@
 # Production triples derivatives and response cost audit
 
+> **8 November priority update:** further Hessian development is paused. Review
+> the gradient theory, original-code reuse and molecular validation first, under
+> the contract recorded in `DLPNO_GRADIENT_WORKING_MEMORY.md`.
+
 ## Measured result, before this patch
 
 The successful `water_freq_test(8).out` is from `39ac9fb`; compare it with
@@ -108,8 +112,10 @@ by this audit, and their existing entry points are unchanged.
    generated from domain(0,1). The new production route uses the full occupied
    search. Existing single-space results retain their original graph.
 3. `T_CUT_ITER` permits individual production triplets to stop updating before
-   every residual converges. The new stationary derivative route requires
-   `T_CUT_ITER=0`; it does not differentiate a partially converged stopping history.
+   every residual converges. Gradient requests now disable this stopping
+   automatically: the public driver temporarily sets `T_CUT_ITER=0` and restores
+   it afterward, and the native solver guards the skip condition. The derivative
+   does not differentiate a partially converged stopping history.
 4. In the legacy in-core iteration, one OpenMP worker updates T_ijk in place
    while another can read it as a coupled source. That code is not a suitable
    shared Jacobi response operator. The derivative solver keeps separate old
@@ -156,7 +162,6 @@ Enable for an analytic gradient:
 ```python
 set {
     dlpno_gradient_full_triples true
-    t_cut_iter 0
 }
 gradient('dlpno-ccsd(t)', dertype=1)
 ```

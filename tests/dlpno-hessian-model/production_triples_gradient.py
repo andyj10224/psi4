@@ -22,7 +22,7 @@ def run(args):
     psi4.set_num_threads(args.threads)
     psi4.set_options(dict(
         basis=args.basis, freeze_core=True, scf_type='df', pno_convergence='tight',
-        dlpno_gradient_model=True, dlpno_gradient_full_triples=True, dlpno_keep_lmp2_response=True, t_cut_iter=0.,
+        dlpno_gradient_model=True, dlpno_gradient_full_triples=True, dlpno_keep_lmp2_response=True, t_cut_iter=1.e-5,
         t_cut_pairs=0., dlpno_ao_ints_tol=0., f_cut=0., f_cut_t=0., t_cut_do_uv=0.,
         t_cut_tno=1.e-8, t_cut_tno_strong=1.e-6, t_cut_tno_weak=1.e-5,
         t_cut_triples_weak=args.screen, e_convergence=1.e-13, r_convergence=1.e-11,
@@ -44,6 +44,7 @@ no_reorient
         final_ranks={p:x.np.shape for p,x in psi4.core.dlpno_lmp2_blocks(wfn,'FINAL_FRAME').items()}
         return domains,final,ranks,final_ranks
     g,w=psi4.gradient('dlpno-ccsd(t)',molecule=mol,dertype=1,return_wfn=True)
+    assert psi4.core.get_option('DLPNO','T_CUT_ITER')==1.e-5
     pair_selection=pair_branch(w)
     xyz=mol.geometry().np.copy()
     branches={s:w.variable(f'DLPNO GRADIENT {s} BRANCH').np.copy() for s in STAGES}
@@ -60,7 +61,7 @@ no_reorient
                                w.variable('(T) CORRECTION ENERGY'),atol=2.e-10,rtol=0.)
     # Independent legacy production energy, with every retained pair strong and
     # every iterative triples equation active. This does not call the adjoint route.
-    psi4.set_options(dict(dlpno_gradient_model=False,dlpno_gradient_full_triples=False))
+    psi4.set_options(dict(dlpno_gradient_model=False,dlpno_gradient_full_triples=False,t_cut_iter=0.))
     legacy,legacy_wfn=psi4.energy('dlpno-ccsd(t)',molecule=mol,return_wfn=True)
     result['legacy_energy']=float(legacy)
     result['legacy_triples_correction']=float(legacy_wfn.variable('(T) CORRECTION ENERGY'))
@@ -68,7 +69,7 @@ no_reorient
     np.testing.assert_allclose(legacy,w.energy(),atol=2.e-9,rtol=0.)
     np.testing.assert_allclose(legacy_wfn.variable('(T) CORRECTION ENERGY'),
                                w.variable('(T) CORRECTION ENERGY'),atol=2.e-10,rtol=0.)
-    psi4.set_options(dict(dlpno_gradient_model=True,dlpno_gradient_full_triples=True))
+    psi4.set_options(dict(dlpno_gradient_model=True,dlpno_gradient_full_triples=True,t_cut_iter=1.e-5))
     direction=np.sin(np.arange(xyz.size)+.3).reshape(xyz.shape)
     direction/=np.linalg.norm(direction)
     exact=float(np.vdot(direction,g.np))

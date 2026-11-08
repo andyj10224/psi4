@@ -1434,7 +1434,12 @@ std::pair<double, double> DLPNOCCSD_T::lccsd_t_iterations() {
     bool e_converged = false, r_converged = false;
 
     double F_CUT = options_.get_double("F_CUT_T");
-    double T_CUT_ITER = options_.get_double("T_CUT_ITER");
+    const double T_CUT_ITER = options_.get_double("T_CUT_ITER");
+    // Keep every amplitude equation active for a gradient, including native
+    // callers that bypass the public driver's temporary option override.
+    const bool allow_triplet_stopping = !gradient_model_ && options_.get_str("DERTYPE") != "FIRST";
+    if (!allow_triplet_stopping && T_CUT_ITER != 0.)
+        outfile->Printf("    Gradient requested: ignoring T_CUT_ITER; all triplets remain active.\n");
 
     std::vector<double> e_ijk_old(n_lmo_triplets, 0.0);
 
@@ -1507,7 +1512,8 @@ std::pair<double, double> DLPNOCCSD_T::lccsd_t_iterations() {
 
             int ntno_ijk = n_tno_[ijk];
 
-            if (std::fabs(e_ijk_[ijk] - e_ijk_old[ijk]) < std::fabs(e_ijk_old[ijk] * T_CUT_ITER)) continue;
+            if (allow_triplet_stopping &&
+                std::fabs(e_ijk_[ijk] - e_ijk_old[ijk]) < std::fabs(e_ijk_old[ijk] * T_CUT_ITER)) continue;
 
             // S integrals
             std::vector<int> triplet_ext_domain;
@@ -1723,8 +1729,9 @@ void DLPNOCCSD_T::compute_triples_correction(DLPNOCCSDPhase phase) {
         triples_stage_metadata_words_ = 0;
         if (lambda_requested_ || algorithm_ != DLPNOMethod::CCSD_T || options_.get_bool("T0_APPROXIMATION"))
             throw PSIEXCEPTION("Production triples gradients currently support ordinary RHF DLPNO-CCSD(T) only.");
+        // The existing response iteration already updates every triplet.
         if (options_.get_double("T_CUT_ITER") != 0.)
-            throw PSIEXCEPTION("Production triples gradients require T_CUT_ITER=0: every amplitude equation must converge.");
+            outfile->Printf("      Ignoring T_CUT_ITER for gradients: every triples equation remains active.\n");
         if (options_.get_bool("DLPNO_KEEP_TRIPLES_RESPONSE"))
             throw PSIEXCEPTION("The single-space Hessian cannot consume a production multi-space triples gradient.");
         for (const auto& name : {"DLPNO (T) AUXILIARY METRIC GRADIENT", "DLPNO (T) THREE-CENTER GRADIENT"})

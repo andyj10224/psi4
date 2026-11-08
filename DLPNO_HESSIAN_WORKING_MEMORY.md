@@ -1,5 +1,12 @@
 # DLPNO Hessian Working Memory Bank
 
+> **Development paused by user request (8 November 2026).** Preserve this code
+> and its regression tests. Resume only after the gradient theory, original-code
+> reuse, correctness and readability have been reviewed with Andy. Follow the
+> current contract in [gradient working memory](DLPNO_GRADIENT_WORKING_MEMORY.md).
+> The roadmap entries below are historical and do not authorize more Hessian work.
+
+
 > **Public routing delivered for local validation:** the user requested pushing the recovered implementation with the cc-pVDZ tests restored. The experimental `DLPNO_HESSIAN_MODEL` route now defaults to `true`, with complete Cython packaging and local test instructions. Source-level checks pass; fresh native numerical validation remains pending. See [recovery record](DLPNO_HESSIAN_M33_RECOVERY.md) and [local test commands](tests/dlpno-hessian-model/README.md). Milestone 32 remains the last fully validated molecular checkpoint.
 
 ## Response optimization pass (7 November 2026)

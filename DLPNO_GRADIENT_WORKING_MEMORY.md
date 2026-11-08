@@ -1,5 +1,77 @@
 # Working Memory Bank™
 
+## Current priority: gradient theory and review (8 November 2026)
+
+**User decision:** pause further Hessian development. Preserve the existing
+Hessian implementation, branch and regression tests, but prioritize making the
+analytic gradient mathematically transparent, faithful to the original DLPNO
+implementation and understandable to Andy before extending derivatives further.
+This supersedes the historical “next piece” plans below. The preceding code
+checkpoint is `821944a`; its opt-in production-triples gradient still needs the
+provided molecular validation and retains the all-strong CCSD restriction.
+
+### Required development contract
+
+1. Before adding any C++ function, audit existing functions that compute the
+   same or related tensors. Record whether they can be reused or extended and
+   explain any remaining need. Moving a function into an older file alone does
+   not establish reuse or equation equivalence.
+2. Map every gradient contribution to its originating energy/residual/Lambda
+   expression and original source function. State the derivatives, index and
+   normalization conventions, pair/triplet/fitting spaces, and new intermediates.
+   Apply the same requirement to Hessians if their development resumes.
+3. Preserve the established SharedMatrix layouts, pair maps, local domains and
+   contraction patterns. Do not add a parallel tensor abstraction or duplicate
+   maps for convenience. Use existing native C++ and BLAS kernels for expensive
+   inner loops rather than adding Python traversal of pairs or triplets.
+4. Treat performance as a measured requirement: record timings, solve/build
+   counts, repeated intermediates, allocation/storage costs and local-domain
+   scaling. Preserve the numerical regression tests and distinguish isolated
+   checks from compiled molecular validation.
+5. Obtain Andy's explicit approval before architectural changes, replacement of
+   established algorithms, or additional local approximations. First present a
+   concrete mathematical mapping and reuse assessment. Routine fixes explicitly
+   requested in the session do not require another confirmation.
+
+### Immediate change: gradient triples convergence
+
+Reuse audit: `run_dlpno_gradient` already owns an `OptionsState` scope;
+`DLPNOCCSD_T::lccsd_t_iterations` already owns the triplet skip condition;
+`solve_gradient_model_triples` already updates all active equations. Extend those
+controls, with no new C++ helper, amplitude solver, tensor layout or approximation.
+
+The public gradient call temporarily forces `T_CUT_ITER=0`, then restores the
+user's value and changed flags on success or failure. The production C++ skip
+condition also disallows early stopping for the gradient model or `DERTYPE=FIRST`,
+covering direct native calls. The production-triples response route ignores a
+nonzero user cutoff instead of rejecting the calculation. Ordinary energy calls
+retain their configured threshold. This concerns iterative stopping; it does
+not disable triplet energy screening, change TNO cutoffs, or replace residual
+convergence tests.
+
+Validation: 18 new driver tests cover both gradient modes, default/global/local
+cutoffs, and restoration after successful runs or energy/assembly failures.
+They and the 262 existing routing/algebra checks pass in the mock-native harness;
+the actual-header triples C++ syntax check passes. No new molecular validation
+of the production-triples gradient is claimed by this stopping-policy change.
+
+### Review order before further gradient implementation
+
+* Define precisely which total energy is differentiated, including screened
+  pairs, PNO losses, and the four production triples stages.
+* Trace the stationary Lagrangian and ordered-pair normalization into the
+  original CCSD residual and ordinary triples energy routines.
+* Audit the exact CCSD transpose and triples adjoint term by term against the
+  existing Lambda code. Earlier entries record finite-PNO directional
+  discrepancies; reproduce them and locate the responsible contractions before
+  accepting or replacing either implementation.
+* Derive integral, local-fitting metric, overlap, PNO/TNO-selection and orbital
+  contributions from those same expressions, documenting intermediate reuse.
+* Validate each block against independent numerical derivatives, then audit
+  the complete gradient and its measured scaling.
+
+## Historical checkpoints (not the current development plan)
+
 > **Public Hessian routing delivered for local validation:** the user requested pushing the recovered route with the cc-pVDZ tests restored, then making `DLPNO_HESSIAN_MODEL=true` the default. Source-level checks pass, and Cython response packaging is complete; fresh native numerical tests remain pending. See [recovery record](DLPNO_HESSIAN_M33_RECOVERY.md) and [local test commands](tests/dlpno-hessian-model/README.md). The gradient functional is unchanged.
 
 

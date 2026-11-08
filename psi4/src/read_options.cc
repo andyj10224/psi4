@@ -2720,7 +2720,8 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         /*- Differentiate the production ordinary triples correction on the RHF gradient-model
             CCSD reference: screened prescreen (T0), tight retained (T0), and loose
             iterative (T) minus loose (T0). Uses the original triplet selection, fitting,
-            TNO transforms and moments. Requires T_CUT_ITER=0 and in-core triples.
+            TNO transforms and moments. Disables early triplet stopping for gradients
+            regardless of T_CUT_ITER. Requires in-core triples.
             Experimental gradient only; the single-space analytic Hessian cannot consume
             this multi-space state. Does not remove the gradient model's all-strong pair
             restriction. Disabled by default to preserve the single-space model. !expert -*/
@@ -2861,7 +2862,8 @@ int read_options(const std::string &name, Options &options, bool suppress_printi
         options.add_double("T_CUT_DO_TRIPLES", 1e-2);
         /*- Fock matrix threshold for treating amplitudes as coupled during local (T) iterations !expert -*/
         options.add_double("F_CUT_T", 1e-3);
-        /*- Energy-change threshold for removing converged triplets from iterative (T) updates !expert -*/
+        /*- Energy-change threshold for removing converged triplets from iterative (T) updates.
+            Ignored for RHF gradient requests, which keep every triples equation active. !expert -*/
         options.add_double("T_CUT_ITER", 1e-5);
         /*- Minimum number of TNOs required in each triplet !expert -*/
         options.add_int("MIN_TNOS", 9);
