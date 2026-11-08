@@ -140,6 +140,9 @@ class ScreenedHessianColumn:
             pno=self._timed('PNO/LMP2 response',self.native.pno,entry)
             response=self._timed('CCSD mixed response',native_ccsd_response,self.native,entry,pno,S,F,L,D,df,
                                  first_cache=self.ccsd_first,coordinates=(u,self.coordinate))
+            for name,seconds in response['native_profile'].items():
+                label='CCSD subset: '+name
+                self.timings[label]=self.timings.get(label,0.)+seconds
             triples=NativeTriplesInputs(self.native,response)
         else:
             pno=self._timed('PNO/LMP2 response',screened_pno_response,self.wfn,S,F,L,D,df)

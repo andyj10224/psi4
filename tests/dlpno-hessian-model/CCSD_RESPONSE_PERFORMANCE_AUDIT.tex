@@ -1,0 +1,361 @@
+\documentclass[10pt,letterpaper]{article}
+\usepackage[margin=0.72in,headheight=15pt]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern,amsmath,amssymb,booktabs,array,xcolor,fancyhdr,listings,microtype}
+\usepackage[colorlinks=true,linkcolor=blue!45!black,urlcolor=blue!45!black]{hyperref}
+\definecolor{navy}{HTML}{17324D}
+\definecolor{teal}{HTML}{167D8D}
+\definecolor{light}{HTML}{EFF4F7}
+\pagestyle{fancy}\fancyhf{}
+\fancyhead[L]{\small\sffamily DLPNO derivative performance audit}
+\fancyhead[R]{\small\sffamily 8 November 2026}
+\fancyfoot[L]{\small\sffamily Quantum Chemistry Grand Battleplan}
+\fancyfoot[R]{\small\thepage}
+\setlength{\parindent}{0pt}\setlength{\parskip}{6pt}
+\renewcommand{\arraystretch}{1.2}
+\lstset{basicstyle=\ttfamily\small,backgroundcolor=\color{light},frame=single,rulecolor=\color{light},breaklines=true,columns=fullflexible,keepspaces=true,aboveskip=9pt,belowskip=9pt}
+\newcommand{\T}{^{\mathsf T}}
+\newcommand{\uv}{^{uv}}
+\newcommand{\ip}[2]{\left\langle #1,#2\right\rangle}
+\newcommand{\sectionpage}[1]{\newpage\section{#1}}
+\begin{document}
+{\color{teal}\sffamily\bfseries IMPLEMENTATION AUDIT \quad / \quad WATER, cc-pVTZ}\par
+{\color{navy}\sffamily\Huge CCSD mixed response:\\equations, reuse, and cost}\par
+\vspace{8pt}
+{\large Prepared for Andy Jiang}\par
+\textbf{Audited run:} \texttt{water\_freq\_test(6).out}, branch \texttt{dlpno\_gradients}, commit \texttt{50b6a5d}. Input: frozen-core RHF, tight PNOs, 12 threads, 28 GB requested memory. The job includes a geometry optimization and one frequency calculation.
+
+\section{What the new output actually establishes}
+\textbf{The C++ migration helped several stages but made CCSD mixed response slower.} The complete job fell from 666.14 to 636.51 s (4.4\%), while the nine Hessian columns fell from 531.8 to 511.9 s (3.7\%). CCSD mixed response increased by 39.1\%. The numerical frequencies printed to four decimal places remain 1669.3180, 3840.8971, and 3945.3762 cm$^{-1}$. Matching printed frequencies is not independent derivative validation.
+
+\begin{center}\begin{tabular}{lrrr}\toprule
+Stage, summed over nine columns & \texttt{c87867a} (s) & \texttt{50b6a5d} (s) & Change\\\midrule
+CCSD mixed response &250.72&348.83&+98.11\\
+PNO/LMP2 response &57.09&20.31&$-36.78$\\
+Triples first directions &23.96&22.91&$-1.05$\\
+Triples mixed curvature &149.59&67.36&$-82.23$\\
+Triples tangent solves &23.93&34.99&+11.06\\
+Molecular inputs &15.48&14.12&$-1.36$\\
+Retained energy/CCSD contraction &7.33&1.26&$-6.07$\\\bottomrule
+\end{tabular}\end{center}
+\small Timing labels moved some work between triples stages in the native port. Compare their combined time as well as the individual rows. Rounded column totals also include orchestration and checks.\normalsize
+
+The ``33 seconds'' is \textbf{per nine-entry Hessian column}, not per single matrix element. Columns 2--9 spend 33.00--35.01 s in CCSD mixed response, averaging 33.81 s, or 3.76 s per entry. Column 1 costs 78.39 s and includes all nine first CCSD solves and their fixed-amplitude source replays.
+
+\textbf{Successful reuse:} the run reports nine first LMP2 solves and 153 reuses, nine first CCSD solves, and nine first triples builds plus 72 reuses. Repeated first LMP2 solutions are no longer the main problem.
+
+\textbf{Main findings in the code:} (1) raw DF panels and occupied refits lacked stage-owned reuse in the C++ port; (2) mixed Coulomb vertices materialized a three-index panel that was immediately reduced to a matrix; (3) small persistent results competed with transient tensors in one 512 MiB LRU. The changes accompanying this report address those issues and add finer timings. End-to-end timing of the patch remains unmeasured.
+
+\sectionpage{The ordinary triples-sourced Lambda solve}
+Let $t=(t_1,t_2)$ be the converged CCSD amplitudes, $T_3$ the converged ordinary-triples amplitudes, and $z_3$ the triples adjoint. At fixed geometry and selected local spaces, define
+\begin{align}
+\mathcal L &= E_{\rm CC}(t)+E_T(t,T_3)+\ip{z_3}{R_3(t,T_3)}+\ip{\lambda}{R_{\rm CC}(t)},\\
+J&=\frac{\partial R_{\rm CC}}{\partial t},\qquad
+s_T=\frac{\partial E_T}{\partial t}+
+ \left(\frac{\partial R_3}{\partial t}\right)^{\!*}z_3,\\
+s&=E_{{\rm CC},t}+s_T,\qquad J^{\!*}\lambda=-s.
+\end{align}
+The star denotes the adjoint under the code's amplitude pairing, including its doubles weights. For unique pairs, the weight is $1-\delta_{ij}/2$; the native ordered representation uses its corresponding half-weighted symmetrization.
+
+\textbf{Yes: $L_3\!\to L_1$ and $L_3\!\to L_2$ are fixed sources.} Once $t$, $T_3$, $z_3$, frames, and integrals are fixed, these sources do not depend on the iterated $\lambda_1,\lambda_2$. They must be rebuilt when that reference changes, not at each Lambda iteration.
+
+In \texttt{50b6a5d}, \texttt{solve\_gradient\_model\_triples} already accumulates \texttt{triples\_source1\_} and \texttt{triples\_source2\_} after the triples solves. \texttt{solve\_gradient\_lambda} then evaluates the complete inhomogeneous source once at zero Lambda and stores it. Each iteration evaluates only the homogeneous reverse action and adds those stored vectors:
+\begin{equation}
+r_\lambda^{(k)}=J^{\!*}\lambda^{(k)}+s.
+\end{equation}
+
+\begin{lstlisting}
+converge CCSD t, ordinary triples T3, and triples adjoint z3
+form triples_source1 and triples_source2 once
+prepare fixed reference intermediates
+source = full_reverse(lambda = 0, include_source = true)
+choose persistent overlap blocks or semidirect panels
+repeat:
+    residual = reverse_action(lambda, include_source = false)
+    residual += source
+    check residual and pseudoenergy convergence
+    precondition, update Lambda, and extrapolate with DIIS
+release fixed work; form pair densities and backtransforms
+\end{lstlisting}
+
+The measured 5.60--5.93 s in the optimization and 7.588 s at the Hessian reference are labeled \emph{CCSD Lambda and pair response}. They include preparation and subsequent pair-density work; they do not isolate the iteration loop. The new patch prints setup, fixed-source, iteration, and pair-density times separately.
+
+A conventional CCSD Lambda solve and this solve apply the same CCSD transpose Jacobian to different sources when they use the same reference, residual, and pairing. Their per-iteration costs should be comparable in an equally optimized implementation. Equal wall time is not guaranteed: convergence histories and implementation choices differ. A $(T)_\Lambda$ \emph{energy ansatz} is also not interchangeable with the stationary derivative of the ordinary $(T)$ energy.
+
+The patch additionally retains fixed projected exchange blocks, dressed mixed vertices, and gamma/delta transfer maps. The allocation ceiling is the minimum of available response headroom, $M/32$, and the larger of 64 MiB and the energy's estimated CCSD baseline storage. Matrices are released before density/debug work. Debug mode compares the persistent and direct residuals at a nonzero Lambda vector.
+
+\sectionpage{PNO overlaps: resident blocks and a semidirect fallback}
+For pair frames $Y_p$ expressed in AOs, and PAO coefficient matrices $X_p$ on the actual local PAO domains $\mathcal P_p$,
+\begin{equation}
+S_{pq}=Y_p\T S^{\rm AO}Y_q
+      =X_p\T S^{\rm PAO}_{\mathcal P_p,\mathcal P_q}X_q.
+\end{equation}
+These are fixed during an amplitude/Lambda solve at one geometry. Their nuclear derivatives are needed in a Hessian and cannot be replaced by the fixed reference matrix.
+
+\textbf{What is already resident.} Native \texttt{S\_PNO} returns the existing energy overlap tables for shared-index pairs, diagonal target spaces, and general in-domain pairs in the high-memory mode. It recomputes general overlaps if the required occupied labels fall outside the target domain or \texttt{LOW\_MEMORY\_OVERLAP} is active. Thus ``S\_PNO call'' does not necessarily mean ``overlap construction.''
+
+Water explicitly reports the high-memory overlap algorithm and approximately 0.002 GB of overlap storage, versus 0.131 GB for the LCCSD estimate. Increasing an overlap cache alone is therefore unlikely to remove water's main bottleneck.
+
+\textbf{Persistent policy in the patch.} Existing energy tables stay shared. Otherwise-recomputed overlaps are admitted to the Lambda-owned store and kept for that solve. The source traversal records the actual requested graph. When complete blocks do not fit, it can replace a target's stored overlaps with a smaller one-sided union panel. Define
+\begin{align}
+\mathcal U_p&=\bigcup_{q\ \mathrm{requested\ from}\ p}\mathcal P_q,\\
+B_p&=X_p\T S^{\rm PAO}_{\mathcal P_p,\mathcal U_p},\\
+S_{pq}&=B_p[:,\operatorname{pos}_{\mathcal U_p}(\mathcal P_q)]X_q.
+\end{align}
+The map preserves the source pair's PAO order. $B_p$ is persistent; each request performs only the final small right transformation. If neither choice fits, the original direct fallback remains available. The policy is chosen once before iterations, rather than repeatedly evicting overlap blocks.
+
+\begin{center}\begin{tabular}{lll}\toprule
+Storage strategy & Numerical storage & Repeated work per request\\\midrule
+Complete $S_{pq}$ & $8\sum_{pq}r_pr_q$ bytes & lookup\\
+One-sided $B_p$ & $8\sum_p r_p|\mathcal U_p|$ bytes & slice and one GEMM\\
+Direct overlap & transient local blocks & slice and two transforms\\\bottomrule
+\end{tabular}\end{center}
+The smaller choice is graph- and domain-dependent. Global all-pair storage is not assumed. The triples right/left solver already holds a bounded, read-only overlap set on its actual edges and falls back to direct construction beyond its allowance; this patch does not claim that every triples edge is permanently resident.
+
+For the Hessian, a separate fitting object owns raw panels, refits, and pair overlaps for the entire mixed entry, including its $uv$ component. Those panels survive both fixed and affine CCSD replays and subsequent consumers. Selected reference/first panels are also retained in a protected part of the Hessian-wide storage budget. Mixed panels are never reused between different coordinate pairs.
+
+\sectionpage{What ``CCSD mixed response'' computes}
+Let $x$ collect all non-CCSD inputs: $S$, $F$, localized occupied orbitals, density/PAOs, local DF metrics and integrals, and selected PNO frames. These include their already-solved lower-order responses. The first CCSD response obeys
+\begin{equation}
+R(t,x)=0,\qquad Jt^u=-R_xx^u,\qquad J=R_t.
+\end{equation}
+For a pair of nuclear coordinates $u,v$, replay the residual on the affine CCSD amplitudes
+\begin{equation}
+\widehat t=t+u\,t^u+v\,t^v,\qquad
+x(u,v)=x+u\,x^u+v\,x^v+uv\,x\uv+\cdots.
+\end{equation}
+The mixed source is
+\begin{align}
+c\uv&=\left.\partial_u\partial_vR(\widehat t,x(u,v))\right|_0\\
+&=R_xx\uv+R_{xx}[x^u,x^v]
+ +R_{xt}[x^u,t^v]+R_{tx}[t^u,x^v]+R_{tt}[t^u,t^v].
+\end{align}
+\textbf{There is no mixed CCSD-amplitude solve in this timed stage.} The true mixed response would satisfy $Jt\uv=-c\uv$, but stationary curvature contracts $c\uv$ with the appropriate reference adjoint. For a stationary scalar contribution with $J^{\!*}\lambda=-E_t$,
+\begin{equation}
+H_{uv}=\widehat E\uv+\ip{\lambda}{c\uv}.
+\end{equation}
+The implemented retained-CCSD and ordinary-triples stationary contributions use their corresponding adjoints and extra triples terms; the formula above explains the CCSD mixed-amplitude elimination.
+
+Every local tensor is a four-component object
+\begin{equation}
+\mathbf A=(A,A^u,A^v,A\uv).
+\end{equation}
+For any bilinear contraction $C$,
+\begin{align}
+[C(A,B)]^u&=C(A^u,B)+C(A,B^u),\\
+[C(A,B)]\uv&=C(A\uv,B)+C(A^u,B^v)+C(A^v,B^u)+C(A,B\uv).
+\end{align}
+Thus a full uncached binary node can require nine ordinary contractions: one value, two per first derivative, and four mixed terms. Reusing the value and both first components can leave only four mixed terms. Exact structural zeros remove additional work. For $u=v$, both cross assignments remain; the diagonal second derivative must not lose its factor of two.
+
+The native code differentiates a binary contraction tree, not an explicit dense nuclear or amplitude Hessian. This is analytic directional differentiation of the implemented equations. It still incurs tensor packing, allocation, validation, and graph bookkeeping in addition to BLAS arithmetic.
+
+\textbf{Checks retained:} value and first residual replay, fixed first-direction consistency, independent ordered Hessian entries, direct/stationary PNO-loss agreement, gradient replay, and rigid-motion identities. These checks help detect implementation errors but do not substitute for energy/gradient finite differences on unchanged branches.
+
+\sectionpage{Local fitting and T1-dressed building blocks}
+Use $p=(i,j)$ for a pair, $D_p$ for its occupied domain, $r_p$ for its retained virtual rank, and $Q,R$ for its local auxiliary indices. Local AO occupied refits on atom-dependent rows $A$ satisfy
+\begin{equation}
+S_{AA}C_A=S_{A,:}L_{:,D_p},
+\end{equation}
+followed by the native allowed-occupied mask. PAOs are built from the occupied projector and normalized in the AO metric. Their domain coefficients $X_p$ map the moving PAO parent into the selected frame $Y_p$.
+
+Raw local panels are atom-assembled contractions with the actual AO row sets and masks:
+\begin{align}
+o^Q_{mn}&=\sum_{\mu\nu\in A_Q}C^Q_{\mu m}\,q^Q_{\mu\nu}\,C^Q_{\nu n},\\
+h^Q_{ma}&=\sum_{\mu\in A_Q,\nu\in B_Q}C^Q_{\mu m}\,q^Q_{\mu\nu}\,(NX_p)_{\nu a},\\
+f^Q_{ab}&=\sum_{\mu\nu\in B_Q}(NX_p)_{\mu a}\,q^Q_{\mu\nu}\,(NX_p)_{\nu b}.
+\end{align}
+The PAO and PAO-pair masks are applied in their native PAO representation before projection. The expressions above abbreviate that assembly; replacing it with unrestricted global AO fitting would change the implemented local method.
+
+Two metric conventions must stay distinct. With the local Coulomb metric $M_p$,
+\begin{equation}
+G_p=M_p^{-1},\qquad G_{f,p}=f(M_p),\quad
+f(e)=\begin{cases}1/e,&e>0,\ e\ge10^{-14}\max|e|,\\0,&\text{otherwise.}\end{cases}
+\end{equation}
+$G_p$ is used for MP2-origin exchange and nonprojected mixed $J/K$ vertices. $G_{f,p}$ is the product of the filtered half-inverses used in T1 dressing. Its spectral response includes retained/discarded mixing. The patch preserves both definitions.
+
+Write $\ip{A^Q}{B^R}_{G_f}=\sum_{QR}A^Q(G_{f,p})_{QR}B^R$, with any displayed nonauxiliary indices retained. Define $n_m^p=S_{p,mm}t_m$, $U_p=2T_p-T_p\T$, and $L_p=2K_p-K_p\T$. Then
+\begin{align}
+O_i^{Qk}&=o^{Qik}+h^{Qkc}n_i^c,\\
+V_i^{Qa}&=h^{Qia}-O_i^{Qk}n_k^a+f^{Qac}n_i^c,\\
+D^{Qac}&=f^{Qac}-n_k^a h^{Qkc},\qquad g^Q=h^{Qmc}n_m^c,\\
+\overline F_{rc}&=F_{rc}+2\ip{g^Q}{B^{Rrc}}_{G_f}
+ -\sum_{me}\ip{B^{Qre}}{h^{Rmc}}_{G_f}n_m^e.
+\end{align}
+Here $B=f$ or $h$ for a virtual or occupied left leg, respectively; the bare Fock block has the same moving left/right frames. All equations on this and subsequent pages are evaluated in all four components by the product rule, with $T\uv=t_1\uv=0$.
+
+\sectionpage{Pair intermediates and the complete doubles residual}
+Within the target fit, put $J_{lc}=(ij|lc)$, $K_{lc}=(il|jc)$ and $W^i_{bac}=(ib|ac)$, using the filtered metric for these dressed terms. Let $P_{pq}(X)=S_{pq}XS_{qp}$ and stack $(n_l^p)\T$ as rows of $n$. The implemented pair intermediates are
+\begin{align}
+\beta_{p,kl}&=\ip{O_i^{Qk}}{O_j^{Rl}}_{G_f}
+ +\ip{h^{Qkc}}{h^{Rld}}_{G_f}T_p^{cd},\\
+\gamma_p&=-n\T J+\sum_b(n_j^p)_bW^i_{b::}
+ -\sum_l n_l^p(S_{p,il}K_{il}\T n_j^{il})\T\notag\\
+&\hspace{9mm}-\tfrac12\sum_l S_{p,lj}T_{lj}S_{lj,il}K_{il}S_{il,p},\\
+(\delta_p)_{ac}&=-[n\T(2K-J)]_{ac}
+ +\sum_b(n_i^p)_b(2W^j_{cab}-W^j_{bca})\notag\\
+&\quad-\sum_l(n_l^p)_a[(n_i^{lj})\T L_{lj}S_{lj,p}]_c
+ +\tfrac12\sum_l[S_{p,il}U_{il}S_{il,lj}L_{lj}S_{lj,p}]_{ac}.
+\end{align}
+Occupied sums follow the actual pair domain; each $K_{il}$ or $L_{lj}$ is fitted in its own pair domain. Ordered amplitudes obey $T_{ji}=T_{ij}\T$ while the pair frame is shared.
+
+The two Fock intermediates needed below are
+\begin{align}
+F^{(0)}_{ij}&=F^{\rm LMO}_{ij}+\sum_{lc}n_l^c(ij)
+ \left[2\ip{o^{Qij}}{h^{Rlc}}_{G_f}-\ip{o^{Qjl}}{h^{Ric}}_{G_f}\right],\\
+F''_{ij}&=F^{(0)}_{ij}+\sum_c\overline F^{\,jj}_{ic}t_j^c
+ +\sum_{l,cdab}K_{li}^{cd}S_{li,lj}^{ca}U_{lj}^{ab}S_{li,lj}^{db},\\
+F''_p&=\overline F_{vv,p}-n\T\overline F_{ov,p}
+ -\sum_{kl}S_{kl,p}\T U_{kl}K_{kl}\T S_{kl,p}.
+\end{align}
+For the rectangular nonprojected vertices $J^{ijk},K^{ijk}$, define
+\begin{align}
+C_{ij}&=-\sum_k(J^{ijk}+S_{p,ki}\gamma_{ki}S_{ki,kj})T_{kj}\T S_{kj,p},\\
+D_{ij}&=\tfrac12\sum_k(2K^{ijk}-J^{ijk}+S_{p,ik}\delta_{ik}S_{ik,jk})U_{jk}\T S_{jk,p},\\
+M_{ij}&=\tfrac12C_{ij}+C_{ij}\T+D_{ij},\qquad
+G_{ij}=-\sum_{k\in D_{ii}}F''_{kj}P_{p,ik}(T_{ik}).
+\end{align}
+The unique-pair residual assembled by \texttt{native\_ccsd.cc} is
+\begin{align}
+R_{2,p}^{ab}={}&\ip{V_i^{Qa}}{V_j^{Rb}}_{G_f}
+ +\sum_{cd}\ip{D^{Qac}}{D^{Rbd}}_{G_f}T_p^{cd}
+ +\sum_{kl}\beta_{p,kl}[P_{p,kl}(T_{kl})]_{ab}\notag\\
+&+[T_p(F''_p)\T+F''_pT_p+M_{ij}+M_{ji}\T+G_{ij}+G_{ji}\T]_{ab}.
+\end{align}
+Both ordered contributions are retained for diagonal pairs too. This is the expression whose mixed coefficient enters $c_2^{uv}$; only the CCSD amplitudes' mixed components are set to zero.
+
+\sectionpage{Singles residual and its scatter order}
+The complete singles replay is most clearly specified in the same accumulation order as the code. Start $R_{1,i}=0$ in each diagonal pair frame. For $p=ii$, add
+\begin{align}
+A_i^a={}&F_{ia}^{\,ii}+2\ip{g^Q}{h^{Ria}}_{G_f}
+ -\sum_{me}\ip{f^{Qae}}{o^{Rim}}_{G_f}n_m^e
+ +\sum_b\overline F_{ab}^{\,ii}t_i^b\notag\\
+&-\sum_{mb}n_m^a\overline F_{mb}^{\,ii}t_i^b
+ -\sum_m n_m^a F^{(0)}_{mi}.
+\end{align}
+For every ordered retained pair $p=(i,k)$, let $D_p$ be its occupied domain and perform the following updates. All repeated virtual indices are summed in their indicated pair spaces.
+\begin{align}
+W^k_{cda}(p)&=\ip{h^{Qkc}}{f^{Rda}}_{G_f},\\
+R_{1,i}^{x}&\mathrel{+}=\sum_{ac d}S_{p,ii}^{ax}W^k_{cda}(p)U_p^{dc}.
+\end{align}
+Build the occupied-virtual vector
+\begin{equation}
+b_k^a(p)=F_{ka}^{p}+\sum_{l\in D_p,cb}S_{p,kl}^{ac}L_{kl}^{cb}(n_l^{kl})_b,
+\end{equation}
+and add
+\begin{equation}
+R_{1,i}^{x}\mathrel{+}=\sum_{ac}S_{p,ii}^{ax}U_p^{ac}b_k^c(p).
+\end{equation}
+For each $l\in D_p$, the exchange-feedback subtraction is
+\begin{align}
+\alpha_{p,l}&=\sum_{abcd}S_{kl,p}^{ac}U_p^{dc}S_{kl,p}^{bd}K_{kl}^{ab},\\
+R_{1,i}&\mathrel{-}=\alpha_{p,l}\,n_l^{ii}.
+\end{align}
+Finally form a row block and scatter each occupied row into its own diagonal frame:
+\begin{align}
+M_{lb}(p)&=\ip{o^{Qil}}{h^{Rkb}}_{G_f}+\sum_d n_l^dK_p^{db},\\
+B_{lc}(p)&=\sum_b M_{lb}(p)U_p^{cb},\\
+R_{1,l}^{x}&\mathrel{-}=\sum_c B_{lc}(p)S_{p,ll}^{cx},\qquad l\in D_p.
+\end{align}
+Here $F_{ka}^{p}=L_k\T F^{\rm AO}Y_p$; the corresponding bare blocks in the earlier equations use their own displayed frames. $F^{(0)}$ is built before these singles terms, whereas $F''$ receives the subsequent singles/doubles corrections before the doubles residual is assembled.
+
+\textbf{Why the order matters.} The last update scatters into several $R_{1,l}$ destinations. Parallelizing source pairs with shared residual writes would race. The present implementation accumulates these destinations in a fixed order. Existing independent first-PNO and triples moment tasks use OpenMP with private fitting objects. A future threaded CCSD reverse would need private accumulation or an explicit destination decomposition, with a memory estimate for the private buffers.
+
+The mixed source is obtained by applying the four-component product rule to every update above. No finite difference of these equations is used in this stage, and no overlap projection is allowed to stand in for a nonprojected local integral vertex.
+
+\sectionpage{The expensive mixed vertex and the contraction-order fix}
+For $p=(i,j)$ and $q=(k,j)$, with both factors fitted on $p$'s auxiliary domain, the native mixed Coulomb vertex is
+\begin{equation}
+J_{ac}^{ijk}=\sum_{QR\mu\nu}
+ o_{ik}^Q(G_p)_{QR}(X_p)_{\mu a}\,
+ q_{\mu\nu}^{R}(\mathcal P_p,\mathcal P_q)\,(X_q)_{\nu c}.
+\end{equation}
+The PAO pair mask, local AO/auxiliary lists, and moving $X_p,X_q$ are exactly those used in the existing fitting implementation. The exchange vertex is
+\begin{equation}
+K_{ac}^{ijk}=\sum_{QR}h_{ia}^Q(G_p)_{QR}h_{kc}^R.
+\end{equation}
+\textbf{Old evaluation order in the C++ port:}
+\begin{align}
+B_{Rac}&=\sum_{\mu\nu}(X_p)_{\mu a}q^R_{\mu\nu}(X_q)_{\nu c},\\
+J_{ac}^{ijk}&=\sum_{QR}o_{ik}^Q(G_p)_{QR}B_{Rac}.
+\end{align}
+This materializes a three-index $B$ for each ordered mixed vertex, although the consumer needs only $J_{ac}$.
+
+\textbf{New evaluation order:}
+\begin{align}
+w_R&=\sum_Qo_{ik}^Q(G_p)_{QR},\\
+A_{\mu\nu}&=\sum_R w_Rq^R_{\mu\nu},\\
+J^{ijk}&=X_p\T A X_q.
+\end{align}
+All three operations are differentiated with the same mixed product rule. This is associativity of the existing contraction, not a metric approximation or a subspace shortcut. The exchange vertex remains unchanged.
+
+With comparable local PAO/PNO dimensions $v$ and $q$ auxiliaries, the old virtual transformations cost $O(qv^3)$ per vertex and store $O(qv^2)$ numbers. The new order costs $O(q^2+qv^2+v^3)$ beyond the existing raw panel and needs an $O(v^2)$ contracted matrix. Actual rectangular dimensions determine the crossover; numerical tests cover unequal ranks and reordered domains.
+
+\textbf{Separate reuse defect.} At \texttt{50b6a5d}, \texttt{Fitting::raw} and \texttt{Fitting::refit} had no stage-owned map. Even an LRU hit on reference/first pieces did not retain a complete $uv$ panel. Cross-pair requests could repeat the same raw transform in one entry. They now use explicit keys containing kind, actual auxiliary order, and left/right domain lists. Once admitted, a panel persists until its fitting object is released.
+
+The Hessian-wide numerical budget remains $\min(M/16,512\ \mathrm{MiB})$. Half can hold designated reference/first panels without LRU eviction; the remainder accommodates transient nodes. Each fitting workspace has an additional stage-panel allowance of one quarter of that budget. The preflight reserves two live entries plus one private workspace per worker. Completed triples tasks release their fitting panels, retaining only their results. Counts distinguish persistent bytes, raw/refit/overlap builds and reuses, LRU evictions, input invalidations, and graph resets.
+
+\sectionpage{Pseudocode and a measured-cost reading guide}
+\begin{lstlisting}
+# One reference geometry, one Hessian-owned workspace
+snapshot domains, masks, pair/triplet frames, t, T3, z3
+retain first LMP2, CCSD and triples solutions by coordinate
+for column v:
+    for row u:                         # every ordered entry
+        deliver molecular jets (S,F,L,D,M,Q)
+        build moving PNO/LMP2 response and final PNO jets
+        fitting = entry-owned raw/refit/overlap panels
+        for direction k in (u,v):
+            if CCSD_first[k] is absent:
+                fixed = residual(t fixed, moving inputs)
+                solve J * t_first[k] = -fixed.first[k]
+        t_affine = (t, t_first[u], t_first[v], 0)
+        R = native_CCSD_residual(fitting, t_affine)
+        check R.value, R.first[u], R.first[v]
+        c_uv = R.mixed
+        evaluate retained energy from the same fitting
+        contract c_uv with retained and triples adjoints
+        assemble PNO loss, screened terms, RHF and triples
+        check gradient replay and column consistency
+    print section times, subsection times and reuse counts
+check raw Hessian symmetry and rigid-motion identities
+\end{lstlisting}
+The native residual does four broad phases: (1) local factors and initial occupied dressing, (2) singles assembly and scatter, (3) final occupied Fock corrections, and (4) doubles assembly with $\beta,\gamma,\delta$, the ladder, and nonprojected mixed vertices. New \texttt{CCSD subset: ...} timers report those phases; they are \emph{subsets} of the parent CCSD time and must not be added to it again.
+
+\begin{center}\begin{tabular}{p{0.28\linewidth}p{0.62\linewidth}}\toprule
+Candidate cost & Evidence and interpretation\\\midrule
+Mixed Coulomb vertices & Code proves avoidable three-index materialization; the reordered contraction removes it algebraically.\\
+Repeated raw fitting & Code proves missing per-entry reuse; new counters test that a second residual replay does not rebuild admitted panels.\\
+Virtual ladder and reverse DF work & Large repeated BLAS contractions remain mathematically necessary. Per-subsection timings are needed before ranking them on water.\\
+LRU traffic and allocations & The old log shows 6.49 million component evaluations and a full 512 MiB store. That alone does not quantify evictions or time; new counters do.\\
+Gradient PNO overlap fallback & Possible for low-memory/out-of-domain paths, but the water energy uses resident high-memory overlaps.\\
+Triples-sourced RHS & Already formed once. It cannot explain a source rebuild on every Lambda iteration in this revision.\\\bottomrule
+\end{tabular}\end{center}
+
+\sectionpage{Validation, practical conclusions, and source map}
+\textbf{Performance interpretation.} The attachments establish where the previous revision spent time. They do not contain isolated timings for individual CCSD contractions or Lambda iteration substeps. The code establishes the redundant work and the algebraic contraction-order improvement. A synthetic full-residual benchmark is useful for regression detection, but is not a molecular speedup prediction. The user's targets, $T_g<3N T_E$ and $T_H<9N(N+1)T_E/2$, still require a matched energy/gradient/Hessian benchmark.
+
+\textbf{Synthetic full-residual benchmark.} With 4 occupied orbitals, 10 unique pairs, rank 48, 144 auxiliaries, and one BLAS/OpenMP thread, the native CCSD residual changed from 10.15 to 5.05 s on its first replay, and from 7.40--7.62 to 2.61--2.85 s on two subsequent replays. The latter reuse the same mixed entry and are not independent Hessian entries. Protected panels used about 98 MiB and stage panels 19 MiB. This isolates implementation cost; it does not predict the water Hessian time.
+
+\textbf{Checks for the accompanying patch.} All 111 native checks passed in serial and OpenMP builds (one/four threads); 259 existing algebra, kernel, and routing checks also passed. They cover complete CCSD, PNO/LMP2, triples, and screened stages against Python equations, unequal ranks, masks, coordinate order, and small/zero storage budgets. New tests check panel lifetime, residual replay, and byte limits. Native sources/bindings are compiled with real BLAS/LAPACK in an isolated harness; changed Lambda/overlap code is syntax-checked against real Psi4 headers. Driver boundaries are mocked. This is not a complete Psi4 build or molecular finite-difference validation.
+
+\textbf{Next local run.} Rebuild C++ and install the Python modules together. Repeat the supplied water input with identical settings. Compare the raw Hessian and frequencies, first-response counts, CCSD subsection times, and Lambda phase times. For the overlap fallback, also run the existing cc-pVDZ derivative checks with \texttt{LOW\_MEMORY\_OVERLAP true}; debug mode adds a persistent-versus-direct Lambda residual comparison. Use separate scratch directories for separate threaded runs. Keep all existing convergence and residual thresholds.
+
+The changes preserve all 81 independently evaluated water Hessian entries. They do not substitute a symmetrized Hessian, remove first-response checks, change rank selection, or approximate metric/subspace response. Numerical equality after the contraction reorder is expected within roundoff; the existing tolerances remain the acceptance criteria.
+
+\subsection*{Primary implementation sources}
+The audited implementation is the public repository at
+\href{https://github.com/andyj10224/psi4/tree/50b6a5d75985e744687516211da73be0c09f45a4}{\texttt{andyj10224/psi4}, commit \texttt{50b6a5d}}. The patch accompanying this report is on \texttt{dlpno\_gradients}. Equations above describe this implementation and its unchanged algebra, rather than a claim of term-by-term validation against a publication.
+\begin{center}\footnotesize\begin{tabular}{p{0.54\linewidth}p{0.36\linewidth}}\toprule
+Path relative to repository & Role\\\midrule
+\texttt{psi4/src/psi4/dlpno/native\_ccsd.cc} & Full R1/R2 assembly and intermediates\\
+\texttt{psi4/src/psi4/dlpno/native\_fitting.cc} & Local fitting, mixed $J/K$, persistent panels\\
+\texttt{psi4/src/psi4/dlpno/native\_tensor.cc} & Product rule, BLAS, shared storage\\
+\texttt{psi4/src/psi4/dlpno/ccsd\_gradient\_lambda.cc} & Exact reverse action and sourced solve\\
+\texttt{psi4/src/psi4/dlpno/ccsd.cc} & Energy overlap tables and fallback\\
+\texttt{psi4/src/psi4/dlpno/triples\_response.cc} & Triples adjoint and fixed amplitude sources\\
+\texttt{psi4/driver/procrouting/response/}\newline\texttt{dlpno\_native.py} & First-response orchestration and delivery\\
+\texttt{DLPNO\_HESSIAN\_EQUATIONS.tex} & Existing derivative algebra record\\\bottomrule
+\end{tabular}\end{center}
+
+\textbf{Run sources:} \texttt{water\_freq\_test(5).out} at \texttt{c87867a} and \texttt{water\_freq\_test(6).out} at \texttt{50b6a5d}, supplied by the user. Their corresponding input requests cc-pVTZ, frozen core, tight PNOs, zero specified forward screens, optimization, then frequency analysis. The preflight still identifies this as an experimental dense Hessian implementation; these changes do not establish asymptotically local memory scaling.
+\end{document}

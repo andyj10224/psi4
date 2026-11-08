@@ -144,19 +144,28 @@ void Triples::build_all() {
     std::vector<Triplet> pending;
     for (auto& [r, data] : fit->workspace.triplets)
         if (!moments.count(r)) pending.push_back(r);
-    std::vector<std::shared_ptr<Triples>> rows(pending.size());
+    struct Result {
+        Mixed parent, frame;
+        std::array<Mixed, 3> moments;
+    };
+    std::vector<Result> rows(pending.size());
     // Each row owns fitting caches and all temporary tensors. Reference
     // intermediates use the synchronized, reference-owned numerical cache.
     parallel_rows(pending.size(), [&](size_t k) {
         auto local_fit = std::make_shared<Fitting>(*fit);
-        rows[k] = std::make_shared<Triples>(local_fit, singles, doubles);
-        rows[k]->blocks(pending[k]);
+        Triples task(local_fit, singles, doubles);
+        const auto r = pending[k];
+        rows[k].moments = task.blocks(r);
+        rows[k].parent = task.parents.at(r);
+        rows[k].frame = task.frames.at(r);
+        // Retain results only. Fitting panels must be released at task exit,
+        // so their peak storage scales with workers, not the triplet count.
     });
     for (size_t k = 0; k < pending.size(); ++k) {
         const auto r = pending[k];
-        parents[r] = rows[k]->parents.at(r);
-        frames[r] = rows[k]->frames.at(r);
-        moments[r] = rows[k]->moments.at(r);
+        parents[r] = std::move(rows[k].parent);
+        frames[r] = std::move(rows[k].frame);
+        moments[r] = std::move(rows[k].moments);
     }
 }
 Mixed Triples::frame(const Triplet& r) {

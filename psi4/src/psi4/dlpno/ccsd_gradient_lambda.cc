@@ -35,6 +35,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 
 namespace psi {
 namespace dlpno {
@@ -311,7 +312,9 @@ void DLPNOCCSD::reverse_R1(CCAdjoints& g) {
         for (int l : lmopair_to_lmos_[p]) {
             const int kl = i_j_to_ij_[k][l], ll = i_j_to_ij_[l][l];
             auto S = S_PNO(kl, rev);
-            auto Kproj = linalg::triplet(S, K_iajb_[kl], S, true, false, false);
+            auto Kproj = gradient_lambda_matrix(1, p, l, [&]() {
+                return linalg::triplet(S, K_iajb_[kl], S, true, false, false);
+            });
             auto dt = linalg::doublet(S_PNO(ii, ll), g.z1[i], true, false);
             g.u[rev]->axpy(-dt->vector_dot(T_ia_[l]), Kproj);
             g.t1[l]->axpy(-Kproj->vector_dot(Tt_iajb_[rev]), dt);
@@ -323,8 +326,11 @@ void DLPNOCCSD::reverse_R1(CCAdjoints& g) {
             const int o = lmopair_to_lmos_[p][m];
             add_row(rows, m, linalg::doublet(S_PNO(p, i_j_to_ij_[o][o]), g.z1[o]), -1.);
         }
-        auto M = K_mibj_[p]->clone();
-        M->add(linalg::doublet(T_n_ij_[p], K_iajb_[p]));
+        auto M = gradient_lambda_matrix(2, p, 0, [&]() {
+            auto x = K_mibj_[p]->clone();
+            x->add(linalg::doublet(T_n_ij_[p], K_iajb_[p]));
+            return x;
+        });
         g.u[p]->add(linalg::doublet(rows, M, true, false));
         g.tn[p]->add(linalg::triplet(rows, Tt_iajb_[p], K_iajb_[p], false, false, true));
     }
@@ -394,21 +400,26 @@ void DLPNOCCSD::reverse_R2(CCAdjoints& g) {
         for (int m = 0; m < domain.size(); ++m) {
             const int k = domain[m], ki = i_j_to_ij_[k][i], kj = i_j_to_ij_[k][j];
             const int ik = ij_to_ji_[ki], jk = ij_to_ji_[kj];
-            auto reverse_mixed = [&](int a, int b, const SharedMatrix& intermediate, SharedMatrix bare,
+            auto reverse_mixed = [&](int a, int b, const SharedMatrix& intermediate, const SharedMatrix& integral, int family,
                                      const SharedMatrix& amp, const SharedMatrix& seed, double factor,
                                      const SharedMatrix& d_amp, const SharedMatrix& d_intermediate) {
                 auto s1 = S_PNO(p, a), s2 = S_PNO(a, b), s3 = S_PNO(b, p);
-                bare->add(linalg::triplet(s1, intermediate, s2));
+                auto bare = gradient_lambda_matrix(family, p, k, [&]() {
+                    auto x = integral->clone();
+                    if (family == 4) {
+                        x->scale(2.);
+                        x->subtract(J_ikac_non_proj_[p][m]);
+                    }
+                    x->add(linalg::triplet(s1, intermediate, s2));
+                    return x;
+                });
                 auto dz = linalg::triplet(seed, s3, amp, false, true, false);
                 d_intermediate->axpy(factor, linalg::triplet(s1, dz, s2, true, false, true));
                 d_amp->axpy(factor, linalg::triplet(s3, seed, bare, false, true, false));
             };
-            reverse_mixed(ki, kj, gamma_[ki], J_ikac_non_proj_[p][m]->clone(), T_iajb_[kj], yc, -1., g.t2[kj],
+            reverse_mixed(ki, kj, gamma_[ki], J_ikac_non_proj_[p][m], 3, T_iajb_[kj], yc, -1., g.t2[kj],
                           g.gamma[ki]);
-            auto M = K_iakc_non_proj_[p][m]->clone();
-            M->scale(2.);
-            M->subtract(J_ikac_non_proj_[p][m]);
-            reverse_mixed(ik, jk, delta_[ik], M, Tt_iajb_[jk], y, 0.5, g.u[jk], g.delta[ik]);
+            reverse_mixed(ik, jk, delta_[ik], K_iakc_non_proj_[p][m], 4, Tt_iajb_[jk], y, 0.5, g.u[jk], g.delta[ik]);
         }
 
         for (int k : lmopair_to_lmos_[i_j_to_ij_[i][i]]) {
@@ -433,7 +444,10 @@ void DLPNOCCSD::reverse_pair_intermediates(CCAdjoints& g) {
         for (int l : lmopair_to_lmos_[p]) {
             int la = i_j_to_ij_[l][a], lb = i_j_to_ij_[l][b];
             auto S = S_PNO(la, lb);
-            g.u[lb]->axpy(g.fkj[p], linalg::triplet(S, K_iajb_[la], S, true, false, false));
+            auto projected = gradient_lambda_matrix(5, p, l, [&]() {
+                return linalg::triplet(S, K_iajb_[la], S, true, false, false);
+            });
+            g.u[lb]->axpy(g.fkj[p], projected);
         }
 
         // gamma_ki and delta_ik (Eqs. 83--84). The external single is on
@@ -467,14 +481,18 @@ void DLPNOCCSD::reverse_pair_intermediates(CCAdjoints& g) {
                 const int amp = gamma ? i_j_to_ij_[l][i] : i_j_to_ij_[i][l];
                 const auto& integral = gamma ? K_iajb_[other] : L_iajb_[other];
                 auto s1 = S_PNO(p, ll), s2 = S_PNO(other, ii), so = S_PNO(p, other);
-                auto tl = linalg::doublet(s1, T_ia_[l]);
+                auto tl = gradient_lambda_matrix(gamma ? 6 : 7, p, l, [&]() { return linalg::doublet(s1, T_ia_[l]); });
                 // - t_l^p (S_p,other K^T S_other,ii t_i)^T
-                auto map = linalg::triplet(so, integral, s2, false, true, false);
-                auto v = linalg::doublet(map, T_ia_[i]);
+                auto map = gradient_lambda_matrix(gamma ? 8 : 9, p, l, [&]() {
+                    return linalg::triplet(so, integral, s2, false, true, false);
+                });
+                auto v = gradient_lambda_matrix(gamma ? 10 : 11, p, l, [&]() { return linalg::doublet(map, T_ia_[i]); });
                 g.t1[l]->subtract(linalg::triplet(s1, z, v, true, false, false));
                 g.t1[i]->subtract(linalg::triplet(map, z, tl, true, true, false));
                 // +/- 1/2 S_p,amp (t or u)_amp S_amp,other K S_other,p
-                auto right = linalg::triplet(S_PNO(amp, other), integral, S_PNO(other, p));
+                auto right = gradient_lambda_matrix(gamma ? 12 : 13, p, l, [&]() {
+                    return linalg::triplet(S_PNO(amp, other), integral, S_PNO(other, p));
+                });
                 auto result = linalg::triplet(S_PNO(p, amp), z, right, true, false, true);
                 if (gamma)
                     g.t2[amp]->axpy(-0.5, result);
@@ -557,20 +575,46 @@ void DLPNOCCSD::reverse_t1_transform(CCAdjoints& g) {
     }
 }
 
+SharedMatrix DLPNOCCSD::gradient_lambda_matrix(int family, int pair, int member,
+                                               const std::function<SharedMatrix()>& build) {
+    auto* fixed = gradient_lambda_fixed_.get();
+    if (!fixed) return build();
+    const auto key = std::make_tuple(family, pair, member);
+    auto found = fixed->matrices.find(key);
+    if (found != fixed->matrices.end()) {
+        ++fixed->hits;
+        return found->second;
+    }
+    ++fixed->builds;
+    auto value = build();
+    const size_t bytes = sizeof(double) * size_t(value->nrow()) * value->ncol();
+    if (bytes <= fixed->limit - fixed->bytes) {
+        fixed->matrices.emplace(key, value);
+        fixed->bytes += bytes;
+    }
+    return value;
+}
+
 void DLPNOCCSD::build_gradient_lambda_fixed() {
     timer_on("DLPNO Lambda fixed intermediates");
-    auto fixed = std::make_unique<GradientLambdaFixed>();
+    gradient_lambda_fixed_ = std::make_unique<GradientLambdaFixed>();
+    auto& fixed = gradient_lambda_fixed_;
     fixed->q.resize(T_iajb_.size());
     fixed->f.resize(T_iajb_.size());
     const size_t peak = ccsd_response_words_ * sizeof(double);
     const size_t headroom = 0.9 * memory_ > peak ? size_t(0.9 * memory_) - peak : 0;
-    const size_t budget = std::min({size_t(64) * 1024 * 1024, size_t(memory_ / 32), headroom});
-    size_t used = 0, cached_q = 0, cached_f = 0;
+    const size_t budget = std::min({std::max(size_t(64) * 1024 * 1024,
+                                            ccsd_baseline_memory_doubles_ * sizeof(double)),
+                                    size_t(memory_ / 32), headroom});
+    fixed->limit = budget;
+    auto& used = fixed->bytes;
+    size_t cached_q = 0, cached_f = 0;
     for (size_t p = 0; p < T_iajb_.size(); ++p) {
         const auto [i, j] = ij_to_i_j_[p];
         if (i > j) continue;
         const size_t n = n_pno_[p], words = n * n;
         if (words * sizeof(double) <= budget - used) {
+            used += words * sizeof(double); // Reserve before overlap fallback admits panels.
             auto F = Fab_[p]->clone();
             const auto& domain = lmopair_to_lmos_[p];
             for (int k : domain) for (int l : domain) {
@@ -581,7 +625,6 @@ void DLPNOCCSD::build_gradient_lambda_fixed() {
                 F->subtract(linalg::triplet(S, uk, S, true, false, false));
             }
             fixed->f[p] = F;
-            used += words * sizeof(double);
             ++cached_f;
         }
         const size_t qwords = lmopair_to_ribfs_[p].size() * words;
@@ -596,14 +639,49 @@ void DLPNOCCSD::build_gradient_lambda_fixed() {
             ++cached_q;
         }
     }
-    gradient_lambda_fixed_ = std::move(fixed);
     outfile->Printf("    Lambda fixed intermediates: %zu Q pairs, %zu F pairs, %.1f MiB\n",
                     cached_q, cached_f, used / 1048576.);
     timer_off("DLPNO Lambda fixed intermediates");
 }
 
+void DLPNOCCSD::prepare_gradient_lambda_overlaps() {
+    auto& fixed = *gradient_lambda_fixed_;
+    if (fixed.overlap_requests.size() == fixed.overlaps.size()) return;
+    std::map<int, std::set<int>> domains;
+    std::map<int, size_t> full_bytes, resident_bytes;
+    for (auto [p, q] : fixed.overlap_requests) {
+        domains[p].insert(lmopair_to_paos_[q].begin(), lmopair_to_paos_[q].end());
+        const size_t bytes = sizeof(double) * size_t(n_pno_[p]) * n_pno_[q];
+        full_bytes[p] += bytes;
+        if (fixed.overlaps.count({p,q})) resident_bytes[p] += bytes;
+    }
+    // Same one-sided extended-PAO factorization as LOW_MEMORY_OVERLAP.
+    // Choose storage once after the source traversal reveals the actual graph.
+    // A later iteration forms only the final small right transformation.
+    for (const auto& [p, labels] : domains) {
+        if (resident_bytes[p] == full_bytes[p]) continue;
+        const size_t bytes = sizeof(double) * size_t(n_pno_[p]) * labels.size();
+        if (bytes >= full_bytes[p] || bytes > fixed.limit - fixed.bytes + resident_bytes[p]) continue;
+        std::vector<int> ids(labels.begin(), labels.end());
+        for (auto it = fixed.overlaps.begin(); it != fixed.overlaps.end();) {
+            if (it->first.first == p) it = fixed.overlaps.erase(it);
+            else ++it;
+        }
+        fixed.bytes -= resident_bytes[p];
+        auto metric = submatrix_rows_and_cols(*S_pao_, lmopair_to_paos_[p], ids);
+        GradientLambdaFixed::OverlapPanel panel;
+        panel.left = linalg::doublet(X_pno_[p], metric, true, false);
+        for (size_t k = 0; k < ids.size(); ++k) panel.columns.emplace(ids[k], k);
+        fixed.overlap_panels.emplace(p, std::move(panel));
+        fixed.bytes += bytes;
+    }
+}
+
 void DLPNOCCSD::solve_gradient_lambda() {
     reset_lambda_state();
+    using Clock = std::chrono::steady_clock;
+    auto start = Clock::now();
+    auto elapsed = [](auto since) { return std::chrono::duration<double>(Clock::now() - since).count(); };
     estimate_gradient_lambda_memory();
     prepare_ccsd_residual();
     beta_ = compute_beta();
@@ -613,16 +691,21 @@ void DLPNOCCSD::solve_gradient_lambda() {
     lambda_ia_ = zero_blocks(T_ia_);
     lambda_iajb_ = zero_blocks(T_iajb_);
     std::vector<SharedMatrix> l1(T_ia_.size()), l2(T_iajb_.size());
-    build_gradient_lambda_fixed();
     // Clear on both normal exit and exceptions, before any debug amplitude
     // perturbation. Cached matrices are read-only throughout this scope.
     struct FixedGuard {
         std::unique_ptr<GradientLambdaFixed>& fixed;
         ~FixedGuard() { fixed.reset(); }
     } fixed_guard{gradient_lambda_fixed_};
+    build_gradient_lambda_fixed();
+    const double setup_seconds = elapsed(start);
+    start = Clock::now();
     std::vector<SharedMatrix> source1(T_ia_.size()), source2(T_iajb_.size());
     gradient_lambda_residual(lambda_ia_, lambda_iajb_, source1, source2, true);
+    prepare_gradient_lambda_overlaps();
     auto transpose_workspace = std::make_unique<CCAdjoints>(*this, lambda_ia_, lambda_iajb_);
+    const double source_seconds = elapsed(start);
+    start = Clock::now();
 
     const double rtol = options_.get_double("R_CONVERGENCE"), etol = options_.get_double("E_CONVERGENCE");
     const double step = 1. - options_.get_double("DLPNO_LAMBDA_DAMPING");
@@ -635,6 +718,27 @@ void DLPNOCCSD::solve_gradient_lambda() {
         gradient_lambda_residual(lambda_ia_, lambda_iajb_, l1, l2, false, transpose_workspace.get());
         for (size_t i = 0; i < l1.size(); ++i) l1[i]->add(source1[i]);
         for (size_t p = 0; p < l2.size(); ++p) l2[p]->add(source2[p]);
+        if (debug_ && iter == 1) {
+            // Compare the persistent implementation with the original complete
+            // reverse at a nonzero Lambda vector, including the fixed source.
+            auto saved = std::move(gradient_lambda_fixed_);
+            std::vector<SharedMatrix> direct1(l1.size()), direct2(l2.size());
+            try { gradient_lambda_residual(lambda_ia_, lambda_iajb_, direct1, direct2, true); }
+            catch (...) { gradient_lambda_fixed_ = std::move(saved); throw; }
+            gradient_lambda_fixed_ = std::move(saved);
+            double error = 0.;
+            for (size_t i = 0; i < l1.size(); ++i) {
+                direct1[i]->subtract(l1[i]);
+                error = std::max(error, direct1[i]->absmax());
+            }
+            for (size_t p = 0; p < l2.size(); ++p) {
+                direct2[p]->subtract(l2[p]);
+                error = std::max(error, direct2[p]->absmax());
+            }
+            set_scalar_variable("DLPNO LAMBDA PERSISTENT REPLAY ERROR", error);
+            if (!std::isfinite(error) || error > 1.e-11)
+                throw PSIEXCEPTION("Persistent Lambda reverse disagrees with direct evaluation.");
+        }
         auto max_rms = [](const auto& blocks) {
             double r = 0.;
             for (const auto& b : blocks) {
@@ -682,6 +786,7 @@ void DLPNOCCSD::solve_gradient_lambda() {
         copy_flat_mats(x, amps);
     }
 
+    const double iteration_seconds = elapsed(start);
     lambda_solved_ = true;
     lambda_iajb_bar_.resize(l2.size());
     // Basis-independent contractions used for the canonical-limit comparison.
@@ -700,12 +805,20 @@ void DLPNOCCSD::solve_gradient_lambda() {
     set_scalar_variable("DLPNO CCSD(T) LAMBDA2 T2 CONTRACTION", l2t2);
     set_scalar_variable("DLPNO (T) T1 SCALE DERIVATIVE", eta1);
     set_scalar_variable("DLPNO (T) T2 SCALE DERIVATIVE", eta2);
+    const auto& fixed = *gradient_lambda_fixed_;
+    outfile->Printf("    Lambda persistent work: %.1f/%.1f MiB; fixed matrix builds/reuses %zu/%zu; "
+                    "fallback overlap builds/reuses %zu/%zu; semidirect panels/uses %zu/%zu\n", fixed.bytes / 1048576., fixed.limit / 1048576.,
+                    fixed.builds, fixed.hits, fixed.overlap_builds, fixed.overlap_hits,
+                    fixed.overlap_panels.size(), fixed.overlap_panel_uses);
     gradient_lambda_fixed_.reset();
     transpose_workspace.reset();
     source1.clear();
     source2.clear();
+    start = Clock::now();
     form_ccsd_pair_response();
     backtransform_ccsd_one_body();
+    outfile->Printf("    Lambda phase times: setup %.3f s; fixed source %.3f s; iterations %.3f s; "
+                    "pair density %.3f s\n", setup_seconds, source_seconds, iteration_seconds, elapsed(start));
     if (debug_) {
         check_ccsd_adjoint();
         check_ccsd_pair_response();

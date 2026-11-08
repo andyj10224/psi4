@@ -31,6 +31,7 @@ class NativeHessianWorkspace:
         if wfn.variable('DLPNO FIRST PNO AO INTS TOL')!=0.:
             raise ValueError('Native screened Hessian requires the forward AO Schwarz screen off.')
         self.wfn=wfn
+        self.panel_counts=np.zeros(6,dtype=np.int64);self.panel_peak=0
         domains=core.dlpno_response_domain_state(wfn)
         first,native=core.dlpno_first_pno_state(wfn)
         arrays=lambda name:{p:x.np for p,x in core.dlpno_lmp2_blocks(wfn,name).items()}
@@ -147,8 +148,10 @@ def ccsd_response(workspace,entry,pnos,S,F,L,D,df,*,first_cache,coordinates):
         if kind=='pno':return pnos.final_selection[index].frame
         return one[index] if kind=='t1' else two[index]
     fit=NativeFitting(workspace,entry,electronic,S,df)
+    panel=entry.panel_statistics
+    workspace.panel_counts+=panel[:6];workspace.panel_peak=max(workspace.panel_peak,panel[6])
     return dict(electronic=electronic,fitting=fit,residual=result,fixed_residual=fixed,tangent_u=tangent[0],
-                tangent_v=tangent[1],base=(t1,t2),residual_errors=errors,native_amplitudes=(one,two))
+                tangent_v=tangent[1],base=(t1,t2),residual_errors=errors,native_amplitudes=(one,two),native_profile=entry.ccsd_profile)
 
 
 class NativeTriplesCache:

@@ -218,10 +218,23 @@ inline void export_native_response(py::module_& module) {
                  }
              })
         .def_property_readonly("statistics", [](const Workspace& w) { return w.cache->statistics(); })
+        .def_property_readonly("storage_statistics", [](const Workspace& w) { return w.cache->storage_statistics(); })
         .def_property_readonly("lmp2_counts",
                                [](const Workspace& w) { return std::array<size_t, 2>{w.lmp2_solves, w.lmp2_hits}; });
     py::class_<Entry, std::shared_ptr<Entry>>(module, "DLPNOResponseEntry")
         .def("set_frames", &Entry::frames)
+        .def_property_readonly("ccsd_profile",
+                               [](const Entry& e) {
+                                   if (!e.fitting) throw std::runtime_error("Missing native fitting state.");
+                                   return e.fitting->ccsd_seconds;
+                               })
+        .def_property_readonly("panel_statistics",
+                               [](const Entry& e) {
+                                   if (!e.fitting) throw std::runtime_error("Missing native fitting state.");
+                                   auto c = e.fitting->panel_counts;
+                                   return std::array<size_t, 7>{
+                                       c[0], c[1], c[2], c[3], c[4], c[5], e.fitting->panel_bytes};
+                               })
         .def("pno",
              [](Entry& e, py::function first, py::function mixed) {
                  PNOResult r;

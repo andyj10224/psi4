@@ -28,6 +28,7 @@
 
 #include "native_response.h"
 #include <tuple>
+#include <chrono>
 
 namespace psi {
 namespace dlpno {
@@ -53,6 +54,12 @@ Mixed retained_energy(const Fitting& fit, const std::vector<Mixed>& singles, con
     return terms.empty() ? m.s.context->constant("zero_energy", Tensor({}, 0.)) : sum(terms);
 }
 CCSDResult ccsd_residual(const Fitting& fit, const std::vector<Mixed>& singles, const PairMixed& doubles) {
+    auto checkpoint = std::chrono::steady_clock::now();
+    auto phase = [&](const std::string& name) {
+        auto now = std::chrono::steady_clock::now();
+        fit.ccsd_seconds[name] += std::chrono::duration<double>(now - checkpoint).count();
+        checkpoint = now;
+    };
     const auto& m = fit.molecular;
     int no = m.l[0].shape[1];
     if (singles.size() != size_t(no)) throw std::invalid_argument("CCSD singles graph mismatch.");
@@ -69,12 +76,12 @@ CCSDResult ccsd_residual(const Fitting& fit, const std::vector<Mixed>& singles, 
         auto t = doubles.at(key(p));
         return p.first <= p.second ? t : t.transpose();
     };
-    std::map<std::pair<Pair, Pair>, Mixed> overlap;
+    std::map<std::pair<Pair, Pair>, Mixed> overlaps;
     auto ov = [&](Pair p, Pair q) {
-        auto id = std::make_pair(p, q);
-        auto it = overlap.find(id);
-        if (it != overlap.end()) return it->second;
-        return overlap.emplace(id, C("ma,mn,nb->ab", {frame(p), m.s, frame(q)})).first->second;
+        auto id = std::make_pair(key(p), key(q));
+        auto found = overlaps.find(id);
+        if (found != overlaps.end()) return found->second;
+        return overlaps.emplace(id, fit.overlap(p, q)).first->second;
     };
     std::map<std::pair<Pair, int>, Mixed> projected_singles;
     auto sing = [&](Pair p, int i) {
@@ -189,6 +196,7 @@ CCSDResult ccsd_residual(const Fitting& fit, const std::vector<Mixed>& singles, 
     std::vector<Mixed> one;
     for (auto& t : singles) one.push_back(0. * t);
     PairMixed two;
+    phase("preparation");
     // Jiang 87--90. Scatter destinations are accumulated in a fixed order;
     // they must not be written by an OpenMP loop over source pairs.
     for (Pair p : orders) {
@@ -223,6 +231,7 @@ CCSDResult ccsd_residual(const Fitting& fit, const std::vector<Mixed>& singles, 
         for (size_t l = 0; l < dom.size(); ++l)
             one[dom[l]] = one[dom[l]] - C("a,ax->x", {row(rr, l), ov(p, {dom[l], dom[l]})});
     }
+    phase("singles residual");
     for (int j = 0; j < no; ++j) {
         Pair p{j, j};
         auto corr = C("ma,a->m", {partial_fock(p)[2], singles[j]});
@@ -234,6 +243,7 @@ CCSDResult ccsd_residual(const Fitting& fit, const std::vector<Mixed>& singles, 
             auto s = ov({l, i}, {l, j});
             fij[i][j] = fij[i][j] + C("cd,ca,ab,db->", {exchange(l, i), s, spin(amp({l, j})), s});
         }
+    phase("occupied Fock");
     std::map<std::tuple<int, int, int>, std::pair<Mixed, Mixed>> integrals;
     auto mixed_integrals = [&](int i, int j, int k) {
         auto key = std::make_tuple(i, j, k);
@@ -285,6 +295,7 @@ CCSDResult ccsd_residual(const Fitting& fit, const std::vector<Mixed>& singles, 
         }
         two[p] = result;
     }
+    phase("doubles residual");
     return {one, two};
 }
 }  // namespace response

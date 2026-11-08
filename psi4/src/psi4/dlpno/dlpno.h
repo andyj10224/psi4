@@ -43,6 +43,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <set>
 #include <array>
 #include <string>
 #include <tuple>
@@ -765,9 +766,19 @@ class PSI_API DLPNOCCSD : public DLPNO {
     struct GradientLambdaFixed {
         std::vector<std::vector<SharedMatrix>> q;
         std::vector<SharedMatrix> f;
+        std::map<std::tuple<int, int, int>, SharedMatrix> matrices;
+        std::map<std::pair<int, int>, SharedMatrix> overlaps;
+        struct OverlapPanel { SharedMatrix left; std::map<int, int> columns; };
+        std::map<int, OverlapPanel> overlap_panels;
+        std::set<std::pair<int, int>> overlap_requests;
+        size_t limit = 0, bytes = 0, builds = 0, hits = 0, overlap_builds = 0, overlap_hits = 0;
+        size_t overlap_panel_uses = 0;
     };
     std::unique_ptr<GradientLambdaFixed> gradient_lambda_fixed_;
     void build_gradient_lambda_fixed();
+    void prepare_gradient_lambda_overlaps();
+    SharedMatrix gradient_lambda_matrix(int family, int pair, int member,
+                                       const std::function<SharedMatrix()>& build);
     void solve_gradient_lambda();
     void gradient_lambda_residual(const std::vector<SharedMatrix>& z1, const std::vector<SharedMatrix>& z2,
                                   std::vector<SharedMatrix>& l1, std::vector<SharedMatrix>& l2, bool include_source = true,

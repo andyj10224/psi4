@@ -39,6 +39,7 @@
 #include <cstdint>
 #include <algorithm>
 #include <stdexcept>
+#include <tuple>
 
 namespace psi {
 namespace dlpno {
@@ -78,16 +79,21 @@ class Cache {
     std::map<std::string, size_t> nodes_;
     std::map<std::pair<size_t, int>, uint64_t> input_hashes_;
     std::map<std::pair<size_t, int>, Entry> values_;
+    std::map<std::pair<size_t, int>, Tensor> persistent_;
     std::list<std::pair<size_t, int>> order_;
     mutable std::mutex mutex_;
     size_t bytes_ = 0, limit_ = 0, hits_ = 0, evaluations_ = 0, next_node_ = 0;
+    size_t persistent_bytes_ = 0, evictions_ = 0, invalidations_ = 0, graph_resets_ = 0;
 
    public:
     explicit Cache(size_t bytes) : limit_(bytes) {}
     size_t node(const std::string& key);
     Tensor evaluate(size_t node, int coordinate, const std::function<Tensor()>& build);
     void check_input(size_t node, int coordinate, const Tensor& value);
+    void retain(size_t node, int coordinate, const Tensor& value);
     std::array<size_t, 4> statistics() const;
+    std::array<size_t, 5> storage_statistics() const;
+    size_t limit() const { return limit_; }
 };
 
 // Each stage/row has a stable namespace; reference and first derivatives of
@@ -102,6 +108,7 @@ struct Context {
     Mixed input(const std::string&, const std::array<Tensor, 4>&) const;
     Mixed constant(const std::string&, const Tensor&) const;
     Mixed evaluate(const std::string&, const std::vector<size_t>&, const std::function<Tensor(int)>&) const;
+    void retain(const Mixed&) const;
 };
 struct Mixed {
     std::array<Tensor, 4> x;
@@ -221,6 +228,17 @@ class Fitting {
     mutable std::map<std::vector<int>, Mixed> pao_cache;
     mutable std::map<Pair, std::array<Mixed, 5>> projected_cache;
     mutable std::map<Pair, Mixed> coefficient_cache;
+    // These are stage-owned panels, including the mixed component. They do
+    // not compete with transient DAG nodes in the cross-entry LRU. The fixed
+    // per-workspace allowance also bounds task-private copies in triples.
+    using RawKey = std::tuple<std::string, std::vector<int>, std::vector<int>, std::vector<int>>;
+    mutable std::map<RawKey, Mixed> raw_panels;
+    mutable std::map<std::pair<int, std::vector<int>>, Mixed> refit_panels;
+    mutable std::map<std::pair<Pair, Pair>, Mixed> overlap_panels;
+    mutable size_t panel_bytes = 0;
+    mutable std::array<size_t, 6> panel_counts{};  // raw/refit/overlap builds,hits
+    mutable std::map<std::string, double> ccsd_seconds;
+    bool keep_panel(const Mixed&) const;
     Fitting(const Workspace& w, Molecular m, PairMixed y)
         : workspace(w), molecular(std::move(m)), frames(std::move(y)) {}
     Mixed pao(const std::vector<int>&) const;
@@ -228,6 +246,7 @@ class Fitting {
     Mixed coefficients(const std::vector<int>&, const Tensor&, const Mixed&) const;
     Mixed raw(const std::string&, const std::vector<int>&, const std::vector<int>&, const std::vector<int>&) const;
     Mixed metric(const std::vector<int>&) const;
+    Mixed overlap(Pair, Pair) const;
     const std::array<Mixed, 5>& projected(Pair) const;
     std::pair<Mixed, Mixed> mixed_integrals(int, int, int) const;
 };

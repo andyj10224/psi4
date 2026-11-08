@@ -482,9 +482,12 @@ size_t Cache::node(const std::string& key) {
     // Bound graph metadata as well as numerical storage. Monotone identities
     // keep still-live tensors valid after clearing an overgrown graph.
     if (nodes_.size() >= 65536) {
+        ++graph_resets_;
         nodes_.clear();
         input_hashes_.clear();
         values_.clear();
+        persistent_.clear();
+        persistent_bytes_ = 0;
         order_.clear();
         bytes_ = 0;
     }
@@ -494,6 +497,11 @@ Tensor Cache::evaluate(size_t node, int coordinate, const std::function<Tensor()
     const auto key = std::make_pair(node, coordinate);
     if (coordinate >= 0) {
         std::lock_guard<std::mutex> lock(mutex_);
+        auto saved = persistent_.find(key);
+        if (saved != persistent_.end()) {
+            ++hits_;
+            return saved->second;
+        }
         auto it = values_.find(key);
         if (it != values_.end()) {
             ++hits_;
@@ -509,9 +517,12 @@ Tensor Cache::evaluate(size_t node, int coordinate, const std::function<Tensor()
     // Keep intermediates within a quarter of the budget; oversized panels are
     // streamed. LRU limits are shared by every stage and nuclear direction.
     if (coordinate >= 0 && bytes <= limit_ && bytes <= limit_ / 4) {
+        auto saved = persistent_.find(key);
+        if (saved != persistent_.end()) return saved->second;
         auto it = values_.find(key);
         if (it != values_.end()) return it->second.tensor;
-        while (!order_.empty() && bytes_ + bytes > limit_) {
+        while (!order_.empty() && bytes_ + persistent_bytes_ + bytes > limit_) {
+            ++evictions_;
             auto old = values_.find(order_.front());
             bytes_ -= old->second.tensor.size() * sizeof(double);
             values_.erase(old);
@@ -543,7 +554,10 @@ void Cache::check_input(size_t node, int coordinate, const Tensor& value) {
     auto key = std::make_pair(node, coordinate);
     auto old = input_hashes_.find(key);
     if (old != input_hashes_.end() && old->second != hash) {
+        ++invalidations_;
         values_.clear();
+        persistent_.clear();
+        persistent_bytes_ = 0;
         order_.clear();
         bytes_ = 0;
     }
@@ -551,7 +565,41 @@ void Cache::check_input(size_t node, int coordinate, const Tensor& value) {
 }
 std::array<size_t, 4> Cache::statistics() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return {bytes_, limit_, hits_, evaluations_};
+    return {bytes_ + persistent_bytes_, limit_, hits_, evaluations_};
+}
+void Cache::retain(size_t node, int coordinate, const Tensor& value) {
+    if (coordinate < 0 || !limit_) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto key = std::make_pair(node, coordinate);
+    if (persistent_.count(key)) return;
+    const size_t bytes = value.size() * sizeof(double);
+    // Reserve half for explicitly retained fitting/overlap panels. Admission
+    // is bounded; admitted panels are never evicted by transient contractions.
+    if (bytes > limit_ / 2 - persistent_bytes_) return;
+    auto old = values_.find(key);
+    if (old != values_.end()) {
+        bytes_ -= old->second.tensor.size() * sizeof(double);
+        order_.erase(old->second.order);
+        values_.erase(old);
+    }
+    while (!order_.empty() && bytes_ + persistent_bytes_ + bytes > limit_) {
+        ++evictions_;
+        auto old = values_.find(order_.front());
+        bytes_ -= old->second.tensor.size() * sizeof(double);
+        values_.erase(old);
+        order_.pop_front();
+    }
+    persistent_.emplace(key, value);
+    persistent_bytes_ += bytes;
+}
+std::array<size_t, 5> Cache::storage_statistics() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return {persistent_bytes_, limit_ / 2, evictions_, invalidations_, graph_resets_};
+}
+void Context::retain(const Mixed& x) const {
+    cache->retain(x.id, 0, x[0]);
+    cache->retain(x.id, u + 1, x[1]);
+    cache->retain(x.id, v + 1, x[2]);
 }
 Mixed Context::evaluate(const std::string& operation, const std::vector<size_t>& inputs,
                         const std::function<Tensor(int)>& build) const {

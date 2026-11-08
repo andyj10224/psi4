@@ -18,8 +18,57 @@ entries and printed frequencies of 1669.3180, 3840.8971 and 3945.3762 cm^-1,
 unchanged from `6ac570a`. Its residual, gradient-replay and rigid-motion guards
 passed. The full optimization/frequency job took 666.14 s; the nine Hessian
 columns totaled 531.8 s, versus 1051.1 s previously. This is execution evidence
-for those revisions, not independent finite-difference validation or timing
-of the new complete native response stages described below.
+for those revisions, not independent finite-difference validation.
+
+## Persistent response work and the CCSD regression
+
+The subsequent water run at `50b6a5d` took 636.51 s overall and 511.9 s for
+the nine Hessian columns. PNO/LMP2 and triples mixed response improved, but
+CCSD mixed response regressed from 250.72 to 348.83 s. Its usual 33--35 s
+is **per nine-entry column**, about 3.76 s per matrix element. The first
+column includes the nine first CCSD solves and fixed-source replays.
+
+The accompanying changes address identifiable redundant work:
+
+- `Fitting` owns raw local DF panels, occupied refits, and overlaps, including
+  their mixed components, for the lifetime of the entry. The previous native
+  port lost the per-stage raw/refit reuse present in the Python implementation.
+- Mixed Coulomb vertices contract the occupied/auxiliary leg first, then
+  transform a matrix into the two PNO spaces. They no longer form a full
+  three-index virtual panel for every ordered vertex. Masks, domain order,
+  metrics, and all product-rule terms remain unchanged.
+- Designated reference/first fitting panels occupy at most half the existing
+  native storage budget without LRU eviction. The combined protected/LRU
+  budget is unchanged. Each fitting object has an additional one-quarter
+  allowance for stage-owned panels; preflight reserves two live entries and
+  one private allowance per worker. Completed triples tasks retain results
+  only, releasing their fitting panels at task exit.
+- Gradient Lambda owns fixed exchange projections, dressed mixed vertices,
+  transfer maps, and otherwise-recomputed overlaps. Existing energy overlap
+  tables remain shared. When full fallback overlaps do not fit, a smaller
+  one-sided extended-PAO panel can replace them, leaving one small GEMM per
+  request. Its domain map preserves each source pair's actual PAO order.
+- Timings now subdivide CCSD preparation, singles, occupied Fock, and doubles,
+  and separate Lambda setup, fixed source, iterations, and pair density.
+  `CCSD subset:` timings are included in the parent time, not additional work.
+  Storage counters distinguish panel builds/reuses, LRU evictions, input
+  invalidations, and graph resets.
+
+The ordinary `(T)` sources into Lambda1/Lambda2 were **already computed once**
+in `50b6a5d`. Each iteration applies only the homogeneous CCSD transpose
+Jacobian and adds the stored source. This patch retains more of the fixed
+work in that action; it does not change the ordinary triples energy ansatz.
+The water run uses high-memory energy overlaps (about 2 MB), so a general
+on-demand overlap bottleneck is not established for that run.
+
+An isolated full native CCSD residual benchmark (4 occupied orbitals,
+10 unique pairs, rank 48, 144 auxiliaries, one BLAS/OpenMP thread) changed
+from 10.15 to 5.05 s cold and 7.40--7.62 to 2.61--2.85 s on two warm
+replays. This synthetic result is not an end-to-end molecular speedup claim.
+The mathematical derivation, implementation pseudocode, memory accounting,
+and measured-versus-inferred cost discussion are in
+[`CCSD_RESPONSE_PERFORMANCE_AUDIT.tex`](CCSD_RESPONSE_PERFORMANCE_AUDIT.tex).
+Build it with `pdflatex` twice to obtain the accompanying ten-page report.
 
 ## Complete native response stages
 
@@ -46,10 +95,11 @@ residual once, reuses that mixed source for the solve and stationary PNO loss,
 and checks the completed mixed residual once. The 2e-9 residual tolerance and
 2e-10 direct/stationary loss comparison are unchanged.
 
-Reference and first derivative intermediates share a native LRU cache across
+Reference and first derivative intermediates share native storage across
 stages and Hessian entries, bounded by the smaller of 512 MiB and one sixteenth
 of requested memory. Large individual panels can stream; graph metadata is
-also bounded. Mixed derivatives are ephemeral. Changed inputs invalidate cached
+also bounded. Protected fitting panels coexist with transient LRU entries.
+Mixed derivatives remain local to an entry. Changed inputs invalidate stored
 descendants, and first-response chart/residual checks remain active. Fixed local
 LU factors are reused without changing domain-dependent metric/subspace math.
 
@@ -62,9 +112,12 @@ contractions. MKL workers use a thread-local single-thread setting inside outer
 OpenMP tasks. With pthread OpenBLAS, use `OPENBLAS_NUM_THREADS=1` to avoid nesting
 BLAS threads inside those tasks, and set the desired Psi4 thread count normally.
 
-For the gradient, Lambda now retains its fixed dressed Q/F intermediates within
-a separate 64 MiB / memory-headroom bound, builds the inhomogeneous source once,
-and reuses the transpose scratch matrices across iterations. Those caches are
+For the gradient, Lambda retains its fixed dressed Q/F intermediates and
+the matrices described above within a separate memory-headroom bound: the
+minimum of available response headroom, one thirty-second of requested memory,
+and the larger of 64 MiB and the estimated energy CCSD baseline storage.
+It builds the inhomogeneous source once and reuses transpose scratch matrices
+across iterations. Those persistent intermediates are
 released before pair-density assembly, debug amplitude perturbations, and on
 exceptions. The existing memory estimate includes the additional source vector.
 
@@ -80,13 +133,16 @@ one and multiple threads. The native sources/bindings were compiled in an
 isolated harness with real BLAS/LAPACK; complete PNO/LMP2, CCSD, and triples
 results are checked against the independent equations, including unequal ranks,
 local masks, reversed coordinate order, cache eviction, and transpose actions.
-All 109 native algebra checks passed in serial builds and in OpenMP builds
+All 111 native algebra/reuse checks passed in serial builds and in OpenMP builds
 with one and four threads. Another 259 existing algebra, kernel, and routing
 checks passed in the isolated harness. The new native sources and changed
 gradient/Lambda sources also passed C++ syntax checks against the real Psi4
 headers. These counts include mocked driver boundaries, not molecular runs.
 This does not replace a full Psi4 build, molecular finite differences, or the
 user's energy-relative runtime targets, which remain to be measured.
+Debug mode additionally checks a nonzero-Lambda residual against the direct
+implementation with persistent reuse disabled. Exercise the overlap fallback
+with `LOW_MEMORY_OVERLAP true` in the existing cc-pVDZ derivative tests too.
 
 ## Response reuse and timing
 

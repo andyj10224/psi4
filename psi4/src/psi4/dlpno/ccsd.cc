@@ -93,8 +93,41 @@ SharedMatrix DLPNOCCSD::S_PNO(const int ij, const int mn) {
 
         const int m_ij = lmopair_to_lmos_dense_[ij][m], n_ij = lmopair_to_lmos_dense_[ij][n];
         if (m_ij == -1 || n_ij == -1 || low_memory_overlap_) {
+            // During the gradient Lambda solve the reference spaces are fixed.
+            // Retain only otherwise-recomputed overlaps; existing energy
+            // overlap tables remain shared. No eviction within the solve.
+            auto* fixed = gradient_lambda_fixed_.get();
+            const auto key = std::make_pair(i <= j ? ij : ji, m <= n ? mn : nm);
+            if (fixed) {
+                fixed->overlap_requests.insert(key);
+                auto found = fixed->overlaps.find(key);
+                if (found != fixed->overlaps.end()) {
+                    ++fixed->overlap_hits;
+                    return found->second;
+                }
+                auto panel = fixed->overlap_panels.find(key.first);
+                if (panel != fixed->overlap_panels.end()) {
+                    std::vector<int> columns;
+                    for (int ao : lmopair_to_paos_[key.second]) {
+                        auto col = panel->second.columns.find(ao);
+                        if (col == panel->second.columns.end()) { columns.clear(); break; }
+                        columns.push_back(col->second);
+                    }
+                    if (columns.size() == lmopair_to_paos_[key.second].size()) {
+                        ++fixed->overlap_panel_uses;
+                        return linalg::doublet(submatrix_cols(*panel->second.left, columns), X_pno_[key.second]);
+                    }
+                }
+                ++fixed->overlap_builds;
+            }
             auto S_ij_mn = submatrix_rows_and_cols(*S_pao_, lmopair_to_paos_[ij], lmopair_to_paos_[mn]);
-            return linalg::triplet(X_pno_[ij], S_ij_mn, X_pno_[mn], true, false, false);
+            auto overlap = linalg::triplet(X_pno_[ij], S_ij_mn, X_pno_[mn], true, false, false);
+            const size_t bytes = sizeof(double) * size_t(overlap->nrow()) * overlap->ncol();
+            if (fixed && bytes <= fixed->limit - fixed->bytes) {
+                fixed->overlaps.emplace(key, overlap);
+                fixed->bytes += bytes;
+            }
+            return overlap;
         }
 
         const int nlmo_ij = lmopair_to_lmos_[ij].size();

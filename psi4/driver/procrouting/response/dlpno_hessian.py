@@ -57,8 +57,14 @@ def preflight(molecule, kwargs):
     # requested memory. Column-local overlap covectors remain in the bound above.
     # The native intermediate workspace reserves another sixteenth (capped
     # at 512 MiB). Input snapshots and first LMP2 vectors are included above.
-    minimum_memory=16*estimate/5
-    estimate+=core.get_memory()//8+min(core.get_memory()//16,512*1024**2)
+    # Stage-owned raw/refit/overlap panels: two live entries, plus one private
+    # fitting workspace per triples worker. Copies share existing tensor data;
+    # counting each allowance independently is a conservative peak bound.
+    workers=max(1,core.get_num_threads())
+    cap=512*1024**2
+    minimum_memory=(8/3)*(estimate+cap+(workers+2)*(cap//4))
+    native=min(core.get_memory()//16,cap)
+    estimate+=core.get_memory()//8+native+(workers+2)*(native//4)
     if estimate>core.get_memory()//2:
         raise ValidationError(f'Dense analytic DLPNO Hessian estimate {estimate/1024**2:.1f} MiB exceeds half '
                               f'the requested memory; request at least {minimum_memory/1024**3:.2f} GiB. '
@@ -108,6 +114,13 @@ def assemble_hessian(wfn):
             core.print_out(f'      LMP2 first solves: {solved}; cache hits: {hits}.\n'
                            f'      Native intermediates: {used/1024**2:.1f}/{limit/1024**2:.1f} MiB; '
                            f'reuses: {reuses}; evaluations: {builds}.\n')
+            pinned,pin_limit,evictions,invalidations,resets=reference.native.native.storage_statistics
+            counts=reference.native.panel_counts
+            core.print_out(f'      Persistent native panels: {pinned/1024**2:.1f}/{pin_limit/1024**2:.1f} MiB; '
+                           f'LRU evictions: {evictions}; input invalidations: {invalidations}; graph resets: {resets}.\n'
+                           f'      Cumulative CCSD raw/refit/overlap builds: {counts[0]}/{counts[2]}/{counts[4]}; '
+                           f'reuses: {counts[1]}/{counts[3]}/{counts[5]}; '
+                           f'peak stage panels: {reference.native.panel_peak/1024**2:.1f} MiB.\n')
         core.print_out(f'      Triples first builds: {reference.triples_first.builds}; '
                        f'cache hits: {reference.triples_first.hits}; '
                        f'cached: {reference.triples_first.bytes/1024**2:.1f} MiB.\n')

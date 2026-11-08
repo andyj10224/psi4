@@ -435,3 +435,27 @@ def test_native_cache_keeps_mixed_entries_ephemeral():
     bad=list(changed);bad[0]=bad[0]._replace(u=bad[0].u+.1*np.eye(6))
     with pytest.raises((ValueError,RuntimeError),match='cached input'):
         x.workspace.entry(0,1,bad)
+
+
+@pytest.mark.parametrize('budget',[0,64*1024**2])
+def test_native_stage_panel_lifetime_and_bounds(budget):
+    """Fixed/affine replays share whole fitting panels, including mixed parts."""
+    x=fitting_fixture(cache=budget)
+    a=x.entry.ccsd(x.one,x.two,'affine')
+    counts=np.asarray(x.entry.panel_statistics)
+    b=x.entry.ccsd(x.one,x.two,'affine')
+    after=np.asarray(x.entry.panel_statistics)
+    for one,two in zip(a[0],b[0]):assert_blocks(one,two)
+    for p in a[1]:assert_blocks(a[1][p],b[1][p])
+    if budget:
+        # No raw/refit/overlap rebuild is needed in the second residual replay.
+        np.testing.assert_equal(after[[0,2,4]],counts[[0,2,4]])
+        assert after[1]>counts[1] and after[5]>counts[5]
+        assert 0<after[6]<=budget//4
+    else:
+        assert after[0]>counts[0] and after[6]==0
+    used,limit,*_=x.workspace.statistics
+    pinned,pin_limit,*_=x.workspace.storage_statistics
+    assert 0<=pinned<=pin_limit==budget//2
+    assert pinned<=used<=limit==budget
+    assert set(x.entry.ccsd_profile)=={'preparation','singles residual','occupied Fock','doubles residual'}
