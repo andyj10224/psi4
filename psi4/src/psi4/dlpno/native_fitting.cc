@@ -362,7 +362,9 @@ PNOResult Workspace::pno(const Molecular& m, const FirstSolver& first_solver, co
     first_fit.cache = cache;
     Fitting own_first(first_fit, m, {});
     bool same_domains = common != nullptr;
-    for (const auto& name : {"AO_OCC", "AO_VIR", "OCC", "PAO", "PAO_PAIRS"})
+    // Only the OV panel is shared here. Its dependencies are these four
+    // maps; the VV-only PAO_PAIRS mask is not part of a first-PNO snapshot.
+    for (const auto& name : {"AO_OCC", "AO_VIR", "OCC", "PAO"})
         same_domains &= first_domains.at(name) == domains.at(name);
     const Fitting& first = same_domains ? *common : own_first;
     first.prepare_raw({"ov"});

@@ -190,8 +190,10 @@ from these shared panels instead of repeating AO refits and transformations.
 The VV panel retains the original PAO-pair mask; its dense bounding rectangle
 may be larger than the energy code's packed `qab_`. It is admitted only if it
 fits the existing per-fitting allowance; otherwise direct construction remains
-available. First-PNO and CCSD OV panels are shared only when all captured raw
-domain maps agree. Different first-fit domains remain separate.
+available. First-PNO and CCSD OV panels are shared only when the four captured
+OV maps (`AO_OCC`, `AO_VIR`, `OCC`, `PAO`) agree. The first-PNO snapshot does
+not contain the VV-only `PAO_PAIRS` mask. Different first-fit domains remain
+separate.
 
 The driver separately prepares first AO derivative panels before Hessian
 entries, with a non-evicting allowance `min(requested_memory/32, 512 MiB)`.
@@ -225,7 +227,7 @@ curvature, screened terms, and individual kernels against independent Python
 equations. Added cases cover transpose flags, SharedMatrix lifetime,
 rectangular transformation order, different first/final AO domains, reordered
 source PAOs, unequal auxiliary domains, discarded metric eigenvalues, and
-zero/small/resident storage budgets. All 131 native checks passed in serial
+zero/small/resident storage budgets. All 137 native checks passed in serial
 and OpenMP builds (one/four threads); another 261 existing algebra, kernel
 and routing checks passed. Existing numerical tolerances are unchanged.
 

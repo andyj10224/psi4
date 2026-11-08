@@ -29,6 +29,16 @@ def constant(x):
     return B(np.array(x),*[np.zeros_like(x) for _ in range(3)])
 
 
+def first_pno_domains(domains):
+    """Match the snapshot exported by ccsd.cc's first PNO construction.
+
+    It contains the OV-fit maps, not the later VV PAO_PAIRS mask or PAIR_OCC.
+    Supplying the entire final domain state here hides production key errors.
+    """
+    return {name:domains[name] for name in
+            ('AO_OCC','AO_VIR','OCC','PAO','PAIRS','PAIR_PAO','PAIR_AUX')}
+
+
 def assert_blocks(a,b,atol=3.e-11,rtol=1.e-10):
     for x,y in zip(a,b):np.testing.assert_allclose(x,y,atol=atol,rtol=rtol)
 
@@ -88,7 +98,7 @@ def fitting_fixture(seed=16,cache=0):
         t=block(rng,rng.normal(scale=.02,size=(rank,rank)));two[p]=t._replace(uv=np.zeros_like(t.value))
     for i in range(no):
         t=block(rng,rng.normal(scale=.02,size=frames[i,i].value.shape[1]));one.append(t._replace(uv=np.zeros_like(t.value)))
-    w=core.DLPNOResponseWorkspace(domains,domains,metadata,{},centers,{},0.,cache)
+    w=core.DLPNOResponseWorkspace(domains,first_pno_domains(domains),metadata,{},centers,{},0.,cache)
     entry=w.entry(0,1,[s,f,l,d,j,q]);entry.set_frames(frames)
     def electronic(key):
         if key=='lmo':return l
@@ -186,7 +196,7 @@ def triples_fixture(monkeypatch,cache=0):
     monkeypatch.setattr(core,'dlpno_lmp2_blocks',lambda *args:{p:SimpleNamespace(np=t.value) for p,t in x.two.items()},raising=False)
     monkeypatch.setattr(core,'dlpno_ccsd_df_pair_state',lambda w,i,j:([i],[SimpleNamespace(np=x.one[i].value)],{}),raising=False)
     monkeypatch.setattr(core,'get_option',lambda *args:1.e-11 if args[-1]=='R_CONVERGENCE' else 0.)
-    w=core.DLPNOResponseWorkspace(x.domains,x.domains,x.metadata,metadata,x.centers,{},0.,cache)
+    w=core.DLPNOResponseWorkspace(x.domains,first_pno_domains(x.domains),x.metadata,metadata,x.centers,{},0.,cache)
     entry=w.entry(0,1,x.inputs);entry.set_frames(x.frames)
     native=entry.triples(x.one,x.two)
     return SimpleNamespace(x=x,workspace=w,entry=entry,native=native,provider=provider,keys=keys,energy=energy,dense=dense)
@@ -217,8 +227,8 @@ def test_native_triples_complete_sources_operator_and_curvature(monkeypatch,cach
 
 
 @pytest.mark.parametrize('budget',[0,32*1024**2])
-@pytest.mark.parametrize('different_first_domains',[False,True])
-def test_native_pno_pipeline_and_first_solve_reuse(budget,different_first_domains):
+@pytest.mark.parametrize('changed_final_domain',[None,'AO_OCC','AO_VIR','OCC','PAO'])
+def test_native_pno_pipeline_and_first_solve_reuse(budget,changed_final_domain):
     from psi4.driver.procrouting.response.dlpno_pno_curvature import (
         first_pno_curvature,mixed_pair_exchange,lmp2_residual,pno_truncation_energy,mixed_pno_selection)
     x=fitting_fixture(cache=budget);C=algebra.mixed_product
@@ -284,11 +294,14 @@ def test_native_pno_pipeline_and_first_solve_reuse(budget,different_first_domain
         gradient.append(pno_truncation_energy(fixed_initial,fixed_final).u)
     adjoint=unpack(np.linalg.solve(matrix.T,-np.array(gradient)),dual=True)
     final_domains=dict(x.domains)
-    if different_first_domains:
-        # First-PNO fitting must use its own captured AO rows even when
-        # the subsequent CCSD domains admit a shared atom-local OV panel.
-        final_domains['AO_OCC']=[list(range(5)),list(range(1,6))]
-    workspace=core.DLPNOResponseWorkspace(final_domains,x.domains,metadata,{},x.centers,adjoint,float(energy),budget)
+    if changed_final_domain:
+        # Each OV dependency independently prevents sharing with final CCSD.
+        # Changing final maps must not alter the captured first-PNO response.
+        final_domains[changed_final_domain]={
+            'AO_OCC':[list(range(5)),list(range(1,6))],
+            'AO_VIR':[list(range(5)),list(range(1,6))],
+            'OCC':[[0],[1,0]],'PAO':[[2,3,5],[2,4,5]]}[changed_final_domain]
+    workspace=core.DLPNOResponseWorkspace(final_domains,first_pno_domains(x.domains),metadata,{},x.centers,adjoint,float(energy),budget)
     calls=[]
     def first_solve(dy,dk,ds,df,dfoo):
         calls.append('first')
@@ -391,7 +404,7 @@ def test_native_adapter_snapshots_once_and_delivers_molecular_blocks(monkeypatch
     first={p:{key:SimpleNamespace(np=data[field] if key!='OCCUPATIONS' else data[field][:,None]) for key,field in
               [('PARENT','parent'),('FRAME','first_frame'),('AMPLITUDE','first_amplitude'),('QI','qi'),('QJ','qj'),('OCCUPATIONS','occupations')]} for p,data in x.metadata.items()}
     monkeypatch.setattr(core,'dlpno_response_domain_state',snapshot('domains',x.domains),raising=False)
-    monkeypatch.setattr(core,'dlpno_first_pno_state',snapshot('first',(x.domains,first)),raising=False)
+    monkeypatch.setattr(core,'dlpno_first_pno_state',snapshot('first',(first_pno_domains(x.domains),first)),raising=False)
     monkeypatch.setattr(core,'dlpno_lmp2_blocks',lambda w,key:blocks[key],raising=False)
     monkeypatch.setattr(core,'dlpno_triples_response_state',snapshot('triples',{}),raising=False)
     monkeypatch.setattr(core,'dlpno_triples_basis_state',snapshot('basis',{}),raising=False)
@@ -526,7 +539,7 @@ def test_native_ccsd_mixed_vertices_keep_target_fit_and_source_pao_order(budget,
         # A stable discarded eigenspace exercises the H^T H convention; the
         # full inverse on nonprojected vertices must remain distinct.
         x.inputs[4].value[:]=np.diag([-.3,.7,1.2,1.7,2.1])
-    w=core.DLPNOResponseWorkspace(x.domains,x.domains,x.metadata,{},x.centers,{},0.,budget)
+    w=core.DLPNOResponseWorkspace(x.domains,first_pno_domains(x.domains),x.metadata,{},x.centers,{},0.,budget)
     e=w.entry(0,1,x.inputs);e.set_frames(x.frames)
     expected=mixed_ccsd_residual(None,x.fit.electronic,x.fit.S,x.fit.df,fitted=x.fit)
     actual=e.ccsd(x.one,x.two,'affine')

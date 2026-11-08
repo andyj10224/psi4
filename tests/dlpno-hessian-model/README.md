@@ -47,6 +47,13 @@ from 5.05 to 4.05 s cold and 2.61–2.85 to 1.30–1.34 s
 for repeated evaluations of the same mixed entry. These are implementation
 benchmarks, not measured water Hessian times. Existing phase timers remain.
 
+The follow-up fix to `c9c78ac` removes a first-PNO startup error: the OV-panel
+reuse check incorrectly required the later VV-only `PAO_PAIRS` map, which the
+actual first-PNO snapshot does not export. It now compares only the four OV
+domain maps. Regression fixtures use the production snapshot structure and
+exercise shared and separate first/final fits, including a change to each
+OV dependency independently. This fix requires rebuilding C++.
+
 ## Persistent response work at `67020eb` and the CCSD regression
 
 The subsequent water run at `50b6a5d` took 636.51 s overall and 511.9 s for
@@ -160,7 +167,7 @@ one and multiple threads. The native sources/bindings were compiled in an
 isolated harness with real BLAS/LAPACK; complete PNO/LMP2, CCSD, and triples
 results are checked against the independent equations, including unequal ranks,
 local masks, reversed coordinate order, cache eviction, and transpose actions.
-All 131 native algebra/reuse checks passed in serial builds and in OpenMP builds
+All 137 native algebra/reuse checks passed in serial builds and in OpenMP builds
 with one and four threads. Another 261 existing algebra, kernel, and routing
 checks passed in the isolated harness. The new native sources and changed
 gradient/Lambda sources also passed C++ syntax checks against the real Psi4
