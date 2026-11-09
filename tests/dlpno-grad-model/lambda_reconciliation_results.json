@@ -4,9 +4,9 @@
   "coordinate_probes": 27,
   "max_shared_reverse": 5.551115123125783e-16,
   "max_shared_fd": 1.868163338868828e-12,
-  "max_coordinate_fd": 1.0584866316776242e-12,
-  "max_thread_difference": 1.3877787807814457e-16,
-  "max_cache_difference": 1.6653345369377348e-16,
+  "max_coordinate_fd": 8.689576835863022e-13,
+  "max_thread_difference": 1.6653345369377348e-16,
+  "max_cache_difference": 2.220446049250313e-16,
   "baseline_commit": "13d74e01c7d7f02b1deae831bca37a341080be20",
   "sectors": [
     "energy source",
@@ -62,7 +62,7 @@
         1.2967404927621828e-13
       ],
       "threads": 3.469446951953614e-18,
-      "cache": 3.469446951953614e-18,
+      "cache": 1.734723475976807e-18,
       "fixed_source_split": 5.551115123125783e-17,
       "published_difference": 0.0001781001993080289
     },
@@ -78,8 +78,8 @@
         7.073707938842766e-13,
         2.1449508835758024e-13
       ],
-      "threads": 4.336808689942018e-18,
-      "cache": 6.938893903907228e-18,
+      "threads": 3.469446951953614e-18,
+      "cache": 5.204170427930421e-18,
       "fixed_source_split": 5.551115123125783e-17,
       "published_difference": 0.0006246574298850449
     },
@@ -96,12 +96,14 @@
         4.4075854077618715e-13
       ],
       "threads": 1.734723475976807e-18,
-      "cache": 0.0,
+      "cache": 3.469446951953614e-18,
       "fixed_source_split": 1.1102230246251565e-16,
       "published_difference": 0.0003941652054075817
     }
   ],
   "max_fixed_source_split": 2.220446049250313e-16,
   "legacy_fixtures": 64,
-  "max_legacy_difference": 0.0
+  "max_legacy_difference": 0.0,
+  "nonzero_fov_fixtures": 64,
+  "max_2fia_source_error": 4.163336342344337e-17
 }

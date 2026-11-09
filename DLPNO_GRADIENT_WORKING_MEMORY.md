@@ -115,6 +115,33 @@ Psi4 build, molecular gradient validation, or performance benchmark.
 The cc-pVDZ molecular input retains its previous checks and adds shared
 transpose/source-count checks; fresh molecular execution remains pending.
 
+### Energy Lambda source and projector cost follow-up (9 November 2026)
+
+The shared `2 f_ia` source already reached the energy Lambda solver in
+`cffd222`; its call now explicitly requests the published projection mode
+and full energy source. There is no duplicated source or extra scalar
+energy term. Sixty-four nonzero-Fov fixtures verify that the difference
+from `13d74e0` is exactly `2 f_ia` in L1 and zero in L2 (4.17e-17 error).
+The 64 zero-Fov comparisons remain unchanged.
+
+The retained G/D and higher-L2 expressions have O(P d r^3) matrix cost;
+the combined affected L1/L2 evaluation adds no power of occupied-domain
+size or PNO rank. Final G/D and gamma products now accumulate with GEMM.
+L1 applies the existing pair/diagonal overlap with its transpose flag,
+avoiding a reversed lookup that could reconstruct a PAO overlap in
+low-memory mode. No new C++ function, pair map, or approximation is added.
+The mixed-density timer isolates G/D construction.
+
+Executable contraction counts verify fixed-domain linear replication,
+cubic PNO-rank growth, the dense occupied-graph bounds, and no added
+overlap matrix products under LOW_MEMORY_OVERLAP. See the
+[cost and numerical-effect follow-up](tests/dlpno-grad-model/LAMBDA_RECONCILIATION.md#follow-up-energy-path-2fia-and-the-cost-of-retaining-projectors).
+Synthetic complete-graph tests isolate projector-only residual differences
+of up to about 2.9e-4; complete common-parent spaces agree at roundoff.
+These are not molecular nuclear-gradient errors. A controlled molecular
+gradient comparison and wall timings remain pending; no speedup or
+molecular force-error bound is claimed from matrix counts alone.
+
 ## Historical checkpoints (not the current development plan)
 
 > **Public Hessian routing delivered for local validation:** the user requested pushing the recovered route with the cc-pVDZ tests restored, then making `DLPNO_HESSIAN_MODEL=true` the default. Source-level checks pass, and Cython response packaging is complete; fresh native numerical tests remain pending. See [recovery record](DLPNO_HESSIAN_M33_RECOVERY.md) and [local test commands](tests/dlpno-hessian-model/README.md). The gradient functional is unchanged.

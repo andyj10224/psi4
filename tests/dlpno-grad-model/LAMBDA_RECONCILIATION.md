@@ -315,3 +315,127 @@ Psi4 build were not run for this patch.** Local validation must still check
 converged Lambda residuals, finite-difference nuclear gradients on a stable
 domain branch, existing asymmetric energies, and timing/memory before claiming
 production readiness or improved wall time.
+
+## Follow-up: energy-path 2Fia and the cost of retaining projectors
+
+The `2 f_ia` addition in `cffd222` was already outside the exact-residual
+conditional: it applies to **both** Lambda pathways. The energy solver now
+calls `compute_L_ia(..., false, true)` explicitly, preserving its published
+projector choices and including the full source. No second copy of `2 f_ia`
+was added. The scalar energy already includes `2 f_ia t_i^a` through
+`singles_fock_energy()`. A bare `2 f_ia` is a singles derivative, not a
+separate scalar energy term. The existing Brueckner mode that deliberately
+omits Lambda1 still omits that equation.
+
+The historical comparison test now also uses 64 **nonzero-Fov** fixtures.
+Against base `13d74e0`, the energy Lambda residual changes by precisely the
+projected `2 f_ia` in L1 and zero in L2, to 4.17e-17. Its original 64 Fov=0
+fixtures remain unchanged. This exercises full/truncated PNO spaces,
+different PAO/fitting domains, and sparse pair graphs.
+
+### What has actually been quantified about gradients?
+
+There is not yet a controlled, paired **molecular nuclear-gradient** result
+for projector retention versus removal. The historical water directional
+checks did not isolate projector choices from every other correction and
+must not be reported as that force difference.
+
+A controlled fixed-space comparison uses the same amplitudes, multipliers,
+energy source, a complete pair graph, and a common PAO parent. Only the
+projector choices then differ; sparse-domain corrections cannot contribute.
+For seed 17, the measured maximum component changes are:
+
+| Spaces / fitting | Lambda1 residual change | Lambda2 residual change |
+|---|---:|---:|
+| Complete PNO spaces, common fit | 5.56e-17 | 1.12e-16 |
+| Truncated PNO spaces, common fit | 7.36e-5 | 2.79e-4 |
+| Complete PNO spaces, pair-specific fits | 8.33e-17 | 5.56e-17 |
+| Truncated PNO spaces, pair-specific fits | 7.72e-6 | 1.79e-4 |
+
+These are **synthetic Lambda residuals at trial multipliers**, not gradients
+in hartree/bohr, converged Lambda differences, or error estimates for water.
+Another seed reaches 2.89e-4 in L1 and 2.44e-4 in L2. The random amplitudes
+and fitting tensors have no claim to represent the magnitude in a molecule.
+
+In independent amplitude coordinates, if `r = b + J^T lambda_a` is the
+exact stationarity residual at an approximate multiplier, then
+`lambda_a - lambda_exact = J^(-T) r`. For the fixed-space CC contribution,
+with the other response blocks held fixed,
+`Delta g_X = (lambda_a-lambda_exact)^T R_X`.
+Consequently neither the residual size alone nor a PNO occupation threshold
+sets a universal force error; the response operator and nuclear derivative
+couplings also matter. A molecular A/B comparison must hold all other
+approximations, domains, ranks, fitting definitions and convergence settings
+fixed, and also compare the retained-projector result with finite differences
+on a stable domain branch.
+
+### Cost guarantee for evaluating the affected expressions
+
+Let P be the number of stored ordered pairs, d the maximum occupied-domain
+size, and r the maximum PNO rank. The bounds below concern a residual
+evaluation; they do not assume that different Lambda operators require the
+same number of iterations. Pair-overlap preparation and other gradient
+terms are separate costs.
+
+| Affected work | Published projector removal | Retained projectors |
+|---|---|---|
+| Fixed higher L2 intermediates, Eqs. 103/105 | O(P d² r³) setup; O(P d r²) storage | Not built |
+| Shared G/D | Not present | O(P d r³) per evaluation; O(P r²) storage |
+| L1 Eqs. 69–72 | O(P d r³ + P d² r²) | O(P r³ + P d r²), after G/D |
+| Higher L2 Eqs. 88b/89b | O(P d r³) per evaluation | O(P d r³), after G/D |
+
+Thus the combined retained-projector expressions cost
+**O(P d r³ + P d r²)**, with the same PNO-rank power and no extra occupied
+sum. The G/D cost is counted once for the combined L1/L2 evaluation.
+With bounded local domains/ranks and P proportional to molecular size,
+both versions are linear in that size. Removing the old setup can improve
+the bound; equality of prefactors or wall time is not asserted.
+
+The reuse audit remains the one above: extend `form_goo` and use the existing
+G/D arrays and pair maps. Final G/D and higher-gamma products now accumulate
+directly with `Matrix::gemm`, avoiding a pair-sized output temporary and
+subsequent addition. A `DLPNO-CCSD Lambda : Mixed rho` timer isolates the
+shared build. No new production C++ function is needed.
+
+Every overlap in the added G/D and higher-L2 chains joins pairs sharing an
+occupied index, and is already in the energy overlap tables. L1 now obtains
+`S(oo,p)` as the **transposed application of the stored `S(p,oo)`**, rather
+than issuing a reversed lookup that could trigger a PAO-space reconstruction
+under `LOW_MEMORY_OVERLAP`. This is an exact transpose identity. The affected
+retained-chain blocks therefore introduce no new AO/PAO-sized overlap
+contraction, including in low-memory mode.
+
+### Executable scaling checks
+
+The optional probe scopes count the Matrix contractions in the actual C++
+blocks. Its test-only `triplet` uses the same C1 flop-minimizing association
+as `libmints/matrix.cc`. Scopes do not change equations or loop bounds;
+`2*m*k*n` counts a matrix product and does not count all scalar arithmetic
+or measure time. The test verifies:
+
+* Replicating disconnected fixed-size occupied domains by factors two/four
+  multiplies every affected block's work by exactly two/four.
+* Doubling PNO rank multiplies G/D and higher-L2 work by eight; L1 grows
+  by at most eight, including its quadratic terms.
+* Doubling a complete occupied graph at fixed rank multiplies G/D and
+  higher-L2 work by eight (P doubles quadratically, d linearly), while the
+  old fixed higher-L2 setup grows by sixteen.
+* Enabling `LOW_MEMORY_OVERLAP` adds **no matrix contractions** in the
+  affected retained-chain blocks.
+
+For the P=9, d=3, r=4 example, the combined counted matrix work is 60,192
+operations with retained chains and 79,488 with the published removal,
+excluding setup. The latter also builds 82,944 operations of fixed higher
+L2 tensors. This is an operation-count example, not a molecular speedup.
+
+```sh
+python tests/dlpno-grad-model/build_lambda_reconciliation_probe.py --count-projectors --build-dir /tmp/lambda-counted
+python tests/dlpno-grad-model/lambda_projector_cost.py /tmp/lambda-counted --output /tmp/projector-cost.json
+python tests/dlpno-grad-model/lambda_reconciliation.py /tmp/lambda-counted
+python tests/dlpno-grad-model/lambda_reconciliation_legacy.py /tmp/lambda-original /tmp/lambda-counted
+```
+
+The original probe must be built from `13d74e0`, as in the earlier commands.
+The tracked [projector cost results](lambda_projector_cost_results.json)
+contain all counted cases and numerical residual comparisons. Full molecular
+gradient and wall-time comparisons remain outstanding.

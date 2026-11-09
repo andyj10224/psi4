@@ -1,0 +1,556 @@
+{
+  "scope": "Matrix-operation scaling and synthetic fixed-space residual changes; not molecular gradients or timings",
+  "cost_cases": [
+    {
+      "occupied": 3,
+      "rank": 4,
+      "pairs": 9,
+      "neighbors": 3,
+      "fragments": 1,
+      "counts": {
+        "corrected": {
+          "flops": {
+            "shared_GD": 27648,
+            "retained_L1": 4896,
+            "published_L1": 0,
+            "retained_L2": 27648,
+            "published_L2": 0,
+            "published_L2_setup": 0
+          },
+          "gemms": {
+            "shared_GD": 216,
+            "retained_L1": 63,
+            "published_L1": 0,
+            "retained_L2": 216,
+            "published_L2": 0,
+            "published_L2_setup": 0
+          }
+        },
+        "published": {
+          "flops": {
+            "shared_GD": 0,
+            "retained_L1": 0,
+            "published_L1": 65664,
+            "retained_L2": 0,
+            "published_L2": 13824,
+            "published_L2_setup": 82944
+          },
+          "gemms": {
+            "shared_GD": 0,
+            "retained_L1": 0,
+            "published_L1": 702,
+            "retained_L2": 0,
+            "published_L2": 108,
+            "published_L2_setup": 648
+          }
+        }
+      }
+    },
+    {
+      "occupied": 6,
+      "rank": 4,
+      "pairs": 18,
+      "neighbors": 3,
+      "fragments": 2,
+      "counts": {
+        "corrected": {
+          "flops": {
+            "shared_GD": 55296,
+            "retained_L1": 9792,
+            "published_L1": 0,
+            "retained_L2": 55296,
+            "published_L2": 0,
+            "published_L2_setup": 0
+          },
+          "gemms": {
+            "shared_GD": 432,
+            "retained_L1": 126,
+            "published_L1": 0,
+            "retained_L2": 432,
+            "published_L2": 0,
+            "published_L2_setup": 0
+          }
+        },
+        "published": {
+          "flops": {
+            "shared_GD": 0,
+            "retained_L1": 0,
+            "published_L1": 131328,
+            "retained_L2": 0,
+            "published_L2": 27648,
+            "published_L2_setup": 165888
+          },
+          "gemms": {
+            "shared_GD": 0,
+            "retained_L1": 0,
+            "published_L1": 1404,
+            "retained_L2": 0,
+            "published_L2": 216,
+            "published_L2_setup": 1296
+          }
+        }
+      }
+    },
+    {
+      "occupied": 12,
+      "rank": 4,
+      "pairs": 36,
+      "neighbors": 3,
+      "fragments": 4,
+      "counts": {
+        "corrected": {
+          "flops": {
+            "shared_GD": 110592,
+            "retained_L1": 19584,
+            "published_L1": 0,
+            "retained_L2": 110592,
+            "published_L2": 0,
+            "published_L2_setup": 0
+          },
+          "gemms": {
+            "shared_GD": 864,
+            "retained_L1": 252,
+            "published_L1": 0,
+            "retained_L2": 864,
+            "published_L2": 0,
+            "published_L2_setup": 0
+          }
+        },
+        "published": {
+          "flops": {
+            "shared_GD": 0,
+            "retained_L1": 0,
+            "published_L1": 262656,
+            "retained_L2": 0,
+            "published_L2": 55296,
+            "published_L2_setup": 331776
+          },
+          "gemms": {
+            "shared_GD": 0,
+            "retained_L1": 0,
+            "published_L1": 2808,
+            "retained_L2": 0,
+            "published_L2": 432,
+            "published_L2_setup": 2592
+          }
+        }
+      }
+    },
+    {
+      "occupied": 3,
+      "rank": 2,
+      "pairs": 9,
+      "neighbors": 3,
+      "fragments": 1,
+      "counts": {
+        "corrected": {
+          "flops": {
+            "shared_GD": 3456,
+            "retained_L1": 936,
+            "published_L1": 0,
+            "retained_L2": 3456,
+            "published_L2": 0,
+            "published_L2_setup": 0
+          },
+          "gemms": {
+            "shared_GD": 216,
+            "retained_L1": 63,
+            "published_L1": 0,
+            "retained_L2": 216,
+            "published_L2": 0,
+            "published_L2_setup": 0
+          }
+        },
+        "published": {
+          "flops": {
+            "shared_GD": 0,
+            "retained_L1": 0,
+            "published_L1": 9504,
+            "retained_L2": 0,
+            "published_L2": 1728,
+            "published_L2_setup": 10368
+          },
+          "gemms": {
+            "shared_GD": 0,
+            "retained_L1": 0,
+            "published_L1": 702,
+            "retained_L2": 0,
+            "published_L2": 108,
+            "published_L2_setup": 648
+          }
+        }
+      }
+    },
+    {
+      "occupied": 3,
+      "rank": 4,
+      "pairs": 9,
+      "neighbors": 3,
+      "fragments": 1,
+      "counts": {
+        "corrected": {
+          "flops": {
+            "shared_GD": 27648,
+            "retained_L1": 4896,
+            "published_L1": 0,
+            "retained_L2": 27648,
+            "published_L2": 0,
+            "published_L2_setup": 0
+          },
+          "gemms": {
+            "shared_GD": 216,
+            "retained_L1": 63,
+            "published_L1": 0,
+            "retained_L2": 216,
+            "published_L2": 0,
+            "published_L2_setup": 0
+          }
+        },
+        "published": {
+          "flops": {
+            "shared_GD": 0,
+            "retained_L1": 0,
+            "published_L1": 65664,
+            "retained_L2": 0,
+            "published_L2": 13824,
+            "published_L2_setup": 82944
+          },
+          "gemms": {
+            "shared_GD": 0,
+            "retained_L1": 0,
+            "published_L1": 702,
+            "retained_L2": 0,
+            "published_L2": 108,
+            "published_L2_setup": 648
+          }
+        }
+      }
+    },
+    {
+      "occupied": 3,
+      "rank": 8,
+      "pairs": 9,
+      "neighbors": 3,
+      "fragments": 1,
+      "counts": {
+        "corrected": {
+          "flops": {
+            "shared_GD": 221184,
+            "retained_L1": 28800,
+            "published_L1": 0,
+            "retained_L2": 221184,
+            "published_L2": 0,
+            "published_L2_setup": 0
+          },
+          "gemms": {
+            "shared_GD": 216,
+            "retained_L1": 63,
+            "published_L1": 0,
+            "retained_L2": 216,
+            "published_L2": 0,
+            "published_L2_setup": 0
+          }
+        },
+        "published": {
+          "flops": {
+            "shared_GD": 0,
+            "retained_L1": 0,
+            "published_L1": 483840,
+            "retained_L2": 0,
+            "published_L2": 110592,
+            "published_L2_setup": 663552
+          },
+          "gemms": {
+            "shared_GD": 0,
+            "retained_L1": 0,
+            "published_L1": 702,
+            "retained_L2": 0,
+            "published_L2": 108,
+            "published_L2_setup": 648
+          }
+        }
+      }
+    },
+    {
+      "occupied": 3,
+      "rank": 3,
+      "pairs": 9,
+      "neighbors": 3,
+      "fragments": 1,
+      "counts": {
+        "corrected": {
+          "flops": {
+            "shared_GD": 11664,
+            "retained_L1": 2430,
+            "published_L1": 0,
+            "retained_L2": 11664,
+            "published_L2": 0,
+            "published_L2_setup": 0
+          },
+          "gemms": {
+            "shared_GD": 216,
+            "retained_L1": 63,
+            "published_L1": 0,
+            "retained_L2": 216,
+            "published_L2": 0,
+            "published_L2_setup": 0
+          }
+        },
+        "published": {
+          "flops": {
+            "shared_GD": 0,
+            "retained_L1": 0,
+            "published_L1": 29160,
+            "retained_L2": 0,
+            "published_L2": 5832,
+            "published_L2_setup": 34992
+          },
+          "gemms": {
+            "shared_GD": 0,
+            "retained_L1": 0,
+            "published_L1": 702,
+            "retained_L2": 0,
+            "published_L2": 108,
+            "published_L2_setup": 648
+          }
+        }
+      }
+    },
+    {
+      "occupied": 6,
+      "rank": 3,
+      "pairs": 36,
+      "neighbors": 6,
+      "fragments": 1,
+      "counts": {
+        "corrected": {
+          "flops": {
+            "shared_GD": 93312,
+            "retained_L1": 15552,
+            "published_L1": 0,
+            "retained_L2": 93312,
+            "published_L2": 0,
+            "published_L2_setup": 0
+          },
+          "gemms": {
+            "shared_GD": 1728,
+            "retained_L1": 360,
+            "published_L1": 0,
+            "retained_L2": 1728,
+            "published_L2": 0,
+            "published_L2_setup": 0
+          }
+        },
+        "published": {
+          "flops": {
+            "shared_GD": 0,
+            "retained_L1": 0,
+            "published_L1": 279936,
+            "retained_L2": 0,
+            "published_L2": 46656,
+            "published_L2_setup": 559872
+          },
+          "gemms": {
+            "shared_GD": 0,
+            "retained_L1": 0,
+            "published_L1": 7560,
+            "retained_L2": 0,
+            "published_L2": 864,
+            "published_L2_setup": 10368
+          }
+        }
+      }
+    },
+    {
+      "occupied": 12,
+      "rank": 3,
+      "pairs": 144,
+      "neighbors": 12,
+      "fragments": 1,
+      "counts": {
+        "corrected": {
+          "flops": {
+            "shared_GD": 746496,
+            "retained_L1": 108864,
+            "published_L1": 0,
+            "retained_L2": 746496,
+            "published_L2": 0,
+            "published_L2_setup": 0
+          },
+          "gemms": {
+            "shared_GD": 13824,
+            "retained_L1": 2304,
+            "published_L1": 0,
+            "retained_L2": 13824,
+            "published_L2": 0,
+            "published_L2_setup": 0
+          }
+        },
+        "published": {
+          "flops": {
+            "shared_GD": 0,
+            "retained_L1": 0,
+            "published_L1": 2985984,
+            "retained_L2": 0,
+            "published_L2": 373248,
+            "published_L2_setup": 8957952
+          },
+          "gemms": {
+            "shared_GD": 0,
+            "retained_L1": 0,
+            "published_L1": 91584,
+            "retained_L2": 0,
+            "published_L2": 6912,
+            "published_L2_setup": 165888
+          }
+        }
+      }
+    }
+  ],
+  "projector_only_residual_examples": [
+    {
+      "seed": 17,
+      "local_fit": false,
+      "truncated": false,
+      "ranks": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "max_L1_difference": 5.551115123125783e-17,
+      "max_L2_difference": 1.1102230246251565e-16
+    },
+    {
+      "seed": 17,
+      "local_fit": false,
+      "truncated": true,
+      "ranks": [
+        1,
+        3,
+        2,
+        3,
+        1,
+        3,
+        2,
+        3,
+        1
+      ],
+      "max_L1_difference": 7.35175168263269e-05,
+      "max_L2_difference": 0.0002785195750671654
+    },
+    {
+      "seed": 17,
+      "local_fit": true,
+      "truncated": false,
+      "ranks": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "max_L1_difference": 8.326672684688674e-17,
+      "max_L2_difference": 5.551115123125783e-17
+    },
+    {
+      "seed": 17,
+      "local_fit": true,
+      "truncated": true,
+      "ranks": [
+        1,
+        3,
+        2,
+        3,
+        1,
+        3,
+        2,
+        3,
+        1
+      ],
+      "max_L1_difference": 7.717285358616044e-06,
+      "max_L2_difference": 0.0001781001993080289
+    },
+    {
+      "seed": 91,
+      "local_fit": false,
+      "truncated": false,
+      "ranks": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "max_L1_difference": 5.551115123125783e-17,
+      "max_L2_difference": 5.551115123125783e-17
+    },
+    {
+      "seed": 91,
+      "local_fit": false,
+      "truncated": true,
+      "ranks": [
+        1,
+        3,
+        2,
+        3,
+        1,
+        3,
+        2,
+        3,
+        1
+      ],
+      "max_L1_difference": 0.0001029354026156476,
+      "max_L2_difference": 0.00023152489805679938
+    },
+    {
+      "seed": 91,
+      "local_fit": true,
+      "truncated": false,
+      "ranks": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "max_L1_difference": 5.551115123125783e-17,
+      "max_L2_difference": 2.7755575615628914e-17
+    },
+    {
+      "seed": 91,
+      "local_fit": true,
+      "truncated": true,
+      "ranks": [
+        1,
+        3,
+        2,
+        3,
+        1,
+        3,
+        2,
+        3,
+        1
+      ],
+      "max_L1_difference": 0.0002886614497558393,
+      "max_L2_difference": 0.0002439281206877142
+    }
+  ]
+}

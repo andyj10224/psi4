@@ -215,6 +215,7 @@ void DLPNOCCSD::form_goo(bool exact_residual) {
     } // end
 
     if (!exact_residual) return;
+    timer_on("DLPNO-CCSD Lambda : Mixed rho");
     // Reuse audit: rho^OO (Eq. 53) is scalar in the virtual indices, and
     // rho^VV (Eq. 54) contains a single pair. Neither retains the intermediate
     // pair projector needed by Eqs. 69--72 and 88b--89b. These two matrices
@@ -239,11 +240,17 @@ void DLPNOCCSD::form_goo(bool exact_residual) {
         for (int n : lmopair_to_lmos_[p]) {
             const int in = i_j_to_ij_[i][n], jn = i_j_to_ij_[j][n], nj = ij_to_ji_[jn];
             auto g = linalg::triplet(S_PNO(p, jn), lambda_iajb_bar_[jn], S_PNO(jn, in));
-            lambda_gamma_[p]->add(linalg::triplet(g, T_iajb_[in], S_PNO(in, p)));
+            g = linalg::doublet(g, T_iajb_[in]);
+            lambda_gamma_[p]->gemm(false, false, 1., g, S_PNO(in, p), 1.);
             auto d = linalg::triplet(S_PNO(p, in), lambda_iajb_[in], S_PNO(in, nj));
-            lambda_delta_[p]->add(linalg::triplet(d, Tt_iajb_[nj], S_PNO(nj, p)));
+            d = linalg::doublet(d, Tt_iajb_[nj]);
+            lambda_delta_[p]->gemm(false, false, 1., d, S_PNO(nj, p), 1.);
         }
     }
+    // With P ordered pairs, at most d occupied neighbors and rank r, this
+    // shared build is O(P d r^3), not O(P d^2 r^3). Keep the n sum here;
+    // neither L1 nor L2 may rebuild it inside its own occupied-index loop.
+    timer_off("DLPNO-CCSD Lambda : Mixed rho");
 }
 
 void DLPNOCCSD::compute_lambda_intermediates(bool exact_residual) {
@@ -1100,6 +1107,7 @@ void DLPNOCCSD::compute_L_ia(std::vector<SharedMatrix>& L_ia, std::vector<std::v
         if (include_source) {
             // d(2 f_ia t_i^a)/dt_i^a. Zero at an ideal RHF stationary point,
             // but part of singles_fock_energy() and required away from it.
+            // Applies to both published energy Lambda and gradient Lambda.
             auto f = submatrix_rows_and_cols(*F_lmo_pao_, {i}, lmopair_to_paos_[ii]);
             L_ia[i]->axpy(2., linalg::doublet(X_pno_[ii], f, true, true));
         }
@@ -1238,7 +1246,10 @@ void DLPNOCCSD::compute_L_ia(std::vector<SharedMatrix>& L_ia, std::vector<std::v
                 const int o = lmopair_to_lmos_[p][row], oo = i_j_to_ij_[o][o];
                 auto value = submatrix_cols(*gj, {row});
                 value->axpy(-0.5, submatrix_cols(*dm, {row}));
-                L_ia_buffer[thread][o]->add(linalg::doublet(S_PNO(oo, p), value)); // Eqs. 69/72
+                // S(p,oo) is already in the energy's pair/diagonal table.
+                // Use its transpose directly, including LOW_MEMORY_OVERLAP;
+                // the reversed lookup could otherwise rebuild an AO overlap.
+                L_ia_buffer[thread][o]->add(linalg::doublet(S_PNO(p, oo), value, true, false)); // Eqs. 69/72
             }
         }
     } else {
@@ -1621,7 +1632,8 @@ void DLPNOCCSD::compute_L_iajb(std::vector<SharedMatrix>& L_iajb, std::vector<Sh
             for (int k : lmopair_to_lmos_[ij]) {
                 const int ik = i_j_to_ij_[i][k], kj = i_j_to_ij_[k][j];
                 auto g = linalg::triplet(S_PNO(ij, kj), lambda_gamma_[kj], S_PNO(kj, ik));
-                Ln_iajb[ij]->axpy(0.5, linalg::triplet(g, K_iajb_[ik], S_PNO(ik, ij)));
+                g = linalg::doublet(g, K_iajb_[ik]);
+                Ln_iajb[ij]->gemm(false, false, 0.5, g, S_PNO(ik, ij), 1.);
                 auto d = linalg::triplet(S_PNO(ij, ik), lambda_delta_[ik], S_PNO(ik, kj));
                 d = linalg::triplet(d, L_iajb_[kj], S_PNO(kj, ij));
                 Ln_iajb[ij]->axpy(0.5, d);
@@ -1826,8 +1838,9 @@ void DLPNOCCSD::solve_lambda(bool include_singles) {
             // Lambda2 has changed, so rebuild Eqs. 53--54 before Lambda1.
             form_goo();
 
-            // Lambda-singles residual (Toth Eqs. 58 and 67--72).
-            compute_L_ia(L_ia, L_ia_buffer);
+            // Published energy Lambda, including d(2 f_ia t_i^a)/dt_i^a.
+            // Explicit flags preserve its projector choices and include 2 Fia.
+            compute_L_ia(L_ia, L_ia_buffer, false, true);
 
             // Track the largest occupied-domain RMS as the Lambda1 metric.
 #pragma omp parallel for schedule(dynamic, 1)

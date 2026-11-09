@@ -1,6 +1,8 @@
 """Compile verbatim production Lambda/right-residual functions for algebra audits.
 
 Small storage/API adapters only; this is not a molecular Psi4 build or benchmark.
+With --count-projectors, add test-only scopes to count matrix work in the
+affected expressions. Their arithmetic and loop bounds are left unchanged.
 """
 from pathlib import Path
 import re, subprocess, sysconfig
@@ -10,6 +12,7 @@ parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--build-dir',type=Path)
 parser.add_argument('--pybind-include',type=Path)
 parser.add_argument('--ref',help='Optional git commit to extract for a published-mode regression')
+parser.add_argument('--count-projectors',action='store_true')
 args=parser.parse_args()
 root=Path(__file__).resolve().parents[2]
 work=args.build_dir or Path(tempfile.mkdtemp(prefix='dlpno-lambda-'))
@@ -27,6 +30,36 @@ def function(s,name):
 right_names=['S_PNO','compute_pno_overlaps','t1_ints','t1_fock','compute_beta','compute_gamma','compute_delta','compute_Fkj_double_tilde','compute_R_ia','compute_R_iajb','prepare_ccsd_residual','singles_fock_energy']
 left_names=['form_goo','compute_lambda_intermediates','compute_L_ia','compute_alpha_ijkl','compute_L_iajb','gradient_lambda_residual','reverse_R1','reverse_R2','reverse_pair_intermediates','reverse_t1_transform','ccsd_lagrangian','prepare_gradient_lambda_overlaps']
 functions=[function(right,n) for n in right_names]+[function(left,n) for n in left_names]
+if args.count_projectors:
+    for i,f in enumerate(functions):
+        if 'DLPNOCCSD::form_goo(' in f:
+            marker='        const auto [i, j] = ij_to_i_j_[p];'
+            assert f.count(marker)==1
+            f=f.replace(marker, '        AuditScope work(0);\n'+marker)
+        elif 'DLPNOCCSD::compute_lambda_intermediates(' in f:
+            a=f.index('    // Higher-order doubles-residual intermediates')
+            head,tail=f[:a],f[a:]
+            marker='        auto &[i, j] = ij_to_i_j_[ij];'
+            assert tail.count(marker)==1
+            f=head+tail.replace(marker,'        AuditScope work(5);\n'+marker)
+        elif 'DLPNOCCSD::compute_L_ia(' in f:
+            a=f.index('    if (exact_residual) {\n        // Toth Eqs. 69--72')
+            b=f.index('    // Add L_ia_buffers',a)
+            body=f[a:b];cut=body.index('    } else {')
+            exact,old=body[:cut],body[cut:]
+            marker='            const auto [i, j] = ij_to_i_j_[p];'
+            exact=exact.replace(marker,'            AuditScope work(1);\n'+marker)
+            old,n=re.subn(r'(        for \(int (?:mn|in) = 0;[^\n]+\{\n)',r'\1            AuditScope work(2);\n',old)
+            assert n==4
+            f=f[:a]+exact+old+f[b:]
+        elif 'DLPNOCCSD::compute_L_iajb(' in f:
+            marker='            if (!exact_residual) {'
+            assert f.count(marker)==2
+            f=f.replace(marker,marker+'\n                AuditScope work(4);')
+            marker='            for (int k : lmopair_to_lmos_[ij]) {'
+            assert f.count(marker)==1
+            f=f.replace(marker,marker+'\n                AuditScope work(3);')
+        functions[i]=f
 decls='\n'.join(f[:f.index('{')].replace('DLPNOCCSD::','')+';' for f in functions)
 decls=decls.replace('bool include_source,','bool include_source = true,').replace('CCAdjoints* workspace)', 'CCAdjoints* workspace = nullptr)')
 decls=decls.replace('std::vector<SharedMatrix>* right1,','std::vector<SharedMatrix>* right1 = nullptr,').replace('std::vector<SharedMatrix>* right2)', 'std::vector<SharedMatrix>* right2 = nullptr)')
@@ -46,10 +79,15 @@ header=r'''
 #include <map>
 #include <set>
 #include <mutex>
+#include <atomic>
 #include <cstring>
 #include <omp.h>
 #define PSIEXCEPTION(x) std::runtime_error(x)
 namespace psi {
+inline std::atomic<unsigned long long> audit_flops[6],audit_gemms[6];
+inline bool audit_enabled=false;
+inline thread_local int audit_slot=-1;
+struct AuditScope {int old;explicit AuditScope(int slot):old(audit_slot){audit_slot=slot;}~AuditScope(){audit_slot=old;}};
 struct Environment {int get_n_threads() const {return omp_get_max_threads();}};
 struct Process {static inline Environment environment;};
 struct Output {template<class...T>void Printf(const char*,T...) {}};
@@ -86,9 +124,15 @@ namespace linalg {
 inline SharedMatrix doublet(const SharedMatrix&a,const SharedMatrix&b,bool ta=false,bool tb=false){
  if(!a||!b)throw PSIEXCEPTION("Null doublet");int r=ta?a->ncol():a->nrow(),k=ta?a->nrow():a->ncol(),c=tb?b->nrow():b->ncol();
  if(k!=(tb?b->ncol():b->nrow()))throw PSIEXCEPTION("Bad doublet");auto o=std::make_shared<Matrix>(r,c);
+ if(audit_enabled && audit_slot>=0){audit_flops[audit_slot]+=2ULL*r*k*c;++audit_gemms[audit_slot];}
  for(int i=0;i<r;i++)for(int j=0;j<c;j++)for(int l=0;l<k;l++)(*o)(i,j)+=(ta?a->get(l,i):a->get(i,l))*(tb?b->get(j,l):b->get(l,j));return o;
 }
-inline SharedMatrix triplet(const SharedMatrix&a,const SharedMatrix&b,const SharedMatrix&c,bool ta=false,bool tb=false,bool tc=false){return doublet(doublet(a,b,ta,tb),c,false,tc);}
+// Match libmints/matrix.cc's C1 flop-minimizing triplet order, including ties.
+inline SharedMatrix triplet(const SharedMatrix&a,const SharedMatrix&b,const SharedMatrix&c,bool ta=false,bool tb=false,bool tc=false){
+ size_t m=ta?a->ncol():a->nrow(),k=ta?a->nrow():a->ncol(),n=tb?b->nrow():b->ncol(),l=tc?c->nrow():c->ncol();
+ if(m*n*(k+l)<=k*l*(m+n))return doublet(doublet(a,b,ta,tb),c,false,tc);
+ return doublet(a,doublet(b,c,tb,tc),ta,false);
+}
 }
 inline void Matrix::gemm(bool ta,bool tb,double alpha,const SharedMatrix&a,const SharedMatrix&b,double beta){auto x=linalg::doublet(a,b,ta,tb);scale(beta);axpy(alpha,x);}
 inline SharedMatrix submatrix_rows_and_cols(const Matrix&a,const std::vector<int>&r,const std::vector<int>&c){auto o=std::make_shared<Matrix>(r.size(),c.size());for(int i=0;i<r.size();i++)for(int j=0;j<c.size();j++)(*o)(i,j)=a.get(r[i],c[j]);return o;}
@@ -137,8 +181,11 @@ Blocks blocks(py::handle h){Blocks b;for(auto v:py::cast<py::list>(h))b.push_bac
 std::vector<Blocks> nested(py::handle h){std::vector<Blocks>b;for(auto v:py::cast<py::list>(h))b.push_back(blocks(v));return b;}
 py::list arrays(const Blocks&b){py::list out;for(auto&m:b){Array a({m->nrow(),m->ncol()});std::copy_n(m->get_pointer(),a.size(),a.mutable_data());out.append(a);}return out;}
 PYBIND11_MODULE(lambda_probe,m){
+m.def("work_counts",[](){py::dict d;std::vector<unsigned long long>f,g;for(int k=0;k<6;k++){f.push_back(audit_flops[k]);g.push_back(audit_gemms[k]);}d["flops"]=f;d["gemms"]=g;return d;});
 m.def("evaluate",[](py::dict data,py::list t1,py::list t2,py::list z1,py::list z2,std::string kind,int threads){
  omp_set_num_threads(threads);
+ audit_enabled=data.contains("count_flops") && py::cast<bool>(data["count_flops"]);
+ for(int k=0;k<6;k++){audit_flops[k]=0;audit_gemms[k]=0;}
  DLPNOCCSD w;
 '''
 for n in ['ij_to_i_j_']:module+=f'w.{n}=py::cast<std::vector<std::pair<int,int>>>(data["{n}"]);\n'
@@ -175,7 +222,7 @@ module+=r'''
        fixed.bytes+=bytes;
      }
    }
-   for(int replay=0;replay<(exact?3:1);++replay) {
+   for(int replay=0;replay<(exact&&!audit_enabled?3:1);++replay) {
      w.form_goo(exact);w.compute_L_ia(a,buf,exact);w.compute_L_iajb(b,bn,exact);
      if(exact && w.gradient_lambda_fixed_ && replay==0)w.prepare_gradient_lambda_overlaps();
    }
