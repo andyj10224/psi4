@@ -70,6 +70,51 @@ of the production-triples gradient is claimed by this stopping-policy change.
 * Validate each block against independent numerical derivatives, then audit
   the complete gradient and its measured scaling.
 
+### Tóth Lambda reconciliation (9 November 2026)
+
+The [term-by-term reconciliation](tests/dlpno-grad-model/LAMBDA_RECONCILIATION.md)
+maps the paper's energy/L1/L2 contributions and fixed intermediates to the
+right residual and existing `ccsd_lambda.cc` functions. This resolves the
+earlier unexplained finite-PNO mismatch at the fixed-space amplitude level:
+the original L1 code collapses intermediate projectors in Eqs. 69/72, and
+Section V.A explicitly deprojects the higher gamma/delta terms in L2
+(Eqs. 103/105/106/107). Those local simplifications are not generally the
+exact transpose of the implemented truncated-space right residual. Sparse
+graphs additionally require incoming-domain bounds in Eqs. 56/66/69–72/88–89
+and the direct occupied-Fock part of Eq. 91. This is not a universal sign or
+pair-factor error in the paper.
+
+The production gradient Lambda iteration now reuses `form_goo`,
+`compute_lambda_intermediates`, `compute_L_ia`, and `compute_L_iajb` with
+an internal exact-residual argument. Existing asymmetric-energy callers
+retain their published projector/domain choices. The shared singles source
+now includes the bare `2 f_ia`, zero at ideal RHF stationarity.
+Two pair-sized SharedMatrix arrays G/D preserve the required projectors
+and share the Lambda/T contraction between L1 and L2. No new production
+C++ function, pair map, or tensor abstraction was added. Their storage is
+`16 sum_p n_pno[p]^2` bytes. Fixed tensors and the ordinary-(T) source are
+built once; the iteration reuses admitted dressed Qab and existing overlap
+tables/persistent overlaps/semidirect panels. New mutable overlap access is
+mutex-protected. Existing timers and new source/residual counts expose costs.
+
+The reverse implementation remains for independent transpose checks,
+response Jacobian actions, and integral/domain covectors that the original
+unrelaxed OPDM does not supply. It is no longer the gradient Lambda iteration
+engine. This change does not modify the triples derivative equations or
+establish a complete production-(T) gradient.
+
+Validation: extracted actual C++ kernels pass 256 fixed-space sector fixtures,
+including sparse graphs, truncated PNOs, different PAO/fitting domains,
+nonzero Fov, one/four threads, and persistent-memory budgets. Shared versus
+reverse error is at most 5.56e-16; scalar-Lagrangian directional and 27
+coordinate finite differences differ by at most 1.87e-12 and 1.06e-12.
+Fixed-source splitting agrees within 2.23e-16. Published-mode residuals at
+Fov=0 are identical to base `13d74e0` on 64 fixtures. Actual-header syntax
+checks pass for `ccsd.cc` and `ccsd_lambda.cc`. Test adapters are not a full
+Psi4 build, molecular gradient validation, or performance benchmark.
+The cc-pVDZ molecular input retains its previous checks and adds shared
+transpose/source-count checks; fresh molecular execution remains pending.
+
 ## Historical checkpoints (not the current development plan)
 
 > **Public Hessian routing delivered for local validation:** the user requested pushing the recovered route with the cc-pVDZ tests restored, then making `DLPNO_HESSIAN_MODEL=true` the default. Source-level checks pass, and Cython response packaging is complete; fresh native numerical tests remain pending. See [recovery record](DLPNO_HESSIAN_M33_RECOVERY.md) and [local test commands](tests/dlpno-hessian-model/README.md). The gradient functional is unchanged.

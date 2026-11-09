@@ -43,6 +43,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <set>
 #include <array>
 #include <string>
@@ -594,8 +595,11 @@ class PSI_API DLPNOCCSD : public DLPNO {
     std::vector<std::vector<SharedMatrix>> delta_double_tilde_; ///< Toth Eq. 105
     SharedMatrix rho_oo_;                         ///< Toth Eq. 53
     std::vector<SharedMatrix> rho_vv_;             ///< Toth Eq. 54
-    std::vector<std::vector<SharedMatrix>> F_fcia_hat_; ///< Toth Eq. 33 (currently not formed)
-    std::vector<std::vector<SharedMatrix>> F_knia_hat_; ///< Toth Eq. 34
+    // Exact retained-residual forms of Toth Eqs. 69--72 and 88b--89b.
+    // One matrix per existing ordered pair; rebuilt once per Lambda iteration.
+    std::vector<SharedMatrix> lambda_gamma_, lambda_delta_;
+    std::vector<std::vector<SharedMatrix>> F_fcia_hat_; ///< Toth Eq. 65 (currently not formed)
+    std::vector<std::vector<SharedMatrix>> F_knia_hat_; ///< Toth Eq. 66; exact mode stores rows on nn
     std::vector<SharedMatrix> K_maef_dt_;          ///< Toth Eq. 59
     std::vector<SharedMatrix> K_eimn_dt_;          ///< Toth Eq. 60
     std::vector<SharedMatrix> M_kace_bar_;         ///< Toth Eq. 61
@@ -686,13 +690,15 @@ class PSI_API DLPNOCCSD : public DLPNO {
     /// Estimate the incremental memory required by the Lambda equations.
     void estimate_lambda_memory();
     /// Compute occupied-occupied and virtual-virtual Lambda density intermediates (Toth Eqs. 53--54).
-    void form_goo();
+    void form_goo(bool exact_residual = false);
     /// Compute intermediates required by the Lambda equations.
-    void compute_lambda_intermediates();
+    void compute_lambda_intermediates(bool exact_residual = false);
     /// Compute the Lambda singles residual (Toth Eq. 58, 67--72).
-    void compute_L_ia(std::vector<SharedMatrix>& L_ia, std::vector<std::vector<SharedMatrix>>& L_ia_buffer);
+    void compute_L_ia(std::vector<SharedMatrix>& L_ia, std::vector<std::vector<SharedMatrix>>& L_ia_buffer,
+                      bool exact_residual = false, bool include_source = true);
     /// Compute the Lambda doubles residual (Toth Eq. 75, 86--91).
-    void compute_L_iajb(std::vector<SharedMatrix>& L_iajb, std::vector<SharedMatrix>& Ln_iajb);
+    void compute_L_iajb(std::vector<SharedMatrix>& L_iajb, std::vector<SharedMatrix>& Ln_iajb,
+                        bool exact_residual = false, bool include_source = true);
     /// Compute the occupied-space Lambda contraction (Toth Eq. 81).
     std::vector<SharedMatrix> compute_alpha_ijkl();
     /// Solve the Lambda equations for the current converged right-hand CCSD state.
@@ -764,6 +770,9 @@ class PSI_API DLPNOCCSD : public DLPNO {
     // Immutable only during one Lambda solve; released before amplitude probes
     // or rebuilding the right-hand residual can change its reference inputs.
     struct GradientLambdaFixed {
+        // The shared Toth residual loops call S_PNO concurrently. Protect
+        // admission and accounting for overlaps absent from the energy tables.
+        std::mutex overlap_mutex;
         std::vector<std::vector<SharedMatrix>> q;
         std::vector<SharedMatrix> f;
         std::map<std::tuple<int, int, int>, SharedMatrix> matrices;

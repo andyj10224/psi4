@@ -127,8 +127,12 @@ def check_stationarity(w):
                        f'converged sourced Lambda{rank}')                                                      #TEST
         compare_values(0., w.variable(f'DLPNO CCSD L{rank} DIRECTION ERROR'), 1.e-8,
                        f'CCSD rank {rank} transpose against right residual')                                   #TEST
+        compare_values(0., w.variable(f'DLPNO CCSD L{rank} SHARED TRANSPOSE ERROR'), 1.e-10,
+                       f'Toth shared rank {rank} residual against independent reverse')                        #TEST
         compare_values(0., w.variable(f'DLPNO (T) L{rank} SOURCE DIRECTION ERROR'), 1.e-8,
                        f'ordinary (T) rank {rank} source with responding TNOs')                                #TEST
+    compare_values(1., w.variable('DLPNO LAMBDA FIXED SOURCE BUILDS'), 1.e-12,
+                   'ordinary (T) fixed Lambda source built once')                                              #TEST
     compare_values(0., w.variable('DLPNO (T) L2 TNO DIRECTION ERROR'), 1.e-8,
                    'kept/discarded TNO contribution to Lambda2')                                               #TEST
     compare_values(2*w.variable('(T) CORRECTION ENERGY'),

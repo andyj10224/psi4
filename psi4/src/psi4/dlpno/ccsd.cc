@@ -97,6 +97,8 @@ SharedMatrix DLPNOCCSD::S_PNO(const int ij, const int mn) {
             // Retain only otherwise-recomputed overlaps; existing energy
             // overlap tables remain shared. No eviction within the solve.
             auto* fixed = gradient_lambda_fixed_.get();
+            std::unique_lock<std::mutex> overlap_lock;
+            if (fixed) overlap_lock = std::unique_lock<std::mutex>(fixed->overlap_mutex);
             const auto key = std::make_pair(i <= j ? ij : ji, m <= n ? mn : nm);
             if (fixed) {
                 fixed->overlap_requests.insert(key);

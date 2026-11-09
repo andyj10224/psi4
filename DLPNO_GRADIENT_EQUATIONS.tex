@@ -676,4 +676,86 @@ the accepted development providers after name/import normalization.
 No gradient equation, energy term or pair multiplicity is changed.
 See the Hessian delivery follow-up and test README for the current status.
 
+\section{Reconciliation with the Toth Lambda equations (9 November 2026)}
+The term-by-term source-function map and validation record are in
+\texttt{tests/dlpno-grad-model/LAMBDA\_RECONCILIATION.md}.
+The gradient Lambda iterations now reuse the original functions in
+\texttt{ccsd\_lambda.cc}, with the intermediate projectors and incoming
+domains required by the actual right residual retained. The default
+asymmetric-energy algorithm keeps its published projection choices.
+
+For the code's ordered-pair storage, define
+\begin{align}
+ \mathcal L_{CC}&=E_{CC}+\sum_i\ip{\lambda_i}{R_i}
+     +\tfrac12\sum_{p\,\mathrm{ordered}}\ip{\Lambda_p}{R_p},\\
+ \delta\mathcal L_{CC}&=\sum_i\ip{l_i}{\delta t_i}
+     +\tfrac12\sum_{p\,\mathrm{ordered}}\ip{l_p}{\delta T_p}.
+\end{align}
+The paper's nonsymmetric residual and final partner addition (Eq.~92)
+must both be included when comparing prefactors. No universal sign or
+factor-of-two correction is implied. The bare singles energy source
+$2f_{ia}$ is included explicitly, although it vanishes at ideal RHF
+stationarity.
+
+With parent-domain restriction understood,
+\begin{equation}
+ S_{pq}S_{qr}=X_p\T S X_qX_q\T S X_r
+            =X_p\T S P_q X_r,\qquad P_q=X_qX_q\T S.
+\end{equation}
+Replacing this chain by $S_{pr}$ removes $P_q$. It is not generally an
+identity in finite PNO/PAO spaces. The original singles implementation
+collapses such chains in Eqs.~69/72. Section V.A of Toth explicitly removes
+inner chains in Eqs.~103/105 and outer chains in Eqs.~106/107 for the
+higher doubles terms. Gradient mode retains these projectors without
+changing the right residual or adding an approximation to it.
+
+Let $\mathcal O_{ij}$ be the existing occupied domain of pair $ij$,
+$U=2T-T\T$, and $\bar\Lambda=\tfrac12\Lambda+\Lambda\T$.
+Extend the existing density-intermediate construction with
+\begin{align}
+ G_{ij}&=\sum_{n\in\mathcal O_{ij}}
+    S_{ij,jn}\bar\Lambda_{jn}S_{jn,in}T_{in}S_{in,ij},\\
+ D_{ij}&=\sum_{n\in\mathcal O_{ij}}
+    S_{ij,in}\Lambda_{in}S_{in,nj}U_{nj}S_{nj,ij}.
+\end{align}
+These two pair-sized SharedMatrix arrays are shared by L1 Eqs.~69--72
+and L2 Eqs.~88b--89b. They retain information lost by the virtual trace
+in $\rho^{OO}$ or absent from the same-pair $\rho^{VV}$.
+For the nonsymmetric doubles residual,
+\begin{align}
+ \Delta\bar l_{ij}^{(88b)}&=\tfrac12\sum_{k\in\mathcal O_{ij}}
+    S_{ij,kj}G_{kj}S_{kj,ik}K_{ik}S_{ik,ij},\\
+ X_{ijk}&=S_{ij,ik}D_{ik}S_{ik,kj}L_{kj}S_{kj,ij},\\
+ \Delta\bar l_{ij}^{(89b)}&=\sum_{k\in\mathcal O_{ij}}
+    \left(\tfrac12 X_{ijk}-\tfrac14 X_{ijk}\T\right).
+\end{align}
+The existing final partner permutation is unchanged. L1 contracts these
+same G/D matrices with the existing J/M intermediates of Eqs.~61--64.
+All fitted tensors retain their own auxiliary domains.
+
+On sparse graphs, Eq.~56's bilinear term sums over the mm domain;
+Eq.~66b retains all i in nn, including i outside kn. The incoming sums
+in G/D belong to their intermediate pair. Eq.~91's direct occupied-Fock
+piece includes retained in even when jn is absent. These bounds follow
+the contraction being differentiated, not an assumed complete graph.
+
+The fixed energy and existing ordinary-(T) sources are built once:
+\begin{equation}
+ l(\Lambda)=b_{CC}+b_{(T)}+J_{CC}\T\Lambda.
+\end{equation}
+The G/D arrays cost $16\sum_p n_p^2$ bytes in double precision and are
+updated once per residual evaluation. The original unrelaxed OPDM cannot
+replace all integral/domain covectors; the reverse routines remain for
+those covectors and independent checks, but no longer drive the gradient
+Lambda iterations.
+
+Validation here concerns fixed-space amplitude algebra: 256 fixtures
+agree with the independent reverse to $5.56\times10^{-16}$; scalar
+directional finite differences and 27 coordinate probes agree to
+$1.87\times10^{-12}$ and $1.06\times10^{-12}$. Source splitting,
+threading and persistent-overlap budgets agree to roundoff. The original
+published mode at zero occupied--virtual Fock is unchanged on 64 fixtures.
+Full molecular cc-pVDZ tests remain pending. No new triples-gradient,
+nuclear-Hessian, molecular speedup, or asymptotic-scaling claim follows.
+
 \end{document}

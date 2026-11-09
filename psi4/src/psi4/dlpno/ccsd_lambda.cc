@@ -172,7 +172,7 @@ void DLPNOCCSD::estimate_lambda_memory() {
 
 } // end function
 
-void DLPNOCCSD::form_goo() {
+void DLPNOCCSD::form_goo(bool exact_residual) {
     // Lambda-density contractions rho^OO and rho^VV (Toth Eqs. 53 and 54).
     // They are rebuilt from the current Lambda amplitudes every iteration and
     // are reused by both Lambda residuals and the unrelaxed CCSD OPDM.
@@ -182,7 +182,8 @@ void DLPNOCCSD::form_goo() {
     int n_lmo_pairs = ij_to_i_j_.size();
 
     // \rho^{OO}_{nk} = \sum_{m, e, f} \lambda_{mn}^{e_{mn} f_{mn}} [S(e_{mn}, e_{mk}) T_{mk}^{e_{mk} f_{mk}} S(f_{mk}, f_{mn})]
-    rho_oo_ = std::make_shared<Matrix>("rho_oo", naocc, naocc);
+    if (!exact_residual || !rho_oo_) rho_oo_ = std::make_shared<Matrix>("rho_oo", naocc, naocc);
+    else rho_oo_->zero();
 
 #pragma omp parallel for schedule(dynamic, 1)
     for (int nk = 0; nk < n_lmo_pairs; ++nk) {
@@ -208,15 +209,49 @@ void DLPNOCCSD::form_goo() {
     for (int mn = 0; mn < n_lmo_pairs; ++mn) {
         auto &[m, n] = ij_to_i_j_[mn];
 
-        rho_vv_[mn] = linalg::doublet(lambda_iajb_[mn], T_iajb_[mn], true, false);
+        if (!exact_residual || !rho_vv_[mn])
+            rho_vv_[mn] = linalg::doublet(lambda_iajb_[mn], T_iajb_[mn], true, false);
+        else rho_vv_[mn]->gemm(true, false, 1., lambda_iajb_[mn], T_iajb_[mn], 0.);
     } // end
+
+    if (!exact_residual) return;
+    // Reuse audit: rho^OO (Eq. 53) is scalar in the virtual indices, and
+    // rho^VV (Eq. 54) contains a single pair. Neither retains the intermediate
+    // pair projector needed by Eqs. 69--72 and 88b--89b. These two matrices
+    // keep that projector and share the Lambda/T contraction between L1/L2.
+    // G_kj = sum_n S_kj,jn lambda_bar_jn S_jn,kn T_kn S_kn,kj
+    // D_ik = sum_n S_ik,in lambda_in S_in,nk U_nk S_nk,ik.
+    lambda_iajb_bar_.resize(n_lmo_pairs);
+    lambda_gamma_.resize(n_lmo_pairs);
+    lambda_delta_.resize(n_lmo_pairs);
+#pragma omp parallel for schedule(dynamic, 1)
+    for (int p = 0; p < n_lmo_pairs; ++p) {
+        lambda_iajb_bar_[p] = lambda_iajb_[p]->transpose();
+        lambda_iajb_bar_[p]->axpy(0.5, lambda_iajb_[p]);
+        if (!lambda_gamma_[p]) lambda_gamma_[p] = std::make_shared<Matrix>(n_pno_[p], n_pno_[p]);
+        if (!lambda_delta_[p]) lambda_delta_[p] = std::make_shared<Matrix>(n_pno_[p], n_pno_[p]);
+        lambda_gamma_[p]->zero();
+        lambda_delta_[p]->zero();
+    }
+#pragma omp parallel for schedule(dynamic, 1)
+    for (int p = 0; p < n_lmo_pairs; ++p) {
+        const auto [i, j] = ij_to_i_j_[p];
+        for (int n : lmopair_to_lmos_[p]) {
+            const int in = i_j_to_ij_[i][n], jn = i_j_to_ij_[j][n], nj = ij_to_ji_[jn];
+            auto g = linalg::triplet(S_PNO(p, jn), lambda_iajb_bar_[jn], S_PNO(jn, in));
+            lambda_gamma_[p]->add(linalg::triplet(g, T_iajb_[in], S_PNO(in, p)));
+            auto d = linalg::triplet(S_PNO(p, in), lambda_iajb_[in], S_PNO(in, nj));
+            lambda_delta_[p]->add(linalg::triplet(d, Tt_iajb_[nj], S_PNO(nj, p)));
+        }
+    }
 }
 
-void DLPNOCCSD::compute_lambda_intermediates() {
+void DLPNOCCSD::compute_lambda_intermediates(bool exact_residual) {
 
     // Build the reusable tensors entering the stationary Lambda equations.
-    // Published equation map: Toth Eqs. 33--34, 57, 59--64, 73--74,
-    // 103, and 105. beta/gamma/delta and the doubly transformed Fock
+    // Published equation map: Toth Eqs. 56--66, 73--74, 103, and 105
+    // (the last two apply only to the published deprojected mode).
+    // beta/gamma/delta and the doubly transformed Fock
     // matrices are shared with the right-hand implementation (Jiang
     // Eqs. 82--86). Keeping this map here makes the residual routines below
     // readable without relying on the order in which storage is allocated.
@@ -553,7 +588,7 @@ void DLPNOCCSD::compute_lambda_intermediates() {
     time_stop = std::time(nullptr);
     outfile->Printf("   %3d seconds\n\n", (int) time_stop - (int) time_start);
 
-    // Toth Eq. 33. This explicit three-virtual intermediate and its matching
+    // Toth Eq. 65. This explicit three-virtual intermediate and its matching
     // residual contraction are retained below as documentation but disabled;
     // the active factorized Eq. 68a contraction avoids storing it.
     /*
@@ -616,7 +651,8 @@ void DLPNOCCSD::compute_lambda_intermediates() {
     outfile->Printf("   Forming F_knia_hat...");
     time_start = std::time(nullptr);
 
-    // Toth Eq. 34a
+    // Toth Eq. 66a. The exact residual also needs Eq. 66b on every i in
+    // nn, including i outside kn. Keep those rows in the existing tensor.
     F_knia_hat_.resize(n_lmo_pairs);
 #pragma omp parallel for schedule(dynamic, 1)
     for (int kn = 0; kn < n_lmo_pairs; ++kn) {
@@ -627,7 +663,15 @@ void DLPNOCCSD::compute_lambda_intermediates() {
         int nlmo_kn = lmopair_to_lmos_[kn].size();
         int npno_kn = n_pno_[kn];
 
-        F_knia_hat_[kn].resize(nlmo_kn);
+        const int nn = i_j_to_ij_[n][n];
+        const auto& hat_domain = exact_residual ? lmopair_to_lmos_[nn] : lmopair_to_lmos_[kn];
+        F_knia_hat_[kn].resize(hat_domain.size());
+        if (exact_residual) {
+            for (size_t row = 0; row < hat_domain.size(); ++row) {
+                if (lmopair_to_lmos_dense_[kn][hat_domain[row]] >= 0) continue;
+                F_knia_hat_[kn][row] = std::make_shared<Matrix>(n_pno_[i_j_to_ij_[hat_domain[row]][hat_domain[row]]], 1);
+            }
+        }
 
         auto F_knia_temp = J_ijmb_[kn]->clone(); // (i_kn, a_kn)
         F_knia_temp->scale(2.0);
@@ -636,14 +680,15 @@ void DLPNOCCSD::compute_lambda_intermediates() {
         for (int i_kn = 0; i_kn < nlmo_kn; ++i_kn) {
             int i = lmopair_to_lmos_[kn][i_kn];
             int ii = i_j_to_ij_[i][i];
+            const int row = exact_residual ? lmopair_to_lmos_dense_[nn][i] : i_kn;
 
-            F_knia_hat_[kn][i_kn] = submatrix_rows(*F_knia_temp, std::vector<int>(1, i_kn)); // (1, a_kn)
-            F_knia_hat_[kn][i_kn]->reshape(npno_kn, 1); // (a_kn, 1)
-            F_knia_hat_[kn][i_kn] = linalg::doublet(S_PNO(ii, kn), F_knia_hat_[kn][i_kn]); // (a_ii, 1)
+            F_knia_hat_[kn][row] = submatrix_rows(*F_knia_temp, std::vector<int>(1, i_kn)); // (1, a_kn)
+            F_knia_hat_[kn][row]->reshape(npno_kn, 1); // (a_kn, 1)
+            F_knia_hat_[kn][row] = linalg::doublet(S_PNO(ii, kn), F_knia_hat_[kn][row]); // (a_ii, 1)
         } // end i_kn
     } // end kn
 
-    // Toth Eq. 34b
+    // Toth Eq. 66b: differentiate Fkc_bar_[nn] in its own occupied domain.
 #pragma omp parallel for schedule(dynamic, 1)
     for (int n = 0; n < naocc; ++n) {
         int nn = i_j_to_ij_[n][n];
@@ -664,7 +709,7 @@ void DLPNOCCSD::compute_lambda_intermediates() {
                 for (int i_nn = 0; i_nn < nlmo_nn; ++i_nn) {
                     int i = lmopair_to_lmos_[nn][i_nn];
                     int ii = i_j_to_ij_[i][i];
-                    int i_kn = lmopair_to_lmos_dense_[kn][i]; // Index of i in the domain of kn
+                    int i_kn = exact_residual ? i_nn : lmopair_to_lmos_dense_[kn][i];
                     if (i_kn == -1) continue; // If i is not in the domain of kn, skip
 
                     auto F_knia_temp = std::make_shared<Matrix>("F_knia_temp", npno_nn, 1);
@@ -807,10 +852,11 @@ void DLPNOCCSD::compute_lambda_intermediates() {
         // -\widetilde{T}_k^{e_mm} L_{ik}^{a_mm f_mm} S^{a_mm}_{a_ii} T_m^{f_mm}.
 
         // L_{ik}^{a_{mm}f_{mm}} = 2(ia_{mm} | kf_{mm})  - (if_{mm} | ka_{mm})
-        for (int k_im = 0; k_im < nlmo_im; ++k_im) {
-            int k = lmopair_to_lmos_[im][k_im];
+        // This term differentiates the mm-fitted Fock contribution: its
+        // contracted k belongs to mm, even when ik is not a retained pair.
+        const auto& bilinear_domain = exact_residual ? lmopair_to_lmos_[mm] : lmopair_to_lmos_[im];
+        for (int k : bilinear_domain) {
             int mk = i_j_to_ij_[m][k], kk = i_j_to_ij_[k][k];
-            int i_mk = lmopair_to_lmos_dense_[mk][i];
             int k_mm = lmopair_to_lmos_dense_[mm][k];
 
             // \widetilde{T}^{e_{mm}}_k
@@ -954,6 +1000,9 @@ void DLPNOCCSD::compute_lambda_intermediates() {
     time_stop = std::time(nullptr);
     outfile->Printf("   %3d seconds\n\n", (int) time_stop - (int) time_start);
 
+    // Eqs. 103/105 have removed projectors. The exact residual instead uses
+    // the shared Lambda-dependent G/D matrices built by form_goo(true).
+    if (exact_residual) return;
     outfile->Printf("   Forming gamma_double_tilde and delta_double_tilde...");
     time_start = std::time(nullptr);
 
@@ -1017,7 +1066,8 @@ void DLPNOCCSD::compute_lambda_intermediates() {
     outfile->Printf("   %3d seconds\n\n", (int) time_stop - (int) time_start);
 }
 
-void DLPNOCCSD::compute_L_ia(std::vector<SharedMatrix>& L_ia, std::vector<std::vector<SharedMatrix>> &L_ia_buffer) {
+void DLPNOCCSD::compute_L_ia(std::vector<SharedMatrix>& L_ia, std::vector<std::vector<SharedMatrix>> &L_ia_buffer,
+                            bool exact_residual, bool include_source) {
 
     // Assemble l_i^{a_ii} = dL_CCSD/dt_i^{a_ii}, the Lambda-singles
     // stationarity residual. The leading transformed-Fock/delta terms are
@@ -1047,11 +1097,18 @@ void DLPNOCCSD::compute_L_ia(std::vector<SharedMatrix>& L_ia, std::vector<std::v
         int ii = i_j_to_ij_[i][i];
 
         L_ia[i] = linalg::doublet(F_vv_double_tilde_[ii], lambda_ia_[i], true, false); // (e, a) x (e, 1) -> (a, 1)
+        if (include_source) {
+            // d(2 f_ia t_i^a)/dt_i^a. Zero at an ideal RHF stationary point,
+            // but part of singles_fock_energy() and required away from it.
+            auto f = submatrix_rows_and_cols(*F_lmo_pao_, {i}, lmopair_to_paos_[ii]);
+            L_ia[i]->axpy(2., linalg::doublet(X_pno_[ii], f, true, true));
+        }
     } // end for
 
     // + 2.0 * (S^{a_{ii}}_{a_{in}} L_{in}^{a_{in}f_{in}} S^{f_{in}}_{f_{nn}}) T_{n}^{f_{nn}}
 #pragma omp parallel for schedule(dynamic, 1)
     for (int in = 0; in < n_lmo_pairs; ++in) {
+        if (!include_source) continue;
         auto &[i, n] = ij_to_i_j_[in];
         int ii = i_j_to_ij_[i][i], nn = i_j_to_ij_[n][n];
 
@@ -1105,7 +1162,9 @@ void DLPNOCCSD::compute_L_ia(std::vector<SharedMatrix>& L_ia, std::vector<std::v
 	    int naux_mn = lmopair_to_ribfs_[mn].size();
 
         auto qia_mn = QIA_PNO(mn); // naux_mn * (nlmo_mn, npno_mn)
-        auto qab_mn = QAB_PNO(mn); // naux_mn * (npno_mn, npno_mn)
+        const int pair_idx = std::min(mn, ij_to_ji_[mn]);
+        const bool fixed_q = exact_residual && gradient_lambda_fixed_ && !gradient_lambda_fixed_->q[pair_idx].empty();
+        auto qab_mn = fixed_q ? std::vector<SharedMatrix>{} : QAB_PNO(mn);
 
         // l_i^{a_ii} -= \widetilde{\widetilde{K}}_{e_mn i}^{mn}
         //                  \widetilde{\lambda}_{mn}^{e_mn a_mn}S_{a_mn}^{a_ii} (Toth Eq. 67b)
@@ -1120,12 +1179,12 @@ void DLPNOCCSD::compute_L_ia(std::vector<SharedMatrix>& L_ia, std::vector<std::v
 
         // rho^VV contribution to l_i^{a_ii} (Toth Eq. 68a).
         for (int q_mn = 0; q_mn < naux_mn; ++q_mn) {
-            auto q_vv = qab_mn[q_mn]->clone(); // (npno_mn, npno_mn)
-            auto q_ov = qia_mn[q_mn]->clone(); // (nlmo_mn, npno_mn)
+            auto q_vv = fixed_q ? gradient_lambda_fixed_->q[pair_idx][q_mn] : qab_mn[q_mn]->clone();
+            const auto& q_ov = qia_mn[q_mn]; // (nlmo_mn, npno_mn)
 
             // This performs a "T1-dressing" on Qvv, 
             // B^{Q_{mn}}_{f_{mn}c_{mn}} -= \widetilde{T}_{k_{mn}}^{f_{mn}} B^{Q_{mn}}_{k_{mn}c_{mn}}
-            q_vv->subtract(linalg::doublet(T_n_ij_[mn], q_ov, true, false));
+            if (!fixed_q) q_vv->subtract(linalg::doublet(T_n_ij_[mn], q_ov, true, false));
 
             auto Gvv_temp = q_ov->clone();
             Gvv_temp->scale(2.0 * rho_vv_[mn]->vector_dot(q_vv));
@@ -1141,8 +1200,9 @@ void DLPNOCCSD::compute_L_ia(std::vector<SharedMatrix>& L_ia, std::vector<std::v
         } // end q_mn
 
         // -rho^OO_nm \hat{F}_{mn}^{i a_ii} contribution (Toth Eq. 68b).
-        for (int i_mn = 0; i_mn < lmopair_to_lmos_[mn].size(); ++i_mn) {
-            int i = lmopair_to_lmos_[mn][i_mn];
+        const auto& hat_domain = exact_residual ? lmopair_to_lmos_[i_j_to_ij_[n][n]] : lmopair_to_lmos_[mn];
+        for (int i_mn = 0; i_mn < hat_domain.size(); ++i_mn) {
+            int i = hat_domain[i_mn];
 
             /*
             auto Gvv_temp = linalg::doublet(F_fcia_hat_[mn][i_mn], Gvv_slice, false, false); // (a_ii, f_mn * c_mn) (f_mn * c_mn, 1) -> (a_ii, 1)
@@ -1155,119 +1215,148 @@ void DLPNOCCSD::compute_L_ia(std::vector<SharedMatrix>& L_ia, std::vector<std::v
         }
     } // end mn
 
-    /* \textcolor{blue}{\begin{equation}
-        l^{a_{ii}}_{i} \mathrel{+}= [S^{a_{ii}}_{a_{km}}S^{a_{km}}_{a_{mn}}\overline{\lambda}^{a_{mn}f_{mn}}_{mn}S^{f_{kn}}_{f_{mn}}]T^{f_{kn}c_{kn}}_{kn}S^{c_{km}}_{c_{kn}}\overline{J}^{ic_{km}}_{km} (Toth Eq. 69)
-        \end{equation}}
-    */
+    if (exact_residual) {
+        // Toth Eqs. 69--72, with their intermediate pair projectors retained.
+        // G/D are shared with L2; no second sum over the same Lambda/T product.
 #pragma omp parallel for schedule(dynamic, 1)
-    for (int mn = 0; mn < n_lmo_pairs; ++mn) {
-        auto &[m, n] = ij_to_i_j_[mn];
-
-        int thread = 0;
+        for (int p = 0; p < n_lmo_pairs; ++p) {
+            const auto [i, j] = ij_to_i_j_[p];
+            const int rev = ij_to_ji_[p];
+            int thread = 0;
 #ifdef _OPENMP
-        thread = omp_get_thread_num();
+            thread = omp_get_thread_num();
+#endif
+            auto g = lambda_gamma_[p]->clone();
+            g->reshape(n_pno_[p] * n_pno_[p], 1);
+            L_ia_buffer[thread][j]->subtract(linalg::doublet(J_kaec_bar_[p], g)); // Eq. 70
+            auto d = lambda_delta_[p]->transpose();
+            d->reshape(n_pno_[p] * n_pno_[p], 1);
+            L_ia_buffer[thread][i]->axpy(0.5, linalg::doublet(M_kace_bar_[rev], d)); // Eq. 71
+            auto gj = linalg::doublet(lambda_gamma_[p], J_kmic_bar_[p], false, true);
+            auto dm = linalg::doublet(lambda_delta_[p], M_mkic_bar_[p], false, true);
+            for (int row = 0; row < lmopair_to_lmos_[p].size(); ++row) {
+                const int o = lmopair_to_lmos_[p][row], oo = i_j_to_ij_[o][o];
+                auto value = submatrix_cols(*gj, {row});
+                value->axpy(-0.5, submatrix_cols(*dm, {row}));
+                L_ia_buffer[thread][o]->add(linalg::doublet(S_PNO(oo, p), value)); // Eqs. 69/72
+            }
+        }
+    } else {
+        /* \textcolor{blue}{\begin{equation}
+            l^{a_{ii}}_{i} \mathrel{+}= [S^{a_{ii}}_{a_{km}}S^{a_{km}}_{a_{mn}}\overline{\lambda}^{a_{mn}f_{mn}}_{mn}S^{f_{kn}}_{f_{mn}}]T^{f_{kn}c_{kn}}_{kn}S^{c_{km}}_{c_{kn}}\overline{J}^{ic_{km}}_{km} (Toth Eq. 69)
+            \end{equation}}
+        */
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int mn = 0; mn < n_lmo_pairs; ++mn) {
+            auto &[m, n] = ij_to_i_j_[mn];
+
+            int thread = 0;
+#ifdef _OPENMP
+            thread = omp_get_thread_num();
 #endif
 
-        for (int k_mn = 0; k_mn < lmopair_to_lmos_[mn].size(); ++k_mn) {
-            int k = lmopair_to_lmos_[mn][k_mn];
-            int km = i_j_to_ij_[k][m], kn = i_j_to_ij_[k][n];
-            auto gus = linalg::doublet(lambda_iajb_bar_[mn], S_PNO(mn, kn));
-            auto L1_temp = linalg::triplet(gus, T_iajb_[kn], S_PNO(kn, km));
+            for (int k_mn = 0; k_mn < lmopair_to_lmos_[mn].size(); ++k_mn) {
+                int k = lmopair_to_lmos_[mn][k_mn];
+                int km = i_j_to_ij_[k][m], kn = i_j_to_ij_[k][n];
+                auto gus = linalg::doublet(lambda_iajb_bar_[mn], S_PNO(mn, kn));
+                auto L1_temp = linalg::triplet(gus, T_iajb_[kn], S_PNO(kn, km));
 
-            // Contract with the \overline{J} intermediate from Toth Eq. 63.
-            L1_temp = linalg::doublet(L1_temp, J_kmic_bar_[km], false, true); // (a, c) * (i, c)
+                // Contract with the \overline{J} intermediate from Toth Eq. 63.
+                L1_temp = linalg::doublet(L1_temp, J_kmic_bar_[km], false, true); // (a, c) * (i, c)
             
-            for (int i_km = 0; i_km < lmopair_to_lmos_[km].size(); ++i_km) {
-                int i = lmopair_to_lmos_[km][i_km];
-                int ii = i_j_to_ij_[i][i];
-                auto L1_temp_slice = submatrix_cols(*L1_temp, std::vector<int>(1, i_km));
-                L_ia_buffer[thread][i]->add(linalg::doublet(S_PNO(ii, mn), L1_temp_slice));
+                for (int i_km = 0; i_km < lmopair_to_lmos_[km].size(); ++i_km) {
+                    int i = lmopair_to_lmos_[km][i_km];
+                    int ii = i_j_to_ij_[i][i];
+                    auto L1_temp_slice = submatrix_cols(*L1_temp, std::vector<int>(1, i_km));
+                    L_ia_buffer[thread][i]->add(linalg::doublet(S_PNO(ii, mn), L1_temp_slice));
+                } // end for
+
             } // end for
-
         } // end for
-    } // end for
 
-    // l_i^{a_ii} -= (S \overline{\lambda}_{in} S) T_kn S \overline{J}_{k a_ii}
-    // (Toth Eq. 70; \overline{J} is defined in Toth Eq. 64).
+        // l_i^{a_ii} -= (S \overline{\lambda}_{in} S) T_kn S \overline{J}_{k a_ii}
+        // (Toth Eq. 70; \overline{J} is defined in Toth Eq. 64).
 #pragma omp parallel for schedule(dynamic, 1) 
-    for (int in = 0; in < n_lmo_pairs; ++in) {
-        auto &[i, n] = ij_to_i_j_[in];
+        for (int in = 0; in < n_lmo_pairs; ++in) {
+            auto &[i, n] = ij_to_i_j_[in];
 
-        int thread = 0;
+            int thread = 0;
 #ifdef _OPENMP
-        thread = omp_get_thread_num();
+            thread = omp_get_thread_num();
 #endif
 
-        for (int k_in = 0; k_in < lmopair_to_lmos_[in].size(); ++k_in) {
-            int k = lmopair_to_lmos_[in][k_in];
-            int kn = i_j_to_ij_[k][n], in = i_j_to_ij_[i][n], ki = i_j_to_ij_[k][i];
-            auto L1_temp = linalg::triplet(S_PNO(ki, in), lambda_iajb_bar_[in], S_PNO(in, kn));
-            L1_temp = linalg::triplet(L1_temp, T_iajb_[kn], S_PNO(kn, ki));
+            for (int k_in = 0; k_in < lmopair_to_lmos_[in].size(); ++k_in) {
+                int k = lmopair_to_lmos_[in][k_in];
+                int kn = i_j_to_ij_[k][n], in = i_j_to_ij_[i][n], ki = i_j_to_ij_[k][i];
+                auto L1_temp = linalg::triplet(S_PNO(ki, in), lambda_iajb_bar_[in], S_PNO(in, kn));
+                L1_temp = linalg::triplet(L1_temp, T_iajb_[kn], S_PNO(kn, ki));
 
-            L1_temp->reshape(n_pno_[ki] * n_pno_[ki], 1);
-            L1_temp = linalg::doublet(J_kaec_bar_[ki], L1_temp); // (a, e * c) (e * c, 1) => (a, 1)
-            L_ia_buffer[thread][i]->subtract(L1_temp);
-        } // end k_in
-    } // end in
+                L1_temp->reshape(n_pno_[ki] * n_pno_[ki], 1);
+                L1_temp = linalg::doublet(J_kaec_bar_[ki], L1_temp); // (a, e * c) (e * c, 1) => (a, 1)
+                L_ia_buffer[thread][i]->subtract(L1_temp);
+            } // end k_in
+        } // end in
         
-    /*
-    \textcolor{blue}{\begin{equation}
-        l^{a_{ii}}_i \mathrel{+}= \frac{1}{2} \widetilde{\lambda}_{in}^{e_{in}f_{in}} [S^{e_{in}}_{e_{ik}}(S^{c_{nk}}_{c_{ik}}u^{f_{nk}c_{nk}}_{nk}S^{f_{in}}_{f_{nk}})]\overline{M}^{c_{ki}e_{ki}}_{ka_{ii}} (Toth Eq. 71)
-    \end{equation}}
-    */
-#pragma omp parallel for schedule(dynamic, 1)
-    for (int in = 0; in < n_lmo_pairs; ++in) {
-        auto &[i, n] = ij_to_i_j_[in];
-
-        int thread = 0;
-#ifdef _OPENMP
-        thread = omp_get_thread_num();
-#endif
-
-        for (int k_in = 0; k_in < lmopair_to_lmos_[in].size(); ++k_in) {
-            int k = lmopair_to_lmos_[in][k_in];
-            int nk = i_j_to_ij_[n][k], in = i_j_to_ij_[i][n], ki = i_j_to_ij_[k][i];
-            auto L1_temp = linalg::triplet(S_PNO(ki, in), lambda_iajb_[in], S_PNO(in, nk)); // (e_{ki}, e_{in}) (e_{in}, f_{in}) (f_{in}, f_{nk}) -> (e_{ki}, f_{nk})
-            L1_temp = linalg::triplet(L1_temp, Tt_iajb_[nk], S_PNO(nk, ki));
-
-            L1_temp->transpose_this(); // (e, c) -> (c, e)
-            L1_temp->reshape(n_pno_[ki] * n_pno_[ki], 1);
-            L1_temp = linalg::doublet(M_kace_bar_[ki], L1_temp); // (a, c * e) (c * e, 1) => (a, 1) (steak sauce)
-            L1_temp->scale(0.5);
-            L_ia_buffer[thread][i]->add(L1_temp);
-        } // end k_in
-    } // end in
-
-    /*
+        /*
         \textcolor{blue}{\begin{equation}
-            l^{a_{ii}}_i \mathrel{-}= \frac{1}{2}[S^{a_{ii}}_{a_{mk}}(S^{a_{mk}}_{a_{mn}}\widetilde{\lambda}^{a_{mn}f_{mn}}_{mn}S^{f_{mn}}_{f_{nk}})]u^{f_{nk}c_{nk}}_{nk}S^{c_{nk}}_{c_{mk}}\overline{M}^{ic_{mk}}_{mk} (Toth Eq. 72)
+            l^{a_{ii}}_i \mathrel{+}= \frac{1}{2} \widetilde{\lambda}_{in}^{e_{in}f_{in}} [S^{e_{in}}_{e_{ik}}(S^{c_{nk}}_{c_{ik}}u^{f_{nk}c_{nk}}_{nk}S^{f_{in}}_{f_{nk}})]\overline{M}^{c_{ki}e_{ki}}_{ka_{ii}} (Toth Eq. 71)
         \end{equation}}
-    */
+        */
 #pragma omp parallel for schedule(dynamic, 1)
-    for (int mn = 0; mn < n_lmo_pairs; ++mn) {
-        auto &[m, n] = ij_to_i_j_[mn];
+        for (int in = 0; in < n_lmo_pairs; ++in) {
+            auto &[i, n] = ij_to_i_j_[in];
 
-        int thread = 0;
+            int thread = 0;
 #ifdef _OPENMP
-        thread = omp_get_thread_num();
+            thread = omp_get_thread_num();
 #endif
 
-        for (int k_mn = 0; k_mn < lmopair_to_lmos_[mn].size(); ++k_mn) {
-            int k = lmopair_to_lmos_[mn][k_mn];
-            int nk = i_j_to_ij_[n][k], mk = i_j_to_ij_[m][k];
-            auto L1_temp = linalg::doublet(lambda_iajb_[mn], S_PNO(mn, nk)); // (a, f)
-            L1_temp = linalg::triplet(L1_temp, Tt_iajb_[nk], S_PNO(nk, mk)); // (a, f) (f, c) -> (a, c)
+            for (int k_in = 0; k_in < lmopair_to_lmos_[in].size(); ++k_in) {
+                int k = lmopair_to_lmos_[in][k_in];
+                int nk = i_j_to_ij_[n][k], in = i_j_to_ij_[i][n], ki = i_j_to_ij_[k][i];
+                auto L1_temp = linalg::triplet(S_PNO(ki, in), lambda_iajb_[in], S_PNO(in, nk)); // (e_{ki}, e_{in}) (e_{in}, f_{in}) (f_{in}, f_{nk}) -> (e_{ki}, f_{nk})
+                L1_temp = linalg::triplet(L1_temp, Tt_iajb_[nk], S_PNO(nk, ki));
 
-            for (int i_mk = 0; i_mk < lmopair_to_lmos_[mk].size(); ++i_mk) {
-                int i = lmopair_to_lmos_[mk][i_mk];
-                int ii = i_j_to_ij_[i][i];
-                auto M_temp = submatrix_rows(*M_mkic_bar_[mk], std::vector<int>(1, i_mk));
-                M_temp = linalg::triplet(S_PNO(ii, mn), L1_temp, M_temp, false, false, true);
-                M_temp->scale(-0.5);
-                L_ia_buffer[thread][i]->add(M_temp);
-            } // end i_mk
-        } // end k_mn
-    } // end mn
+                L1_temp->transpose_this(); // (e, c) -> (c, e)
+                L1_temp->reshape(n_pno_[ki] * n_pno_[ki], 1);
+                L1_temp = linalg::doublet(M_kace_bar_[ki], L1_temp); // (a, c * e) (c * e, 1) => (a, 1) (steak sauce)
+                L1_temp->scale(0.5);
+                L_ia_buffer[thread][i]->add(L1_temp);
+            } // end k_in
+        } // end in
+
+        /*
+            \textcolor{blue}{\begin{equation}
+                l^{a_{ii}}_i \mathrel{-}= \frac{1}{2}[S^{a_{ii}}_{a_{mk}}(S^{a_{mk}}_{a_{mn}}\widetilde{\lambda}^{a_{mn}f_{mn}}_{mn}S^{f_{mn}}_{f_{nk}})]u^{f_{nk}c_{nk}}_{nk}S^{c_{nk}}_{c_{mk}}\overline{M}^{ic_{mk}}_{mk} (Toth Eq. 72)
+            \end{equation}}
+        */
+#pragma omp parallel for schedule(dynamic, 1)
+        for (int mn = 0; mn < n_lmo_pairs; ++mn) {
+            auto &[m, n] = ij_to_i_j_[mn];
+
+            int thread = 0;
+#ifdef _OPENMP
+            thread = omp_get_thread_num();
+#endif
+
+            for (int k_mn = 0; k_mn < lmopair_to_lmos_[mn].size(); ++k_mn) {
+                int k = lmopair_to_lmos_[mn][k_mn];
+                int nk = i_j_to_ij_[n][k], mk = i_j_to_ij_[m][k];
+                auto L1_temp = linalg::doublet(lambda_iajb_[mn], S_PNO(mn, nk)); // (a, f)
+                L1_temp = linalg::triplet(L1_temp, Tt_iajb_[nk], S_PNO(nk, mk)); // (a, f) (f, c) -> (a, c)
+
+                for (int i_mk = 0; i_mk < lmopair_to_lmos_[mk].size(); ++i_mk) {
+                    int i = lmopair_to_lmos_[mk][i_mk];
+                    int ii = i_j_to_ij_[i][i];
+                    auto M_temp = submatrix_rows(*M_mkic_bar_[mk], std::vector<int>(1, i_mk));
+                    M_temp = linalg::triplet(S_PNO(ii, mn), L1_temp, M_temp, false, false, true);
+                    M_temp->scale(-0.5);
+                    L_ia_buffer[thread][i]->add(M_temp);
+                } // end i_mk
+            } // end k_mn
+        } // end mn
+
+    }
 
     // Add L_ia_buffers to L_ia
     for (int i = 0; i < naocc; ++i) {
@@ -1316,7 +1405,8 @@ std::vector<SharedMatrix> DLPNOCCSD::compute_alpha_ijkl() {
     return alpha_ijkl;
 }
 
-void DLPNOCCSD::compute_L_iajb(std::vector<SharedMatrix>& L_iajb, std::vector<SharedMatrix>& Ln_iajb) {
+void DLPNOCCSD::compute_L_iajb(std::vector<SharedMatrix>& L_iajb, std::vector<SharedMatrix>& Ln_iajb,
+                              bool exact_residual, bool include_source) {
 
     // Assemble the ordered-pair Lambda-doubles stationarity residual. Ln_ij
     // holds the nonsymmetric contribution in Toth Eq. 75; the final loop adds
@@ -1353,21 +1443,27 @@ void DLPNOCCSD::compute_L_iajb(std::vector<SharedMatrix>& L_iajb, std::vector<Sh
         const int nlmo_ij = lmopair_to_lmos_[ij].size();
         const int npno_ij = n_pno_[ij];
 
-        Ln_iajb[ij] = L_iajb_[ij]->clone();
+        if (include_source) Ln_iajb[ij]->copy(L_iajb_[ij]);
 
         // Pair-symmetric terms need be formed only for one orientation; their
         // transpose is accumulated into the reverse ordered pair at each step.
         if (i <= j) {
             // Necessary three-center integrals
             auto qma_ij = QIA_PNO(ij); // naux_ij * (nlmo_ij, npno_ij)
-            auto qab_ij = QAB_PNO(ij); // naux_ij * (npno_ij, npno_ij)
+            const bool fixed_q = exact_residual && gradient_lambda_fixed_ && !gradient_lambda_fixed_->q[ij].empty();
+            auto qab_ij = fixed_q ? std::vector<SharedMatrix>{} : QAB_PNO(ij);
 
             // Four-index/DF contractions collected in Toth Eq. 86.
             for (int q_ij = 0; q_ij < naux_ij; ++q_ij) {
-                // Form the T1-dressed Qab intermediate on the fly; it is used once.
+                // Reuse the persistent T1-dressed Qab when admitted to RAM.
                 // \widetilde{B}^{Q}_{ab} = B^{Q}_{ab} - t_{k}^{a} B^{Q}_{kb} (Jiang Eq. 93)
-                auto Qab_t1 = qab_ij[q_ij]->clone(); // (a, b)
-                Qab_t1->subtract(linalg::doublet(T_n_ij_[ij], qma_ij[q_ij], true, false)); // (k, a) (k, b) -> (a, b)
+                SharedMatrix Qab_t1;
+                if (fixed_q) {
+                    Qab_t1 = gradient_lambda_fixed_->q[ij][q_ij];
+                } else {
+                    Qab_t1 = qab_ij[q_ij]->clone(); // (a, b)
+                    Qab_t1->subtract(linalg::doublet(T_n_ij_[ij], qma_ij[q_ij], true, false));
+                }
 
                 auto L_temp = std::make_shared<Matrix>(n_pno_[ij], n_pno_[ij]);
                 L_temp->zero();
@@ -1473,9 +1569,11 @@ void DLPNOCCSD::compute_L_iajb(std::vector<SharedMatrix>& L_iajb, std::vector<Sh
 
             // Higher-order correction to the same contraction (Toth Eq. 88b),
             // preassembled in gamma_double_tilde_ (Eq. 103).
-            gamma_temp = gamma_double_tilde_[ij][n_ij]->clone();
-            gamma_temp->scale(0.5);
-            Ln_iajb[ij]->add(linalg::triplet(S_PNO(ij, jn), lambda_iajb_bar_[jn], gamma_temp));
+            if (!exact_residual) {
+                gamma_temp = gamma_double_tilde_[ij][n_ij]->clone();
+                gamma_temp->scale(0.5);
+                Ln_iajb[ij]->add(linalg::triplet(S_PNO(ij, jn), lambda_iajb_bar_[jn], gamma_temp));
+            }
         } // end n_ij
         
         for (int n_ij = 0; n_ij < nlmo_ij; ++n_ij) {
@@ -1507,13 +1605,36 @@ void DLPNOCCSD::compute_L_iajb(std::vector<SharedMatrix>& L_iajb, std::vector<Sh
 
             // Higher-order partner, Toth Eq. 89b, using the Eq. 105
             // delta_double_tilde_ intermediate.
-            delta_temp = delta_double_tilde_[ij][n_ij]->clone();
-            delta_temp->scale(0.5);
-            
-            delta_temp = linalg::triplet(S_PNO(ij, in), lambda_iajb_[in], delta_temp);
-            Ln_iajb[ij]->add(delta_temp);
-            delta_temp->scale(-0.5);
-            Ln_iajb[ij]->add(delta_temp->transpose());
+            if (!exact_residual) {
+                delta_temp = delta_double_tilde_[ij][n_ij]->clone();
+                delta_temp->scale(0.5);
+                delta_temp = linalg::triplet(S_PNO(ij, in), lambda_iajb_[in], delta_temp);
+                Ln_iajb[ij]->add(delta_temp);
+                delta_temp->scale(-0.5);
+                Ln_iajb[ij]->add(delta_temp->transpose());
+            }
+        }
+
+        if (exact_residual) {
+            // Eqs. 88b/89b before the deprojections in Section V.A. Each
+            // shared G/D already sums incoming n in its own retained domain.
+            for (int k : lmopair_to_lmos_[ij]) {
+                const int ik = i_j_to_ij_[i][k], kj = i_j_to_ij_[k][j];
+                auto g = linalg::triplet(S_PNO(ij, kj), lambda_gamma_[kj], S_PNO(kj, ik));
+                Ln_iajb[ij]->axpy(0.5, linalg::triplet(g, K_iajb_[ik], S_PNO(ik, ij)));
+                auto d = linalg::triplet(S_PNO(ij, ik), lambda_delta_[ik], S_PNO(ik, kj));
+                d = linalg::triplet(d, L_iajb_[kj], S_PNO(kj, ij));
+                Ln_iajb[ij]->axpy(0.5, d);
+                Ln_iajb[ij]->axpy(-0.25, d->transpose());
+            }
+            // The right residual G_in contains every retained ij with the
+            // same i, even when jn is absent and F_jn is only its bare value.
+            for (int n : lmopair_to_lmos_[ii]) {
+                if (i_j_to_ij_[j][n] >= 0) continue; // remaining terms below
+                const int in = i_j_to_ij_[i][n];
+                auto projected = linalg::triplet(S_PNO(ij, in), lambda_iajb_[in], S_PNO(in, ij));
+                Ln_iajb[ij]->axpy(-F_im_double_tilde_->get(j, n), projected);
+            }
         }
 
         // Occupied-Fock and rho^OO contributions (Toth Eq. 91; rho^OO is
@@ -1561,6 +1682,8 @@ void DLPNOCCSD::reset_lambda_state() {
     delta_double_tilde_.clear();
     rho_oo_.reset();
     rho_vv_.clear();
+    lambda_gamma_.clear();
+    lambda_delta_.clear();
     F_fcia_hat_.clear();
     F_knia_hat_.clear();
     K_maef_dt_.clear();
@@ -1998,10 +2121,18 @@ void DLPNOCCSD::estimate_gradient_lambda_memory() {
     size_t words = ccsd_baseline_memory_doubles_ + triples_local_response_words_ + no * no;
     size_t amp = 0, scratch = 0;
     for (auto& t : T_ia_) amp += t->nrow();
-    size_t response = 0, df_scratch = 0;
+    size_t response = 0, df_scratch = 0, toth_words = no * no, mixed_density_words = 0;
     for (int p = 0; p < T_iajb_.size(); ++p) {
         const size_t n = n_pno_[p], m = lmopair_to_lmos_[p].size(), q = lmopair_to_ribfs_[p].size();
         const size_t nv = lmopair_to_paos_[p].size();
+        const auto [i, j] = ij_to_i_j_[p];
+        const size_t ni = n_pno_[i_j_to_ij_[i][i]], nj = n_pno_[i_j_to_ij_[j][j]];
+        // Fixed Toth tensors: delta_im, K/M/J with three virtual labels,
+        // four (occupied,virtual) panels, F_vv, and the expanded Eq. 66 rows.
+        toth_words += ni * nj + 4 * nj * n * n + 4 * m * n + 3 * n * n;
+        if (i <= j) toth_words += n * n;
+        for (int k : lmopair_to_lmos_[i_j_to_ij_[j][j]]) toth_words += n_pno_[i_j_to_ij_[k][k]];
+        mixed_density_words += 2 * n * n;
         response += 3 * n * n + 3 * m * n + n * n * n + q * (m + n) + nv * n;
         size_t widest = n;
         for (const auto& block : J_ikac_non_proj_[p]) {
@@ -2027,7 +2158,11 @@ void DLPNOCCSD::estimate_gradient_lambda_memory() {
         scratch = std::max(scratch,
                            n * n * n + 8 * n * n + (write_qia_pno_ ? q * m * n : 0) + (write_qab_pno_ ? q * n * n : 0));
     }
-    words += (11 + 2 * options_.get_int("DIIS_MAX_VECS")) * amp + scratch;
+    // The shared setup/residual loops use thread-private local scratch and L1 buffers.
+    const size_t threads = Process::environment.get_n_threads();
+    words += (11 + threads + 2 * options_.get_int("DIIS_MAX_VECS")) * amp + threads * scratch + toth_words;
+    outfile->Printf("    Shared Toth Lambda tensors: %.1f MiB (G/D pair intermediates: %.1f MiB)\n",
+                    toth_words * sizeof(double) / 1048576., mixed_density_words * sizeof(double) / 1048576.);
     ccsd_response_words_ = words + response + df_scratch;
     outfile->Printf("    CCSD response memory estimate before sparse overlaps: %.3f GiB\n",
                     ccsd_response_words_ * 8.0 / (1ULL << 30));
@@ -2043,6 +2178,8 @@ void DLPNOCCSD::gradient_lambda_residual(const std::vector<SharedMatrix>& z1, co
                                          CCAdjoints* workspace) {
     // Differentiate E_CC + lambda1 . R1 + 1/2 sum_ij lambda2_ij . R2_ij.
     // Reverse the right-hand contractions in their original pair domains.
+    // Kept as an independent check/Jacobian action and for integral covectors.
+    // Production gradient Lambda iterations now use compute_L_ia/compute_L_iajb.
     std::unique_ptr<CCAdjoints> owned;
     if (!workspace) owned = std::make_unique<CCAdjoints>(*this, z1, z2);
     auto& g = workspace ? *workspace : *owned;
@@ -2561,7 +2698,12 @@ void DLPNOCCSD::build_gradient_lambda_fixed() {
         const auto [i, j] = ij_to_i_j_[p];
         if (i > j) continue;
         const size_t n = n_pno_[p], words = n * n;
-        if (words * sizeof(double) <= budget - used) {
+        if (F_vv_double_tilde_.size() == T_iajb_.size() && F_vv_double_tilde_[p]) {
+            // Already built by the shared Toth setup. Share its storage with
+            // the reverse density/reference pass; do not repeat the pair sum.
+            fixed->f[p] = F_vv_double_tilde_[p];
+            ++cached_f;
+        } else if (words * sizeof(double) <= budget - used) {
             used += words * sizeof(double); // Reserve before overlap fallback admits panels.
             auto F = Fab_[p]->clone();
             const auto& domain = lmopair_to_lmos_[p];
@@ -2631,14 +2773,12 @@ void DLPNOCCSD::solve_gradient_lambda() {
     auto start = Clock::now();
     auto elapsed = [](auto since) { return std::chrono::duration<double>(Clock::now() - since).count(); };
     estimate_gradient_lambda_memory();
-    prepare_ccsd_residual();
-    beta_ = compute_beta();
-    gamma_ = compute_gamma();
-    delta_ = compute_delta();
-    F_im_double_tilde_ = compute_Fkj_double_tilde();
+    compute_lambda_intermediates(true);
     lambda_ia_ = zero_blocks(T_ia_);
     lambda_iajb_ = zero_blocks(T_iajb_);
-    std::vector<SharedMatrix> l1(T_ia_.size()), l2(T_iajb_.size());
+    auto l1 = zero_blocks(T_ia_), l2 = zero_blocks(T_iajb_), ln = zero_blocks(T_iajb_);
+    std::vector<std::vector<SharedMatrix>> buffers(Process::environment.get_n_threads());
+    for (auto& buffer : buffers) buffer = zero_blocks(T_ia_);
     // Clear on both normal exit and exceptions, before any debug amplitude
     // perturbation. Cached matrices are read-only throughout this scope.
     struct FixedGuard {
@@ -2648,10 +2788,15 @@ void DLPNOCCSD::solve_gradient_lambda() {
     build_gradient_lambda_fixed();
     const double setup_seconds = elapsed(start);
     start = Clock::now();
-    std::vector<SharedMatrix> source1(T_ia_.size()), source2(T_iajb_.size());
-    gradient_lambda_residual(lambda_ia_, lambda_iajb_, source1, source2, true);
+    auto source1 = zero_blocks(T_ia_), source2 = zero_blocks(T_iajb_);
+    size_t source_builds = 0;
+    form_goo(true);
+    compute_L_ia(source1, buffers, true);
+    compute_L_iajb(source2, ln, true);
+    for (size_t i = 0; i < source1.size(); ++i) source1[i]->add(triples_source1_[i]);
+    for (size_t p = 0; p < source2.size(); ++p) source2[p]->add(triples_source2_[p]);
+    ++source_builds;
     prepare_gradient_lambda_overlaps();
-    auto transpose_workspace = std::make_unique<CCAdjoints>(*this, lambda_ia_, lambda_iajb_);
     const double source_seconds = elapsed(start);
     start = Clock::now();
 
@@ -2660,15 +2805,20 @@ void DLPNOCCSD::solve_gradient_lambda() {
     DIISManager diis(options_.get_int("DIIS_MAX_VECS"), "DLPNO gradient Lambda DIIS",
                      DIISManager::RemovalPolicy::LargestError, DIISManager::StoragePolicy::InCore);
     outfile->Printf("\n  ==> Ordinary (T)-sourced RHF Lambda <==\n\n");
+    outfile->Printf("    Shared Toth residuals: retained projectors and incoming domains; fixed source built once.\n");
     outfile->Printf("      Iter    pseudoenergy      delta E      max L1 RMS   max L2 RMS\n");
     double last_energy = 0.0;
+    size_t residual_evaluations = 1;
     for (int iter = 0;; ++iter) {
-        gradient_lambda_residual(lambda_ia_, lambda_iajb_, l1, l2, false, transpose_workspace.get());
+        form_goo(true);
+        compute_L_ia(l1, buffers, true, false);
+        compute_L_iajb(l2, ln, true, false);
+        ++residual_evaluations;
         for (size_t i = 0; i < l1.size(); ++i) l1[i]->add(source1[i]);
         for (size_t p = 0; p < l2.size(); ++p) l2[p]->add(source2[p]);
         if (debug_ && iter == 1) {
-            // Compare the persistent implementation with the original complete
-            // reverse at a nonzero Lambda vector, including the fixed source.
+            // Independent reference: compare the shared published-code route
+            // with the full reverse graph at a nonzero Lambda vector.
             auto saved = std::move(gradient_lambda_fixed_);
             std::vector<SharedMatrix> direct1(l1.size()), direct2(l2.size());
             try { gradient_lambda_residual(lambda_ia_, lambda_iajb_, direct1, direct2, true); }
@@ -2684,8 +2834,9 @@ void DLPNOCCSD::solve_gradient_lambda() {
                 error = std::max(error, direct2[p]->absmax());
             }
             set_scalar_variable("DLPNO LAMBDA PERSISTENT REPLAY ERROR", error);
+            set_scalar_variable("DLPNO LAMBDA SHARED RESIDUAL ERROR", error);
             if (!std::isfinite(error) || error > 1.e-11)
-                throw PSIEXCEPTION("Persistent Lambda reverse disagrees with direct evaluation.");
+                throw PSIEXCEPTION("Shared Toth Lambda residual disagrees with the right-residual transpose.");
         }
         auto max_rms = [](const auto& blocks) {
             double r = 0.;
@@ -2759,18 +2910,24 @@ void DLPNOCCSD::solve_gradient_lambda() {
                     fixed.builds, fixed.hits, fixed.overlap_builds, fixed.overlap_hits,
                     fixed.overlap_panels.size(), fixed.overlap_panel_uses);
     gradient_lambda_fixed_.reset();
-    transpose_workspace.reset();
+    if (debug_) check_ccsd_adjoint();
+    // Lambda-only fixed tensors are not needed by the following density pass.
+    // beta/gamma/delta and F_im_double_tilde remain shared with that pass.
+    for (auto* blocks : {&delta_imae_tilde_, &F_vv_double_tilde_, &K_maef_dt_, &K_eimn_dt_,
+                         &M_kace_bar_, &M_mkic_bar_, &J_kmic_bar_, &J_kaec_bar_, &L_ieab_bar_,
+                         &K_ijmb_bar_, &rho_vv_, &lambda_gamma_, &lambda_delta_}) blocks->clear();
+    F_knia_hat_.clear();
+    rho_oo_.reset();
     source1.clear();
     source2.clear();
+    set_scalar_variable("DLPNO LAMBDA FIXED SOURCE BUILDS", static_cast<double>(source_builds));
+    set_scalar_variable("DLPNO LAMBDA SHARED RESIDUAL EVALUATIONS", static_cast<double>(residual_evaluations));
     start = Clock::now();
     form_ccsd_pair_response();
     backtransform_ccsd_one_body();
     outfile->Printf("    Lambda phase times: setup %.3f s; fixed source %.3f s; iterations %.3f s; "
                     "pair density %.3f s\n", setup_seconds, source_seconds, iteration_seconds, elapsed(start));
-    if (debug_) {
-        check_ccsd_adjoint();
-        check_ccsd_pair_response();
-    }
+    if (debug_) check_ccsd_pair_response();
 }
 
 double DLPNOCCSD::ccsd_lagrangian(const std::vector<SharedMatrix>& z1, const std::vector<SharedMatrix>& z2,
@@ -2865,6 +3022,44 @@ void DLPNOCCSD::check_ccsd_adjoint() {
     const auto z1 = amplitude_probe(true, 3), z2 = amplitude_probe(false, 4);
     std::vector<SharedMatrix> l1(z1.size()), l2(z2.size());
     gradient_lambda_residual(z1, z2, l1, l2);
+    // Compare with the reused Toth implementation at independent multipliers,
+    // before finite differences perturb T. Setup tensors still belong to T.
+    const auto saved1 = lambda_ia_, saved2 = lambda_iajb_, saved_bar = lambda_iajb_bar_;
+    auto restore = [&]() {
+        lambda_ia_ = saved1;
+        lambda_iajb_ = saved2;
+        lambda_iajb_bar_ = saved_bar;
+    };
+    try {
+        lambda_ia_ = z1;
+        lambda_iajb_ = z2;
+        form_goo(true);
+        auto shared1 = zero_blocks(z1), shared2 = zero_blocks(z2), ln = zero_blocks(z2);
+        std::vector<std::vector<SharedMatrix>> buffers(Process::environment.get_n_threads());
+        for (auto& buffer : buffers) buffer = zero_blocks(z1);
+        compute_L_ia(shared1, buffers, true);
+        compute_L_iajb(shared2, ln, true);
+        double error1 = 0., error2 = 0.;
+        for (size_t i = 0; i < shared1.size(); ++i) {
+            shared1[i]->add(triples_source1_[i]);
+            shared1[i]->subtract(l1[i]);
+            error1 = std::max(error1, shared1[i]->absmax());
+        }
+        for (size_t p = 0; p < shared2.size(); ++p) {
+            shared2[p]->add(triples_source2_[p]);
+            shared2[p]->subtract(l2[p]);
+            error2 = std::max(error2, shared2[p]->absmax());
+        }
+        set_scalar_variable("DLPNO CCSD L1 SHARED TRANSPOSE ERROR", error1);
+        set_scalar_variable("DLPNO CCSD L2 SHARED TRANSPOSE ERROR", error2);
+        outfile->Printf("    Shared Toth/reverse Lambda errors: L1 %.3e; L2 %.3e\n", error1, error2);
+        if (!std::isfinite(error1 + error2) || std::max(error1, error2) > 1.e-10)
+            throw PSIEXCEPTION("Shared Toth Lambda equations fail the independent transpose check.");
+    } catch (...) {
+        restore();
+        throw;
+    }
+    restore();
     auto lagrangian = [&]() { return ccsd_lagrangian(z1, z2); };
     for (bool singles : {true, false}) {
         const auto probe = amplitude_probe(singles);
